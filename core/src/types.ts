@@ -80,6 +80,7 @@ export interface GateFailure {
 export interface GateResult {
   ok: boolean;
   failures: GateFailure[]; // empty iff ok === true
+  dir: string; // the directory this result validated — binds a GateResult to its tree (change-proposal-1)
 }
 
 // --- Additional supporting types needed to give this slice's functions
@@ -117,4 +118,44 @@ export interface TopicError {
 export interface TopicSweep {
   topics: TopicSummary[]; // every topic that parsed and validated
   errors: TopicError[]; // every topic that did not — the sweep never fails fast
+}
+
+// --- Cut mechanics & Session mechanics supporting types (03-api-design.md,
+// "Additional supporting types") ---
+
+export interface StagedCut {
+  dir: string; // absolute path to .staycurrent/staged/<slug>/; basename == slug
+  topic: string;
+  version: number; // the N this stage targets (1 from createTopic; live version + 1 from stageCut)
+}
+
+export interface CreateTopicOptions {
+  title: string; // display title; stance and body are authored into the staged draft afterwards
+}
+
+export interface CutReport {
+  topic: string;
+  version: number;
+  paths: string[]; // every artifact path written under topics/<slug>/, root-relative
+  removed: string[]; // files removed from topics/<slug>/ because the staged tree no longer carries them (landing is a sync — change-proposal-1)
+}
+
+export interface NoCutInput {
+  lastResearched: string; // ISO date, normally today
+  researchLogLines: string[];
+}
+
+export interface ConveneResult {
+  topic: string;
+  againstVersion: number; // the live version this run researches against
+  stagedDir: string; // .staycurrent/staged/<slug>/ — the seeded baseline the run's drafts are authored into
+}
+
+export interface ReconcileOptions {
+  sessionExists?: boolean; // single-slug form
+  sessions?: Record<string, boolean>; // sweep form: slug → session-file existence
+}
+
+export interface ReconcileReport {
+  reverted: string[]; // slugs whose status was reverted in-research → current (filesystem wins)
 }

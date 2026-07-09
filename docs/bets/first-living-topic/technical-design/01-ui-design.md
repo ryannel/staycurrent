@@ -574,7 +574,7 @@ $ echo $?
 
 #### CLI: `convene <slug>`
 
-**Purpose:** The deterministic half of the conversational convene turn: stamp `status: in-research` in the topic's frontmatter, create the session quarantine file, and seed the staged tree at `.staycurrent/staged/<slug>/`. The agent does the research; the CLI does the filesystem.
+**Purpose:** The deterministic half of the conversational convene turn: seed the staged tree at `.staycurrent/staged/<slug>/`, stamp `status: in-research` in the topic's frontmatter (in that order — the staged baseline always reads `current`), then create the session quarantine file (CLI-layer). The agent does the research; the CLI does the filesystem.
 
 **States:**
 
@@ -630,6 +630,8 @@ $ echo $?
 | Blocked | A staged tree exists → gate fails | The full halt template — `cut` is the only CLI command that renders it; `topics/` untouched, staged tree intact | 1 |
 | Nothing to cut | No staged tree and the latest version is complete (a re-run after success lands here) | `Nothing to cut — v<N> is complete.` — no duplicate commit | 0 |
 | Committed topic broken | No staged tree and the committed topic fails its own gate | The full halt template — the live tree needs repair before any new cut | 1 |
+| Converged re-entry | Staged tree exists and `topics/<slug>/` is already byte-identical to it (crash landed the sync, commit lost) | The cut report — `executeCut` is skipped, the commit and cleanup proceed | 0 |
+| Non-advancing version | Gate passes but the staged version does not exceed the live version (zero-authoring: convene, author nothing, cut) | The full halt template naming both versions; staged tree and session intact | 1 |
 | Unknown slug | No staged tree **and** no `topics/` entry (a staged-only slug — the `create` path — proceeds) | Plain one-line usage error naming the slug | 2 |
 
 **Key interactions (turns):**

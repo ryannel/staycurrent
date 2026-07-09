@@ -84,6 +84,7 @@ interface GateFailure {
 interface GateResult {
   ok: boolean;
   failures: GateFailure[];   // empty iff ok === true
+  dir: string;                // the directory this result validated — binds the result to its tree (executeCut refuses any other)
 }
 ```
 
@@ -151,7 +152,8 @@ interface CreateTopicOptions {
 interface CutReport {
   topic: string;
   version: number;
-  paths: string[];     // every artifact path written under topics/<slug>/, root-relative
+  paths: string[];      // every artifact path written under topics/<slug>/, root-relative
+  removed: string[];     // files deleted from topics/<slug>/ because they are absent from the staged tree (the landing is a sync)
 }
 
 interface NoCutInput {
@@ -371,14 +373,15 @@ opts?: PublishGateOptions { now?: Date }
 
 **Response:**
 ```
-GateResult { ok: boolean, failures: GateFailure[] }   — ok is true iff failures.length === 0
+GateResult { ok: boolean, failures: GateFailure[], dir: string }
+// ok is true iff failures.length === 0; dir echoes the directory validated
 ```
 
 **Errors:**
 - Never throws for content problems — every violation becomes a `GateFailure` entry, not an exception. This is the one function in the module deliberately designed not to throw on invalid content, because invalid content is its entire subject matter; a caller scripting against it (CI, the `gate` command) needs the complete list, not a stack unwound at the first problem.
 - May propagate a raw fs error if `dir` itself does not exist — a usage error, not a content violation.
 
-**Design rationale:** Runs all nine checks and aggregates every failure rather than failing fast, so an operator debugging a failed cut sees every problem in one pass instead of iterating the gate check-by-check. `opts.now` makes check 9 deterministic under test without mocking the system clock. `stageCut`/`executeCut` never re-validate; every caller — the `gate` and `cut` commands, CI pre-deploy — calls exactly this function against exactly this directory shape.
+**Design rationale:** Runs all nine checks and aggregates every failure rather than failing fast, so an operator debugging a failed cut sees every problem in one pass instead of iterating the gate check-by-check. `opts.now` makes check 9 deterministic under test without mocking the system clock. `dir` is echoed into the result so a `GateResult` is bound to the tree it certified — `executeCut` refuses a result for any other directory (change-proposal-1: a pass for one tree must not authorize landing another). `stageCut`/`executeCut` never re-validate; every caller — the `gate` and `cut` commands, CI pre-deploy — calls exactly this function against exactly this directory shape.
 
 ---
 
@@ -387,7 +390,7 @@ GateResult { ok: boolean, failures: GateFailure[] }   — ok is true iff failure
 ```
 stageCut(root, slug)                → StagedCut          // seed the staged baseline (convene calls this internally)
 runPublishGate(staged.dir)          → GateResult          // called directly — not reimplemented, not wrapped
-executeCut(root, slug, gateResult)  → CutReport           // throws unless gateResult.ok
+executeCut(root, slug, gateResult)  → CutReport           // throws unless gateResult.ok and gateResult.dir is the staged tree
 <CLI>: git add topics/<slug>/ && git commit -m "cut(<slug>): v<N>"
 ```
 
@@ -442,26 +445,35 @@ StagedCut { dir: string, topic: string, version: number }   // version = live ve
 
 **`executeCut(root: string, slug: string, gateResult: GateResult): CutReport`**
 
-**Purpose:** Moves the staged tree into `topics/<slug>/` via fs writes only — no git. Action-contract step 3, mechanical execution of an already-sanctioned decision (design system, Authority boundaries: "within a sanctioned cut, the system executes autonomously").
+**Purpose:** Lands the staged tree into `topics/<slug>/` via fs writes only — no git. Action-contract step 3, mechanical execution of an already-sanctioned decision (design system, Authority boundaries: "within a sanctioned cut, the system executes autonomously"). **Landing is a sync with normalization** (change-proposal-1), defined by four rules:
+
+1. **Normalization** — the landed live `article.md` always carries `status: current`: published state is always current, whatever the staged working copy read. This is what keeps `in-research` out of git history even if a stray stamp reaches the staged tree.
+2. **Monotonicity at the landing** — the staged version must **exceed** the live topic's version; otherwise `ContentValidationError`. A zero-authoring cut (staged N == live N) passes the gate but cannot land — monotonicity is enforced here, not only by convention.
+3. **Sync** — after landing, `topics/<slug>/` exactly matches the staged tree: files absent from staging are deleted and reported in `CutReport.removed`. A copy-only landing would let deleted files survive live, and the freshly cut topic would then fail its own gate in CI.
+4. **Binding** — `gateResult.dir` must equal the staged tree being landed; anything else throws `GateNotPassedError`. A gate pass certifies one directory, not the operation.
 
 **Request:**
 ```
 root: string
 slug: string             — the staged tree is read from the deterministic .staycurrent/staged/<slug>/
-gateResult: GateResult   — the result of runPublishGate over that staged tree; required, not optional
+gateResult: GateResult   — the result of runPublishGate over that staged tree; required, not optional;
+                            its dir must equal the staged tree's path (rule 4)
 ```
 
 **Response:**
 ```
-CutReport { topic: string, version: number, paths: string[] }
-// paths lists every artifact written, root-relative — feeds the cut report template verbatim
+CutReport { topic: string, version: number, paths: string[], removed: string[] }
+// paths lists every artifact written, removed every file deleted by the sync — both root-relative;
+// paths feeds the cut report template verbatim
 ```
 
 **Errors:**
-- Throws `GateNotPassedError` immediately, before touching `topics/`, if `gateResult.ok !== true` — a runtime-enforced instance of ADR 0003's fail-closed rule: the signature makes "no commit without a passing `GateResult`" a compile-time reminder and a runtime guarantee, not just a documented calling convention.
+- Throws `GateNotPassedError` immediately, before touching `topics/`, if `gateResult.ok !== true` **or** `gateResult.dir` is not the staged tree being landed — a runtime-enforced instance of ADR 0003's fail-closed rule: the signature makes "no commit without a passing, matching `GateResult`" a compile-time reminder and a runtime guarantee, not just a documented calling convention.
+- Throws `ContentNotFoundError` — no staged tree exists at `.staycurrent/staged/<slug>/`. Never a silent empty success.
+- Throws `ContentValidationError` — the staged version does not exceed the live topic's version (rule 2).
 - Propagates raw fs errors on a write failure.
 
-**Design rationale:** Content-core performs the fs half of the commit only; the caller performs `git add`/`git commit` (core does fs, the CLI does the git commit — architecture §4). This keeps content-core testable with no git binary present, and keeps commit-message construction, author identity, and signing out of the module `site` also depends on. **Idempotency:** `executeCut` writes each artifact only if the destination does not already hold byte-identical content — re-running after a partial failure (the process died after writing `article.md` but before `skill/`) completes the remaining artifacts and returns the same `paths` list, never duplicating or erroring on the already-complete ones (design system, Skill Anatomy: "every artifact has exactly one path it can exist at").
+**Design rationale:** Content-core performs the fs half of the commit only; the caller performs `git add`/`git commit` (core does fs, the CLI does the git commit — architecture §4). This keeps content-core testable with no git binary present, and keeps commit-message construction, author identity, and signing out of the module `site` also depends on. **Idempotency:** the landing is a convergent sync — files already byte-identical are skipped, missing ones written, stragglers deleted — so re-running after a partial failure completes the landing and returns the same `paths` list, never duplicating (design system, Skill Anatomy: "every artifact has exactly one path it can exist at"). One ordering obligation follows from rule 2: `article.md`, the version-bearing file, lands last, so a partially-landed tree still reads as the previous live version and the monotonicity check permits the completing re-run.
 
 ---
 
@@ -471,7 +483,7 @@ Ownership is split precisely, and 04-data-design's ownership statement is normat
 
 **`convene(root: string, slug: string): ConveneResult`**
 
-**Purpose:** Opens a research run in one core call: stamps `status: in-research` in the live `article.md` frontmatter (working tree only — no commit) **and** seeds the staged baseline by calling `stageCut` internally — the one sanctioned core-calls-core composition, so the stamp and the staged tree cannot arrive separately. It does not create the session file — that is the `convene` command's CLI-layer action.
+**Purpose:** Opens a research run in one core call, in a contractual order: **seeds the staged baseline first** by calling `stageCut` internally — the one sanctioned core-calls-core composition — and only **then** stamps `status: in-research` in the live `article.md` frontmatter (working tree only — no commit). Seed-then-stamp means the staged baseline is copied before the stamp exists, so it always reads `status: current` (change-proposal-1) — the landing's normalization never has an accidental `in-research` to scrub from a faithfully-authored tree. It does not create the session file — that is the `convene` command's CLI-layer action.
 
 **Request:**
 ```
@@ -488,7 +500,7 @@ ConveneResult { topic, againstVersion, stagedDir }
 - Throws `ContentNotFoundError` — the topic does not exist.
 - Throws `ContentValidationError` — `status` is already `in-research` (an open or unreconciled session; resume or discard it first), or the frontmatter fails schema validation.
 
-**Design rationale:** Stamp and seed are one call so a crash between them is a single process's window, not a CLI choreography to get wrong. The session file rides with the CLI instead because 04's ownership line wins: core's contract ends at `topics/` and the staged tree; the session file is workbench conversation state.
+**Design rationale:** Seed and stamp are one call so a crash between them is a single process's window, not a CLI choreography to get wrong — and the order makes that crash harmless: a seeded tree without a stamp is just a re-runnable convene (`stageCut`'s idempotent re-seed), while the reverse order could strand an `in-research` stamp with no staged tree behind it. The session file rides with the CLI instead because 04's ownership line wins: core's contract ends at `topics/` and the staged tree; the session file is workbench conversation state.
 
 ---
 
@@ -692,7 +704,7 @@ Created staged topic ${slug} — draft at .staycurrent/staged/${slug}/. Session:
 
 **`convene <slug>`**
 
-**Purpose:** Opens a research run — calls core's `convene(root, slug)` (stamp + staged seed in one call), then creates the session file (CLI-layer, per the ownership split). No git commit follows (`in-research` never appears in git history).
+**Purpose:** Opens a research run — calls core's `convene(root, slug)` (staged seed + stamp, in that order, in one call), then creates the session file (CLI-layer, per the ownership split). No git commit follows (`in-research` never appears in git history).
 
 **Request:**
 ```
@@ -749,6 +761,8 @@ slug: string (required)
 
 **Behaviour:**
 - Staged tree exists at `.staycurrent/staged/<slug>/` → `runPublishGate(stagedDir)` → on pass, `executeCut(root, slug, gateResult)`, then `git add topics/<slug>/ && git commit -m "cut(<slug>): v<N>"`, then CLI cleanup: delete the staged tree and the session file (quarantine emptied — the cut resolved the run). A staged-only slug with no `topics/` entry is the founding-v1 create path and proceeds identically.
+- Staged tree exists and `topics/<slug>/` is already **byte-identical** to it (a crash landed the sync but the commit was lost) → the **converged re-entry**: skip `executeCut` (its monotonicity check would rightly refuse a same-version landing) and proceed straight to the git commit and cleanup — exit `0` with the cut report.
+- Staged tree exists, gate passes, but `executeCut` throws `ContentValidationError` (staged version does not exceed the live version — the zero-authoring case: convene, author nothing, cut) → exit `1` with the halt template naming the versions; staged tree and session left intact.
 - No staged tree, `topics/<slug>/` exists, and `runPublishGate(topics/<slug>/)` passes → exit `0` with `Nothing to cut — v<N> is complete.` — the idempotent re-run the design system's rule requires (the gate detects already-complete artifacts and skips).
 - No staged tree and the committed topic fails its own gate → exit `1` with the halt template — there is nothing staged to complete from, and the failure names the artifact.
 
@@ -771,7 +785,7 @@ Action:  <the one thing the operator should do>
 [additional GateFailures, if any, listed below the block]
 ```
 
-**Exit codes:** `0` — committed, or nothing to cut (idempotent). `1` — gate failed (staged tree, or the committed topic when nothing is staged); nothing written to `topics/`, any staged set left intact for resume. `2` — unknown slug: no staged tree **and** no `topics/` entry.
+**Exit codes:** `0` — committed (including the converged re-entry), or nothing to cut (idempotent). `1` — gate failed (staged tree, or the committed topic when nothing is staged), or `executeCut` refused a non-advancing version (zero-authoring); nothing further written to `topics/`, any staged set left intact for resume. `2` — unknown slug: no staged tree **and** no `topics/` entry.
 
 **Design rationale:** `cut` and `log` are the only two commands that construct git commits — `cut(<slug>): v<N>` here, `log(<slug>): no-cut` there; nothing else in the system touches git. Only `cut` renders the halt template, because only `cut` has an action in flight to block — `gate` reporting the same failures stays a report. On gate failure, `cut` exits before calling `executeCut` at all, so `GateNotPassedError` is never actually thrown in normal CLI operation — it exists as a safety net for any other caller of `executeCut`. The nothing-to-cut case exits `0`, not `2`, because a re-run after success is a legitimate operation with a true answer, not a caller mistake.
 

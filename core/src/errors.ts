@@ -1,5 +1,9 @@
-// Errors — every throw in this module's Loading API is one of these two,
-// never a bare Error (GateNotPassedError belongs to Cut mechanics, a later slice).
+// Errors — every throw in this module is one of these three, never a bare Error
+// (03-api-design.md, "Additional supporting types"). ContentValidationError and
+// ContentNotFoundError cover the Loading API and the frontmatter-schema checks
+// Cut/Session mechanics reuse; GateNotPassedError belongs to Cut mechanics alone.
+
+import type { GateFailure } from './types.js';
 
 export class ContentValidationError extends Error {
   readonly topic: string;
@@ -24,5 +28,15 @@ export class ContentNotFoundError extends Error {
     this.name = 'ContentNotFoundError';
     this.topic = topic;
     this.path = path;
+  }
+}
+
+export class GateNotPassedError extends Error {
+  readonly failures: GateFailure[];
+
+  constructor(failures: GateFailure[], message?: string) {
+    super(message ?? `publish gate did not pass: ${failures.length} failure(s)`);
+    this.name = 'GateNotPassedError';
+    this.failures = failures;
   }
 }

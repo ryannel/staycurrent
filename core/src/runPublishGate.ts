@@ -4,10 +4,7 @@ import type { GateFailure, GateResult, PublishGateOptions } from './types.js';
 import { isIsoDate, normalizeDateValue } from './dates.js';
 import { parseProvenance } from './parseProvenance.js';
 import { readMatterFile } from './loaders/shared.js';
-
-// Reserved root slugs a topic must never collide with (04-data-design.md, Directory
-// Layout; 03-api-design.md Publish gate check 8).
-const RESERVED_SLUGS = new Set(['skills', 'changelog', 'about', 'rss.xml']);
+import { RESERVED_SLUGS } from './slug.js';
 
 const CADENCE_RE = /^\d+d$/;
 
@@ -27,7 +24,7 @@ function pathExists(p: string): boolean {
   }
 }
 
-interface VersionScan {
+export interface VersionScan {
   n: number; // the highest version number present as a versions/vN/ subdirectory
   dirCount: number; // how many vN-named directories exist — the plausibility denominator
 }
@@ -35,9 +32,11 @@ interface VersionScan {
 /**
  * N is the highest version number present as a `versions/vN/` subdirectory inside
  * `dir` (03-api-design.md, Publish gate, "How N is derived") — a numeric max, not a
- * lexicographic one ('v9' must not beat 'v10' by string comparison).
+ * lexicographic one ('v9' must not beat 'v10' by string comparison). Exported so
+ * `executeCut` (Cut mechanics) derives the same N from the staged tree instead of
+ * re-implementing the scan.
  */
-function scanVersions(dir: string): VersionScan {
+export function scanVersions(dir: string): VersionScan {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(path.join(dir, 'versions'), { withFileTypes: true });
@@ -397,5 +396,7 @@ export function runPublishGate(dir: string, opts: PublishGateOptions = {}): Gate
   checkReservedSlug(articleData, failures);
   checkCadenceDateValid(dir, articleData, nImplausible ? 0 : n, slug, todayUtcMs, failures);
 
-  return { ok: failures.length === 0, failures };
+  // `dir` binds this result to the tree it validated: executeCut refuses a
+  // GateResult produced for any other directory (change-proposal-1, rule d).
+  return { ok: failures.length === 0, failures, dir };
 }
