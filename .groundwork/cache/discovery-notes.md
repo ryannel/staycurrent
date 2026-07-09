@@ -35,3 +35,5 @@
 ## Bets
 
 <!-- Delivery priorities, MVP scope instincts, feature sequencing for future bets. -->
+
+- MVP scope reasoning (first-living-topic): both surfaces in scope because the product IS the article+skill pair — excluding either voids the signal. Databases chosen as seed content by operator directive (coverage: relational/document/key-value/columnar/vector/graph, selection heuristics, convergence trend, mental models). Build order by dependency: core → topics/databases → site routes → workbench → deploy workflow. Post-MVP sequence instincts: second topic (proves repeatability), framework extraction, search at ~25 topics.
