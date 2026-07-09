@@ -1,9 +1,9 @@
 // @staycurrent/core — public entry point.
 //
-// This slice (bet first-living-topic, 01-core-contract) ships the exported
-// contract types and the read-side Loading API + renderMarkdown. The publish
-// gate, cut mechanics, and session functions are later slices — nothing for
-// them is exported yet, per the slice's scope boundary.
+// Slice 1.1 (bet first-living-topic, core-contract) shipped the exported contract
+// types and the read-side Loading API + renderMarkdown. Slice 1.2 (publish-gate)
+// adds runPublishGate — the one place gate logic exists (ADR 0003). Cut mechanics
+// and session functions remain later slices; nothing for them is exported yet.
 
 export * from './types.js';
 export * from './errors.js';
@@ -15,3 +15,5 @@ export { loadTopic } from './loaders/loadTopic.js';
 export { loadChangelog } from './loaders/loadChangelog.js';
 export { loadVersion } from './loaders/loadVersion.js';
 export { loadResearchLog } from './loaders/loadResearchLog.js';
+
+export { runPublishGate } from './runPublishGate.js';

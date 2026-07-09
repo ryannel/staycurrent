@@ -90,6 +90,10 @@ export interface RenderMarkdownOptions {
   headingIdPrefix?: string; // default '' — namespaces generated heading-anchor ids
 }
 
+export interface PublishGateOptions {
+  now?: Date; // injectable clock for the cadence-date-valid check; defaults to the current date
+}
+
 export interface Topic {
   frontmatter: TopicFrontmatter;
   due: boolean;
