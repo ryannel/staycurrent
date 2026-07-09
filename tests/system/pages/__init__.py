@@ -5,5 +5,6 @@ in one place instead of being repeated across tests.
 """
 
 from .base_page import BasePage
+from .topic_article_page import TopicArticlePage
 
-__all__ = ["BasePage"]
+__all__ = ["BasePage", "TopicArticlePage"]

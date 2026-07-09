@@ -8,7 +8,10 @@ milestone tests.
 Run './dev test bet first-living-topic' to see it fail; it will pass when this slice is merged.
 """
 
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -110,3 +113,74 @@ def test_static_export_carries_no_api_route():
         f"{OUT_DIR.relative_to(REPO_ROOT)} does not exist — run `pnpm build` in services/site"
     )
     assert not (OUT_DIR / "api").exists(), "expected no api/ directory in the static export"
+
+
+def test_build_fails_closed_when_a_topic_cannot_state_its_currency(tmp_path):
+    """The fail-closed half of this slice's proof (02-data-flows.md, "currency is
+    never guessed"): a topic that cannot state its version/last_researched must fail
+    `next build` outright rather than silently drop out of the catalogue. This drives
+    the real loadTopic/listTopics validation through a real `pnpm build` subprocess
+    against a throwaway fixture root — never a scripted stand-in, and never the
+    repository's own topics/ (services/site/lib/content.ts's STAYCURRENT_REPO_ROOT
+    override exists for exactly this).
+    """
+    fixture_root = tmp_path / "fixture-root"
+    fixture_topic_dir = fixture_root / "topics" / "databases"
+    shutil.copytree(REPO_ROOT / "topics" / "databases", fixture_topic_dir)
+
+    article = fixture_topic_dir / "article.md"
+    original = article.read_text()
+    stripped = "\n".join(
+        line
+        for line in original.split("\n")
+        if not re.match(r"^(version|last_researched):", line)
+    )
+    assert stripped != original, "expected the fixture's version/last_researched lines to be present to strip"
+    article.write_text(stripped)
+
+    # Snapshot the positive test's artifact before the failing build — verified
+    # empirically that `next build` fails during "Collecting page data"
+    # (generateStaticParams throws before any static HTML is written or
+    # rewritten), so a failed build never touches an already-built out/. No
+    # shutil.move-aside/restore dance is needed; the assertions below lock that
+    # invariant in so a future Next.js behaviour change that starts clobbering
+    # out/ on a failed build is caught here rather than silently breaking the
+    # positive test's precondition.
+    out_index = OUT_DIR / SLUG / "index.html"
+    out_existed_before = out_index.exists()
+    out_snapshot_before = out_index.read_bytes() if out_existed_before else None
+
+    env = {**os.environ, "STAYCURRENT_REPO_ROOT": str(fixture_root)}
+    result = subprocess.run(
+        ["pnpm", "build"],
+        cwd=REPO_ROOT / "services" / "site",
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, (
+        "expected `pnpm build` to fail closed against a topic missing version/"
+        f"last_researched; it exited 0. Output:\n{combined}"
+    )
+    assert "version" in combined, f"expected the failure output to name 'version':\n{combined}"
+    assert "last_researched" in combined, (
+        f"expected the failure output to name 'last_researched':\n{combined}"
+    )
+
+    # The repository's own content tree is never touched by this proof.
+    real_article = (REPO_ROOT / "topics" / "databases" / "article.md").read_text()
+    assert "version:" in real_article and "last_researched:" in real_article, (
+        "the repository's own topics/databases/article.md was modified by this test"
+    )
+
+    if out_existed_before:
+        assert out_index.exists(), (
+            f"{out_index.relative_to(REPO_ROOT)} was removed by the failed build — a "
+            "fail-closed build must not clobber the previous successful build's static export"
+        )
+        assert out_index.read_bytes() == out_snapshot_before, (
+            f"{out_index.relative_to(REPO_ROOT)} was modified by the failed build"
+        )
