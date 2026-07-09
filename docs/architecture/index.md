@@ -5,7 +5,8 @@ type: index
 generation_mode: authored
 source_of_truth:
   - core/
-  - site/
+  - services/site/
+  - workbench/
   - .agents/skills/
   - .github/workflows/
 last_reviewed: 2026-07-09
@@ -110,7 +111,7 @@ The site-wide feed is generated at build by content-core from the newest changel
 
 **Skill distribution — the resolved format.** A companion skill is distributed as the plain file tree the design system specifies (`SKILL.md` + `references/`), published by the site in two forms per version: browsable raw files under `/skills/<slug>/` (current) and `/skills/<slug>/v/<n>/` (archived), and a single downloadable `.zip` of the same tree for one-command install. The install page (`/[topic]/skill`) shows the one-liner — fetch the archive, unpack into the agent runtime's skills directory — and states the `article_version` binding. The zip is generated at build from the same gate-checked files it mirrors; no registry, no installer, no package manager at MVP. Because payloads live at top-level `/skills/` while topics own the root namespace, the root path segments `skills`, `changelog`, `about`, and `rss.xml` are **reserved slugs** — content-core's gate rejects a topic slug that collides with them.
 
-**Framework / instance boundary.** The brief commits to two products sharing one engine; the boundary is drawn now, extracted later. At MVP the engine (content-core, the site app, the workbench skills) and the first instance (staycurrent.dev's `topics/`, brand tokens, domain) live in **one repository** — the reference deployment. The line between them is enforced by a rule, not a package split: **engine code never names the instance** — no topic slugs, site titles, or staycurrent-specific values in `core/`, `site/`, or the workbench skills; everything instance-specific resolves from `topics/`, `brand-tokens.json`, and one site-config module. A builder adopts the framework today by templating the repo and replacing those three things. Extracting the engine into a distributable package is a post-MVP bet — a packaging exercise, not a rewrite, precisely because the naming rule holds from the first commit.
+**Framework / instance boundary.** The brief commits to two products sharing one engine; the boundary is drawn now, extracted later. At MVP the engine (content-core, the site app, the workbench skills) and the first instance (staycurrent.dev's `topics/`, brand tokens, domain) live in **one repository** — the reference deployment. The line between them is enforced by a rule, not a package split: **engine code never names the instance** — no topic slugs, site titles, or staycurrent-specific values in `core/`, `services/site/`, or the workbench skills; everything instance-specific resolves from `topics/`, `brand-tokens.json`, and one site-config module. A builder adopts the framework today by templating the repo and replacing those three things. Extracting the engine into a distributable package is a post-MVP bet — a packaging exercise, not a rewrite, precisely because the naming rule holds from the first commit.
 
 **Trust boundaries.** Three exist: repo write access (operator's git credentials — the only mutation path), the CI publish path (the gate re-validates everything before deploy, so a hand-edited commit cannot silently publish a broken version), and skill-payload consumption by third-party agents (mitigated by the markdown-only floor and per-version provenance).
 ## 5. Communication & Integration Patterns

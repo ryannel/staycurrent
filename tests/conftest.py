@@ -1,0 +1,365 @@
+"""Shared fixtures for the system and bet-progress test suites.
+
+This file is the single source of truth for service discovery and state
+management. Both tests/system/ and tests/bets/ import from here.
+
+Services and their ports/DBs are DISCOVERED at runtime by parsing the
+workspace docker-compose.yml — there are no hardcoded ports and no
+manifest file. Adding a service to the workspace automatically brings
+it under test.
+
+FAIL LOUD, NOT SILENT: when GROUNDWORK_REQUIRE_SERVICES=1 (set by CI and
+by `./dev test integration`), an unreachable service is a FAILURE. Locally
+(flag unset) the same condition skips, so the inner loop stays ergonomic.
+"""
+
+import os
+import shlex
+import subprocess
+import uuid
+from pathlib import Path
+
+import httpx
+import psycopg
+import pytest
+import yaml
+from tenacity import RetryError, retry, stop_after_delay, wait_exponential
+
+# tests/ -> workspace root (conftest.py sits at tests/, one level above system/)
+WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+COMPOSE_PATH = WORKSPACE_ROOT / "docker-compose.yml"
+SERVICES_DIR = WORKSPACE_ROOT / "services"
+
+# Postgres on the dev stack is published to host localhost:5432.
+PG_HOST = "localhost"
+PG_PORT = 5432
+PG_USER = "postgres"
+PG_PASSWORD = "postgres"
+
+# Jaeger query API (UI + /api/services + /api/traces) on the dev stack.
+JAEGER_URL = os.environ.get("TRACE_BACKEND_URL", "http://localhost:16686")
+
+REQUIRE_SERVICES = os.environ.get("GROUNDWORK_REQUIRE_SERVICES") == "1"
+
+
+def _infer_type(name: str) -> str:
+    """Infer service type from on-disk markers under services/<name>/."""
+    svc = SERVICES_DIR / name
+    if (svc / "go.mod").exists():
+        return "go"
+    if (svc / "pyproject.toml").exists():
+        return "python"
+    if (svc / "package.json").exists():
+        return "next"
+    return "unknown"
+
+
+def _health_path_for(svc_type: str) -> str:
+    if svc_type == "next":
+        return "/api/healthz"
+    # Go (huma) and Python (FastAPI) both expose /health.
+    return "/health"
+
+
+def _probe_path_for(svc_type: str) -> str:
+    """A real (traced) GET route per service type, used by the span tests.
+    /health is excluded from tracing by the otelhttp middleware, so use a
+    domain route. Go ships /api/v1/entities; the Python scaffold's example
+    router is mounted at /examples."""
+    if svc_type == "python":
+        return "/examples"
+    return "/api/v1/entities"
+
+
+def _discover_services() -> list[dict]:
+    """Parse the workspace docker-compose.yml and return APP services only.
+
+    Discriminator: an APP service has `build.context` starting with
+    `./services/`; infra services use `image:` and are skipped.
+    """
+    if not COMPOSE_PATH.exists():
+        return []
+    doc = yaml.safe_load(COMPOSE_PATH.read_text()) or {}
+    services = doc.get("services", {}) or {}
+    discovered: list[dict] = []
+    for name, spec in services.items():
+        spec = spec or {}
+        build = spec.get("build")
+        context = build.get("context") if isinstance(build, dict) else None
+        if not (isinstance(context, str) and context.startswith("./services/")):
+            continue  # infra (image:-based) service
+
+        # host_port = left side of the first "X:Y" ports mapping.
+        host_port = None
+        for mapping in spec.get("ports", []) or []:
+            left = str(mapping).split(":")[0]
+            if left.isdigit():
+                host_port = int(left)
+                break
+
+        # db_name from environment DB_NAME (supports list or dict form),
+        # default to the service key.
+        db_name = name
+        env = spec.get("environment")
+        env_pairs: dict[str, str] = {}
+        if isinstance(env, list):
+            for item in env:
+                if "=" in str(item):
+                    k, v = str(item).split("=", 1)
+                    env_pairs[k] = v
+        elif isinstance(env, dict):
+            env_pairs = {k: str(v) for k, v in env.items()}
+        if "DB_NAME" in env_pairs:
+            # value may be "${DB_NAME:-svc}"; take the default after :- if present.
+            raw = env_pairs["DB_NAME"]
+            if ":-" in raw:
+                db_name = raw.split(":-", 1)[1].rstrip("}")
+            elif not raw.startswith("$"):
+                db_name = raw
+
+        svc_type = _infer_type(name)
+        discovered.append(
+            {
+                "name": name,
+                "host_port": host_port,
+                "db_name": db_name,
+                # otel_name == compose service key == Go otelhttp.NewMiddleware name.
+                "otel_name": name,
+                "health_path": _health_path_for(svc_type),
+                "probe_path": _probe_path_for(svc_type),
+                "type": svc_type,
+            }
+        )
+    return discovered
+
+
+@pytest.fixture(scope="session")
+def services_manifest() -> list[dict]:
+    """Discovered APP services. Empty list is allowed (no services yet)."""
+    return _discover_services()
+
+
+def _base_url(svc: dict) -> str:
+    return f"http://localhost:{svc['host_port']}"
+
+
+def _compose_declares(service_name: str) -> bool:
+    """True when the workspace docker-compose.yml declares the named service.
+    This workspace provisions infrastructure opt-in; health gates only what
+    actually exists (a Jaeger probe against a stack with no Jaeger would skip
+    every test forever)."""
+    if not COMPOSE_PATH.exists():
+        return False
+    compose = yaml.safe_load(COMPOSE_PATH.read_text()) or {}
+    return service_name in (compose.get("services") or {})
+
+
+@pytest.fixture(scope="session")
+def cluster(services_manifest):
+    """Health-gate the dev stack: poll every discovered service's health
+    endpoint, every URL-reach surface, and the jaeger query API when the
+    stack provisions one. FAIL if REQUIRE_SERVICES and anything is
+    unreachable after the timeout; otherwise skip (local inner loop)."""
+
+    @retry(stop=stop_after_delay(300), wait=wait_exponential(multiplier=1, min=1, max=8))
+    def _wait():
+        unreachable = []
+        for svc in services_manifest:
+            if svc["host_port"] is None:
+                continue
+            url = f"{_base_url(svc)}{svc['health_path']}"
+            try:
+                r = httpx.get(url, timeout=2.0)
+                if r.status_code != 200:
+                    unreachable.append(url)
+            except httpx.HTTPError:
+                unreachable.append(url)
+        for slug, spec in _SURFACE_SPECS.items():
+            if spec["medium"] in _URL_MEDIUMS and spec["reach"]:
+                try:
+                    r = httpx.get(spec["reach"], timeout=2.0)
+                    if r.status_code >= 500:
+                        unreachable.append(spec["reach"])
+                except httpx.HTTPError:
+                    unreachable.append(spec["reach"])
+        if _compose_declares("jaeger"):
+            try:
+                j = httpx.get(f"{JAEGER_URL}/api/services", timeout=2.0)
+                if j.status_code != 200:
+                    unreachable.append(f"{JAEGER_URL}/api/services")
+            except httpx.HTTPError:
+                unreachable.append(f"{JAEGER_URL}/api/services")
+        if unreachable:
+            raise RuntimeError(f"unreachable: {unreachable}")
+
+    try:
+        _wait()
+    except (RetryError, RuntimeError) as exc:
+        if REQUIRE_SERVICES:
+            pytest.fail(
+                f"dev stack not healthy and GROUNDWORK_REQUIRE_SERVICES=1: {exc}"
+            )
+        pytest.skip(f"dev stack not reachable (run `./dev start`): {exc}")
+    return services_manifest
+
+
+@pytest.fixture
+def trace_id():
+    """A W3C trace id (32 hex chars)."""
+    return uuid.uuid4().hex
+
+
+@pytest.fixture
+async def api_client(trace_id):
+    """Async HTTPX client that stamps a W3C traceparent so test traffic is
+    identifiable in jaeger."""
+    span_id = uuid.uuid4().hex[:16]
+    traceparent = f"00-{trace_id}-{span_id}-01"
+    headers = {"traceparent": traceparent, "x-test-run": "system-test"}
+    async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
+        yield client
+
+
+@pytest.fixture(scope="function", autouse=True)
+def pure_state_reset(services_manifest):
+    """Truncate every table in each discovered service's database before each
+    test. Runs for BOTH system/ and bets/ suites (autouse is rootdir-scoped).
+    Tolerates a missing DB (not yet created) and an empty table set."""
+    for svc in services_manifest:
+        dsn = (
+            f"postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{svc['db_name']}"
+        )
+        try:
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT tablename FROM pg_tables WHERE schemaname='public'"
+                    )
+                    tables = [row[0] for row in cur.fetchall()]
+                    if tables:
+                        joined = ", ".join(f'"{t}"' for t in tables)
+                        cur.execute(
+                            f"TRUNCATE {joined} RESTART IDENTITY CASCADE"
+                        )
+        except psycopg.OperationalError:
+            pass  # DB may not exist yet (pre-migrate); tolerate it.
+    yield
+
+
+
+# ---------------------------------------------------------------------------
+# Surface fixtures
+#
+# `surfaces` is the canonical per-surface reach map, derived from the surface
+# registry (docs/surfaces.md / .groundwork/surfaces.json) at scaffold time.
+# Per-surface runner fixtures are generated by test medium:
+#   playwright          -> <slug>_page    (Playwright page scoped to that surface)
+#   subprocess-cli      -> <slug>_runner  (invokes the binary, returns CompletedProcess)
+#   protocol-client     -> <slug>_client  (httpx client bound to the endpoint)
+#   flutter-integration -> <slug>_runner  (drives the app's own integration_test
+#                                          suite as a subprocess via its Nx target)
+#   playwright-electron -> <slug>_runner  (drives the app's own Playwright
+#                                          _electron smoke as a subprocess via its Nx target)
+# A surface whose medium has no generated family (e.g. a scaffold: manual
+# surface on bespoke tooling) is still registered in `surfaces` so tests can name it; the
+# implementation must keep this registration honest when it lands — a health
+# endpoint, ./dev integration, and a reach value tests can use.
+# ---------------------------------------------------------------------------
+
+# Scaffold-time surface specs. reach=None means "discover at runtime": URL
+# mediums resolve the docker-compose service named after the slug.
+_SURFACE_SPECS: dict[str, dict] = {
+    "site": {"medium": "playwright", "reach": "http://localhost:4173"},
+    "workbench": {"medium": "subprocess-cli", "reach": "node workbench/cli.mjs"},
+}
+
+_URL_MEDIUMS = {"playwright", "protocol-client"}
+
+
+def _surface_reach(slug: str, spec: dict, manifest: list[dict]) -> str | None:
+    """Resolve a surface's reach: the scaffold-time value when set, otherwise
+    the compose service whose name matches the slug (URL mediums) or the
+    scaffolded app's Nx test target (app-harness mediums)."""
+    if spec["reach"] is not None:
+        return spec["reach"]
+    if spec["medium"] not in _URL_MEDIUMS:
+        return None
+    for svc in manifest:
+        if svc["name"] == slug and svc["host_port"] is not None:
+            return f"http://localhost:{svc['host_port']}"
+    # Single graphical surface: fall back to the first Next.js service — the
+    # same discovery the deprecated frontend_base_url fixture used.
+    if spec["medium"] == "playwright":
+        for svc in manifest:
+            if svc.get("type") == "next" and svc["host_port"] is not None:
+                return f"http://localhost:{svc['host_port']}"
+    return None
+
+
+@pytest.fixture(scope="session")
+def surfaces(services_manifest) -> dict[str, dict]:
+    """Surface slug -> {"slug", "medium", "reach"} for every registered surface.
+
+    reach is a base URL for playwright/protocol-client surfaces, a launch
+    command for subprocess-cli surfaces, the test-harness command for
+    flutter-integration/playwright-electron surfaces, and None when the
+    surface is not reachable yet (its runner fixture skips).
+    """
+    return {
+        slug: {
+            "slug": slug,
+            "medium": spec["medium"],
+            "reach": _surface_reach(slug, spec, services_manifest),
+        }
+        for slug, spec in _SURFACE_SPECS.items()
+    }
+
+
+@pytest.fixture
+def site_page(browser, surfaces):
+    """Playwright page for the `site` surface. Relative page.goto()
+    paths resolve against the surface's base URL."""
+    base = surfaces["site"]["reach"]
+    if base is None:
+        pytest.skip("surface 'site' has no reachable base URL (is its service in docker-compose.yml?)")
+    context = browser.new_context(base_url=base)
+    page = context.new_page()
+    yield page
+    context.close()
+
+
+@pytest.fixture
+def workbench_runner(surfaces):
+    """Subprocess runner for the `workbench` CLI surface: run(args, ...) ->
+    subprocess.CompletedProcess. Drive interactive (REPL) flows with pexpect
+    against the same launch command."""
+    command = surfaces["workbench"]["reach"]
+    if command is None:
+        pytest.skip("surface 'workbench' has no launch command registered")
+
+    def run(args, input=None, timeout=30, env=None):
+        cmd = [*shlex.split(command), *[str(a) for a in args]]
+        return subprocess.run(
+            cmd,
+            input=input,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env={**os.environ, **(env or {})},
+        )
+
+    return run
+
+
+@pytest.fixture(scope="session")
+def frontend_base_url(surfaces):
+    """DEPRECATED alias for surfaces["site"]["reach"].
+
+    Generated only while exactly one graphical surface exists; new tests read
+    the `surfaces` fixture instead.
+    """
+    base = surfaces["site"]["reach"]
+    if base is None:
+        pytest.skip("surface 'site' has no reachable base URL — frontend_base_url unavailable")
+    return base
+
