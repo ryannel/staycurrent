@@ -165,13 +165,13 @@ sequenceDiagram
 
 ### Publish Flow (CI)
 
-**Trigger:** `git push` to `main` (a direct push or a merged PR) — the repository's only path to production; no manual upload exists.
+**Trigger:** One GitHub Actions workflow, two triggers: `push` to `main` runs the full pipeline — gate → RSS + skill payloads → `next build` → deploy to Pages (the repository's only path to production; no manual upload exists) — and `pull_request` runs the identical pipeline minus the deploy step, verification only.
 
 **What persists:** GitHub Pages' served static file set, replaced atomically at deploy — never `topics/`. Every step in this flow is a reader over `topics/`, exactly like the Site Build Data Flow it wraps; CI has no write path into content.
 
-**Business logic & routing:** GitHub Actions installs dependencies (`pnpm install --frozen-lockfile`), then runs `runPublishGate` over **every** topic and **every** version snapshot in the tree — not just what changed in this push — through the identical `content-core` code path the workbench's cut used. Full-tree, every push, because the repository (not the operator's machine) is the trust boundary: a hand-edited commit that never went through `workbench/cli.mjs cut` must still be caught here. On a passing `GateResult`, the pipeline runs `prebuild` (RSS + skill payloads) and `next build` — the Site Build Data Flow above, unmodified, now with the gate precondition already satisfied. On a passing build, Pages deploys the static output. Any step failing — install, gate, prebuild, build, or the deploy call itself — stops the pipeline before the next step runs.
+**Business logic & routing:** GitHub Actions installs dependencies (`pnpm install --frozen-lockfile`), then runs `runPublishGate` over **every** topic and **every** version snapshot in the tree — not just what changed in this push — through the identical `content-core` code path the workbench's cut used. Full-tree, every push, because the repository (not the operator's machine) is the trust boundary: a hand-edited commit that never went through `workbench/cli.mjs cut` must still be caught here. On a passing `GateResult`, the pipeline runs `prebuild` (RSS + skill payloads) and `next build` — the Site Build Data Flow above, unmodified, now with the gate precondition already satisfied. On a passing build, a `push`-to-`main` run deploys the static output to Pages; a `pull_request` run stops after the build — same gate, same prebuild, same `next build`, no deploy step. Any step failing — install, gate, prebuild, build, or (on `main`) the deploy call itself — stops the pipeline before the next step runs.
 
-**Key decisions:** The gate re-runs in CI even though the workbench already ran it pre-commit — this is deliberate redundancy, not waste, because CI validates commits the workbench never touched. The build triggers on every push to `main`, not on a `topics/`-path filter or a schedule, because one repository carries both the engine and the instance — a framework-code change can affect the deployed output just as a content change can. Deploy is the terminal step with no post-deploy smoke test or automated rollback: reversion is a `git revert` and a re-push, the same "rollback is git" principle the Version-Cut Flow relies on, not a runtime rollback command against Pages.
+**Key decisions:** The gate re-runs in CI even though the workbench already ran it pre-commit — this is deliberate redundancy, not waste, because CI validates commits the workbench never touched. The workflow triggers on every push to `main` and every pull request, not on a `topics/`-path filter or a schedule, because one repository carries both the engine and the instance — a framework-code change can affect the deployed output just as a content change can. The `pull_request` trigger is how fail-closed behaviour is provable through the front door — a gate-breaking PR shows a red check while the deployed site stays on the previous good build — and it protects `main` from un-gated merges. Deploy is the terminal step with no post-deploy smoke test or automated rollback: reversion is a `git revert` and a re-push, the same "rollback is git" principle the Version-Cut Flow relies on, not a runtime rollback command against Pages.
 
 **Failure modes:** install failure (lockfile drift, registry outage) blocks before the gate runs at all. Gate failure names the exact offending artifact, the same as a local cut, but surfaces as a red CI check rather than an interactive halt — there is no operator in the loop to address a template to. Prebuild failure (an RSS or skill-payload write error) blocks before `next build`. Build failure — a currency-field or snapshot-completeness throw from the Site Build Data Flow — blocks before deploy. A deploy-step failure (a GitHub Pages API error) is the one case where the build succeeded but nothing new shipped; the previous deploy stays live and CI reports red regardless of which step failed.
 
@@ -179,13 +179,13 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant Dev as "git push (main)"
+    participant Dev as "push to main / pull_request"
     participant GA as "GitHub Actions"
     participant Core as "content-core (CI)"
     participant Site as "next build"
     participant Pages as "GitHub Pages"
 
-    Dev->>GA: trigger
+    Dev->>GA: trigger (push to main, or pull_request)
     GA->>GA: install (pnpm install --frozen-lockfile)
     GA->>Core: runPublishGate() over every topics/<slug>/ + versions/vN/
     alt gate passes
@@ -194,15 +194,19 @@ sequenceDiagram
         GA->>Site: next build (see Site Build Data Flow)
         alt build succeeds
             Site-->>GA: out/ static export
-            GA->>Pages: deploy static files
-            Pages-->>Dev: new deploy live
+            alt event: push to main
+                GA->>Pages: deploy static files
+                Pages-->>Dev: new deploy live
+            else event: pull_request
+                GA-->>Dev: green check - verification only, no deploy
+            end
         else build fails
             Site-->>GA: non-zero exit
             GA-->>Dev: red build - previous deploy stays live
         end
     else gate fails
         Core-->>GA: GateResult: fail - artifact named
-        GA-->>Dev: red build - previous deploy stays live
+        GA-->>Dev: red check - previous deploy stays live
     end
 ```
 
