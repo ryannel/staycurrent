@@ -1,5 +1,5 @@
 ---
-status: design
+status: decomposition
 surfaces: [site, workbench]
 ---
 
