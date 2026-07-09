@@ -20,20 +20,16 @@
 
 <!-- Infrastructure preferences, scaling instincts, technology opinions surfaced outside the architecture phase. -->
 
-<!-- (Entry incorporated into docs/architecture/index.md at the architecture commit: fully static site, build-time content reads.) -->
-
 ---
 
 ## Design Details
 
 <!-- Internal mechanisms the user never sees directly — async flows, callback patterns, job lifecycles, data ownership, contract format choices, resiliency patterns. Not user-facing interaction patterns; those go to ## Design System. -->
 
-<!-- (Entries incorporated into docs/design-system.md at the design-system commit: writer skill as binding stage, skill-creator conventions, frontmatter-as-state.) -->
-
 ---
 
 ## Bets
 
-<!-- Delivery priorities, MVP scope instincts, feature sequencing for future bets. -->
+- Post-MVP sequencing instincts (from setup, 2026-07-09): second topic proves loop repeatability; framework extraction after that; search at ~25 topics.
 
-- MVP scope reasoning (first-living-topic): both surfaces in scope because the product IS the article+skill pair — excluding either voids the signal. Databases chosen as seed content by operator directive (coverage: relational/document/key-value/columnar/vector/graph, selection heuristics, convergence trend, mental models). Build order by dependency: core → topics/databases → site routes → workbench → deploy workflow. Post-MVP sequence instincts: second topic (proves repeatability), framework extraction, search at ~25 topics.
+<!-- Delivery priorities, MVP scope instincts, feature sequencing for future bets. -->
