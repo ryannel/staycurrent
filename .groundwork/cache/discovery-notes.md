@@ -20,11 +20,15 @@
 
 <!-- Infrastructure preferences, scaling instincts, technology opinions surfaced outside the architecture phase. -->
 
+- The website is fully static: versions are content files, RSS generated at build, no backend, no accounts, no server-side search. Static generator reads the topic content tree directly.
+
 ---
 
 ## Design Details
 
 <!-- Internal mechanisms the user never sees directly — async flows, callback patterns, job lifecycles, data ownership, contract format choices, resiliency patterns. Not user-facing interaction patterns; those go to ## Design System. -->
+
+<!-- (Entries incorporated into docs/design-system.md at the design-system commit: writer skill as binding stage, skill-creator conventions, frontmatter-as-state.) -->
 
 ---
 
