@@ -31,5 +31,6 @@
 ## Bets
 
 - Post-MVP sequencing instincts (from setup, 2026-07-09): second topic proves loop repeatability; framework extraction after that; search at ~25 topics.
+- Skill-design bet (operator, 2026-07-09, change-proposal-2): companion-skill authoring deferred until the article format settles; the one-skill-per-topic assumption is in doubt — the databases topic will likely yield SEVERAL focused skills. A future bet must design the skill unit, the content contract implications (topics/<slug>/skill/ shape), and how the install page presents a set. Until then v1+ ships an honestly-labelled placeholder.
 
 <!-- Delivery priorities, MVP scope instincts, feature sequencing for future bets. -->

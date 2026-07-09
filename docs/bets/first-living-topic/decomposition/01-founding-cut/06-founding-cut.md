@@ -10,7 +10,7 @@
 
 ## Scope
 
-This slice closes the milestone. It authors the companion skill to the article's stance, then executes the founding cut itself — `gate databases` passing, `cut databases` landing the atomic five-artifact set as one commit, and `status` confirming the result. This is the milestone's headline proof: everything the five slices before it built is exercised together, for real, for the first time.
+This slice closes the milestone. It finalizes the seeded skill skeleton as an honest placeholder (companion-skill authoring deferred by operator decision — change-proposal-2: description states the skill is not yet authored and the article is the stance's only rendering; `article_version: 1` binding and byte-identical live/snapshot pair intact), then executes the founding cut itself — `gate databases` passing, `cut databases` landing the atomic five-artifact set as one commit, and `status` confirming the result. This is the milestone's headline proof: everything the five slices before it built is exercised together, for real, for the first time.
 
 **Required Capabilities:**
 - The staged `skill/SKILL.md` frontmatter states `name: databases`, a `description` written as routing triggers (per `04-data-design.md`'s SKILL.md entry), and `article_version: 1`, plus a `references/` directory — matching the `name`/`description`/`article_version` field table `04-data-design.md` fixes for the companion skill.
