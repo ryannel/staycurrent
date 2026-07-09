@@ -1,5 +1,5 @@
 ---
-status: decomposition
+status: delivery
 surfaces: [site, workbench]
 ---
 
