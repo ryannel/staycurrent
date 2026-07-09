@@ -63,7 +63,7 @@ The reader-facing website: staycurrent.dev and every site a builder deploys from
 - **Navigation feels instant.** Internal links prefetch on hover/viewport entry; a route change paints in < 100ms on repeat visits.
 - **Client-side interactions < 50ms** to first visual response: theme toggle, sidebar drawer, TOC highlight, copy buttons. Switching between article versions is a route change between static pages and falls under the navigation budget above, not this one. All interaction feedback runs on `transform`, `opacity`, or `color` only — no layout-triggering properties.
 - **Cumulative Layout Shift < 0.02.** Fonts are size-adjusted against their fallbacks (`size-adjust`, `ascent-override`); images and diagrams carry explicit dimensions.
-- **JavaScript is progressive enhancement.** Every page is fully readable and navigable with JS disabled; script exists only for the theme toggle, drawer, TOC scroll-spy, copy affordances, link prefetch, and per-tab sidebar state. Nothing else ships.
+- **JavaScript is progressive enhancement.** Every page is fully readable and navigable with JS disabled; script exists only for the theme toggle, drawer, TOC scroll-spy, copy affordances, link prefetch, per-tab sidebar state, and diagram rendering (mermaid — the fenced source stays readable without JS, and every diagram container reserves layout space so rendering never shifts settled text). Nothing else ships.
 
 ### Accessibility baselines
 

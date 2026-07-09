@@ -20,7 +20,7 @@
 
 <!-- Infrastructure preferences, scaling instincts, technology opinions surfaced outside the architecture phase. -->
 
-- The website is fully static: versions are content files, RSS generated at build, no backend, no accounts, no server-side search. Static generator reads the topic content tree directly.
+<!-- (Entry incorporated into docs/architecture/index.md at the architecture commit: fully static site, build-time content reads.) -->
 
 ---
 
