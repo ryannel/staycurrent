@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { GateFailure, GateResult, PublishGateOptions } from './types.js';
 import { isIsoDate, normalizeDateValue } from './dates.js';
+import { ContentValidationError } from './errors.js';
 import { parseProvenance } from './parseProvenance.js';
 import { readMatterFile } from './loaders/shared.js';
 import { RESERVED_SLUGS } from './slug.js';
@@ -251,8 +252,20 @@ function checkProvenanceNonEmpty(dir: string, n: number, slug: string, failures:
     try {
       const record = parseProvenance(raw, slug, relPath);
       entryCount = record.sources.length + record.synthesis.length;
-    } catch {
-      entryCount = 0; // unparseable provenance reads as having no entries — never a throw
+    } catch (err) {
+      // The file exists but fails the bullet grammar: surface the parser's own
+      // diagnostic — it names the offending bullet and the required grammar —
+      // rather than the false "has no entries" (milestone-1 experience audit).
+      // Still a GateFailure, never a throw.
+      failures.push({
+        check: 'provenance-non-empty',
+        path: relPath,
+        message:
+          err instanceof ContentValidationError
+            ? err.message
+            : `${relPath} failed to parse: ${String(err)}`,
+      });
+      return;
     }
   }
 

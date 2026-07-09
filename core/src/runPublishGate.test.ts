@@ -292,6 +292,29 @@ describe('runPublishGate', () => {
     ]);
   });
 
+  it('fails provenance-non-empty with the parser diagnostic — naming the bullet grammar — when provenance.md exists but does not parse', () => {
+    const dir = fixtureDir(makeTmpRoot());
+    writeGateFixture(dir, 'fixture-topic');
+    // Prose-form provenance: the file exists and has content, but the Sources
+    // line is not a bullet in the fixed grammar — the FAIL message must carry
+    // the parser's own diagnostic, never the false "has no entries".
+    fs.writeFileSync(
+      path.join(dir, 'versions', 'v1', 'provenance.md'),
+      '## Sources\n\nI read the vendor docs and a few blog posts.\n\n## Synthesis\n\n'
+    );
+
+    const result = runPublishGate(dir);
+
+    expect(result.failures).toHaveLength(1);
+    const failure = result.failures[0];
+    expect(failure.check).toBe('provenance-non-empty');
+    expect(failure.path).toBe('versions/v1/provenance.md');
+    expect(failure.message).toContain(
+      "does not match '- [<title>](<url>) — accessed <YYYY-MM-DD> — supports: <claim>'"
+    );
+    expect(failure.message).not.toContain('has no entries');
+  });
+
   it('fails slug-matches-dirname — and only it — when article.md topic does not equal the directory name', () => {
     const dir = fixtureDir(makeTmpRoot());
     writeGateFixture(dir, 'fixture-topic', { topicField: 'other-topic' });

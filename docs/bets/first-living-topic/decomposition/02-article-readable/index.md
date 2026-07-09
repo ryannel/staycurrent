@@ -24,4 +24,6 @@
 
 ## Slices
 
-> *Slices authored on arrival.*
+- [Slice 2.1 — site: Content Pipeline](./01-content-pipeline.md)
+- [Slice 2.2 — site: Doc Shell & Trust](./02-doc-shell-and-trust.md)
+- [Slice 2.3 — site: Library, About & 404](./03-library-about-404.md)

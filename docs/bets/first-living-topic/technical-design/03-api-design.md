@@ -706,6 +706,8 @@ Created staged topic ${slug} — draft at .staycurrent/staged/${slug}/. Session:
 
 **Purpose:** Opens a research run — calls core's `convene(root, slug)` (staged seed + stamp, in that order, in one call), then creates the session file (CLI-layer, per the ownership split). No git commit follows (`in-research` never appears in git history).
 
+**Guard:** the CLI refuses (exit `2`) when a session file already exists at `.staycurrent/sessions/<slug>.md` — regardless of the frontmatter status — naming the file: an existing session is resumed or discarded, never silently restarted (01-ui-design's rule is normative; core's already-in-research check is the second, independent guard).
+
 **Request:**
 ```
 slug: string (required)

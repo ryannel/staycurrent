@@ -253,6 +253,11 @@ test('convene opens a research run against the live version', () => {
 test('convening an already-open run exits 2 without disturbing the open session', () => {
   const r = run(['convene', SLUG]);
   assert.equal(r.status, 2);
+  // The refusal names the session file and the real options — never "resume"
+  // as if it were a CLI verb (amended 03, convene Guard).
+  assert.ok(r.stderr.includes(`.staycurrent/sessions/${SLUG}.md`), 'the refusal must name the session file');
+  assert.ok(r.stderr.includes(`discard it (discard ${SLUG})`), 'the refusal must point at discard');
+  assert.ok(!/\bresume\b/i.test(r.stderr), 'the refusal must not offer "resume" as a verb');
   assert.ok(fs.existsSync(sessionFile(SLUG)), 'the original session file must survive the rejected re-convene');
 });
 
@@ -319,6 +324,10 @@ test('cut halts with the gate-failure template when the staged tree fails its ow
   assert.match(r.stdout, /^Cause:   provenance-non-empty: /m);
   assert.match(r.stdout, /^State:   staged set intact at \.staycurrent\/staged\/databases\/; topics\/ untouched$/m);
   assert.match(r.stdout, /^Action:  /m);
+  // Exactly one failure: Cause carries it — no FAIL list below the block and no
+  // dangling "below" reference in Action (experience audit).
+  assert.ok(!/^FAIL /m.test(r.stdout), 'a single-failure halt must not repeat the failure below the block');
+  assert.ok(!r.stdout.includes('below'), 'a single-failure halt must not point at a list that is not there');
 
   assert.ok(fs.existsSync(stagedDir(SLUG)), 'a blocked cut must leave the staged tree intact');
   assert.ok(fs.existsSync(sessionFile(SLUG)), 'a blocked cut must leave the session intact');
@@ -381,13 +390,14 @@ test('cut lands v2 after authoring, then converged re-entry recovers a lost comm
 // --json
 // ---------------------------------------------------------------------------
 
-test('status --json prints the typed { reverted, topics, errors } value', () => {
+test('status --json prints the typed { reverted, topics, errors, drafts } value', () => {
   const r = run(['status', '--json']);
   assert.equal(r.status, 0);
   const parsed = JSON.parse(r.stdout);
   assert.ok(Array.isArray(parsed.reverted));
   assert.ok(Array.isArray(parsed.topics));
   assert.ok(Array.isArray(parsed.errors));
+  assert.deepEqual(parsed.drafts, [], 'no founding drafts are in flight at this point');
   assert.ok(parsed.topics.some((t) => t.topic === SLUG && t.version === 2));
 });
 
@@ -553,4 +563,133 @@ test('status reports a malformed topic on exit 1 without blinding the catalogue'
 
   fs.rmSync(brokenDir, { recursive: true, force: true });
   assert.equal(git(['status', '--porcelain']).stdout.trim(), '');
+});
+
+// ---------------------------------------------------------------------------
+// Milestone-1 experience-audit findings
+// ---------------------------------------------------------------------------
+
+test('wrong cwd: a directory with neither topics/ nor .staycurrent/ refuses every command', () => {
+  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-cli-barecwd-'));
+  try {
+    for (const args of [['status'], ['cut', SLUG], ['create', SLUG, '--title', 'X']]) {
+      const result = spawnSync('node', [CLI, ...args], { cwd: bareDir, encoding: 'utf8' });
+      assert.equal(result.status, 2, `expected exit 2 in a non-instance cwd for ${JSON.stringify(args)}`);
+      assert.ok(
+        result.stderr.includes('not a Stay Current instance root (no topics/ or .staycurrent/ here)'),
+        `expected the wrong-cwd refusal for ${JSON.stringify(args)}, got: ${result.stderr}`
+      );
+      assert.ok(!result.stdout.includes('No topics.'), 'status must never print a confident answer from the wrong directory');
+    }
+  } finally {
+    fs.rmSync(bareDir, { recursive: true, force: true });
+  }
+});
+
+test('status lists a staged-only founding draft alone instead of "No topics."', () => {
+  const draftDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-cli-draftonly-'));
+  try {
+    fs.mkdirSync(path.join(draftDir, '.staycurrent', 'staged', 'widgets'), { recursive: true });
+    const result = spawnSync('node', [CLI, 'status'], { cwd: draftDir, encoding: 'utf8' });
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), 'widgets — founding draft in progress (staged)');
+    assert.ok(!result.stdout.includes('No topics.'), 'an in-flight founding run is never invisible');
+  } finally {
+    fs.rmSync(draftDir, { recursive: true, force: true });
+  }
+});
+
+test('convene refuses when a session file exists even though the topic reads current', () => {
+  // An orphaned session file (e.g. a crash left it while the stamp was already
+  // reverted): the CLI guard fires on the file alone, before any core call.
+  fs.mkdirSync(path.dirname(sessionFile(SLUG)), { recursive: true });
+  fs.writeFileSync(
+    sessionFile(SLUG),
+    `---\ntopic: ${SLUG}\nphase: researching\nopened: 2026-01-01\nagainst_version: 3\n---\n`
+  );
+
+  const r = run(['convene', SLUG]);
+  assert.equal(r.status, 2);
+  assert.ok(r.stderr.includes(`a session already exists at .staycurrent/sessions/${SLUG}.md`));
+  assert.ok(r.stderr.includes(`discard it (discard ${SLUG})`));
+  assert.ok(!fs.existsSync(stagedDir(SLUG)), 'the refused convene must not seed a staged tree');
+  assert.match(readArticle(SLUG), /^status: current$/m, 'the refused convene must not stamp the topic');
+
+  fs.rmSync(sessionFile(SLUG));
+});
+
+test('convene on an orphaned in-research stamp gets the same session pointer, never "resume"', () => {
+  assert.equal(run(['convene', SLUG]).status, 0);
+  fs.rmSync(sessionFile(SLUG)); // orphan the stamp: in-research, no session file
+
+  const r = run(['convene', SLUG]);
+  assert.equal(r.status, 2);
+  assert.ok(r.stderr.includes(`a session already exists at .staycurrent/sessions/${SLUG}.md`));
+  assert.ok(!/\bresume\b/i.test(r.stderr), 'core\'s "resume or discard" wording must not leak through');
+
+  // Clean up: stamp + staged tree, no session — discard clears both.
+  const d = run(['discard', SLUG]);
+  assert.equal(d.status, 0);
+  assert.match(readArticle(SLUG), /^status: current$/m);
+});
+
+test('status surfaces an in-flight founding draft and discard reports it honestly', () => {
+  assert.equal(run(['create', 'widgets', '--title', 'Widgets']).status, 0);
+
+  const r = run(['status']);
+  assert.equal(r.status, 0);
+  assert.ok(r.stdout.split('\n').some((l) => l.startsWith(SLUG)), 'the state block still lists real topics');
+  assert.match(r.stdout, /^widgets — founding draft in progress \(staged; session open\)$/m);
+
+  const j = run(['status', '--json']);
+  assert.deepEqual(JSON.parse(j.stdout).drafts, [{ slug: 'widgets', staged: true, session: true }]);
+
+  const d = run(['discard', 'widgets']);
+  assert.equal(d.status, 0);
+  assert.equal(
+    d.stdout.trim(),
+    'Discarded founding draft for widgets — staged tree and session removed. Nothing published existed.'
+  );
+  assert.ok(!fs.existsSync(stagedDir('widgets')));
+  assert.ok(!fs.existsSync(sessionFile('widgets')));
+});
+
+test('a multi-failure cut halt lists every failure below the block and Action points at them', () => {
+  assert.equal(run(['convene', SLUG]).status, 0);
+  // Two independent failures: empty v3 provenance + a stale changelog top entry.
+  fs.writeFileSync(path.join(stagedDir(SLUG), 'versions', 'v3', 'provenance.md'), '## Sources\n\n## Synthesis\n\n');
+  fs.writeFileSync(
+    path.join(stagedDir(SLUG), 'changelog.md'),
+    '# Databases — Changelog\n\n## v1 — 2026-01-01\n\nfounding note.\n'
+  );
+
+  const r = run(['cut', SLUG]);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /^Cause:   changelog-top-entry: /m, 'Cause carries the first failure');
+  assert.match(r.stdout, /^Action:  .*below/m, 'Action points at the list below');
+  const failLines = r.stdout.split('\n').filter((l) => l.startsWith('FAIL '));
+  assert.equal(failLines.length, 2, 'every failure lists below the block');
+  assert.ok(failLines.some((l) => l.startsWith('FAIL changelog-top-entry:')));
+  assert.ok(failLines.some((l) => l.startsWith('FAIL provenance-non-empty:')));
+
+  run(['discard', SLUG]);
+});
+
+test('gate surfaces the provenance parser diagnostic naming the required grammar', () => {
+  assert.equal(run(['convene', SLUG]).status, 0);
+  fs.writeFileSync(
+    path.join(stagedDir(SLUG), 'versions', 'v3', 'provenance.md'),
+    '## Sources\n\nI read the vendor docs and a few blog posts.\n\n## Synthesis\n\n'
+  );
+
+  const r = run(['gate', SLUG]);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /^FAIL provenance-non-empty: /m);
+  assert.ok(
+    r.stdout.includes("does not match '- [<title>](<url>) — accessed <YYYY-MM-DD> — supports: <claim>'"),
+    `the FAIL line must carry the parser's grammar diagnostic, got: ${r.stdout}`
+  );
+  assert.ok(!r.stdout.includes('has no entries'), 'a parse failure must not read as an emptiness failure');
+
+  run(['discard', SLUG]);
 });

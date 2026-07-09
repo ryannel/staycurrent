@@ -540,7 +540,8 @@ The current version's zip is served at `/skills/<slug>.zip`; archived versions a
 | State | Trigger | What the operator/caller observes | Exit code |
 |---|---|---|---|
 | Topics exist | ≥ 1 topic | The state-block table, plain text, column-aligned, greppable; reconciliation lines appended when one was applied | 0 |
-| Zero topics | No topics | `No topics.` (one line) | 0 |
+| Zero topics | No topics and no staged drafts | `No topics.` (one line) | 0 |
+| Founding draft in flight | A staged tree and/or session file exists for a slug with no `topics/` entry | One line per draft after the state block (or alone): `<slug> — founding draft in progress (staged; session open)` — an in-flight founding run is never invisible | 0 |
 | Malformed topic frontmatter | Any `topics/*/article.md` fails frontmatter validation | One error line per malformed topic (the loading API returns `{topics, errors}` — valid topics still list) | 1 |
 
 **Key interactions (turns):**

@@ -140,22 +140,66 @@ function cmdStatus(args) {
   }
 
   const sweep = core.listTopics(root);
+  const drafts = listFoundingDrafts();
 
   if (json) {
-    outJson({ reverted, topics: sweep.topics, errors: sweep.errors });
+    outJson({ reverted, topics: sweep.topics, errors: sweep.errors, drafts });
   } else {
     for (const slug of reverted) {
       out(`reconciled ${slug}: in-research had no session file — status reverted to current`);
     }
-    if (sweep.topics.length === 0 && sweep.errors.length === 0) {
+    if (sweep.topics.length === 0 && sweep.errors.length === 0 && drafts.length === 0) {
       out('No topics.');
     } else {
       for (const line of renderStateBlock(sweep.topics)) out(line);
+    }
+    // An in-flight founding run is never invisible (amended 01): one line per
+    // quarantine-only slug, after the state block (or alone when no topics exist).
+    for (const d of drafts) {
+      const parts = [d.staged ? 'staged' : null, d.session ? 'session open' : null].filter(Boolean);
+      out(`${d.slug} — founding draft in progress (${parts.join('; ')})`);
     }
     for (const e of sweep.errors) out(`malformed ${e.slug}: ${e.message}`);
   }
 
   process.exitCode = sweep.errors.length > 0 ? 1 : 0;
+}
+
+/** Founding drafts: slugs living only in the quarantine — a staged tree and/or
+ * session file with no `topics/<slug>/` entry. `listTopics` sweeps `topics/`
+ * only, so without this probe a staged-only founding run would be invisible in
+ * `status` (amended 01, "Founding draft in flight"). */
+function listFoundingDrafts() {
+  const topicsSet = new Set(listTopicDirSlugs(root));
+  const slugs = new Set();
+
+  try {
+    for (const entry of fs.readdirSync(path.join(root, '.staycurrent', 'staged'), {
+      withFileTypes: true,
+    })) {
+      if (entry.isDirectory()) slugs.add(entry.name);
+    }
+  } catch {
+    /* no staged quarantine yet */
+  }
+  try {
+    for (const entry of fs.readdirSync(path.join(root, '.staycurrent', 'sessions'), {
+      withFileTypes: true,
+    })) {
+      if (entry.isFile() && entry.name.endsWith('.md')) slugs.add(entry.name.slice(0, -3));
+    }
+  } catch {
+    /* no sessions quarantine yet */
+  }
+
+  return [...slugs]
+    .filter((slug) => !topicsSet.has(slug))
+    .sort()
+    .map((slug) => ({
+      slug,
+      staged: dirExists(stagedDirPath(root, slug)),
+      session: sessionFileExists(root, slug),
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -202,11 +246,29 @@ function cmdCreate(args) {
 // convene <slug>
 // ---------------------------------------------------------------------------
 
+/** The one pointer an existing run ever gets (03's convene Guard; 01's rule is
+ * normative): name the session file and the two real options — never "resume"
+ * as if it were a CLI verb. */
+function sessionPointer(slug) {
+  return (
+    `a session already exists at .staycurrent/sessions/${slug}.md — ` +
+    `discard it (discard ${slug}) or continue working in its staged tree`
+  );
+}
+
 function cmdConvene(args) {
   const json = extractBooleanFlag(args, '--json');
   expectPositionals(args, 1, 'convene <slug>');
   const slug = args[0];
   if (!isValidSlugShape(slug)) return usageError(`'${slug}' is not a valid slug`);
+
+  // Guard (amended 03): an existing session file refuses the convene regardless
+  // of the frontmatter status — an existing session is discarded or continued,
+  // never silently restarted. Core's already-in-research check is the second,
+  // independent guard.
+  if (sessionFileExists(root, slug)) {
+    return usageError(sessionPointer(slug));
+  }
 
   let result;
   try {
@@ -216,6 +278,12 @@ function cmdConvene(args) {
       return usageError(`unknown slug '${slug}'`);
     }
     if (e instanceof core.ContentValidationError) {
+      // The already-in-research refusal gets the same session pointer (the
+      // stamp implies a run; core's message says "resume", which is not a verb
+      // this CLI offers). Any other validation failure keeps core's diagnostic.
+      if (e.issues.some((issue) => issue.includes('in-research'))) {
+        return usageError(sessionPointer(slug));
+      }
       return usageError(e.issues.join('; '));
     }
     throw e;
@@ -316,11 +384,14 @@ function cmdCut(args) {
   // Only `cut` renders the halt template (03-api-design.md, binding rules). `cause`
   // and any `extraFailures` are built directly from GateFailure's `check` +
   // `message`, never a paraphrase — the same rule `gate`'s FAIL lines follow.
-  const failHalt = ({ blocked, cause, state, action, failures = [] }, jsonValue) => {
+  // The Action line never points at nothing (experience audit): with more than
+  // one failure ALL of them list below the block and Action says so; with
+  // exactly one, Cause carries it and no "below" reference appears.
+  const failHalt = ({ blocked, cause, state, action, extraFailures = [] }, jsonValue) => {
     if (json) {
       outJson(jsonValue);
     } else {
-      out(renderHaltTemplate({ blocked, cause, state, action, extraFailures: failures.slice(1) }));
+      out(renderHaltTemplate({ blocked, cause, state, action, extraFailures }));
     }
     process.exitCode = 1;
   };
@@ -330,13 +401,16 @@ function cmdCut(args) {
 
     if (!gateResult.ok) {
       const first = gateResult.failures[0];
+      const multi = gateResult.failures.length > 1;
       failHalt(
         {
           blocked: `cut ${slug} failed the publish gate.`,
           cause: `${first.check}: ${first.message}`,
           state: `staged set intact at .staycurrent/staged/${slug}/; topics/ untouched`,
-          action: `resolve the failing check(s) below, then re-run \`cut ${slug}\`.`,
-          failures: gateResult.failures,
+          action: multi
+            ? `resolve the failing checks below, then re-run \`cut ${slug}\`.`
+            : `resolve the failing check, then re-run \`cut ${slug}\`.`,
+          extraFailures: multi ? gateResult.failures : [],
         },
         gateResult
       );
@@ -399,13 +473,16 @@ function cmdCut(args) {
   }
 
   const first = gateResult.failures[0];
+  const multi = gateResult.failures.length > 1;
   failHalt(
     {
       blocked: `the committed topic ${slug} fails its own publish gate.`,
       cause: `${first.check}: ${first.message}`,
       state: `no staged tree at .staycurrent/staged/${slug}/; topics/${slug}/ holds the broken tree`,
-      action: `repair topics/${slug}/ (see failing checks below), then re-run \`cut ${slug}\`.`,
-      failures: gateResult.failures,
+      action: multi
+        ? `repair topics/${slug}/ (see the failing checks below), then re-run \`cut ${slug}\`.`
+        : `repair topics/${slug}/, then re-run \`cut ${slug}\`.`,
+      extraFailures: multi ? gateResult.failures : [],
     },
     gateResult
   );
@@ -530,11 +607,13 @@ function cmdDiscard(args) {
 
   if (json) {
     outJson({ topic: slug, discarded: true });
-  } else if (reverted || !topicsPresent) {
-    // The contract's verbatim response — fully true when a stamp was reverted;
-    // for a staged-only draft (nothing published exists) the claim is vacuous
-    // and the line is the founding-draft case's specified response.
+  } else if (reverted) {
+    // The contract's verbatim response — fully true: a stamp was reverted.
     out(`Discarded session for ${slug} — status reverted to current. Nothing published changed.`);
+  } else if (!topicsPresent) {
+    // Founding draft (experience audit): no published topic ever existed, so
+    // never claim a status revert — name what was actually removed.
+    out(`Discarded founding draft for ${slug} — staged tree and session removed. Nothing published existed.`);
   } else {
     // A published topic whose status was already current: never claim a revert
     // that did not happen (change-proposal-1 Addendum review).
@@ -551,6 +630,16 @@ function main() {
   const argv = process.argv.slice(2);
   const command = argv[0];
   const rest = argv.slice(1);
+
+  // Wrong-cwd guard (experience audit): every command resolves `root` as the
+  // cwd, so a cwd with neither `topics/` nor `.staycurrent/` is not an instance
+  // root — refuse, rather than let `status` print a confident `No topics.` (or
+  // `create` seed a quarantine) in the wrong directory.
+  if (!dirExists(path.join(root, 'topics')) && !dirExists(path.join(root, '.staycurrent'))) {
+    errLine('not a Stay Current instance root (no topics/ or .staycurrent/ here)');
+    process.exitCode = 2;
+    return;
+  }
 
   const commands = {
     status: cmdStatus,
