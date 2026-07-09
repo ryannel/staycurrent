@@ -756,7 +756,10 @@ fail: one line per GateFailure — FAIL ${check-id}: ${message}
 slug: string (required)
 // operates on the staged tree at .staycurrent/staged/<slug>/, seeded by convene/create
 // and authored into by the run's skills
---json   — prints CutReport on success, GateResult on gate failure
+--json   — prints CutReport on success (converged re-entry included; nothing-to-cut prints the
+//         degenerate CutReport { topic, version, paths: [], removed: [] }); GateResult on gate
+//         failure; a non-advancing-version refusal prints the serialized typed error
+//         { error: 'ContentValidationError', topic, file, issues }
 ```
 
 **Behaviour:**
@@ -795,6 +798,8 @@ Action:  <the one thing the operator should do>
 
 **Purpose:** Resolves a convened run as no-cut — calls core's `recordNoCut` (research-log entry, `last_researched` bump, status revert to `current`), then deletes the session file and the staged tree (CLI-layer cleanup) and makes the single git commit `log(<slug>): no-cut`.
 
+**Converged re-entry:** a crash between `recordNoCut`'s filesystem writes and the git commit leaves the resolution applied but uncommitted. `log <slug>` re-entry detects it — status already `current`, the session file still present, and uncommitted changes under `topics/<slug>/` — and proceeds straight to the commit and cleanup, exit `0`. Mirrors `cut`'s converged re-entry; the two committing commands share the same crash-window discipline.
+
 **Request:**
 ```
 slug: string (required)
@@ -830,7 +835,7 @@ slug: string (required)
 Discarded session for ${slug} — status reverted to current. Nothing published changed.
 ```
 
-**Exit codes:** `0` — discarded. `2` — nothing to discard: no session file and no `in-research` stamp.
+**Exit codes:** `0` — discarded (whichever of the session file, the `in-research` stamp, and the staged tree exist are cleared). `2` — nothing to discard: no session file, no `in-research` stamp, **and** no staged tree.
 
 **Design rationale:** Nothing-to-discard is exit `2` for the same reason `convene`'s already-in-research is: a checkable precondition, not a content defect. For a staged-only founding draft (the `create` path, no `topics/` entry), the CLI skips the core call — there is no stamp to revert — and simply deletes the session file and staged tree. Abandonment is not a resolution (`domain/research-run.md`) — hence no log entry and no `last_researched` update, deliberately distinct from `log`.
 

@@ -25,3 +25,11 @@ The technical design specifies `convene` stamps `status: in-research` and then s
 ## Before / after
 
 Before: executeCut = "writes the staged tree's artifacts into `topics/<slug>/`" (copy-only, status silent, no version check, unbound GateResult). After: executeCut = the landing contract above; convene = seed-then-stamp.
+
+## Addendum (slice 1.4 review, same day)
+
+Four contract completions in the same landing-contract family, discovered wiring the CLI:
+- `cut`'s sibling crash window (commit landed, cleanup lost): the CLI probes for a no-op commit and falls through to cleanup — both halves of the crash window now recover.
+- `log` gains the mirrored converged re-entry (resolution applied, commit lost → commit + cleanup).
+- `discard`'s nothing-to-discard condition now includes the staged tree (an orphaned staged tree — crash between `createTopic` and the session write — is discardable; exit 2 only when none of the three exist).
+- `cut --json` branch shapes recorded in contract vocabulary: degenerate CutReport for nothing-to-cut; serialized ContentValidationError for the non-advancing refusal. 03's Response block is normative for cut's human output (01's rendered example aligned).

@@ -498,7 +498,7 @@ The current version's zip is served at `/skills/<slug>.zip`; archived versions a
 
 **Key interactions (turns):**
 - Operator: explicit go (e.g. "approved" / "cut it")
-- System (pass): `Cut v6 — article, skill, changelog entry, provenance; RSS follows at site build. Paths: …` (four written artifacts listed; RSS is not a fifth write — it derives at site build from the changelog entry, verbatim)
+- System (pass): `Cut v6 — article, skill, changelog entry, provenance; RSS follows at site build.` followed by the bare root-relative artifact paths, one per line (03-api-design's Response block is normative; RSS is not a fifth write — it derives at site build from the changelog entry, verbatim)
 - System (gate fail): halt template, e.g. `Blocked: cut v6 failed the publish gate. Cause: versions/v6/provenance.md missing. State: staged tree intact at .staycurrent/staged/databases/. Action: the draft's Sources section is empty — provide or approve synthesis labelling, then I re-run the gate.`
 
 #### Resume & Reconciliation
@@ -638,7 +638,6 @@ $ echo $?
 ```
 $ node workbench/cli.mjs cut databases
 Cut v6 — article, skill, changelog entry, provenance; RSS follows at site build.
-Paths:
   topics/databases/article.md
   topics/databases/skill/
   topics/databases/changelog.md (## v6 entry)
@@ -682,7 +681,7 @@ $ echo $?
 | State | Trigger | What the operator/caller observes | Exit code |
 |---|---|---|---|
 | Discarded | An open session exists for the topic | `Discarded session for <slug> — status reverted to current. Nothing published changed.` | 0 |
-| Nothing to discard | No session file **and** no `in-research` stamp for the topic | Plain one-line usage error | 2 |
+| Nothing to discard | No session file, no `in-research` stamp, **and** no staged tree for the topic | Plain one-line usage error | 2 |
 
 **Key interactions (turns):**
 ```
