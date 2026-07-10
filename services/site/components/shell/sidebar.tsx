@@ -32,12 +32,12 @@ const DRAWER_QUERY = '(max-width: 899px)';
  * toggle. Sticky at >= 900px; an overlay drawer below it (Shell zone rule,
  * 01-ui-design.md).
  *
- * `changelog`/`history`/`skill` face links and the site-wide `/changelog/`
- * page don't exist as routes yet (Milestone 3) — `prefetch={false}` on all
- * of them so Next's viewport prefetcher never issues a background request
- * for a route this export doesn't generate (which would otherwise surface as
- * a failed-request in the render-smoke gate). `/about/` is a real route as
- * of this slice, so its link prefetches normally.
+ * `changelog`/`history` face links and the site-wide `/changelog/` page are
+ * real routes as of Slice 3.2 and prefetch normally, same as `/about/`. The
+ * `skill` face link stays `prefetch={false}` — that route lands in Slice
+ * 3.3, and until then Next's viewport prefetcher must never issue a
+ * background request for a route this export doesn't generate (which would
+ * otherwise surface as a failed-request in the render-smoke gate).
  */
 export function Sidebar({ topics }: SidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -120,7 +120,7 @@ export function Sidebar({ topics }: SidebarProps) {
 
         <ul className="site-pages">
           <li>
-            <Link href="/changelog/" prefetch={false} onClick={close}>
+            <Link href="/changelog/" onClick={close}>
               Changelog
             </Link>
           </li>
@@ -171,12 +171,12 @@ export function Sidebar({ topics }: SidebarProps) {
                       </Link>
                     </li>
                     <li>
-                      <Link href={`/${topic.slug}/changelog/`} prefetch={false} onClick={close}>
+                      <Link href={`/${topic.slug}/changelog/`} onClick={close}>
                         Changelog
                       </Link>
                     </li>
                     <li>
-                      <Link href={`/${topic.slug}/history/`} prefetch={false} onClick={close}>
+                      <Link href={`/${topic.slug}/history/`} onClick={close}>
                         History
                       </Link>
                     </li>

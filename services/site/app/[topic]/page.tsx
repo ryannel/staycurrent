@@ -84,14 +84,17 @@ export default async function TopicPage({ params }: PageProps) {
             </time>
           </span>
           <span aria-hidden="true">·</span>
-          <Link href={`/${slug}/changelog/`} prefetch={false}>
+          <Link href={`/${slug}/changelog/`}>
             changelog
           </Link>
           <span aria-hidden="true">·</span>
-          <Link href={`/${slug}/history/`} prefetch={false}>
+          <Link href={`/${slug}/history/`}>
             history
           </Link>
           <span aria-hidden="true">·</span>
+          {/* skill lands in Slice 3.3 — prefetch={false} keeps Next's
+              viewport prefetcher from issuing a background request for a
+              route this export doesn't generate yet (see sidebar.tsx). */}
           <Link href={`/${slug}/skill/`} prefetch={false}>
             skill
           </Link>

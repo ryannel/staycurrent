@@ -148,4 +148,58 @@ describe('loadChangelog', () => {
       expect((err as ContentValidationError).issues[0]).toContain('2026-02-30');
     }
   });
+
+  // Fail-closed completeness (extends the strict-descending check above):
+  // every topic's founding cut writes a '## v1' entry, so its absence is
+  // itself a defect, not silently-empty history.
+  it('throws ContentValidationError when a changelog parses to zero entries', () => {
+    const root = makeTmpRoot();
+    writeFile(root, 'topics/databases/changelog.md', HEADER);
+    try {
+      loadChangelog(root, 'databases');
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(ContentValidationError);
+      expect((err as ContentValidationError).issues[0]).toContain('no parseable version entries');
+    }
+  });
+
+  it("throws ContentValidationError naming the gap when entries stop at v2 without reaching v1", () => {
+    const root = makeTmpRoot();
+    writeFile(
+      root,
+      'topics/databases/changelog.md',
+      HEADER + '## v2 — 2026-06-12\n\n**Stance:** held — unchanged.\n'
+    );
+    try {
+      loadChangelog(root, 'databases');
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(ContentValidationError);
+      expect((err as ContentValidationError).issues[0]).toContain("earliest entry present is '## v2'");
+    }
+  });
+
+  it("throws ContentValidationError when the founding entry is swallowed by a typo'd '##v1' heading (no space)", () => {
+    const root = makeTmpRoot();
+    // `##v1` (no space after `##`) never starts with the `'## '` prefix
+    // `splitSections` requires to recognise a new section — it silently
+    // falls into the preceding `## v2` section's body instead of becoming
+    // its own entry, so the parse stops at v2 exactly like the gap case
+    // above.
+    writeFile(
+      root,
+      'topics/databases/changelog.md',
+      HEADER +
+        '## v2 — 2026-06-12\n\n**Stance:** held — unchanged.\n\n' +
+        '##v1 — 2026-01-01\n\nFounding note.\n'
+    );
+    try {
+      loadChangelog(root, 'databases');
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(ContentValidationError);
+      expect((err as ContentValidationError).issues[0]).toContain("earliest entry present is '## v2'");
+    }
+  });
 });

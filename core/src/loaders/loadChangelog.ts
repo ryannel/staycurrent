@@ -112,5 +112,30 @@ export function loadChangelog(root: string, slug: string): ChangelogEntry[] {
     });
   }
 
+  // Fail-closed completeness, extending the strict-descending check above:
+  // every topic's founding cut writes a '## v1' entry (createTopic's
+  // writeFoundingSkeleton), so a changelog that parses to zero entries, or
+  // whose earliest parsed entry isn't v1, was edited outside the action
+  // contract — a gap left above v1 (e.g. an operator deleted the founding
+  // entry) or a v1 entry SWALLOWED by a typo'd heading (e.g. '##v1 — ...'
+  // with no space, which `splitSections` never recognises as a section at
+  // all, silently dropping it into the previous entry's body or off the
+  // front of the file) both surface here as "the earliest entry present
+  // isn't v1" — one check catches both, no need to tell them apart.
+  // `lib/content.ts`'s `getVersionHistory` doc comment ("null only for v1")
+  // depends on this: without it, a v1-less changelog would let a NON-v1 row
+  // read as the founding entry.
+  if (entries.length === 0) {
+    throw new ContentValidationError(slug, relPath, [
+      "changelog has no parseable version entries — expected at least the founding '## v1' entry",
+    ]);
+  }
+  const earliestVersion = entries[entries.length - 1].version;
+  if (earliestVersion !== 1) {
+    throw new ContentValidationError(slug, relPath, [
+      `entries do not run contiguously down to the founding '## v1' entry — the earliest entry present is '## v${earliestVersion}'`,
+    ]);
+  }
+
   return entries;
 }

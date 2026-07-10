@@ -4,10 +4,14 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ContentNotFoundError, ContentValidationError } from '@staycurrent/core';
 import {
+  getArchivedVersion,
   getTopic,
+  getTopicChangelog,
   getTopicCutDate,
   getTopicSlugs,
   getTopicVersion,
+  getVersionHistory,
+  listSiteChangelog,
   listTopicCards,
   reserveMermaidSpace,
 } from './content';
@@ -68,6 +72,28 @@ function writeTopicFixture(root: string, slug: string, opts: FixtureOptions = {}
 
   const body = opts.bodyMd ?? '# Fixture Topic\n\nStance restated.\n\n## Overview\n\nBody content.\n';
   fs.writeFileSync(path.join(topicDir, 'article.md'), frontmatter + body);
+}
+
+/** Shared by the changelog/history/archived-version describes below. */
+function writeChangelogFixture(root: string, slug: string, markdown: string): void {
+  const topicDir = path.join(root, 'topics', slug);
+  fs.mkdirSync(topicDir, { recursive: true });
+  fs.writeFileSync(path.join(topicDir, 'changelog.md'), markdown);
+}
+
+/** Shared by the getVersionHistory/getArchivedVersion describes below. */
+function writeVersionSnapshotFixture(root: string, slug: string, n: number, cut: string): void {
+  const versionDir = path.join(root, 'topics', slug, 'versions', `v${n}`);
+  fs.mkdirSync(versionDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(versionDir, 'article.md'),
+    `---\nversion: ${n}\ncut: ${cut}\n---\n\n# Fixture Topic\n\nFrozen body.\n`
+  );
+  fs.writeFileSync(
+    path.join(versionDir, 'provenance.md'),
+    `## Sources\n\n- [Example Source](https://example.com/source) — accessed ${cut} — supports: the fixture claim.\n\n` +
+      '## Synthesis\n\n- The fixture synthesis claim.\n'
+  );
 }
 
 describe('getTopicSlugs', () => {
@@ -332,6 +358,187 @@ describe('getTopicVersion', () => {
     writeTopicFixture(root, 'databases', { version: 1 });
 
     expect(() => getTopicVersion('databases', 1, root)).toThrow(ContentNotFoundError);
+  });
+});
+
+describe('getTopicChangelog', () => {
+  it('returns newest-first entries with mermaid space reserved in bodyHtml', () => {
+    const root = makeTmpRoot();
+    writeChangelogFixture(
+      root,
+      'databases',
+      '# Databases — Changelog\n\n' +
+        '## v2 — 2026-06-12\n\n```mermaid\ngraph TD\n  A --> B\n```\n\n**Stance:** held — unchanged.\n\n' +
+        '## v1 — 2026-01-01\n\nFounding note.\n'
+    );
+
+    const entries = getTopicChangelog('databases', root);
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ version: 2, stance: 'held' });
+    expect(entries[0].bodyHtml).toContain('class="mermaid-figure" style="min-height: 320px"');
+    expect(entries[1]).toMatchObject({ version: 1, stance: null });
+  });
+
+  it('propagates ContentNotFoundError when changelog.md is missing', () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'databases');
+
+    expect(() => getTopicChangelog('databases', root)).toThrow(ContentNotFoundError);
+  });
+
+  it('propagates ContentValidationError for a malformed entry heading', () => {
+    const root = makeTmpRoot();
+    writeChangelogFixture(root, 'databases', '# Databases — Changelog\n\n## Not a version heading\n\nBody.\n');
+
+    expect(() => getTopicChangelog('databases', root)).toThrow(ContentValidationError);
+  });
+
+  // The core parser's Stance value regex accepts `held | bent | reversed` —
+  // only `held`/`bent` had a passing test through this data layer's own
+  // parser call before this; `reversed` is exercised here too.
+  it("parses a 'reversed' stance-disposition entry through the real core parser", () => {
+    const root = makeTmpRoot();
+    writeChangelogFixture(
+      root,
+      'databases',
+      '# Databases — Changelog\n\n' +
+        '## v2 — 2026-06-12\n\n**Stance:** reversed — the pitch flipped entirely.\n\n' +
+        '## v1 — 2026-01-01\n\nFounding note.\n'
+    );
+
+    const entries = getTopicChangelog('databases', root);
+
+    expect(entries[0]).toMatchObject({ version: 2, stance: 'reversed' });
+  });
+});
+
+describe('getVersionHistory', () => {
+  it('returns newest-first rows carrying each version\'s cut date (loadVersion) and stance (the changelog entry)', () => {
+    const root = makeTmpRoot();
+    writeChangelogFixture(
+      root,
+      'databases',
+      '# Databases — Changelog\n\n' +
+        '## v2 — 2026-06-12\n\n**Stance:** bent — vector stores are now mainstream.\n\n' +
+        '## v1 — 2026-01-01\n\nFounding note.\n'
+    );
+    writeVersionSnapshotFixture(root, 'databases', 1, '2026-01-01');
+    writeVersionSnapshotFixture(root, 'databases', 2, '2026-06-12');
+
+    expect(getVersionHistory('databases', 2, root)).toEqual([
+      { version: 2, cutDate: '2026-06-12', stance: 'bent' },
+      { version: 1, cutDate: '2026-01-01', stance: null },
+    ]);
+  });
+
+  it('propagates ContentNotFoundError when a version in range has no versions/vN snapshot', () => {
+    const root = makeTmpRoot();
+    writeChangelogFixture(
+      root,
+      'databases',
+      '# Databases — Changelog\n\n## v1 — 2026-01-01\n\nFounding note.\n'
+    );
+    writeVersionSnapshotFixture(root, 'databases', 1, '2026-01-01');
+    // versions/v2/ deliberately absent even though currentVersion claims 2.
+
+    expect(() => getVersionHistory('databases', 2, root)).toThrow(ContentNotFoundError);
+  });
+});
+
+describe('getArchivedVersion', () => {
+  it('returns the frozen article (mermaid space reserved) and provenance for a past snapshot', () => {
+    const root = makeTmpRoot();
+    const versionDir = path.join(root, 'topics', 'databases', 'versions', 'v1');
+    fs.mkdirSync(versionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(versionDir, 'article.md'),
+      '---\nversion: 1\ncut: 2026-01-01\n---\n\n# Databases\n\n```mermaid\ngraph TD\n  A --> B\n```\n'
+    );
+    fs.writeFileSync(
+      path.join(versionDir, 'provenance.md'),
+      '## Sources\n\n- [Docs](https://example.com) — accessed 2026-01-01 — supports: claim\n\n## Synthesis\n\n- A claim.\n'
+    );
+
+    const archived = getArchivedVersion('databases', 1, root);
+
+    expect(archived.version).toBe(1);
+    expect(archived.cutDate).toBe('2026-01-01');
+    expect(archived.article.html).toContain('class="mermaid-figure" style="min-height: 320px"');
+    expect(archived.provenance.sources).toHaveLength(1);
+  });
+
+  it('propagates ContentNotFoundError only when versions/vN/ itself does not exist', () => {
+    const root = makeTmpRoot();
+    expect(() => getArchivedVersion('databases', 9, root)).toThrow(ContentNotFoundError);
+  });
+});
+
+describe('listSiteChangelog', () => {
+  it("flattens every topic's entries, newest-first, labelled with topic slug and title", () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'testing', { title: 'Testing' });
+    writeChangelogFixture(
+      root,
+      'testing',
+      '# Testing — Changelog\n\n## v1 — 2026-05-01\n\nTesting founding note.\n'
+    );
+    writeTopicFixture(root, 'databases', { title: 'Databases' });
+    writeChangelogFixture(
+      root,
+      'databases',
+      '# Databases — Changelog\n\n## v1 — 2026-06-12\n\nDatabases founding note.\n'
+    );
+
+    const entries = listSiteChangelog(root);
+
+    expect(entries.map((e) => e.topicSlug)).toEqual(['databases', 'testing']);
+    expect(entries[0]).toMatchObject({
+      topicSlug: 'databases',
+      topicTitle: 'Databases',
+      version: 1,
+      date: '2026-06-12',
+    });
+    expect(entries[0].bodyHtml).toContain('Databases founding note.');
+  });
+
+  it('throws when the listTopics sweep reports any invalid topic', () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'databases', { title: 'Databases' });
+    writeChangelogFixture(root, 'databases', '# Databases — Changelog\n\n## v1 — 2026-06-12\n\nFounding note.\n');
+    writeTopicFixture(root, 'broken', { cadence: 'weekly' });
+
+    expect(() => listSiteChangelog(root)).toThrow(/broken/);
+  });
+
+  it('throws when the root has no topics/ directory at all', () => {
+    const root = makeTmpRoot();
+    expect(() => listSiteChangelog(root)).toThrow(/topics\//);
+  });
+
+  // Documented but previously unasserted (a surviving-mutant site): the
+  // final `.sort` compares by date only, so two topics cutting on the same
+  // day must keep the pre-sort slug-ascending order (`listTopics`' own
+  // order, per `Array#sort`'s guaranteed stability) rather than an
+  // unspecified tie order.
+  it('keeps slug-ascending order for topics whose entries share the same date (sort stability)', () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'testing', { title: 'Testing' });
+    writeChangelogFixture(
+      root,
+      'testing',
+      '# Testing — Changelog\n\n## v1 — 2026-06-12\n\nTesting founding note.\n'
+    );
+    writeTopicFixture(root, 'databases', { title: 'Databases' });
+    writeChangelogFixture(
+      root,
+      'databases',
+      '# Databases — Changelog\n\n## v1 — 2026-06-12\n\nDatabases founding note.\n'
+    );
+
+    const entries = listSiteChangelog(root);
+
+    expect(entries.map((e) => e.topicSlug)).toEqual(['databases', 'testing']);
   });
 });
 

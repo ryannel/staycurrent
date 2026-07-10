@@ -259,7 +259,7 @@ ChangelogEntry[]   — newest first (file order; changelog.md is append-only-at-
 
 **Errors:**
 - Throws `ContentNotFoundError` — `changelog.md` is missing.
-- Throws `ContentValidationError` — a heading is not `## vN — YYYY-MM-DD`; entries are not strictly version-descending or a version number repeats or gaps; a non-v1 entry has no parseable `**Stance:**` line, or its value is outside `held | bent | reversed`; the v1 entry carries a `**Stance:**` line (only the founding entry may omit it, per Document Architecture).
+- Throws `ContentValidationError` — a heading is not `## vN — YYYY-MM-DD`; entries are not strictly version-descending or a version number repeats or gaps; the file parses to zero entries, or the entries do not run contiguously down to `v1` (the founding cut guarantees `## v1` exists — a v1-less tail means the file was edited outside the action contract); a non-v1 entry has no parseable `**Stance:**` line, or its value is outside `held | bent | reversed`; the v1 entry carries a `**Stance:**` line (only the founding entry may omit it, per Document Architecture).
 
 **Design rationale:** Renders `bodyHtml` eagerly (via `renderMarkdown`) so the changelog page and `buildRss` share one parse of one file — a changelog entry is never rendered two different ways. The strict-descending-order validation is defensive rather than load-bearing at write time (only content-core ever appends, one entry per cut, always at the top) — but a gap or reorder can only mean the file was edited outside the action contract, exactly the drift class the gate exists to catch, and a reader of the changelog benefits from a loud failure over a silently wrong timeline.
 

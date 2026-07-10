@@ -2,9 +2,12 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import {
   listTopics,
+  loadChangelog,
   loadTopic,
   loadVersion,
+  type ChangelogEntry,
   type ProvenanceRecord,
+  type RenderedDoc,
   type Topic,
   type TopicSummary,
 } from '@staycurrent/core';
@@ -188,4 +191,127 @@ export function getTopicVersion(slug: string, version: number, root: string = RE
  */
 export function getTopicCutDate(slug: string, version: number, root: string = REPO_ROOT): string {
   return getTopicVersion(slug, version, root).cutDate;
+}
+
+/**
+ * The topic's changelog entries for `/[topic]/changelog/` and `/changelog/`
+ * (03-api-design.md, `loadChangelog`) — newest first, exactly as the loader
+ * returns them. `bodyHtml` gets the same mermaid-space reservation `getTopic`
+ * applies to the article body (`reserveMermaidSpace`): a changelog entry's
+ * prose goes through the identical `renderMarkdown` pipeline as the article
+ * (Slice 3.1's hardened pipeline included), so it can carry a mermaid fence
+ * too, and the CLS-reservation concern applies equally there.
+ *
+ * Throw contract mirrors `loadChangelog`: `ContentNotFoundError` when
+ * `changelog.md` is missing, `ContentValidationError` for a malformed entry —
+ * both propagate uncaught, exactly like every other loader this data layer
+ * wraps ("currency is never guessed" extends to the changelog: an
+ * author-corrupted changelog must fail the build, not render a partial
+ * timeline).
+ */
+export function getTopicChangelog(slug: string, root: string = REPO_ROOT): ChangelogEntry[] {
+  return loadChangelog(root, slug).map((entry) => ({
+    ...entry,
+    bodyHtml: reserveMermaidSpace(entry.bodyHtml),
+  }));
+}
+
+/**
+ * One row of the Version History ledger (01-ui-design.md, `/[topic]/history/`):
+ * the version number, its snapshot's cut date (`loadVersion`'s
+ * `VersionSnapshot.cut` — the same currency key the trust header's freshness
+ * dot uses, never `last_researched`), and the stance disposition the
+ * changelog entry AT THAT VERSION recorded (`held`/`bent`/`reversed`, `null`
+ * only for v1 — the founding entry has no predecessor to hold against).
+ * Newest first, matching the view's row order.
+ */
+export interface VersionHistoryEntry {
+  version: number;
+  cutDate: string;
+  stance: 'held' | 'bent' | 'reversed' | null;
+}
+
+/**
+ * `currentVersion` is supplied by the caller (already holding
+ * `getTopic(slug).frontmatter.version` at render time) rather than
+ * re-derived here — the same "read once, pass in" shape `getTopicVersion`'s
+ * doc comment explains — so this function only needs to know how far to walk
+ * `versions/vN/`, not re-load the live topic itself.
+ */
+export function getVersionHistory(
+  slug: string,
+  currentVersion: number,
+  root: string = REPO_ROOT
+): VersionHistoryEntry[] {
+  const stanceByVersion = new Map(
+    getTopicChangelog(slug, root).map((entry) => [entry.version, entry.stance])
+  );
+  const rows: VersionHistoryEntry[] = [];
+  for (let n = currentVersion; n >= 1; n--) {
+    const { meta } = loadVersion(root, slug, n);
+    rows.push({ version: n, cutDate: meta.cut, stance: stanceByVersion.get(n) ?? null });
+  }
+  return rows;
+}
+
+/**
+ * One immutable snapshot's rendered form for `/[topic]/v/[n]/`'s archived
+ * state (`n` < the live version) — `loadVersion`'s `meta`/`article`/
+ * `provenance`, minus `articleMd` (no caller here needs the raw text) and
+ * `skillDir` (a filesystem path with no reader on this page — the archived
+ * skill payload's PUBLIC url, `/skills/<slug>/v/<n>/`, is a fixed string
+ * template the page builds directly, per the Skill payload distribution
+ * contract in 03-api-design.md, not a value this loader returns).
+ *
+ * `superseded`/`current` is deliberately NOT computed or returned here —
+ * `loadVersion`'s own design rationale says that label is always a
+ * comparison against the live article's version, which the caller already
+ * holds (`getTopic(slug).frontmatter.version`); this function reads exactly
+ * one version directory, same as `loadVersion` itself.
+ */
+export interface ArchivedVersion {
+  version: number;
+  cutDate: string;
+  article: RenderedDoc;
+  provenance: ProvenanceRecord;
+}
+
+export function getArchivedVersion(slug: string, n: number, root: string = REPO_ROOT): ArchivedVersion {
+  const version = loadVersion(root, slug, n);
+  return {
+    version: version.meta.version,
+    cutDate: version.meta.cut,
+    article: { html: reserveMermaidSpace(version.article.html), toc: version.article.toc },
+    provenance: version.provenance,
+  };
+}
+
+/**
+ * Every topic's changelog entries, flattened and merged newest-first, for
+ * `/changelog/` — the Site-Wide Changelog (01-ui-design.md). Fails closed via
+ * `sweepOrThrow` exactly like `listTopicCards`: a malformed topic or a
+ * mis-resolved root must not ship a partial or silently-empty feed page.
+ * Sorted by `date` descending — ties (same-day cuts across topics) keep
+ * `listTopics`' slug-ascending order, `Array#sort`'s documented stability.
+ */
+export interface SiteChangelogEntry {
+  topicSlug: string;
+  topicTitle: string;
+  version: number;
+  date: string;
+  bodyHtml: string;
+}
+
+export function listSiteChangelog(root: string = REPO_ROOT): SiteChangelogEntry[] {
+  return sweepOrThrow(root)
+    .flatMap((topic) =>
+      getTopicChangelog(topic.topic, root).map((entry) => ({
+        topicSlug: topic.topic,
+        topicTitle: topic.title,
+        version: entry.version,
+        date: entry.date,
+        bodyHtml: entry.bodyHtml,
+      }))
+    )
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 }

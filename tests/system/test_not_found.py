@@ -31,10 +31,13 @@ def test_unmatched_route_reaches_the_designed_404(cluster, site_page: Page, surf
 
 
 def test_milestone_3_face_link_reaches_the_designed_404(cluster, site_page: Page, surfaces):
-    """changelog/history/skill face routes are Milestone 3 scope; until then
-    they reach the designed 404 — the accepted mid-ladder state."""
+    """The skill face route is Slice 3.3 scope; until then it reaches the
+    designed 404 — the one remaining mid-ladder state (Slice 3.2 closed the
+    changelog/history faces this test targeted before — see
+    tests/bets/first-living-topic/test_slice_11_site_trust-routes.py, which
+    now proves those routes are real)."""
     not_found = NotFoundPage(site_page, surfaces["site"]["reach"])
-    not_found.goto("/databases/changelog/").expect_designed_dead_end()
+    not_found.goto("/databases/skill/").expect_designed_dead_end()
 
 
 def test_sidebar_face_link_reaches_the_designed_404(cluster, site_page: Page, surfaces):
@@ -42,7 +45,11 @@ def test_sidebar_face_link_reaches_the_designed_404(cluster, site_page: Page, su
     reaches it by typing the URL directly — it would stay green even if the
     sidebar's own topic-faces list pointed somewhere else entirely. This
     walks the real navigation path instead: expand the databases entry in
-    the sidebar and follow its Changelog face link.
+    the sidebar and follow its Skill face link (the changelog/history faces
+    this test used to exercise are real routes as of Slice 3.2 — see
+    tests/bets/first-living-topic/test_slice_11_site_trust-routes.py — so
+    Skill, the one face still mid-ladder until Slice 3.3, is what's left to
+    prove the sidebar's own dead-end wiring with).
 
     Desktop viewport (matching test_visual_regression.py's DESKTOP
     convention) keeps the sidebar in its sticky, always-visible mode rather
@@ -51,9 +58,9 @@ def test_sidebar_face_link_reaches_the_designed_404(cluster, site_page: Page, su
     site_page.set_viewport_size({"width": 1280, "height": 800})
     shell = BasePage(site_page, surfaces["site"]["reach"])
     shell.goto("/")
-    shell.click_sidebar_face_link("Databases", "Changelog")
+    shell.click_sidebar_face_link("Databases", "Skill")
 
-    # The link's own href carries the trailing slash (`/databases/changelog/`,
+    # The link's own href carries the trailing slash (`/databases/skill/`,
     # confirmed against the rendered DOM), but Next's client-side router
     # deterministically drops it from the address bar when a soft navigation
     # resolves to the not-found boundary for a route this static export never
@@ -61,9 +68,9 @@ def test_sidebar_face_link_reaches_the_designed_404(cluster, site_page: Page, su
     # direct `goto()` (test_milestone_3_face_link_reaches_the_designed_404),
     # which preserves whatever was typed. The optional trailing slash below
     # tolerates that real client-router quirk without cementing it as pass/fail
-    # signal — the load-bearing assertion is landing on /databases/changelog,
+    # signal — the load-bearing assertion is landing on /databases/skill,
     # which expect_designed_dead_end() below confirms is the real 404.
-    expect(site_page).to_have_url(re.compile(r"/databases/changelog/?$"))
+    expect(site_page).to_have_url(re.compile(r"/databases/skill/?$"))
     NotFoundPage(site_page, surfaces["site"]["reach"]).expect_designed_dead_end()
 
 
