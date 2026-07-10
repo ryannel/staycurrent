@@ -46,3 +46,14 @@ def test_databases_article_trust_header_states_currency(cluster, site_page: Page
     a topic cannot state either)."""
     article = TopicArticlePage(site_page, surfaces["site"]["reach"])
     article.goto(ARTICLE_PATH).expect_trust_header_version("v1").expect_trust_header_last_researched()
+
+
+def test_databases_article_renders_provenance_sources_and_synthesis(cluster, site_page: Page, surfaces):
+    """The essay-close Provenance section (01-ui-design.md's micro-polish spec)
+    renders the real, gate-cut provenance record: a Sources list of
+    `.badge-sourced` items each linking to a real source, and a Synthesis
+    list of `.badge-synthesis` items — the two-section anatomy
+    (versions/v1/provenance.md's `## Sources` / `## Synthesis`) rendered
+    inline, not a fixture standing in for it."""
+    article = TopicArticlePage(site_page, surfaces["site"]["reach"])
+    article.goto(ARTICLE_PATH).expect_provenance_sources_list(1).expect_provenance_synthesis_list(1)

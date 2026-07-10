@@ -1,7 +1,12 @@
 import type { Metadata } from 'next';
 
+// A bare page title — the root layout's `title.template` ("%s — Stay
+// Current") composes the full "About — Stay Current" from this. Do not
+// hand-write the suffix here: Next applies the inherited template to a plain
+// string title even when that string is already the full desired title,
+// which would otherwise double it up.
 export const metadata: Metadata = {
-  title: 'About — Stay Current',
+  title: 'About',
 };
 
 /**

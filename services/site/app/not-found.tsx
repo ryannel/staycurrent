@@ -1,5 +1,12 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { listTopicCards } from '@/lib/content';
+
+// A bare page title — the root layout's `title.template` composes the full
+// "Page not found — Stay Current" from this (see app/layout.tsx's metadata).
+export const metadata: Metadata = {
+  title: 'Page not found',
+};
 
 /**
  * Root 404 — Not Found (01-ui-design.md). Rendered for any unmatched route

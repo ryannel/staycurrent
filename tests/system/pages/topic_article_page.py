@@ -160,3 +160,30 @@ class TopicArticlePage(BasePage):
     def get_stored_theme(self) -> str | None:
         """The persisted `localStorage['theme']` preference (light|dark|system)."""
         return self.page.evaluate("() => localStorage.getItem('theme')")
+
+    def expect_provenance_sources_list(self, minimum: int = 1) -> "TopicArticlePage":
+        """Assert the essay-close Provenance section (01-ui-design.md's
+        micro-polish spec) renders a Sources list with at least `minimum`
+        `.badge-sourced` items, each carrying a real (non-empty) `href`."""
+        items = self.page.locator(".provenance-sources li:has(.badge-sourced)")
+        count = items.count()
+        assert count >= minimum, (
+            f"expected >= {minimum} Sources list item(s) carrying a .badge-sourced badge; "
+            f"found {count}"
+        )
+        for i in range(count):
+            href = items.nth(i).locator("a").first.get_attribute("href")
+            assert href and href.strip(), (
+                f"expected Sources item {i} to carry a link with a real href; got {href!r}"
+            )
+        return self
+
+    def expect_provenance_synthesis_list(self, minimum: int = 1) -> "TopicArticlePage":
+        """Assert the essay-close Provenance section renders a Synthesis list
+        with at least `minimum` `.badge-synthesis` items."""
+        items = self.page.locator(".provenance-synthesis li:has(.badge-synthesis)")
+        assert items.count() >= minimum, (
+            f"expected >= {minimum} Synthesis list item(s) carrying a .badge-synthesis badge; "
+            f"found {items.count()}"
+        )
+        return self

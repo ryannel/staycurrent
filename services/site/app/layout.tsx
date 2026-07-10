@@ -40,8 +40,17 @@ const jetbrainsMono = JetBrains_Mono({
   display: 'swap',
 })
 
+// Unifies every page's <title> on "<Page> — Stay Current": the template
+// applies to any descendant segment that supplies a plain string title (the
+// topic pages' `generateMetadata` and the 404 route both do), and `default`
+// covers the root route, which sets none of its own. A segment that already
+// wants a bare title with no suffix would need `{ absolute: '...' }` instead
+// of a string — none does.
 export const metadata: Metadata = {
-  title: 'Stay Current',
+  title: {
+    template: '%s — Stay Current',
+    default: 'Stay Current',
+  },
   description: 'A living article that states its version and last-researched date without being asked.',
 }
 
@@ -90,6 +99,41 @@ export default async function RootLayout({
       className={`${literata.variable} ${inter.variable} ${jetbrainsMono.variable}`}
     >
       <body className="antialiased">
+        {/* No-JS fallback (Required Capability: every page fully readable and
+            navigable with JS disabled). Below doc-shell.css's own drawer
+            breakpoint the sidebar is normally an off-canvas drawer
+            (`transform: translateX(-100%)`) that only the hamburger's React
+            state can open — with no JS, that transform never lifts and the
+            topic tree/Changelog/About become unreachable (CONFIRMED live).
+            This keeps the sidebar in normal document flow instead (static,
+            full-width, no drawer chrome) and hides the now-inert hamburger.
+            The theme toggle is hidden everywhere, at every viewport, for the
+            same reason — its click handler never attaches without JS, so it
+            would otherwise render as an operable-looking button that does
+            nothing. `<noscript>` content is inert (not applied) whenever JS
+            *is* enabled, so this never fights the real drawer/toggle. */}
+        <noscript>
+          <style>{`
+            @media (max-width: 899px) {
+              .sidebar {
+                position: static !important;
+                inset: auto !important;
+                height: auto !important;
+                min-height: 0 !important;
+                width: 100% !important;
+                transform: none !important;
+                box-shadow: none !important;
+                z-index: auto !important;
+              }
+              .mobile-topbar .btn-ghost {
+                display: none !important;
+              }
+            }
+            .theme-toggle {
+              display: none !important;
+            }
+          `}</style>
+        </noscript>
         <ThemeProvider
           // Both mechanisms, in tandem: `data-theme` is doc-shell.css's own
           // (hand-authored) hook, while `class` is what Tailwind's

@@ -78,16 +78,107 @@ function enhanceCodeBlocks(): () => void {
 }
 
 /**
+ * Reads one non-colour design token's live computed value off `<html>` (e.g.
+ * `--font-sans`) — the house theme is generated from the tokens at render
+ * time, never a hardcoded approximation, so it tracks whichever palette is
+ * currently active (`[data-theme]`) without the caller branching on
+ * light/dark itself. Falls back to `fallback` only if the token is somehow
+ * unset (e.g. a test environment with no stylesheet loaded) — production
+ * always has the real value.
+ */
+function readDesignToken(name: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+/**
+ * Reads a COLOUR token's live computed value, normalized to plain 8-bit
+ * `rgb()`/`rgba()` — the format every colour library (including mermaid's
+ * own, `khroma`) understands. `getComputedStyle(...).getPropertyValue(...)`
+ * on this project's `oklch()`-declared tokens comes back as a `lab(...)`
+ * string on this browser (CONFIRMED live) rather than the literal `oklch()`
+ * source or a plain `rgb()`; `khroma` can't parse either exotic form, which
+ * silently failed every diagram render (caught by the try/catch below, so it
+ * read as the designed "leave the fenced source visible" failure state
+ * rather than a visible error). Even setting an actual CSS *property* (e.g.
+ * `color`) and reading its resolved value back doesn't help — CSS Color 4
+ * browsers now preserve the source colour space there too instead of
+ * downgrading to `rgb()`.
+ *
+ * Painting the token onto a 1x1 canvas and reading the pixel back via
+ * `getImageData` sidesteps all of that: canvas 2D accepts any CSS `<color>`
+ * syntax as `fillStyle` (so the OKLCH value paints correctly), but a filled
+ * pixel is always plain 8-bit sRGB once rasterized — there's no colour-space
+ * string serialization to disagree about.
+ */
+function readColorToken(name: string, fallback: string): string {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  if (!raw) return fallback;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return fallback;
+
+  ctx.fillStyle = raw;
+  ctx.fillRect(0, 0, 1, 1);
+  const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+  return a === 255 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${(a / 255).toFixed(3)})`;
+}
+
+const DEFAULT_DIAGRAM_LABEL = 'Diagram';
+
+/**
+ * Interim accessible name for a rendered diagram (mermaid's own SVG output
+ * carries `role="graphics-document"` with no name of its own). Derived from
+ * the nearest preceding heading in the article — e.g. a diagram under
+ * "## The storage-layer trade" is labelled "Diagram: The storage-layer
+ * trade" — rather than a dedicated caption field, since none exists yet.
+ * This is a stand-in pending the caption channel the content contract will
+ * add (recorded discovery-note item); once articles can author a real
+ * per-figure caption, that should replace this heuristic.
+ */
+function describeDiagramFigure(figure: HTMLElement): string {
+  const articleBody = figure.closest('.article-body');
+  if (!articleBody) return DEFAULT_DIAGRAM_LABEL;
+
+  const nodes = Array.from(
+    articleBody.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6, .mermaid-figure')
+  );
+  const index = nodes.indexOf(figure);
+  for (let i = index - 1; i >= 0; i--) {
+    const node = nodes[i];
+    if (/^H[1-6]$/.test(node.tagName)) {
+      const text = node.textContent?.trim();
+      if (text) return `${DEFAULT_DIAGRAM_LABEL}: ${text}`;
+      break;
+    }
+  }
+  return DEFAULT_DIAGRAM_LABEL;
+}
+
+/**
  * Renders every `.mermaid-figure`'s `data-mermaid` source in-theme (Diagrams
- * spec: house theme built from the tokens, both palettes ship, diagrams
- * re-render on theme switch). The reserved `min-height: 320px` slice 2.1
- * already stamped onto the container absorbs the initial layout; a
- * successful render may still extend beyond it (diagram growth beyond the
- * reservation is accepted — see `lib/content.ts`), so a real render can grow
- * the page without ever shifting *already-settled* text. A failed render
- * (Diagram render failure, Error & Honesty Choreography) leaves the fenced
- * source visible rather than force a broken result — the no-JS fallback and
- * the render-failure fallback are the same DOM state by construction.
+ * spec: house theme built from the tokens — surfaces `--color-surface-alt`,
+ * strokes `--color-rule-strong`, text `--text-ui-small` body ink — both
+ * palettes ship, diagrams re-render on theme switch). Colours and the font
+ * family are read live via `getComputedStyle` (see `readColorToken`/
+ * `readDesignToken` above) rather than hardcoded hex approximations of the
+ * OKLCH tokens: every other element on the site renders in one of the three
+ * committed families, and mermaid's own default (Trebuchet MS) was the one
+ * exception before this. The re-render this component already triggers on
+ * every theme flip (below) means these reads naturally track the active
+ * palette; no separate light/dark branch is needed here.
+ *
+ * The reserved `min-height: 320px` slice 2.1 already stamped onto the
+ * container absorbs the initial layout; a successful render may still extend
+ * beyond it (diagram growth beyond the reservation is accepted — see
+ * `lib/content.ts`), so a real render can grow the page without ever
+ * shifting *already-settled* text. A failed render (Diagram render failure,
+ * Error & Honesty Choreography) leaves the fenced source visible rather than
+ * force a broken result — the no-JS fallback and the render-failure fallback
+ * are the same DOM state by construction.
  *
  * `isStale` is checked right before each figure's result is applied to the
  * DOM: `resolvedTheme` flipping again while a render is still in flight must
@@ -102,9 +193,12 @@ async function renderMermaidDiagrams(isDark: boolean, isStale: () => boolean): P
   const mermaidModule = await import('mermaid');
   const mermaid = mermaidModule.default;
 
-  const palette = isDark
-    ? { bg: '#242019', border: '#4c473f', ink: '#dcd7cc' }
-    : { bg: '#f1eee8', border: '#c9c4ba', ink: '#3a332c' };
+  // Fallbacks mirror the previous hardcoded palette — only ever used if a
+  // token is somehow missing from the stylesheet.
+  const surfaceAlt = readColorToken('--color-surface-alt', isDark ? '#242019' : '#f1eee8');
+  const ruleStrong = readColorToken('--color-rule-strong', isDark ? '#4c473f' : '#c9c4ba');
+  const textBody = readColorToken('--color-text-body', isDark ? '#dcd7cc' : '#3a332c');
+  const fontSans = readDesignToken('--font-sans', 'ui-sans-serif, system-ui, sans-serif');
 
   mermaid.initialize({
     startOnLoad: false,
@@ -117,14 +211,18 @@ async function renderMermaidDiagrams(isDark: boolean, isStale: () => boolean): P
     suppressErrorRendering: true,
     themeVariables: {
       background: 'transparent',
-      primaryColor: palette.bg,
-      primaryTextColor: palette.ink,
-      primaryBorderColor: palette.border,
-      lineColor: palette.border,
-      secondaryColor: palette.bg,
-      tertiaryColor: palette.bg,
-      textColor: palette.ink,
+      primaryColor: surfaceAlt,
+      primaryTextColor: textBody,
+      primaryBorderColor: ruleStrong,
+      lineColor: ruleStrong,
+      secondaryColor: surfaceAlt,
+      tertiaryColor: surfaceAlt,
+      textColor: textBody,
+      // `--text-ui-small`'s size (0.8125rem/13px, Type Scale) — the diagram
+      // label register matches the site's smallest UI text, not the essay
+      // body copy the figure sits inside.
       fontSize: '13px',
+      fontFamily: fontSans,
     },
   });
 
@@ -132,6 +230,13 @@ async function renderMermaidDiagrams(isDark: boolean, isStale: () => boolean): P
     figures.map(async (figure, index) => {
       const source = figure.getAttribute('data-mermaid');
       if (!source) return;
+
+      // Interim accessible name for the rendered SVG (`role="graphics-document"`
+      // ships with no name of its own) — derived from the nearest preceding
+      // heading in the article rather than a dedicated caption field, pending
+      // the caption channel the content contract will add (recorded
+      // discovery-note item).
+      const ariaLabel = describeDiagramFigure(figure);
 
       const renderId = `mermaid-diagram-${index}-${Math.random().toString(36).slice(2)}`;
       try {
@@ -145,6 +250,9 @@ async function renderMermaidDiagrams(isDark: boolean, isStale: () => boolean): P
           figure.insertBefore(rendered, figure.firstChild);
         }
         rendered.innerHTML = svg;
+
+        const svgEl = rendered.querySelector('svg');
+        if (svgEl) svgEl.setAttribute('aria-label', ariaLabel);
 
         const sourceEl = figure.querySelector('.mermaid-source');
         if (sourceEl instanceof HTMLElement) sourceEl.style.display = 'none';

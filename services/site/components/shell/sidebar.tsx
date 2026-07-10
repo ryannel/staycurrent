@@ -3,8 +3,14 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Menu, X } from 'lucide-react';
+import { ArrowUpRight, ChevronRight, Menu, X } from 'lucide-react';
 import { ThemeToggle } from './theme-toggle';
+
+// The GitHub repository behind this site — the sidebar footer's third
+// cluster item (Footer cluster spec, docs/design-system.md § Graphical UI).
+// The RSS glyph link is the fourth and lands in Milestone 3, once /changelog/
+// exists to feed it.
+const FRAMEWORK_REPO_URL = 'https://github.com/ryannel/staycurrent';
 
 export interface TopicNavEntry {
   slug: string;
@@ -135,6 +141,18 @@ export function Sidebar({ topics }: SidebarProps) {
               <li key={topic.slug}>
                 <details className="topic-disclosure">
                   <summary>
+                    {/* Committed Lucide `chevron-right` (Iconography spec: 16px,
+                        stroke 1.5) replacing the former Unicode `▸` marker —
+                        every glyph in the product is Lucide, never a text
+                        glyph. Rotation on open is a CSS transform keyed off
+                        this class (see doc-shell.css), unchanged from the
+                        marker it replaces. */}
+                    <ChevronRight
+                      size={16}
+                      strokeWidth={1.5}
+                      aria-hidden="true"
+                      className="topic-disclosure-chevron"
+                    />
                     <span className="topic-title">{topic.title}</span>
                     <span
                       className="freshness-dot"
@@ -176,6 +194,19 @@ export function Sidebar({ topics }: SidebarProps) {
 
         <div className="sidebar-footer">
           <ThemeToggle />
+          {/* Footer cluster's framework repo link (docs/design-system.md § Graphical
+              UI: "theme toggle, RSS glyph link, framework repo link"). The RSS glyph
+              link is the remaining item and lands in Milestone 3, once /changelog/
+              exists to feed it — deliberately not added here. */}
+          <a
+            href={FRAMEWORK_REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-ghost"
+            aria-label="Framework repository on GitHub"
+          >
+            <ArrowUpRight size={16} aria-hidden="true" />
+          </a>
         </div>
       </nav>
     </>

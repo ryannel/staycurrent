@@ -3,7 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ContentNotFoundError, ContentValidationError } from '@staycurrent/core';
-import { getTopic, getTopicCutDate, getTopicSlugs, listTopicCards, reserveMermaidSpace } from './content';
+import {
+  getTopic,
+  getTopicCutDate,
+  getTopicSlugs,
+  getTopicVersion,
+  listTopicCards,
+  reserveMermaidSpace,
+} from './content';
 
 /**
  * `@staycurrent/core`'s own frontmatter-fixture helper
@@ -276,6 +283,55 @@ describe('getTopicCutDate', () => {
     writeTopicFixture(root, 'databases', { version: 1 });
 
     expect(() => getTopicCutDate('databases', 1, root)).toThrow(ContentNotFoundError);
+  });
+});
+
+describe('getTopicVersion', () => {
+  function writeVersionFixture(root: string, slug: string, n: number, cut: string): void {
+    const versionDir = path.join(root, 'topics', slug, 'versions', `v${n}`);
+    fs.mkdirSync(versionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(versionDir, 'article.md'),
+      `---\nversion: ${n}\ncut: ${cut}\n---\n\n# Fixture Topic\n\nStance restated.\n`
+    );
+    fs.writeFileSync(
+      path.join(versionDir, 'provenance.md'),
+      '## Sources\n\n' +
+        '- [Example Source](https://example.com/source) — accessed 2026-07-01 — supports: the fixture claim.\n\n' +
+        '## Synthesis\n\n' +
+        '- The fixture synthesis claim.\n'
+    );
+  }
+
+  // `/[topic]/` needs both the cut date (freshness) and the provenance record
+  // (the essay-close Provenance section) for the SAME live version — this is
+  // the one accessor that supplies both off a single `loadVersion` call
+  // (lib/content.ts's doc comment); `getTopicCutDate` above proves the date
+  // half already, so this proves the shape carries the parsed provenance too.
+  it('returns both the cut date and the parsed provenance record for the live version', () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'databases', { version: 1, lastResearched: '2026-07-09' });
+    writeVersionFixture(root, 'databases', 1, '2026-07-01');
+
+    const version = getTopicVersion('databases', 1, root);
+
+    expect(version.cutDate).toBe('2026-07-01');
+    expect(version.provenance.sources).toEqual([
+      {
+        title: 'Example Source',
+        url: 'https://example.com/source',
+        accessed: '2026-07-01',
+        supports: 'the fixture claim.',
+      },
+    ]);
+    expect(version.provenance.synthesis).toEqual(['The fixture synthesis claim.']);
+  });
+
+  it('propagates ContentNotFoundError when the live version has no versions/vN snapshot', () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'databases', { version: 1 });
+
+    expect(() => getTopicVersion('databases', 1, root)).toThrow(ContentNotFoundError);
   });
 });
 

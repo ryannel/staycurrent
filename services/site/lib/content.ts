@@ -1,6 +1,13 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { listTopics, loadTopic, loadVersion, type Topic, type TopicSummary } from '@staycurrent/core';
+import {
+  listTopics,
+  loadTopic,
+  loadVersion,
+  type ProvenanceRecord,
+  type Topic,
+  type TopicSummary,
+} from '@staycurrent/core';
 
 /**
  * Thin server-side data layer over `@staycurrent/core`'s Loading API
@@ -143,18 +150,18 @@ export function getTopic(slug: string, root: string = REPO_ROOT): Topic {
 }
 
 /**
- * The CURRENT version's cut date — the date `versions/vN/article.md`'s
- * frontmatter (`VersionSnapshot.cut`) was written for `version === n`, via
- * `@staycurrent/core`'s public `loadVersion` (never a direct `topics/` read).
+ * The CURRENT version's cut date plus its provenance record — both read off
+ * `versions/vN/article.md` / `versions/vN/provenance.md` via
+ * `@staycurrent/core`'s public `loadVersion` (never a direct `topics/`
+ * read), fetched with a SINGLE `loadVersion` call.
  *
- * Freshness keys on this, not `frontmatter.last_researched`: a no-cut
- * research run updates `last_researched` without producing a new version, so
- * the two fields diverge the first time a topic gets researched-but-not-cut.
- * Per docs/design-system.md § Graphical UI's freshness rule ("the current
- * version is ≤ 14 days old"), the dot must track the cut, not the research
- * run — this is that lookup, kept separate from `getTopic` so its existing
- * fail-closed contract (and its test suite's fixtures, none of which stage a
- * `versions/vN/` tree) are undisturbed by this addition.
+ * `/[topic]/` needs both facts for the same live version (the trust header's
+ * freshness dot and the essay-close Provenance section, 01-ui-design.md's
+ * micro-polish spec) — this accessor exists so that page loads the version
+ * once rather than twice. `getTopicCutDate` below stays the entry point for
+ * callers that only need the date (the root layout's sidebar sweep, which
+ * loops every topic and never touches its provenance) and now delegates here
+ * rather than duplicating the read.
  *
  * Throw contract mirrors `loadVersion`: a missing/invalid `versions/vN/` for
  * the live version propagates uncaught (`ContentNotFoundError` /
@@ -162,6 +169,23 @@ export function getTopic(slug: string, root: string = REPO_ROOT): Topic {
  * landing, so its absence for the live version is itself a currency defect,
  * not a condition this data layer papers over.
  */
+export interface TopicVersion {
+  cutDate: string;
+  provenance: ProvenanceRecord;
+}
+
+export function getTopicVersion(slug: string, version: number, root: string = REPO_ROOT): TopicVersion {
+  const v = loadVersion(root, slug, version);
+  return { cutDate: v.meta.cut, provenance: v.provenance };
+}
+
+/**
+ * The CURRENT version's cut date alone — see `getTopicVersion` above for the
+ * full rationale (freshness keys on the cut, not `frontmatter.last_researched`,
+ * per docs/design-system.md § Graphical UI's freshness rule). Kept separate
+ * from `getTopic` so its existing fail-closed contract (and its test suite's
+ * fixtures, none of which stage a `versions/vN/` tree) are undisturbed.
+ */
 export function getTopicCutDate(slug: string, version: number, root: string = REPO_ROOT): string {
-  return loadVersion(root, slug, version).meta.cut;
+  return getTopicVersion(slug, version, root).cutDate;
 }
