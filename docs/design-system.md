@@ -376,7 +376,7 @@ Every interactive element implements all five states. Missing states are impleme
 
 ### Iconography
 
-One set: **Lucide**, at `stroke-width: 1.5` — the thin functional line Phase 4 committed, consistent because it is one library, not a curation. Sizes: 16px in chrome (sidebar footer, code-block copy, theme toggle), 14px inline beside 13px text. Colour is always `currentColor` — icons inherit their text context and are never independently coloured. Icons never appear without an accessible name (`aria-label` on icon-only buttons); decorative icons don't exist here because decoration doesn't. The full working set at MVP is nine glyphs: `sun`, `moon`, `rss`, `arrow-up-right` (external link), `chevron-right` (disclosure), `copy`, `check`, `menu`, `x`. Adding a glyph means adding it to this list.
+One set: **Lucide**, at `stroke-width: 1.5` — the thin functional line Phase 4 committed, consistent because it is one library, not a curation. Sizes: 16px in chrome (sidebar footer, code-block copy, theme toggle), 14px inline beside 13px text. Colour is always `currentColor` — icons inherit their text context and are never independently coloured. Icons never appear without an accessible name (`aria-label` on icon-only buttons); decorative icons don't exist here because decoration doesn't. The full working set at MVP is ten glyphs: `sun`, `moon`, `monitor` (the theme toggle's system state), `rss`, `arrow-up-right` (external link), `chevron-right` (disclosure), `copy`, `check`, `menu`, `x`. Adding a glyph means adding it to this list.
 
 ### Buttons
 

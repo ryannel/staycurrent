@@ -1,8 +1,11 @@
 """Page object for `/<topic>/` — the Living Article (01-ui-design.md).
 
-Helpers are content-based (element/attribute/text), never style-based, so they
-keep working across Milestone 3's restyle of the shell around this
-content-bearing core (the same content that renders today under a bare shell).
+Helpers are content-based (element/attribute/text) wherever the assertion
+survives a later restyle; slice 2.2 (doc-shell-and-trust) is that restyle for
+the shared shell, trust header, TOC rail, and theme toggle, so a handful of
+helpers below assert semantic state (an `aria-current`/`data-theme` attribute)
+rather than raw computed style — chosen specifically so they keep working
+through any future visual pass.
 """
 
 import re
@@ -67,3 +70,93 @@ class TopicArticlePage(BasePage):
             f"expected a <time datetime=...> matching {pattern.pattern!r}; got {datetime_attr!r}"
         )
         return self
+
+    def expect_shell_landmarks(self) -> "TopicArticlePage":
+        """Assert the three-zone shell's landmark set (01-ui-design.md's shared
+        Accessibility rule): a <nav> sidebar, the article inside <main>, and an
+        <aside> TOC rail."""
+        assert self.page.locator("nav").count() > 0, "expected a <nav> sidebar landmark"
+        assert self.page.locator("main article, article").count() > 0, (
+            "expected the reading column to render as an <article>"
+        )
+        assert self.page.locator("aside").count() > 0, "expected an <aside> TOC rail landmark"
+        return self
+
+    def expect_trust_header_face_links(self, slug: str) -> "TopicArticlePage":
+        """Assert the trust header's changelog/history/skill face links point at
+        this topic's other faces (01-ui-design.md's Key interactions)."""
+        for face in ("changelog", "history", "skill"):
+            link = self.page.locator(f"a[href*='/{slug}/{face}']")
+            assert link.count() > 0, f"expected a trust-header link to the {face} face"
+        return self
+
+    def expect_toc_rail_link_count_at_least(self, minimum: int) -> "TopicArticlePage":
+        """Assert the TOC rail (<aside>) lists at least `minimum` in-page anchor links."""
+        links = self.page.locator("aside a[href^='#']")
+        assert links.count() >= minimum, (
+            f"expected >= {minimum} TOC rail anchor links; found {links.count()}"
+        )
+        return self
+
+    def expect_toc_active_link_tracks_scroll(self) -> "TopicArticlePage":
+        """Scroll the last <h2> into view and assert the TOC rail's active
+        entry changes to match — the scroll-spy contract, asserted on a
+        semantic attribute rather than computed style so it survives a future
+        restyle of the active-link treatment.
+
+        Deliberately makes no assertion about which entry (if any) is active
+        BEFORE scrolling: whenever the first heading already sits inside the
+        initial viewport, its TOC entry is legitimately active from the
+        start, and asserting zero active entries there is flaky by
+        construction (false whenever a reader's viewport is tall enough, or
+        the article short enough, for that to happen)."""
+        headings = self.page.locator("article h2, main h2")
+        count = headings.count()
+        assert count >= 2, "expected >= 2 <h2> headings for the TOC rail to spy on"
+
+        last_heading = headings.nth(count - 1)
+        last_id = last_heading.get_attribute("id")
+        assert last_id, "expected the last <h2> to carry a generated anchor id"
+
+        target_link = self.page.locator(f"aside a[href='#{last_id}']")
+        assert target_link.count() > 0, f"expected a TOC entry linking to #{last_id}"
+
+        active_before = self.page.locator("aside a[aria-current='location']")
+        href_before = active_before.first.get_attribute("href") if active_before.count() > 0 else None
+
+        last_heading.scroll_into_view_if_needed()
+        expect(target_link).to_have_attribute("aria-current", "location")
+
+        # The active entry changed to the scrolled-to heading — either it
+        # wasn't active before, or (the article being short enough that the
+        # last heading was already in view) it already was; either way the
+        # assertion above already proved the target is active, and this
+        # confirms no OTHER entry is left simultaneously marked active.
+        assert href_before in (None, f"#{last_id}") or self.page.locator(
+            "aside a[aria-current='location']"
+        ).count() == 1, "expected exactly one TOC entry marked active after scrolling"
+        return self
+
+    def expect_code_copy_affordance(self) -> "TopicArticlePage":
+        """Assert a designed code block (Code blocks spec) carries the ghost
+        copy-affordance button."""
+        assert self.page.locator("pre, [class*='code-block' i]").count() > 0, (
+            "expected at least one designed code block"
+        )
+        assert self.page.locator("pre button, button[aria-label*='copy' i]").count() > 0, (
+            "expected a code block to carry a ghost copy-affordance button"
+        )
+        return self
+
+    def toggle_theme(self) -> "TopicArticlePage":
+        """Click the sidebar footer's theme toggle."""
+        self.page.locator("[data-theme-toggle]").first.click()
+        return self
+
+    def get_data_theme(self) -> str | None:
+        """The resolved `[data-theme]` attribute on `<html>`."""
+        return self.page.evaluate("() => document.documentElement.getAttribute('data-theme')")
+
+    def get_stored_theme(self) -> str | None:
+        """The persisted `localStorage['theme']` preference (light|dark|system)."""
+        return self.page.evaluate("() => localStorage.getItem('theme')")

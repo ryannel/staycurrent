@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ContentNotFoundError, ContentValidationError } from '@staycurrent/core';
-import { getTopic, getTopicSlugs, reserveMermaidSpace } from './content';
+import { getTopic, getTopicCutDate, getTopicSlugs, reserveMermaidSpace } from './content';
 
 /**
  * `@staycurrent/core`'s own frontmatter-fixture helper
@@ -183,6 +183,50 @@ describe('getTopic', () => {
 
     const topic = getTopic('databases', root);
     expect(topic.body.html).toContain('class="mermaid-figure" style="min-height: 320px"');
+  });
+});
+
+describe('getTopicCutDate', () => {
+  function writeVersionFixture(root: string, slug: string, n: number, cut: string): void {
+    const versionDir = path.join(root, 'topics', slug, 'versions', `v${n}`);
+    fs.mkdirSync(versionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(versionDir, 'article.md'),
+      `---\nversion: ${n}\ncut: ${cut}\n---\n\n# Fixture Topic\n\nStance restated.\n`
+    );
+    fs.writeFileSync(path.join(versionDir, 'provenance.md'), '## Sources\n\n## Synthesis\n\n- noted\n');
+  }
+
+  it("returns the versions/vN snapshot's cut date for the live version", () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'databases', { version: 1, lastResearched: '2026-07-09' });
+    writeVersionFixture(root, 'databases', 1, '2026-07-01');
+
+    expect(getTopicCutDate('databases', 1, root)).toBe('2026-07-01');
+  });
+
+  // The whole point of keying freshness on this instead of `last_researched`:
+  // a no-cut research run updates the latter without touching the version
+  // snapshot, so the two dates diverge and this function must keep reporting
+  // the unchanged cut, not the newer research date.
+  it('diverges from last_researched after a no-cut research run', () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'databases', { version: 1, lastResearched: '2026-07-09' });
+    writeVersionFixture(root, 'databases', 1, '2026-06-01');
+
+    const topic = getTopic('databases', root);
+    const cutDate = getTopicCutDate('databases', topic.frontmatter.version, root);
+
+    expect(topic.frontmatter.last_researched).toBe('2026-07-09');
+    expect(cutDate).toBe('2026-06-01');
+    expect(cutDate).not.toBe(topic.frontmatter.last_researched);
+  });
+
+  it('propagates ContentNotFoundError when the live version has no versions/vN snapshot', () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'databases', { version: 1 });
+
+    expect(() => getTopicCutDate('databases', 1, root)).toThrow(ContentNotFoundError);
   });
 });
 

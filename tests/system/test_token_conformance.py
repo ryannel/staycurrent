@@ -50,7 +50,7 @@ _PROBE = """
 
 
 def _load_routes() -> tuple[str, ...]:
-    manifest = pathlib.Path("tests/system/routes.json")
+    manifest = pathlib.Path(__file__).parent / "routes.json"
     if manifest.exists():
         try:
             routes = json.loads(manifest.read_text())
@@ -93,3 +93,44 @@ def _assert_token_conformance(page: Page, surface_slug: str) -> None:
 
 def test_site_token_conformance(cluster, site_page: Page):
     _assert_token_conformance(site_page, "site")
+
+
+_DOC_SHELL_TOKEN_PROBE = """
+() => {
+  const cs = getComputedStyle(document.documentElement);
+  return {
+    surface: cs.getPropertyValue('--color-surface').trim(),
+    textBody: cs.getPropertyValue('--color-text-body').trim(),
+    accent: cs.getPropertyValue('--color-accent').trim(),
+    colorScheme: cs.colorScheme,
+  };
+}
+"""
+
+
+def test_doc_shell_tokens_resolve_and_differ_between_themes(cluster, site_page: Page):
+    """Deterministic token assertions for the hand-authored doc-shell design
+    system (app/doc-shell.css), distinct from the generated brand.css
+    `--gw-*` atmosphere probe above: `--color-surface`, `--color-text-body`,
+    and `--color-accent` resolve non-empty on `:root`; each resolves to a
+    genuinely DIFFERENT value once `[data-theme='dark']` is forced; and
+    computed `color-scheme` follows the forced theme (fix: doc-shell.css's
+    `[data-theme='dark'] { color-scheme: dark }` / `[data-theme='light']
+    { color-scheme: light }`)."""
+    site_page.goto("/", wait_until="load")
+    site_page.wait_for_load_state("networkidle")
+
+    site_page.evaluate("() => document.documentElement.setAttribute('data-theme', 'light')")
+    light = site_page.evaluate(_DOC_SHELL_TOKEN_PROBE)
+    assert light["surface"], "expected --color-surface to resolve on :root"
+    assert light["textBody"], "expected --color-text-body to resolve on :root"
+    assert light["accent"], "expected --color-accent to resolve on :root"
+    assert light["colorScheme"] == "light", "expected color-scheme to follow the forced light theme"
+
+    site_page.evaluate("() => document.documentElement.setAttribute('data-theme', 'dark')")
+    dark = site_page.evaluate(_DOC_SHELL_TOKEN_PROBE)
+    assert dark["colorScheme"] == "dark", "expected color-scheme to follow the forced dark theme"
+
+    assert dark["surface"] != light["surface"], "expected --color-surface to differ between themes"
+    assert dark["textBody"] != light["textBody"], "expected --color-text-body to differ between themes"
+    assert dark["accent"] != light["accent"], "expected --color-accent to differ between themes"

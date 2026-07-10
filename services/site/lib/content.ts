@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { listTopics, loadTopic, type Topic } from '@staycurrent/core';
+import { listTopics, loadTopic, loadVersion, type Topic } from '@staycurrent/core';
 
 /**
  * Thin server-side data layer over `@staycurrent/core`'s Loading API
@@ -60,8 +60,12 @@ export function getTopicSlugs(root: string = REPO_ROOT): string[] {
 // property order. content-core deliberately carries no reserved-space
 // behaviour — renderMarkdown's design rationale (03-api-design.md) names
 // sizing/CLS as "the site's rendering concern, not a rendering option [in
-// renderMarkdown]". This is that concern: inject an explicit min-height so
-// the client mermaid render (Slice 2.2) never shifts settled text.
+// renderMarkdown]". This is that concern: inject an explicit min-height that
+// absorbs the initial layout so the client mermaid render (Slice 2.2) never
+// shifts *settled* text on arrival. A rendered figure may still extend taller
+// than the reservation (change-proposal-3: diagram growth beyond 320px is
+// accepted, not capped) — when it does, scroll anchoring is what preserves
+// the reader's position, not a hard size cap.
 //
 // Anchored on the full open-tag prefix, not the class attribute alone: HTML
 // serialization never escapes `"` inside a text node or attribute value, so
@@ -96,4 +100,28 @@ export function getTopic(slug: string, root: string = REPO_ROOT): Topic {
       html: reserveMermaidSpace(topic.body.html),
     },
   };
+}
+
+/**
+ * The CURRENT version's cut date — the date `versions/vN/article.md`'s
+ * frontmatter (`VersionSnapshot.cut`) was written for `version === n`, via
+ * `@staycurrent/core`'s public `loadVersion` (never a direct `topics/` read).
+ *
+ * Freshness keys on this, not `frontmatter.last_researched`: a no-cut
+ * research run updates `last_researched` without producing a new version, so
+ * the two fields diverge the first time a topic gets researched-but-not-cut.
+ * Per docs/design-system.md § Graphical UI's freshness rule ("the current
+ * version is ≤ 14 days old"), the dot must track the cut, not the research
+ * run — this is that lookup, kept separate from `getTopic` so its existing
+ * fail-closed contract (and its test suite's fixtures, none of which stage a
+ * `versions/vN/` tree) are undisturbed by this addition.
+ *
+ * Throw contract mirrors `loadVersion`: a missing/invalid `versions/vN/` for
+ * the live version propagates uncaught (`ContentNotFoundError` /
+ * `ContentValidationError`) — every cut writes that snapshot as part of
+ * landing, so its absence for the live version is itself a currency defect,
+ * not a condition this data layer papers over.
+ */
+export function getTopicCutDate(slug: string, version: number, root: string = REPO_ROOT): string {
+  return loadVersion(root, slug, version).meta.cut;
 }

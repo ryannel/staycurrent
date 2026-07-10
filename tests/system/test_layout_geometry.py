@@ -19,7 +19,7 @@ _OVERFLOW_TOLERANCE_PX = 2
 
 
 def _load_routes() -> tuple[str, ...]:
-    manifest = pathlib.Path("tests/system/routes.json")
+    manifest = pathlib.Path(__file__).parent / "routes.json"
     if manifest.exists():
         try:
             routes = json.loads(manifest.read_text())

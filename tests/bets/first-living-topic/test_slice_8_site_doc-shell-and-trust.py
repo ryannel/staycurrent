@@ -12,6 +12,7 @@ import re
 
 import pytest
 from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 SLUG = "databases"
 ARTICLE_PATH = f"/{SLUG}/"
@@ -151,10 +152,32 @@ def test_theme_toggle_flips_data_theme_and_persists_across_reload(cluster, site_
     )
 
     before = site_page.evaluate("() => document.documentElement.getAttribute('data-theme')")
-    toggle.first.click()
-    site_page.wait_for_timeout(200)
-    after = site_page.evaluate("() => document.documentElement.getAttribute('data-theme')")
-    assert after != before, "expected clicking the theme toggle to flip [data-theme] on <html>"
+
+    # The toggle's click handler only attaches once React hydrates — a click
+    # landing before that is a silent no-op. Retry a few times, each
+    # conditioned on the actual [data-theme] change via `wait_for_function`,
+    # instead of a fixed sleep. Also allow more than one click: the strict
+    # committed cycle (light -> dark -> system -> light) doesn't guarantee
+    # every single click flips the resolved palette (leaving "system" can
+    # resolve to the same palette already showing, depending on the
+    # OS/browser colour-scheme preference the test runs under) — two clicks
+    # always cross a light<->dark transition, which unconditionally changes.
+    after = None
+    for _ in range(4):
+        toggle.first.click()
+        try:
+            site_page.wait_for_function(
+                "(before) => document.documentElement.getAttribute('data-theme') !== before",
+                arg=before,
+                timeout=2_000,
+            )
+            after = site_page.evaluate("() => document.documentElement.getAttribute('data-theme')")
+            break
+        except PlaywrightTimeoutError:
+            continue
+    assert after is not None and after != before, (
+        "expected clicking the theme toggle to flip [data-theme] on <html> within a few clicks"
+    )
 
     stored = site_page.evaluate("() => localStorage.getItem('theme')")
     assert stored in ("light", "dark", "system"), (

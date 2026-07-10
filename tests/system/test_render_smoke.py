@@ -23,7 +23,7 @@ def _load_routes() -> tuple[str, ...]:
     """Route inventory — the screens the route-driven gates sweep. A bet declares
     the routes it touched in tests/system/routes.json (a JSON array of paths);
     absent that file, the gate covers the app root."""
-    manifest = pathlib.Path("tests/system/routes.json")
+    manifest = pathlib.Path(__file__).parent / "routes.json"
     if manifest.exists():
         try:
             routes = json.loads(manifest.read_text())
