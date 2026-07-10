@@ -72,18 +72,19 @@
 │ (280px) │ v5 · researched 12 Jun 2026 · changelog · history ·     │ Overview            │
 │         │ skill                                        [fresh●]  │ Choosing a model     │
 │         ├───────────────────────────────────────────────────────┤ The convergence trend │
-│         │ ┃ Stance: relational is the default; reach for         │ Practitioner mental   │
-│         │ ┃ document/kv/columnar/vector/graph only when a        │  models                │
+│         │ # Databases                                            │ Practitioner mental   │
+│         │                                                        │  models                │
+│         │ ┃ Stance: relational is the default; reach for         │                        │
+│         │ ┃ document/kv/columnar/vector/graph only when a        │                        │
 │         │ ┃ named access pattern demands it.                     │                        │
 │         │                                                        │                        │
-│         │ # Databases                                            │                        │
 │         │ ## Overview                                            │                        │
 │         │ <serif essay body, --space-5 paragraph rhythm>          │                        │
 │         │                                                         │                        │
 │         │ ┌─ figure: the convergence trend (mermaid) ───────────┐│                        │
 │         │ │ [container reserves min-height; renders on client]  ││                        │
-│         │ │ caption: "Postgres absorbing JSON, vector, and       ││                        │
-│         │ │  columnar workloads — 2024–2026."                    ││                        │
+│         │ │ [no visible caption renders in the interim — the    ││                        │
+│         │ │  caption channel is change-proposal-5's deferral]   ││                        │
 │         │ └────────────────────────────────────────────────────┘│                        │
 │         │ ## Sources                                             │                        │
 │         │  [sourced] <title> — <url> — accessed 2026-06-10        │                        │
@@ -97,7 +98,7 @@
 | State | Trigger | What the user observes |
 |---|---|---|
 | Current | Default — this route always renders the live `article.md` | Trust header with the live version, freshness dot present only if the current version's cut date is ≤ 14 days old — a no-cut run updates `last_researched` but never lights the dot |
-| Diagram render failure | A mermaid fence fails to parse/render client-side | The figure's designed caption renders in the empty-state pattern (one factual sentence, no broken-image glyph) — Error & Honesty Choreography |
+| Diagram render failure | A mermaid fence fails to parse/render client-side | The fenced diagram source stays readable in the reserved container, no broken-image glyph. Interim per change-proposal-5: designed captions and alt text await the caption channel the writer-skill/content-format bet designs (the content contract carries none today); until then figures carry heading-derived accessible names, and the failure state shows the source |
 | No topic at this slug | Reader navigates to an unknown `/[topic]/` | 404 (see below) — Next.js static export has no dynamic route for an unenumerated slug |
 
 **Key interactions:**
