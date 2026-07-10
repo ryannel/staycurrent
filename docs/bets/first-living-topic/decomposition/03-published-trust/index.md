@@ -19,8 +19,11 @@
 
 **How we prove it:** Drive the deployed site in a browser: open `/databases/changelog/`, `/databases/history/`, `/databases/v/1/` (confirming the current-version redirect), `/databases/skill/`, the site-wide `/changelog/`, and `rss.xml`, and confirm each renders or validates. In a fresh Claude Code session, run the canonical install one-liner from the install page against `/skills/databases.zip`, confirm the payload unpacks into the skills directory, and confirm the placeholder labelling is present both on the install page and inside the installed SKILL.md (stance-fidelity of an authored skill is deferred to the skill-design bet — change-proposal-2). Separately, open a pull request carrying a gate-breaking change and observe its `pull_request` workflow run fail closed at the gate — a red check, no deploy step — while the deployed site still serves the previous good build; merge nothing.
 
-**Test file:** `tests/bets/first-living-topic/test_milestone_3_published_trust.py` — generated red at Delivery start; drives the `site` surface's deployed routes and the skill-payload distribution contract in `technical-design/03-api-design.md` (the canonical install one-liner and the `/skills/<slug>.zip` archive), over the deploy pipeline in `technical-design/02-data-flows.md`.
+**Test file:** `tests/bets/first-living-topic/test_milestone_3_published-trust.py` — generated red at Delivery start; drives the `site` surface's deployed routes and the skill-payload distribution contract in `technical-design/03-api-design.md` (the canonical install one-liner and the `/skills/<slug>.zip` archive), over the deploy pipeline in `technical-design/02-data-flows.md`.
 
 ## Slices
 
-> *Slices authored on arrival.*
+- [Slice 3.1 — core: Render Hardening](./01-render-hardening.md)
+- [Slice 3.2 — site: Trust Routes](./02-trust-routes.md)
+- [Slice 3.3 — site: Distribution](./03-distribution.md)
+- [Slice 3.4 — site: Publish Workflow](./04-publish-workflow.md)
