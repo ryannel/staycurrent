@@ -1,26 +1,23 @@
+import { listTopicCards } from '@/lib/content';
+import { TopicLibrary } from '@/components/library/topic-library';
+
 /**
- * Home page — Server Component.
+ * `/` — Topic Library (01-ui-design.md). The site's index: a card grid, one
+ * tile per topic (title, stance one-liner, version badge, researched date —
+ * `listTopics`' `TopicSummary` sweep via `lib/content.ts`'s `listTopicCards`),
+ * or the designed first-run empty state when `topics/` is validly empty.
  *
- * This is the landing page for the application. Replace this with
- * your actual home page content (the Topic Library view, 01-ui-design.md —
- * out of scope for this slice).
- *
- * Root-level markup is a <div>, not a second <main> — the root layout
- * (app/layout.tsx) already renders the page's one <main id="main-content">
- * landmark as part of the shared shell; a second <main> here would be a
- * nested/duplicate landmark (axe: landmark-no-duplicate-main).
+ * No TOC rail on this view (Shell zone rule) — `doc-shell-content.no-toc`
+ * collapses the shell's content grid to a single column, freeing the full
+ * width for the card grid instead of capping it to the 72ch essay measure
+ * `.reading-column` uses on the article/about/404 views.
  */
 export default function HomePage() {
+  const cards = listTopicCards();
+
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 p-8">
-      <div className="space-y-2 text-center">
-        <h1 className="text-4xl font-bold tracking-tighter text-foreground">
-          Site
-        </h1>
-        <p className="text-muted-foreground">
-          Your Next.js application is running.
-        </p>
-      </div>
+    <div className="doc-shell-content no-toc">
+      <TopicLibrary cards={cards} />
     </div>
   );
 }

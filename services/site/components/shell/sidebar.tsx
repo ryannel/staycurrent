@@ -27,10 +27,11 @@ const DRAWER_QUERY = '(max-width: 899px)';
  * 01-ui-design.md).
  *
  * `changelog`/`history`/`skill` face links and the site-wide `/changelog/`
- * and `/about/` pages don't exist as routes yet (Milestone 3) — `prefetch={false}`
- * on all of them so Next's viewport prefetcher never issues a background
- * request for a route this export doesn't generate (which would otherwise
- * surface as a failed-request in the render-smoke gate).
+ * page don't exist as routes yet (Milestone 3) — `prefetch={false}` on all
+ * of them so Next's viewport prefetcher never issues a background request
+ * for a route this export doesn't generate (which would otherwise surface as
+ * a failed-request in the render-smoke gate). `/about/` is a real route as
+ * of this slice, so its link prefetches normally.
  */
 export function Sidebar({ topics }: SidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -118,7 +119,7 @@ export function Sidebar({ topics }: SidebarProps) {
             </Link>
           </li>
           <li>
-            <Link href="/about/" prefetch={false} onClick={close}>
+            <Link href="/about/" onClick={close}>
               About
             </Link>
           </li>

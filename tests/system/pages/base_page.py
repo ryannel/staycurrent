@@ -28,3 +28,18 @@ class BasePage:
         """Assert the first element matching the selector is visible."""
         expect(self.page.locator(selector).first).to_be_visible(timeout=timeout_ms)
         return self
+
+    def click_sidebar_face_link(self, title: str, face_name: str) -> None:
+        """Expand the sidebar's topic-tree `<details>` disclosure for the
+        topic titled `title` and click its named face link (e.g.
+        'Changelog') — scoped to `.sidebar .topic-faces` so it can't collide
+        with the trust header's identically-labelled links on an article
+        page. Lives here rather than on a single page object because the
+        sidebar is the shared shell, present on every page. This navigates
+        away, so — like LibraryPage.click_topic_card — it does not return
+        self."""
+        disclosure = self.page.locator(".sidebar .topic-disclosure").filter(
+            has=self.page.get_by_text(title, exact=True)
+        )
+        disclosure.locator("summary").click()
+        disclosure.locator(".topic-faces a", has_text=face_name).click()

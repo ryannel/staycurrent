@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { listTopics, loadTopic, loadVersion, type Topic } from '@staycurrent/core';
+import { listTopics, loadTopic, loadVersion, type Topic, type TopicSummary } from '@staycurrent/core';
 
 /**
  * Thin server-side data layer over `@staycurrent/core`'s Loading API
@@ -21,13 +21,11 @@ const REPO_ROOT = process.env.STAYCURRENT_REPO_ROOT
   : path.resolve(process.cwd(), '..', '..');
 
 /**
- * Enumerates topic slugs for `generateStaticParams`.
- *
- * Fail-closed per 03-api-design.md: "the site's build treats a non-empty
- * `errors` from `listTopics` as build-fatal — the same fail-closed rule
- * `loadTopic` enforces per page". `listTopics` itself never throws for a
- * malformed topic (it collects `errors` instead) — this function is the one
- * place that turns that report into a build-fatal throw for the site.
+ * Sweeps `topics/` and fails closed per 03-api-design.md: "the site's build
+ * treats a non-empty `errors` from `listTopics` as build-fatal — the same
+ * fail-closed rule `loadTopic` enforces per page". `listTopics` itself never
+ * throws for a malformed topic (it collects `errors` instead) — this is the
+ * one place that turns that report into a build-fatal throw for the site.
  *
  * `listTopics` also never throws for a root with no `topics/` directory at
  * all — it reports that the same way as a `topics/` dir with nothing in it:
@@ -36,9 +34,14 @@ const REPO_ROOT = process.env.STAYCURRENT_REPO_ROOT
  * empty export instead of failing the build. So this function distinguishes
  * the two after the sweep: no `topics/` directory at all is a fail-closed
  * throw naming the resolved root; an existing-but-empty `topics/` remains a
- * valid empty catalogue.
+ * valid empty catalogue (the first-run empty state).
+ *
+ * Shared by every accessor below that must ship or fail the whole catalogue
+ * atomically, never a partial one — `getTopicSlugs` (static params) and
+ * `listTopicCards` (the Topic Library's card grid) both fail the same way
+ * for the same reasons, so the check lives once.
  */
-export function getTopicSlugs(root: string = REPO_ROOT): string[] {
+function sweepOrThrow(root: string): TopicSummary[] {
   const sweep = listTopics(root);
   if (sweep.errors.length > 0) {
     const detail = sweep.errors.map((e) => `${e.slug}: ${e.message}`).join('; ');
@@ -46,12 +49,49 @@ export function getTopicSlugs(root: string = REPO_ROOT): string[] {
   }
   if (!existsSync(path.join(root, 'topics'))) {
     throw new Error(
-      `getTopicSlugs: no topics/ directory found under resolved repo root '${root}' — ` +
-        'a mis-resolved root must not ship a green empty export (set STAYCURRENT_REPO_ROOT ' +
-        'to point at the correct content tree)'
+      `no topics/ directory found under resolved repo root '${root}' — a mis-resolved root ` +
+        'must not ship a green empty export (set STAYCURRENT_REPO_ROOT to point at the ' +
+        'correct content tree)'
     );
   }
-  return sweep.topics.map((t) => t.topic);
+  return sweep.topics;
+}
+
+/** Enumerates topic slugs for `generateStaticParams`. See `sweepOrThrow`. */
+export function getTopicSlugs(root: string = REPO_ROOT): string[] {
+  return sweepOrThrow(root).map((t) => t.topic);
+}
+
+/**
+ * The Topic Library card grid's per-card shape (01-ui-design.md, `/` — Topic
+ * Library): title, stance, version, and last-researched date, straight off
+ * `listTopics`' `TopicSummary` sweep (03-api-design.md) — no direct `topics/`
+ * reads from components, no new core API surface beyond the committed
+ * Loading API. Sorted by slug ascending (`listTopics`' own order).
+ */
+export interface TopicCard {
+  slug: string;
+  title: string;
+  stance: string;
+  version: number;
+  lastResearched: string;
+}
+
+/**
+ * Sweeps every topic for the Topic Library (`/`). Returns `[]` for a
+ * validly-empty `topics/` directory — the first-run empty state
+ * (01-ui-design.md's "/ — Topic Library" First-run empty state) — and fails
+ * closed exactly as `getTopicSlugs` does for a malformed catalogue or a
+ * mis-resolved root (`sweepOrThrow`).
+ */
+export function listTopicCards(root: string = REPO_ROOT): TopicCard[] {
+  return sweepOrThrow(root).map((t) => ({
+    slug: t.topic,
+    title: t.title,
+    stance: t.stance,
+    version: t.version,
+    lastResearched: t.last_researched,
+  }));
 }
 
 // The mermaid-fence transform's marker container, as emitted by

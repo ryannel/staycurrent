@@ -1,30 +1,47 @@
-import Link from "next/link";
+import Link from 'next/link';
+import { listTopicCards } from '@/lib/content';
 
 /**
- * Root 404 page.
+ * Root 404 — Not Found (01-ui-design.md). Rendered for any unmatched route
+ * under the static export: `next build` emits this as `out/404.html` (or
+ * `out/404/index.html`), so the "designed dead end" replaces the host
+ * default for every miss — including the changelog/history/skill face links
+ * whose routes arrive in Milestone 3 (the accepted mid-ladder state).
  *
- * Rendered when no route matches. This is a Server Component.
+ * "The dead end contains the map" (Error & honesty choreography): the topic
+ * tree renders inline as page content, not just relying on the sidebar that
+ * already carries it on every page. Reuses `listTopicCards` (no direct
+ * `topics/` read) — no card-grid pattern here, this is wayfinding text, not
+ * the library's browsing surface. Lists each topic by its slug (matching the
+ * 404 wireframe's literal "→ databases" rows), not its display title — the
+ * one place on the site a reader is oriented by URL-shaped wayfinding text
+ * rather than editorial titling.
+ *
+ * This is a Server Component, so it renders at build time and is static for
+ * every miss (the design's intent) — there is no per-request 404 render in a
+ * static export.
  */
 export default function NotFound() {
+  const topics = listTopicCards();
+
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-8 text-center">
-      <div className="space-y-2">
-        <h1 className="text-6xl font-bold tracking-tighter text-foreground">
-          404
-        </h1>
-        <h2 className="text-xl font-semibold tracking-tight text-foreground">
-          Page not found
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          The page you&apos;re looking for doesn&apos;t exist or has been moved.
-        </p>
-      </div>
-      <Link
-        href="/"
-        className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
-      >
-        Go home
-      </Link>
+    <div className="doc-shell-content no-toc">
+      <article className="reading-column">
+        <h1 className="not-found-title">This page doesn&apos;t exist.</h1>
+        <p className="not-found-sentence">It may have moved when a topic was renamed.</p>
+        {topics.length > 0 && (
+          <>
+            <p className="nav-section-label">Topics</p>
+            <ul className="not-found-topics">
+              {topics.map((topic) => (
+                <li key={topic.slug}>
+                  <Link href={`/${topic.slug}/`}>{topic.slug}</Link>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </article>
     </div>
   );
 }

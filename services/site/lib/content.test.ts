@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ContentNotFoundError, ContentValidationError } from '@staycurrent/core';
-import { getTopic, getTopicCutDate, getTopicSlugs, reserveMermaidSpace } from './content';
+import { getTopic, getTopicCutDate, getTopicSlugs, listTopicCards, reserveMermaidSpace } from './content';
 
 /**
  * `@staycurrent/core`'s own frontmatter-fixture helper
@@ -107,6 +107,55 @@ describe('getTopicSlugs', () => {
 
     expect(() => getTopicSlugs(root)).toThrow(/broken/);
     expect(() => getTopicSlugs(root)).toThrow(/cadence/);
+  });
+});
+
+describe('listTopicCards', () => {
+  it("returns each topic's card fields (title, stance, version, last_researched), sorted by slug", () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'testing', { title: 'Testing', stance: 'Test everything that can break.' });
+    writeTopicFixture(root, 'databases', {
+      title: 'Databases',
+      stance: 'Relational is the default.',
+      version: 3,
+      lastResearched: '2026-06-12',
+    });
+
+    const cards = listTopicCards(root);
+
+    expect(cards.map((c) => c.slug)).toEqual(['databases', 'testing']);
+    const databases = cards.find((c) => c.slug === 'databases');
+    expect(databases).toEqual({
+      slug: 'databases',
+      title: 'Databases',
+      stance: 'Relational is the default.',
+      version: 3,
+      lastResearched: '2026-06-12',
+    });
+  });
+
+  // The Topic Library's designed first-run empty state (01-ui-design.md)
+  // renders for a validly-empty topics/ directory — never an error.
+  it('returns an empty array for a root with an existing but empty topics/ directory', () => {
+    const root = makeTmpRoot();
+    fs.mkdirSync(path.join(root, 'topics'), { recursive: true });
+    expect(listTopicCards(root)).toEqual([]);
+  });
+
+  // Mirrors getTopicSlugs: a mis-resolved root must not ship a green empty
+  // library instead of failing the build.
+  it('throws when the root has no topics/ directory at all', () => {
+    const root = makeTmpRoot();
+    expect(() => listTopicCards(root)).toThrow(/topics\//);
+  });
+
+  it('throws when the listTopics sweep reports any invalid topic', () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'databases', { title: 'Databases' });
+    writeTopicFixture(root, 'broken', { cadence: 'weekly' });
+
+    expect(() => listTopicCards(root)).toThrow(/broken/);
+    expect(() => listTopicCards(root)).toThrow(/cadence/);
   });
 });
 
