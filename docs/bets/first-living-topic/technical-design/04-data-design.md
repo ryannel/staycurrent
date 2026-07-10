@@ -111,8 +111,8 @@ last_researched: 2026-06-12     # ISO date, updated by every run, cut or no-cut
 | Field | Type | Description |
 |-------|------|-------------|
 | `topic` | string, kebab-case | Must equal the parent directory name (`topics/<topic>/`); immutable once created — the reconciliation check greps for drift. |
-| `title` | string | Display title; no format constraint. |
-| `stance` | string, one sentence | The card one-liner on the home library; distinct from the article body's stance callout (≤ 3 sentences, see Document anatomy). |
+| `title` | string, non-blank | Display title; must carry visible text — empty or whitespace-only fails validation (change-proposal-6). |
+| `stance` | string, one sentence, non-blank | The card one-liner on the home library; must carry visible text — empty or whitespace-only fails validation (change-proposal-6). Distinct from the article body's stance callout (≤ 3 sentences, see Document anatomy). |
 | `version` | integer | Positive, monotonic; increments only at a cut; must equal the highest-numbered `versions/vN/` directory present. |
 | `status` | enum: `current` \| `in-research` | The only two stored values, ever. `due` is never one of them — it is derived at read time as `last_researched + cadence < today`. |
 | `cadence` | string, pattern `<int>d` | Research interval in days, e.g. `90d`. |
@@ -460,6 +460,7 @@ returning a `GateResult` that names the exact missing or mismatched artifact on 
 | Only content-core mutates a topic's directory, and only via stage → gate → commit | `topic.md` Invariants; [ADR 0003](../../../architecture/decisions/0003-single-fail-closed-publish-gate.md) |
 | One cut is one git commit: `cut(<slug>): v<N>`, or `log(<slug>): no-cut` for a resolved no-cut run | `version.md` Notes; design system Skill Anatomy (action contract) |
 | A topic showing `status: in-research` with no matching `.staycurrent/sessions/<slug>.md` reverts to `current` on next read, reported as a reconciliation | `topic.md` Notes; `research-run.md` Invariants |
+| The live `article.md` frontmatter passes the loaders' schema (types, status enum, non-blank `title`/`stance`) — gate check 10 | Frontmatter field table above; change-proposal-6 |
 | An abandoned (discarded) session appends nothing to `research-log.md` and leaves no trace in `topics/` | `research-run.md` Lifecycle |
 
 The gate runs against the **staged** prospective tree — the state `topics/` will hold
