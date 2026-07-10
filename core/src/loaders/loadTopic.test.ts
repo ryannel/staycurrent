@@ -92,6 +92,66 @@ describe('loadTopic', () => {
     }
   });
 
+  it('throws ContentValidationError naming the field for a whitespace-only stance — G8', () => {
+    const root = makeTmpRoot();
+    // writeTopicFixture quotes stance in the raw YAML, so '   ' survives as a
+    // genuine whitespace string rather than collapsing to null.
+    writeTopicFixture(root, 'databases', { stance: '   ' });
+
+    try {
+      loadTopic(root, 'databases');
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(ContentValidationError);
+      const e = err as ContentValidationError;
+      expect(e.file).toBe('topics/databases/article.md');
+      // Discriminating on the new branch's exact message, not just
+      // `includes("field 'stance'")` — the old 'must be a string' branch also
+      // contains that substring, so a loosely-worded assertion would still
+      // pass if the new blank-value tightening regressed.
+      expect(e.issues).toContain("field 'stance' must not be empty or whitespace-only");
+    }
+  });
+
+  it('throws ContentValidationError naming the field for a whitespace-only title — G8', () => {
+    // writeTopicFixture interpolates title unquoted, so a whitespace-only value
+    // must be quoted in the raw YAML to survive as a string rather than
+    // collapsing to null (which would instead hit the pre-existing
+    // 'must be a string' branch, not the new blank-value tightening).
+    const root = makeTmpRoot();
+    writeFile(
+      root,
+      'topics/databases/article.md',
+      [
+        '---',
+        'topic: databases',
+        'title: "   "',
+        'stance: "A valid stance for this fixture."',
+        'version: 1',
+        'status: current',
+        'cadence: 90d',
+        'last_researched: 2026-01-15',
+        '---',
+        '',
+        '# Databases',
+        '',
+        'Body.',
+        '',
+      ].join('\n')
+    );
+
+    try {
+      loadTopic(root, 'databases');
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(ContentValidationError);
+      const e = err as ContentValidationError;
+      // Discriminating on the new branch's exact message — see the stance
+      // test above for why a bare `includes("field 'title'")` is not enough.
+      expect(e.issues).toContain("field 'title' must not be empty or whitespace-only");
+    }
+  });
+
   it('converts a YAML parse exception into ContentValidationError, never a bare throw', () => {
     const root = makeTmpRoot();
     writeFile(root, 'topics/databases/article.md', '---\ntopic: [unclosed\n---\n\nBody.\n');

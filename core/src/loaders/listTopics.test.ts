@@ -51,6 +51,59 @@ describe('listTopics', () => {
     expect(errors[0].message).toContain('status');
   });
 
+  it('reports a whitespace-only stance in errors by slug, naming the field — G8', () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'good-topic');
+    // writeTopicFixture quotes stance in the raw YAML, so '   ' survives as a
+    // genuine whitespace string rather than collapsing to null.
+    writeTopicFixture(root, 'blank-stance', { stance: '   ' });
+
+    const { topics, errors } = listTopics(root);
+    expect(topics.map((t) => t.topic)).toEqual(['good-topic']);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].slug).toBe('blank-stance');
+    // Discriminating on the new branch's exact message — a bare
+    // `toContain('stance')` also matches the pre-existing 'must be a string'
+    // branch, so it would not catch a regression in the new blank-value check.
+    expect(errors[0].message).toContain("field 'stance' must not be empty or whitespace-only");
+  });
+
+  it('reports a whitespace-only title in errors by slug, naming the field — G8', () => {
+    const root = makeTmpRoot();
+    writeTopicFixture(root, 'good-topic');
+    // writeTopicFixture interpolates title unquoted, so a whitespace-only
+    // value must be quoted in the raw YAML to survive as a string rather than
+    // collapsing to null (which would instead hit the pre-existing 'must be a
+    // string' branch, not the new blank-value tightening) — mirrors
+    // loadTopic.test.ts's hand-written title fixture.
+    writeFile(
+      root,
+      'topics/blank-title/article.md',
+      [
+        '---',
+        'topic: blank-title',
+        'title: "   "',
+        'stance: "A valid stance for this fixture."',
+        'version: 1',
+        'status: current',
+        'cadence: 90d',
+        'last_researched: 2026-01-15',
+        '---',
+        '',
+        '# Blank Title',
+        '',
+        'Body.',
+        '',
+      ].join('\n')
+    );
+
+    const { topics, errors } = listTopics(root);
+    expect(topics.map((t) => t.topic)).toEqual(['good-topic']);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].slug).toBe('blank-title');
+    expect(errors[0].message).toContain("field 'title' must not be empty or whitespace-only");
+  });
+
   it('reports a topic whose frontmatter.topic does not match its directory name', () => {
     const root = makeTmpRoot();
     writeTopicFixture(root, 'dir-name', { topicField: 'different-name' });

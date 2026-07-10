@@ -25,6 +25,7 @@ function skillMd(name: string, articleVersion: number, extraLine?: string): stri
 export interface GateFixtureOptions {
   n?: number; // the version this call seeds under versions/vN/; default 1
   version?: number; // live article.md frontmatter `version`; default = n
+  stance?: string; // live article.md frontmatter `stance`; default a valid one-sentence stance
   cadence?: string; // default '90d'
   lastResearched?: string; // default 10 days ago
   omitLastResearched?: boolean; // drop the last_researched line entirely
@@ -51,6 +52,7 @@ export function writeGateFixture(dir: string, slug: string, opts: GateFixtureOpt
   const lastResearched = opts.lastResearched ?? isoDaysAgo(10);
   const version = opts.version ?? n;
   const topicField = opts.topicField ?? slug;
+  const stance = opts.stance ?? 'A committed one-sentence position for gate testing.';
   const cadence = opts.cadence ?? '90d';
   const skillArticleVersion = opts.skillArticleVersion ?? n;
   const frozenSkillArticleVersion = opts.frozenSkillArticleVersion ?? skillArticleVersion;
@@ -61,7 +63,7 @@ export function writeGateFixture(dir: string, slug: string, opts: GateFixtureOpt
     '---',
     `topic: ${topicField}`,
     'title: Fixture Topic',
-    'stance: "A committed one-sentence position for gate testing."',
+    `stance: "${stance}"`,
     `version: ${version}`,
     'status: current',
     `cadence: ${cadence}`,

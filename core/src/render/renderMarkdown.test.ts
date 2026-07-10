@@ -56,6 +56,17 @@ describe('renderMarkdown', () => {
     expect(html.includes('A-->B') || html.includes('A--&gt;B')).toBe(true);
   });
 
+  it('runs the protocol sanitizer after the mermaid transform without touching data-mermaid — only href/src are in scope', () => {
+    // sanitizeUrlProtocols runs last in the pipeline (review patch) so it sees
+    // every attribute a prior transform emits — but it only ever inspects
+    // href/src, so a mermaid source that happens to contain a hostile-looking
+    // scheme string must survive verbatim inside data-mermaid.
+    const md = '```mermaid\ngraph TD; A[javascript:alert(1)] --> B;\n```\n';
+    const { html } = renderMarkdown(md);
+
+    expect(html).toContain('data-mermaid="graph TD; A[javascript:alert(1)] --> B;');
+  });
+
   it('leaves a mermaid fence as an ordinary code block when opts.mermaid === false', () => {
     const md = '```mermaid\ngraph TD; A-->B;\n```\n';
     const { html } = renderMarkdown(md, { mermaid: false });
@@ -67,5 +78,75 @@ describe('renderMarkdown', () => {
 
   it('does not throw on well-formed markdown with no mermaid fences and no headings', () => {
     expect(() => renderMarkdown('just a paragraph of text.\n')).not.toThrow();
+  });
+
+  describe('protocol allowlist (G7)', () => {
+    it('strips a javascript: href but preserves the link text', () => {
+      const { html } = renderMarkdown('[hostile](javascript:alert(1))\n');
+      expect(html).not.toContain('javascript:');
+      expect(html).toContain('hostile');
+      expect(html).toContain('<a>hostile</a>');
+    });
+
+    it('strips a data: image src but preserves the element', () => {
+      const { html } = renderMarkdown('![img](data:image/svg+xml,<svg/>)\n');
+      expect(html).not.toContain('data:image');
+      expect(html).toContain('<img');
+    });
+
+    it('strips a vbscript: href', () => {
+      const { html } = renderMarkdown('[x](vbscript:msgbox(1))\n');
+      expect(html).not.toContain('vbscript:');
+    });
+
+    it('strips a hostile protocol regardless of case — JaVaScRiPt: is not a bypass', () => {
+      const { html } = renderMarkdown('[x](JaVaScRiPt:alert(1))\n');
+      expect(html.toLowerCase()).not.toContain('javascript:');
+      expect(html).toContain('<a>x</a>');
+    });
+
+    it('leaves an https: link untouched, byte-identical', () => {
+      const { html } = renderMarkdown('[ok](https://example.com/x)\n');
+      expect(html).toContain('<a href="https://example.com/x">ok</a>');
+    });
+
+    it('leaves an http: link untouched', () => {
+      const { html } = renderMarkdown('[ok](http://example.com/x)\n');
+      expect(html).toContain('href="http://example.com/x"');
+    });
+
+    it('leaves a mailto: link untouched', () => {
+      const { html } = renderMarkdown('[mail](mailto:a@example.com)\n');
+      expect(html).toContain('href="mailto:a@example.com"');
+    });
+
+    it('leaves a relative link untouched — no scheme means nothing to sanitize', () => {
+      const { html } = renderMarkdown('[rel](./sibling)\n');
+      expect(html).toContain('href="./sibling"');
+    });
+
+    it('leaves a fragment anchor untouched', () => {
+      const { html } = renderMarkdown('[frag](#anchor)\n');
+      expect(html).toContain('href="#anchor"');
+    });
+
+    it('leaves a protocol-relative URL untouched — resolved as https on this https-only site', () => {
+      const { html } = renderMarkdown('[rel](//example.com/path)\n');
+      expect(html).toContain('href="//example.com/path"');
+    });
+
+    // Confirmed surviving mutant (rehypeSanitizeProtocols.test.ts): deleting the
+    // protocol parser's `.toLowerCase()` leaves this whole describe block green
+    // today because every existing case tests the hostile direction. Pinned here
+    // through the full renderMarkdown pipeline on the safe side.
+    it('leaves an uppercase-scheme https link untouched, byte-identical', () => {
+      const { html } = renderMarkdown('[ok](HTTPS://example.com/x)\n');
+      expect(html).toContain('href="HTTPS://example.com/x"');
+    });
+
+    it('leaves a mixed-case mailto link untouched, byte-identical', () => {
+      const { html } = renderMarkdown('[mail](MailTo:a@example.com)\n');
+      expect(html).toContain('href="MailTo:a@example.com"');
+    });
   });
 });

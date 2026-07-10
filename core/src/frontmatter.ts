@@ -10,6 +10,23 @@ export interface FieldValidation<T> {
 const CADENCE_RE = /^[1-9]\d*d$/;
 const STATUS_VALUES = new Set(['current', 'in-research']);
 
+// Zero-width/format codepoints that render as nothing in a browser but are not
+// whitespace under `.trim()` — U+200B (ZERO WIDTH SPACE), U+200C (ZERO WIDTH
+// NON-JOINER), U+200D (ZERO WIDTH JOINER), U+2060 (WORD JOINER), U+FEFF (ZERO
+// WIDTH NO-BREAK SPACE / BOM). A title or stance built only from these passes
+// `value.trim() === ''` as non-empty while reading as blank to an actual
+// reader — the exact G8 failure this strips before the emptiness test.
+const ZERO_WIDTH_RE = /[​‌‍⁠﻿]/g;
+
+/**
+ * True iff `value` carries no visible content once zero-width/format
+ * characters are removed — the blank check every `title`/`stance` field
+ * shares (validator here, `createTopic`'s pre-write guard elsewhere).
+ */
+export function isBlankField(value: string): boolean {
+  return value.replace(ZERO_WIDTH_RE, '').trim() === '';
+}
+
 /**
  * Validates a topic's live `article.md` frontmatter against the schema
  * `04-data-design.md` fixes for `topics/<slug>/article.md`, and the `topic ===
@@ -29,10 +46,18 @@ export function validateTopicFrontmatter(
   }
 
   const title = typeof data.title === 'string' ? data.title : undefined;
-  if (title === undefined) issues.push("field 'title' must be a string");
+  if (title === undefined) {
+    issues.push("field 'title' must be a string");
+  } else if (isBlankField(title)) {
+    issues.push("field 'title' must not be empty or whitespace-only");
+  }
 
   const stance = typeof data.stance === 'string' ? data.stance : undefined;
-  if (stance === undefined) issues.push("field 'stance' must be a string");
+  if (stance === undefined) {
+    issues.push("field 'stance' must be a string");
+  } else if (isBlankField(stance)) {
+    issues.push("field 'stance' must not be empty or whitespace-only");
+  }
 
   const version =
     typeof data.version === 'number' && Number.isInteger(data.version) && data.version > 0

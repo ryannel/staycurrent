@@ -9,12 +9,16 @@ Run './dev test bet first-living-topic' to see it fail; it will pass when this s
 """
 
 import json
+import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CORE_INDEX_URI = (REPO_ROOT / "core" / "dist" / "index.js").as_uri()
+SITE_DIR = REPO_ROOT / "services" / "site"
+OUT_DIR = SITE_DIR / "out"
 
 
 def _run_node(script: str, timeout: int = 30) -> subprocess.CompletedProcess:
@@ -125,3 +129,74 @@ console.log(JSON.stringify({{ topics: sweep.topics.map(t => t.topic), errors: sw
     out = json.loads(result.stdout.strip().splitlines()[-1])
     assert "databases" in out["topics"], "expected the real databases topic to keep validating"
     assert out["errors"] == [], f"hardening must not break shipped content: {out['errors']}"
+
+
+def test_site_build_strips_a_hostile_link_from_the_exported_article_html():
+    """The slice's site-build half: renderMarkdown's protocol allowlist (G7) must
+    hold through the REAL site pipeline, not just core's unit tests. A fixture
+    copy of the gate-cut topics/databases/ tree gets a hostile javascript: link
+    injected into the article body; `pnpm build` runs against it via
+    STAYCURRENT_REPO_ROOT (services/site/lib/content.ts's override — same
+    mechanism slice 7's fail-closed test uses) and must still succeed (the
+    sanitizer strips the href; it does not fail the build), with the exported
+    HTML carrying no `javascript:`. The repository's own topics/ is never
+    touched — only a tmp_path copy is modified.
+
+    A successful build against the fixture root DOES rewrite services/site/out/
+    (unlike slice 7's failing-build case, which never reaches the write) — so
+    out/ is snapshotted aside first and restored in a `finally`, keeping the
+    sibling tests' (slice 7's) already-built artifact intact regardless of
+    this test's outcome.
+    """
+    with tempfile.TemporaryDirectory(prefix="staycurrent-slice10-build-") as tmp:
+        tmp_path = Path(tmp)
+        fixture_root = tmp_path / "fixture-root"
+        fixture_topic_dir = fixture_root / "topics" / "databases"
+        shutil.copytree(REPO_ROOT / "topics" / "databases", fixture_topic_dir)
+
+        article = fixture_topic_dir / "article.md"
+        original = article.read_text()
+        article.write_text(original + "\n[hostile](javascript:alert(1))\n")
+
+        out_existed_before = OUT_DIR.exists()
+        out_backup = tmp_path / "out-backup"
+        if out_existed_before:
+            shutil.copytree(OUT_DIR, out_backup)
+
+        try:
+            env = {**os.environ, "STAYCURRENT_REPO_ROOT": str(fixture_root)}
+            result = subprocess.run(
+                ["pnpm", "build"],
+                cwd=SITE_DIR,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            combined = result.stdout + result.stderr
+            assert result.returncode == 0, (
+                "expected `pnpm build` to succeed against a fixture root carrying a "
+                "hostile javascript: link in the article body — the sanitizer strips "
+                f"the href, it must not fail the build.\n{combined}"
+            )
+
+            article_html = OUT_DIR / "databases" / "index.html"
+            assert article_html.exists(), (
+                f"{article_html.relative_to(REPO_ROOT)} does not exist after the fixture build"
+            )
+            html = article_html.read_text()
+            assert "javascript:" not in html, (
+                "expected the injected javascript: href stripped from the exported "
+                "article HTML — the hardening must survive the full site build, not "
+                "just core's unit tests"
+            )
+        finally:
+            if out_existed_before:
+                shutil.rmtree(OUT_DIR, ignore_errors=True)
+                shutil.copytree(out_backup, OUT_DIR)
+
+        # The repository's own content tree is never touched by this proof.
+        real_article = (REPO_ROOT / "topics" / "databases" / "article.md").read_text()
+        assert "javascript:" not in real_article, (
+            "the repository's own topics/databases/article.md was modified by this test"
+        )

@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { GateFailure, GateResult, PublishGateOptions } from './types.js';
 import { isIsoDate, normalizeDateValue } from './dates.js';
 import { ContentValidationError } from './errors.js';
+import { validateTopicFrontmatter } from './frontmatter.js';
 import { parseProvenance } from './parseProvenance.js';
 import { readMatterFile } from './loaders/shared.js';
 import { RESERVED_SLUGS } from './slug.js';
@@ -355,8 +356,33 @@ function checkCadenceDateValid(
 }
 
 /**
+ * Check 10, `frontmatter-schema` (03-api-design.md, Publish gate; change-proposal-6):
+ * the live `article.md` frontmatter must pass `validateTopicFrontmatter` — the same
+ * module-internal validator `loadTopic`/`listTopics` share, so a gate-passed cut can
+ * never land content the loaders would then reject. Runs unconditionally, like checks
+ * 7-9, whatever N resolved to. Deliberately not deduped against any other check's
+ * territory (check 9's cadence/date shape, check 7's topic/slug match): one violated
+ * field may surface as more than one `GateFailure`, and that double-reporting is
+ * aggregation by design, not a bug to special-case away.
+ */
+function checkFrontmatterSchema(
+  articleData: Record<string, unknown>,
+  slug: string,
+  failures: GateFailure[]
+): void {
+  const { issues } = validateTopicFrontmatter(articleData, slug);
+  for (const issue of issues) {
+    failures.push({
+      check: 'frontmatter-schema',
+      path: 'article.md',
+      message: `article.md: ${issue}`,
+    });
+  }
+}
+
+/**
  * The one place gate logic exists (ADR 0003): validates that `dir`, treated as a
- * topic-shaped directory, is internally consistent across all nine `GateCheckId`
+ * topic-shaped directory, is internally consistent across all ten `GateCheckId`
  * checks (03-api-design.md, Publish gate). Never throws for a content violation —
  * every violation becomes a `GateFailure`; only a nonexistent (or non-directory)
  * `dir` propagates a raw fs error, a usage error rather than a content problem.
@@ -408,6 +434,7 @@ export function runPublishGate(dir: string, opts: PublishGateOptions = {}): Gate
   checkSlugMatchesDirname(articleData, slug, failures);
   checkReservedSlug(articleData, failures);
   checkCadenceDateValid(dir, articleData, nImplausible ? 0 : n, slug, todayUtcMs, failures);
+  checkFrontmatterSchema(articleData, slug, failures);
 
   // `dir` binds this result to the tree it validated: executeCut refuses a
   // GateResult produced for any other directory (change-proposal-1, rule d).

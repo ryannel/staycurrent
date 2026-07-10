@@ -315,7 +315,7 @@ describe('runPublishGate', () => {
     expect(failure.message).not.toContain('has no entries');
   });
 
-  it('fails slug-matches-dirname — and only it — when article.md topic does not equal the directory name', () => {
+  it('fails slug-matches-dirname, aggregated with frontmatter-schema — the schema shares the topic/slug check (check-10 overlap)', () => {
     const dir = fixtureDir(makeTmpRoot());
     writeGateFixture(dir, 'fixture-topic', { topicField: 'other-topic' });
 
@@ -326,6 +326,11 @@ describe('runPublishGate', () => {
         check: 'slug-matches-dirname',
         path: 'article.md',
         message: "article.md frontmatter topic 'other-topic' does not match directory 'fixture-topic'",
+      },
+      {
+        check: 'frontmatter-schema',
+        path: 'article.md',
+        message: "article.md: field 'topic' ('other-topic') does not match directory name ('fixture-topic')",
       },
     ]);
   });
@@ -348,7 +353,7 @@ describe('runPublishGate', () => {
   });
 
   describe('cadence-date-valid', () => {
-    it('fails when cadence does not match <int>d', () => {
+    it('fails when cadence does not match <int>d — aggregated with frontmatter-schema, never deduped (change-proposal-6)', () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic', { cadence: '90days' });
 
@@ -359,6 +364,12 @@ describe('runPublishGate', () => {
           check: 'cadence-date-valid',
           path: 'article.md',
           message: "article.md: cadence '90days' does not match <int>d",
+        },
+        {
+          check: 'frontmatter-schema',
+          path: 'article.md',
+          message:
+            "article.md: field 'cadence' must match the pattern <int>d with at least 1 day, got '90days'",
         },
       ]);
     });
@@ -378,7 +389,7 @@ describe('runPublishGate', () => {
       ]);
     });
 
-    it('fails when last_researched is not date-shaped at all', () => {
+    it('fails when last_researched is not date-shaped at all — aggregated with frontmatter-schema (shared date-shape territory)', () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic', { cutDate: FIXED_CUT, lastResearched: 'sometime' });
 
@@ -390,10 +401,15 @@ describe('runPublishGate', () => {
           path: 'article.md',
           message: "article.md: last_researched 'sometime' is not a valid date on or before today",
         },
+        {
+          check: 'frontmatter-schema',
+          path: 'article.md',
+          message: "article.md: field 'last_researched' must be an ISO date (YYYY-MM-DD), got 'sometime'",
+        },
       ]);
     });
 
-    it('fails when last_researched is absent from the frontmatter', () => {
+    it('fails when last_researched is absent from the frontmatter — aggregated with frontmatter-schema', () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic', { cutDate: FIXED_CUT, omitLastResearched: true });
 
@@ -404,6 +420,11 @@ describe('runPublishGate', () => {
           check: 'cadence-date-valid',
           path: 'article.md',
           message: "article.md: last_researched 'undefined' is not a valid date on or before today",
+        },
+        {
+          check: 'frontmatter-schema',
+          path: 'article.md',
+          message: "article.md: field 'last_researched' must be an ISO date (YYYY-MM-DD), got 'undefined'",
         },
       ]);
     });
@@ -437,6 +458,33 @@ describe('runPublishGate', () => {
     });
   });
 
+  describe('frontmatter-schema', () => {
+    it('fails naming the issue — and only frontmatter-schema — when the live stance is blank', () => {
+      const dir = fixtureDir(makeTmpRoot());
+      writeGateFixture(dir, 'fixture-topic', { stance: '   ' });
+
+      const result = runPublishGate(dir);
+
+      expect(result.failures).toEqual([
+        {
+          check: 'frontmatter-schema',
+          path: 'article.md',
+          message: "article.md: field 'stance' must not be empty or whitespace-only",
+        },
+      ]);
+    });
+
+    it('adds no check-10 failures for an otherwise complete, schema-valid tree', () => {
+      const dir = fixtureDir(makeTmpRoot());
+      writeGateFixture(dir, 'fixture-topic');
+
+      const result = runPublishGate(dir);
+
+      expect(result.ok).toBe(true);
+      expect(result.failures.some((f) => f.check === 'frontmatter-schema')).toBe(false);
+    });
+  });
+
   describe('N derivation', () => {
     it('fails — with exactly one failure — when no versions/vN/ exists at all (N=0 is not a pass)', () => {
       const dir = fixtureDir(makeTmpRoot());
@@ -463,12 +511,20 @@ describe('runPublishGate', () => {
       const result = runPublishGate(dir);
 
       expect(result.ok).toBe(false);
-      // The N=0 failure blocks alone; no "expected v0" guidance is emitted.
+      // The N-derivation failure blocks alone among the N-relative checks — no
+      // "expected v0" guidance is emitted — but frontmatter-schema (check 10) is
+      // N-independent and still fires on its own: `version: 0` fails
+      // validateTopicFrontmatter's positive-integer rule regardless of N.
       expect(result.failures).toEqual([
         {
           check: 'snapshot-complete',
           path: 'versions/',
           message: 'no version snapshot exists — a topic carries at least versions/v1/',
+        },
+        {
+          check: 'frontmatter-schema',
+          path: 'article.md',
+          message: "article.md: field 'version' must be a positive integer",
         },
       ]);
     });

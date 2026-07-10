@@ -95,5 +95,29 @@ describe('createTopic', () => {
         ContentValidationError
       );
     });
+
+    it('a blank title — mirroring the validator, the one producer of title values must not seed what the loaders reject', () => {
+      const root = makeTmpRoot();
+
+      try {
+        createTopic(root, 'edge-computing', { title: '' });
+        expect.unreachable();
+      } catch (err) {
+        expect(err).toBeInstanceOf(ContentValidationError);
+        const e = err as ContentValidationError;
+        expect(e.issues).toEqual(["field 'title' must not be empty or whitespace-only"]);
+      }
+
+      // Nothing was written: the guard runs before any fs write, so a retry
+      // with a real title is not blocked by a stale staged/topic tree.
+      expect(fs.existsSync(path.join(root, '.staycurrent', 'staged', 'edge-computing'))).toBe(false);
+    });
+
+    it('a whitespace-only title', () => {
+      const root = makeTmpRoot();
+      expect(() => createTopic(root, 'edge-computing', { title: '   \t  ' })).toThrow(
+        ContentValidationError
+      );
+    });
   });
 });

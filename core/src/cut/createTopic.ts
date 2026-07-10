@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CreateTopicOptions, StagedCut } from '../types.js';
 import { ContentValidationError } from '../errors.js';
+import { isBlankField } from '../frontmatter.js';
 import { assertValidSlug } from '../slug.js';
 import { buildDirAtomically, todayIso, writeMatterFile } from '../write.js';
 
@@ -76,6 +77,14 @@ function writeFoundingSkeleton(dir: string, slug: string, title: string, today: 
  */
 export function createTopic(root: string, slug: string, opts: CreateTopicOptions): StagedCut {
   assertValidSlug(slug);
+
+  // createTopic is the one producer of `title` values — it must not seed what
+  // `validateTopicFrontmatter` (the loaders' shared validator) rejects. Mirrors
+  // that validator's own message verbatim (change-proposal-6 addendum) and
+  // throws before any fs write, exactly like the slug guard above.
+  if (isBlankField(opts.title)) {
+    throw new ContentValidationError(slug, 'title', ["field 'title' must not be empty or whitespace-only"]);
+  }
 
   const topicDir = path.join(root, 'topics', slug);
   if (fs.existsSync(topicDir)) {

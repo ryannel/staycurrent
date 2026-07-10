@@ -76,6 +76,62 @@ describe('validateTopicFrontmatter', () => {
     expect(result.issues.some((issue) => issue.includes("field 'last_researched'"))).toBe(true);
   });
 
+  it('rejects an empty-string title, naming the field', () => {
+    const result = validateTopicFrontmatter({ ...VALID_TOPIC, title: '' }, 'databases');
+    expect(result.value).toBeUndefined();
+    expect(result.issues.some((issue) => issue.includes("field 'title'"))).toBe(true);
+  });
+
+  it('rejects a whitespace-only title, naming the field — a blank title has no accessible link name', () => {
+    const result = validateTopicFrontmatter({ ...VALID_TOPIC, title: '   ' }, 'databases');
+    expect(result.value).toBeUndefined();
+    expect(result.issues.some((issue) => issue.includes("field 'title'"))).toBe(true);
+  });
+
+  it('rejects an empty-string stance, naming the field', () => {
+    const result = validateTopicFrontmatter({ ...VALID_TOPIC, stance: '' }, 'databases');
+    expect(result.value).toBeUndefined();
+    expect(result.issues.some((issue) => issue.includes("field 'stance'"))).toBe(true);
+  });
+
+  it('rejects a whitespace-only stance (spaces, tabs, newlines), naming the field — G8', () => {
+    const result = validateTopicFrontmatter({ ...VALID_TOPIC, stance: '  \t\n  ' }, 'databases');
+    expect(result.value).toBeUndefined();
+    expect(result.issues.some((issue) => issue.includes("field 'stance'"))).toBe(true);
+  });
+
+  it('rejects a title built only from zero-width/format characters — renders blank though .trim() sees content (G8)', () => {
+    const result = validateTopicFrontmatter(
+      { ...VALID_TOPIC, title: '​‌‍⁠﻿' },
+      'databases'
+    );
+    expect(result.value).toBeUndefined();
+    expect(
+      result.issues.some((issue) => issue === "field 'title' must not be empty or whitespace-only")
+    ).toBe(true);
+  });
+
+  it('rejects a stance built only from zero-width/format characters mixed with ordinary whitespace (G8)', () => {
+    const result = validateTopicFrontmatter(
+      { ...VALID_TOPIC, stance: '  ​ \t⁠\n﻿ ' },
+      'databases'
+    );
+    expect(result.value).toBeUndefined();
+    expect(
+      result.issues.some((issue) => issue === "field 'stance' must not be empty or whitespace-only")
+    ).toBe(true);
+  });
+
+  it('accepts a title/stance with meaningful text padded by surrounding whitespace — only all-whitespace is rejected', () => {
+    const result = validateTopicFrontmatter(
+      { ...VALID_TOPIC, title: '  Databases  ', stance: '  A real stance.  ' },
+      'databases'
+    );
+    expect(result.issues).toEqual([]);
+    expect(result.value?.title).toBe('  Databases  ');
+    expect(result.value?.stance).toBe('  A real stance.  ');
+  });
+
   it('collects every violated field in one pass rather than stopping at the first', () => {
     const result = validateTopicFrontmatter(
       { topic: 'wrong-slug', status: 'archived', cadence: 'weekly' },

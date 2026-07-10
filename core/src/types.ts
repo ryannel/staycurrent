@@ -69,7 +69,8 @@ export type GateCheckId =
   | 'provenance-non-empty'
   | 'slug-matches-dirname'
   | 'reserved-slug'
-  | 'cadence-date-valid';
+  | 'cadence-date-valid'
+  | 'frontmatter-schema';
 
 export interface GateFailure {
   check: GateCheckId;
