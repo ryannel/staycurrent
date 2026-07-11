@@ -19,8 +19,9 @@
 
 **How we prove it:** The operator runs one real research session end-to-end in Claude Code — convening the run with `convene databases`, producing a ranked digest and a verdict stated as a position, then either directing a v2 cut through `cut databases` or an honest no-cut through `log databases`. The operator then inspects the resulting `git diff`, confirming every changed file is one the workbench's session, gate, and cut mechanics produced; inspects the new changelog entry, confirming v2 stands alone and a reader current on v1 is done after reading it; and inspects the live site after its rebuild, confirming the new state is visible there. Finally, to prove the discard path leaves zero trace, the operator convenes a second session and discards it — then observes `git status` clean, `status` output unchanged, and no new entry in `research-log.md`.
 
-**Test file:** `tests/bets/first-living-topic/test_milestone_4_loop_closes.py` — generated red at Delivery start; drives the `workbench` surface's `subprocess-cli` medium over the `convene`, `recordNoCut`, and `executeCut` interfaces in `technical-design/03-api-design.md`, against the `research-log.md` and `changelog.md` stores in `technical-design/04-data-design.md`.
+**Test file:** `tests/bets/first-living-topic/test_milestone_4_loop-closes.py` — generated red at Delivery start; drives the `workbench` surface's `subprocess-cli` medium over the `convene`, `recordNoCut`, and `executeCut` interfaces in `technical-design/03-api-design.md`, against the `research-log.md` and `changelog.md` stores in `technical-design/04-data-design.md`.
 
 ## Slices
 
-> *Slices authored on arrival.*
+- [Slice 4.1 — workbench: Loop Skills & Doc](./01-loop-skills.md)
+- [Slice 4.2 — workbench: Loop Rehearsal](./02-loop-rehearsal.md)
