@@ -70,7 +70,8 @@ export type GateCheckId =
   | 'slug-matches-dirname'
   | 'reserved-slug'
   | 'cadence-date-valid'
-  | 'frontmatter-schema';
+  | 'frontmatter-schema'
+  | 'changelog-schema';
 
 export interface GateFailure {
   check: GateCheckId;

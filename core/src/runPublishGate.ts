@@ -5,7 +5,8 @@ import { isIsoDate, normalizeDateValue } from './dates.js';
 import { ContentValidationError } from './errors.js';
 import { validateTopicFrontmatter } from './frontmatter.js';
 import { parseProvenance } from './parseProvenance.js';
-import { readMatterFile } from './loaders/shared.js';
+import { parseChangelogEntries } from './loaders/loadChangelog.js';
+import { readMatterFile, readTextFile } from './loaders/shared.js';
 import { RESERVED_SLUGS } from './slug.js';
 
 const CADENCE_RE = /^\d+d$/;
@@ -279,6 +280,42 @@ function checkProvenanceNonEmpty(dir: string, n: number, slug: string, failures:
   }
 }
 
+/**
+ * Check 11, `changelog-schema` (03-api-design.md, Publish gate; change-proposal-7):
+ * `dir/changelog.md` must parse through `parseChangelogEntries` — the identical
+ * module-internal core `loadChangelog` wraps for the read path, never a
+ * re-implementation of its heading grammar, descending-contiguity, or stance-line
+ * rules. Re-covers check 2's top-heading territory by design (one bad artifact may
+ * yield two failures — the same aggregation change-proposal-6 established for check
+ * 10 against check 9). A missing file reports check 1's shape rather than a parse
+ * error, since there is nothing to parse.
+ */
+function checkChangelogSchema(dir: string, slug: string, failures: GateFailure[]): void {
+  const relPath = 'changelog.md';
+  const raw = readTextFile(path.join(dir, relPath));
+  if (raw === undefined) {
+    failures.push({
+      check: 'changelog-schema',
+      path: relPath,
+      message: `missing required artifact: ${relPath}`,
+    });
+    return;
+  }
+
+  try {
+    parseChangelogEntries(raw, slug, relPath);
+  } catch (err) {
+    if (!(err instanceof ContentValidationError)) throw err;
+    for (const issue of err.issues) {
+      failures.push({
+        check: 'changelog-schema',
+        path: relPath,
+        message: `${relPath}: ${issue}`,
+      });
+    }
+  }
+}
+
 function checkSlugMatchesDirname(
   articleData: Record<string, unknown>,
   dirname: string,
@@ -382,10 +419,11 @@ function checkFrontmatterSchema(
 
 /**
  * The one place gate logic exists (ADR 0003): validates that `dir`, treated as a
- * topic-shaped directory, is internally consistent across all ten `GateCheckId`
- * checks (03-api-design.md, Publish gate). Never throws for a content violation —
- * every violation becomes a `GateFailure`; only a nonexistent (or non-directory)
- * `dir` propagates a raw fs error, a usage error rather than a content problem.
+ * topic-shaped directory, is internally consistent across all eleven `GateCheckId`
+ * checks (03-api-design.md, Publish gate; change-proposal-7 added check 11). Never
+ * throws for a content violation — every violation becomes a `GateFailure`; only a
+ * nonexistent (or non-directory) `dir` propagates a raw fs error, a usage error
+ * rather than a content problem.
  */
 export function runPublishGate(dir: string, opts: PublishGateOptions = {}): GateResult {
   // Probe `dir` itself: ENOENT/ENOTDIR propagate raw and uncaught — 03's "may
@@ -424,6 +462,7 @@ export function runPublishGate(dir: string, opts: PublishGateOptions = {}): Gate
   } else {
     checkSnapshotComplete(dir, n, failures);
     checkChangelogTopEntry(dir, n, failures);
+    checkChangelogSchema(dir, slug, failures);
     checkArticleVersionMatch(articleData, n, failures);
     checkSkillVersionMatch(skillData, n, failures);
     checkSkillByteIdentical(dir, n, failures);

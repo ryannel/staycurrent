@@ -32,16 +32,16 @@ function splitSections(raw: string): Section[] {
 }
 
 /**
- * Parses `changelog.md` into structured, rendered entries, newest first
- * (03-api-design.md, `loadChangelog`).
+ * Parses changelog markdown text into structured, rendered entries, newest
+ * first (03-api-design.md, `loadChangelog`) — the module-internal
+ * parse-and-validate core `loadChangelog` wraps for the read path, and that
+ * `runPublishGate`'s check 11 (`changelog-schema`) calls directly against an
+ * arbitrary directory's `changelog.md` (change-proposal-7). One code path,
+ * never a re-implementation: `relPath` is caller-supplied so error messages
+ * read correctly whether the caller is a `topics/<slug>/changelog.md` load or
+ * a gate check pointed at a staged tree.
  */
-export function loadChangelog(root: string, slug: string): ChangelogEntry[] {
-  const relPath = `topics/${slug}/changelog.md`;
-  const raw = readTextFile(path.join(root, 'topics', slug, 'changelog.md'));
-  if (raw === undefined) {
-    throw new ContentNotFoundError(slug, relPath);
-  }
-
+export function parseChangelogEntries(raw: string, slug: string, relPath: string): ChangelogEntry[] {
   const entries: ChangelogEntry[] = [];
   let prevVersion: number | null = null;
 
@@ -138,4 +138,20 @@ export function loadChangelog(root: string, slug: string): ChangelogEntry[] {
   }
 
   return entries;
+}
+
+/**
+ * Loads and parses `topics/<slug>/changelog.md` (03-api-design.md,
+ * `loadChangelog`). Thin wrapper over `parseChangelogEntries`: resolves the
+ * root-relative read path and converts a missing file into
+ * `ContentNotFoundError`; all parsing/validation lives in the shared core.
+ */
+export function loadChangelog(root: string, slug: string): ChangelogEntry[] {
+  const relPath = `topics/${slug}/changelog.md`;
+  const raw = readTextFile(path.join(root, 'topics', slug, 'changelog.md'));
+  if (raw === undefined) {
+    throw new ContentNotFoundError(slug, relPath);
+  }
+
+  return parseChangelogEntries(raw, slug, relPath);
 }

@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runPublishGate } from './runPublishGate.js';
+import { createTopic } from './cut/createTopic.js';
 import { makeTmpRoot } from './loaders/fixtures.testutil.js';
-import { writeGateFixture } from './runPublishGate.testutil.js';
+import { isoDaysAgo, writeGateFixture } from './runPublishGate.testutil.js';
 
 // A fixed reference date, independent of the real system clock, for the
 // cadence-date-valid tests below (03-api-design.md: "opts.now makes check 9
@@ -14,6 +15,56 @@ const FIXED_LAST_RESEARCHED = '2026-06-29'; // 10 days before FIXED_NOW
 
 function fixtureDir(root: string, slug = 'fixture-topic'): string {
   return path.join(root, slug);
+}
+
+/**
+ * Upgrades a `writeGateFixture`'d v1 baseline (default `n`/`version` of 1) to
+ * carry a real v2 layer, mirroring the actual authoring path
+ * (core/src/cut/updateCut.test.ts's `authorV2`) — the only way to exercise a
+ * NON-founding changelog entry (check 11's real territory) without leaving
+ * every other check broken by an incomplete versions/ tree. `changelogV2Body`
+ * is the raw markdown under the new '## v2 — <date>' heading; the caller
+ * controls the Stance line's shape.
+ */
+function upgradeToV2(dir: string, changelogV2Body: string): void {
+  const cutDate = isoDaysAgo(1);
+
+  const articlePath = path.join(dir, 'article.md');
+  fs.writeFileSync(
+    articlePath,
+    fs.readFileSync(articlePath, 'utf8').replace(/^version: 1$/m, 'version: 2')
+  );
+
+  const changelogPath = path.join(dir, 'changelog.md');
+  const changelog = fs.readFileSync(changelogPath, 'utf8');
+  const firstEntryIdx = changelog.indexOf('## v1');
+  fs.writeFileSync(
+    changelogPath,
+    changelog.slice(0, firstEntryIdx) +
+      `## v2 — ${cutDate}\n\n${changelogV2Body}\n\n` +
+      changelog.slice(firstEntryIdx)
+  );
+
+  const skillPath = path.join(dir, 'skill', 'SKILL.md');
+  fs.writeFileSync(
+    skillPath,
+    fs.readFileSync(skillPath, 'utf8').replace(/^article_version: 1$/m, 'article_version: 2')
+  );
+  const skillMd = fs.readFileSync(skillPath);
+
+  const v2Dir = path.join(dir, 'versions', 'v2');
+  fs.mkdirSync(path.join(v2Dir, 'skill'), { recursive: true });
+  fs.writeFileSync(
+    path.join(v2Dir, 'article.md'),
+    `---\nversion: 2\ncut: ${cutDate}\n---\n\n# Fixture Topic\n\nFrozen body.\n`
+  );
+  fs.writeFileSync(path.join(v2Dir, 'skill', 'SKILL.md'), skillMd);
+  fs.writeFileSync(
+    path.join(v2Dir, 'provenance.md'),
+    '## Sources\n\n' +
+      `- [Example Source](https://example.com/fixture) — accessed ${cutDate} — supports: the v2 claim\n\n` +
+      '## Synthesis\n\n- A synthesized claim stated plainly.\n'
+  );
 }
 
 describe('runPublishGate', () => {
@@ -122,22 +173,31 @@ describe('runPublishGate', () => {
   });
 
   describe('changelog-top-entry', () => {
-    it('fails when the top heading names a version other than N', () => {
+    it('fails when the top heading names a version other than N — co-firing with changelog-schema (change-proposal-7)', () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic', { changelogHeading: '## v2 — {date}' });
 
       const result = runPublishGate(dir);
 
+      // The lone entry is now genuinely a non-founding '## v2' with no
+      // '**Stance:**' line, so check 11 co-fires alongside check 2 — the same
+      // aggregation-by-design the docs record for checks 9/10.
       expect(result.failures).toEqual([
         {
           check: 'changelog-top-entry',
           path: 'changelog.md',
           message: "changelog.md top entry is '## v2', expected '## v1'",
         },
+        {
+          check: 'changelog-schema',
+          path: 'changelog.md',
+          message:
+            "changelog.md: '## v2' entry has no parseable '**Stance:**' line (must be held | bent | reversed)",
+        },
       ]);
     });
 
-    it("reports '<malformed>' when the top heading is not '## vN — date' shaped", () => {
+    it("reports '<malformed>' when the top heading is not '## vN — date' shaped — co-firing with changelog-schema", () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic', { changelogHeading: '## Founding Note' });
 
@@ -149,10 +209,15 @@ describe('runPublishGate', () => {
           path: 'changelog.md',
           message: "changelog.md top entry is '## v<malformed>', expected '## v1'",
         },
+        {
+          check: 'changelog-schema',
+          path: 'changelog.md',
+          message: "changelog.md: heading '## Founding Note' does not match '## vN — YYYY-MM-DD'",
+        },
       ]);
     });
 
-    it("reports '<none>' when changelog.md carries no heading at all", () => {
+    it("reports '<none>' when changelog.md carries no heading at all — co-firing with changelog-schema", () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic');
       fs.writeFileSync(path.join(dir, 'changelog.md'), '');
@@ -164,6 +229,12 @@ describe('runPublishGate', () => {
           check: 'changelog-top-entry',
           path: 'changelog.md',
           message: "changelog.md top entry is '## v<none>', expected '## v1'",
+        },
+        {
+          check: 'changelog-schema',
+          path: 'changelog.md',
+          message:
+            "changelog.md: changelog has no parseable version entries — expected at least the founding '## v1' entry",
         },
       ]);
     });
@@ -485,6 +556,90 @@ describe('runPublishGate', () => {
     });
   });
 
+  describe('changelog-schema (change-proposal-7)', () => {
+    it("fails naming the stance issue when a non-founding entry's Stance line is bullet-prefixed — the sandbox-proven slip", () => {
+      const dir = fixtureDir(makeTmpRoot());
+      writeGateFixture(dir, 'fixture-topic'); // n=1, otherwise complete and gate-passing
+      upgradeToV2(
+        dir,
+        'What moved: the pitch.\n\n' +
+          "- **Stance:** held — the natural misreading of the writer skill's bulleted anatomy."
+      );
+
+      const result = runPublishGate(dir);
+
+      // The bullet prefix ('- **Stance:** …') is invisible to the line-start-anchored
+      // parser (loadChangelog's STANCE_LINE_RE) — the exact failure change-proposal-7
+      // discovered escaping to a committed tree. Every other check stays green, so
+      // this failure is check 11's alone.
+      expect(result.failures).toEqual([
+        {
+          check: 'changelog-schema',
+          path: 'changelog.md',
+          message:
+            "changelog.md: '## v2' entry has no parseable '**Stance:**' line (must be held | bent | reversed)",
+        },
+      ]);
+    });
+
+    it('adds no check-11 failures for a well-formed multi-entry changelog', () => {
+      const dir = fixtureDir(makeTmpRoot());
+      writeGateFixture(dir, 'fixture-topic');
+      upgradeToV2(
+        dir,
+        'What moved: the pitch.\n\n**Stance:** held — the pitch holds against new evidence.'
+      );
+
+      const result = runPublishGate(dir);
+
+      expect(result.ok).toBe(true);
+      expect(result.failures.some((f) => f.check === 'changelog-schema')).toBe(false);
+    });
+
+    it('reports the check-1 shape when changelog.md is missing entirely', () => {
+      const dir = fixtureDir(makeTmpRoot());
+      writeGateFixture(dir, 'fixture-topic');
+      fs.rmSync(path.join(dir, 'changelog.md'));
+
+      const result = runPublishGate(dir);
+
+      // changelog-top-entry co-fires (it reads changelog.md too) — both name the
+      // same missing artifact rather than a parse error, since there is nothing to
+      // parse.
+      expect(result.failures).toEqual([
+        {
+          check: 'changelog-top-entry',
+          path: 'changelog.md',
+          message: "changelog.md top entry is '## v<none>', expected '## v1'",
+        },
+        {
+          check: 'changelog-schema',
+          path: 'changelog.md',
+          message: 'missing required artifact: changelog.md',
+        },
+      ]);
+    });
+
+    it("createTopic's founding stub ('## v1', no Stance line) passes check 11 cleanly", () => {
+      const root = makeTmpRoot();
+      const staged = createTopic(root, 'fixture-topic', { title: 'Fixture Topic' });
+      // The freshly seeded skeleton deliberately fails the gate elsewhere (empty
+      // provenance, check 6) — author just that so this test isolates check 11's
+      // own verdict on the founding stub.
+      fs.writeFileSync(
+        path.join(staged.dir, 'versions', 'v1', 'provenance.md'),
+        '## Sources\n\n' +
+          '- [Example Source](https://example.com/fixture) — accessed 2026-01-01 — supports: the founding claim\n\n' +
+          '## Synthesis\n\n- A synthesized claim stated plainly.\n'
+      );
+
+      const result = runPublishGate(staged.dir);
+
+      expect(result.failures.some((f) => f.check === 'changelog-schema')).toBe(false);
+      expect(result.ok).toBe(true);
+    });
+  });
+
   describe('N derivation', () => {
     it('fails — with exactly one failure — when no versions/vN/ exists at all (N=0 is not a pass)', () => {
       const dir = fixtureDir(makeTmpRoot());
@@ -575,6 +730,15 @@ describe('runPublishGate', () => {
           });
         }
       }
+      // The lone changelog entry is genuinely a non-founding '## v10' with no
+      // '**Stance:**' line — check 11 co-fires once, appended after every
+      // snapshot-complete failure (call order in runPublishGate).
+      expected.push({
+        check: 'changelog-schema',
+        path: 'changelog.md',
+        message:
+          "changelog.md: '## v10' entry has no parseable '**Stance:**' line (must be held | bent | reversed)",
+      });
       expect(result.failures).toEqual(expected);
     });
   });
