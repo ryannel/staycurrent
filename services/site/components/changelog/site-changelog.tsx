@@ -24,6 +24,21 @@ function stripHeadingIds(html: string): string {
 }
 
 /**
+ * Unwraps every `<a>` the entry's rendered prose carries into a plain
+ * `<span>` — at the same cross-topic merge surface `stripHeadingIds` already
+ * transforms. `-webkit-line-clamp` (the card body's 4-line clamp) only hides
+ * overflow VISUALLY, so a link that falls past the clamp would otherwise
+ * stay keyboard-focusable while invisible — the fix here is NOT marking the
+ * whole preview `inert` (that pulled the entire prose, link or not, out of
+ * the accessibility tree, when "Read entry →" below is this feed's only
+ * DESIGNED interaction on a card): only the interactive affordance itself is
+ * neutralized, so the surrounding prose stays exposed to assistive tech.
+ */
+function neutralizeLinks(html: string): string {
+  return html.replace(/<a\b[^>]*>/gi, '<span>').replace(/<\/a>/gi, '</span>');
+}
+
+/**
  * `/changelog/` — Site-Wide Changelog (01-ui-design.md). Presentational:
  * `app/changelog/page.tsx` (a Server Component) supplies the merged,
  * newest-first `SiteChangelogEntry[]` via `lib/content.ts`'s
@@ -46,22 +61,16 @@ export function SiteChangelog({ entries }: SiteChangelogProps) {
         <article key={`${entry.topicSlug}-v${entry.version}`} className="changelog-card">
           <p className="changelog-card-topic-label">{`${entry.topicSlug} · v${entry.version} · ${formatDisplayDate(entry.date)}`}</p>
           <h2 className="changelog-card-heading">{entry.topicTitle}</h2>
-          {/* `inert` (React boolean prop, React 19) pulls the whole clamped
-              preview out of the tab order: `-webkit-line-clamp` only hides
-              overflow visually, so without this a link past the 4-line clamp
-              stays keyboard-focusable while invisible. The card's own prose
-              links were never this feed's designed interaction anyway — "Read
-              entry →" below is the sole navigation action for a card. */}
+          {/* The clamped preview's own links are neutralized (see
+              `neutralizeLinks` above), not the whole preview marked `inert` —
+              "Read entry →" below is the sole DESIGNED navigation action for
+              a card, but the prose itself must stay exposed to assistive
+              tech, which a blanket `inert` would also have removed. */}
           <div
             className="changelog-card-body"
-            inert
-            dangerouslySetInnerHTML={{ __html: stripHeadingIds(entry.bodyHtml) }}
+            dangerouslySetInnerHTML={{ __html: neutralizeLinks(stripHeadingIds(entry.bodyHtml)) }}
           />
-          <Link
-            href={`/${entry.topicSlug}/changelog/#v${entry.version}`}
-            prefetch={false}
-            className="changelog-card-read-link"
-          >
+          <Link href={`/${entry.topicSlug}/changelog/#v${entry.version}`} className="changelog-card-read-link">
             {'Read entry →'}
           </Link>
         </article>

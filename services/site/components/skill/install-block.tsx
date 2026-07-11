@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
+import { ICON_STROKE_WIDTH } from '@/lib/icons';
 
 export interface InstallBlockProps {
   /** The canonical one-liner, verbatim (03-api-design.md). */
@@ -78,7 +79,11 @@ export function InstallBlock({ command }: InstallBlockProps) {
             aria-label={copied ? COPIED_LABEL : COPY_LABEL}
             onClick={copy}
           >
-            {copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
+            {copied ? (
+              <Check size={16} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />
+            ) : (
+              <Copy size={16} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />
+            )}
           </button>
         </div>
         {/* Genuinely overflows the reading column at this length on every

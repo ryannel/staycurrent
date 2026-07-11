@@ -63,12 +63,35 @@ def test_skill_zip_is_served_and_unzips_to_a_single_top_level_dir(cluster, surfa
             "loose files at the archive root (03-api-design.md's distribution "
             "contract)"
         )
+        assert not any(n.endswith("index.html") for n in names), (
+            "expected the zip to carry only the skill payload — the browsable "
+            "tree's own index.html (GitHub Pages has no directory listing of "
+            "its own) must never ride along in the archive"
+        )
         skill_md = zf.read(f"{SLUG}/SKILL.md").decode()
 
     assert "article_version:" in skill_md, "expected the payload's article_version binding"
     assert "not yet authored" in skill_md.lower() or "placeholder" in skill_md.lower(), (
         "expected the honest placeholder labelling inside the served payload "
         "(change-proposal-2)"
+    )
+
+
+def test_skill_payload_directory_serves_a_minimal_index_naming_skill_md(cluster, surfaces):
+    """GitHub Pages serves no directory listing of its own for the raw copied
+    payload tree — history rows and the superseded-skill pointer link
+    straight into `/skills/<slug>/[v/<n>/]`, so this route needs its own
+    minimal, self-contained index.html or a reader following one of those
+    links dead-ends."""
+    base = surfaces["site"]["reach"]
+    resp = httpx.get(f"{base}/skills/{SLUG}/", timeout=10.0)
+    assert resp.status_code == 200
+    assert "SKILL.md" in resp.text, (
+        "expected the payload directory's minimal index.html to list "
+        "SKILL.md as a relative link"
+    )
+    assert f"/{SLUG}/skill/" in resp.text, (
+        "expected a link back to the topic's skill install page"
     )
 
 

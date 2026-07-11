@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { ThemeProvider } from 'next-themes';
 import { ArticleEnhancements } from './enhancements';
 
@@ -44,7 +44,12 @@ describe('ArticleEnhancements — copy affordance', () => {
     expect(button).not.toBeNull();
     expect(button).toHaveAttribute('aria-label', 'Copy code');
 
-    fireEvent.click(button);
+    // Confirmation is gated on the clipboard write's own promise resolving
+    // (ported from install-block.tsx's identical pattern) — no longer
+    // synchronous with the click, so the assertion below awaits it.
+    await act(async () => {
+      fireEvent.click(button);
+    });
 
     // The captured code text only — the pre-fix bug appended the button's own
     // glyph/label because it read `pre.textContent` after the button was
@@ -55,7 +60,9 @@ describe('ArticleEnhancements — copy affordance', () => {
     expect(button).toHaveAttribute('aria-label', 'Copied');
     expect(button.classList.contains('is-copied')).toBe(true);
 
-    vi.advanceTimersByTime(1500);
+    await act(async () => {
+      vi.advanceTimersByTime(1500);
+    });
 
     expect(button).toHaveAttribute('aria-label', 'Copy code');
     expect(button.classList.contains('is-copied')).toBe(false);
@@ -70,6 +77,26 @@ describe('ArticleEnhancements — copy affordance', () => {
     const [copied] = (navigator.clipboard.writeText as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(copied).not.toContain('svg');
     expect(copied.trim()).toBe('const x = 1;');
+  });
+
+  // Fix: the confirmation must be gated on actual clipboard success, not
+  // fired optimistically before the write settles (this button previously
+  // swapped to "Copied" unconditionally, even on a rejected write).
+  it('does not confirm when the clipboard write rejects', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+      configurable: true,
+    });
+    renderEnhancements();
+    const button = document.querySelector('.code-copy-btn') as HTMLButtonElement;
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('const x = 1;');
+    expect(button).toHaveAttribute('aria-label', 'Copy code');
+    expect(button.classList.contains('is-copied')).toBe(false);
   });
 });
 

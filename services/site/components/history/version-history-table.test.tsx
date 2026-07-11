@@ -58,6 +58,17 @@ describe('VersionHistoryTable', () => {
     expect(screen.getByRole('link', { name: 'v1' })).toHaveClass('version-history-row-link');
   });
 
+  it('wraps the table in a horizontally-scrollable, keyboard-focusable region (Tables spec, mobile overflow)', () => {
+    render(<VersionHistoryTable slug="databases" currentVersion={2} rows={MULTI_VERSION_ROWS} />);
+
+    const scrollRegion = document.querySelector('.version-history-scroll') as HTMLElement;
+    expect(scrollRegion).not.toBeNull();
+    expect(scrollRegion).toHaveAttribute('tabindex', '0');
+    expect(scrollRegion).toHaveAttribute('role', 'region');
+    expect(scrollRegion).toHaveAttribute('aria-label');
+    expect(scrollRegion.querySelector('table.version-history-table')).not.toBeNull();
+  });
+
   it('renders a single row for a single-version topic, marked current with a dash stance', () => {
     render(
       <VersionHistoryTable

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowUpRight } from 'lucide-react';
 import { getTopic, getTopicSlugs, getTopicVersion } from '@/lib/content';
+import { ICON_STROKE_WIDTH } from '@/lib/icons';
 import { isFresh } from '@/lib/freshness';
 import { formatDisplayDate } from '@/lib/format-date';
 import { TocRail } from '@/components/article/toc-rail';
@@ -132,7 +133,7 @@ export default async function TopicPage({ params }: PageProps) {
                   rel="noreferrer"
                 >
                   {source.title}
-                  <ArrowUpRight size={14} aria-hidden="true" />
+                  <ArrowUpRight size={14} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />
                 </a>
                 <span className="provenance-meta">
                   {' — accessed '}

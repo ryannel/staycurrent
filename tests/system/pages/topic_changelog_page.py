@@ -17,3 +17,9 @@ class TopicChangelogPage(BasePage):
         """Assert the entry's rendered prose is visible somewhere on the page."""
         expect(self.page.locator("body")).to_contain_text(text)
         return self
+
+    def click_entry_permalink(self, version: int) -> "TopicChangelogPage":
+        """Click the quiet `#vN` anchor at the entry heading's right edge
+        (the permalink affordance)."""
+        self.page.get_by_role("link", name=f"Permalink to v{version}").click()
+        return self

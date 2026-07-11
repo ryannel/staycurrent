@@ -28,7 +28,16 @@
 // of things it shares with lib/content.ts (REPO_ROOT resolution, the
 // site.config.json fallback) rather than importing that module.
 
-import { createWriteStream, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  createWriteStream,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { ZipArchive } from 'archiver';
 import { buildRss, listTopics } from '@staycurrent/core';
@@ -109,6 +118,101 @@ async function writeZip(sourceDir, zipPath, slugName) {
   await closed;
 }
 
+/**
+ * Every relative file path under `dir`, recursively, `SKILL.md` sorted
+ * first (03-api-design.md's distribution contract calls it out by name)
+ * then the rest alphabetically — the ordering `skillIndexHtml` below lists
+ * in its browsable index.
+ */
+function listPayloadFiles(dir) {
+  const out = [];
+  const walk = (sub) => {
+    for (const entry of readdirSync(path.join(dir, sub), { withFileTypes: true })) {
+      const rel = sub ? `${sub}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        walk(rel);
+      } else {
+        out.push(rel);
+      }
+    }
+  };
+  walk('');
+  out.sort((a, b) => {
+    if (a === 'SKILL.md') return -1;
+    if (b === 'SKILL.md') return 1;
+    return a.localeCompare(b);
+  });
+  return out;
+}
+
+/**
+ * A minimal, self-contained index.html for one payload directory
+ * (03-api-design.md's distribution contract: GitHub Pages serves no
+ * directory listing for the raw copied trees at `public/skills/<slug>/`
+ * and `public/skills/<slug>/v/<n>/`, so a reader following a History-row or
+ * Archived-Version pointer link straight into one otherwise dead-ends).
+ * Plain, self-contained inline styles — print-flat, `prefers-color-scheme`-
+ * safe for both themes — and no site JS; this file is served standalone,
+ * completely outside Next's own asset pipeline and this site's design
+ * system. It must never ride along in the sibling `.zip`: `writeZip` always
+ * zips straight from the `topics/` SOURCE tree, never this destination
+ * directory this function writes into, so the file structurally can't leak
+ * into the archive regardless of call order.
+ */
+function skillIndexHtml(slug, version, files, skillPageHref) {
+  const items = files
+    .map((file) => `      <li><a href="./${file}">${file}</a></li>`)
+    .join('\n');
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${slug} skill payload — v${version}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    max-width: 40rem;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    color: #24211a;
+    background: #f9f7f2;
+  }
+  a { color: #2b6a45; }
+  h1 { font-size: 1rem; font-weight: 600; margin: 0 0 1rem; }
+  ul { list-style: none; margin: 0 0 1.5rem; padding: 0; }
+  li { margin: 0 0 0.4rem; }
+  p.back { margin: 0; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #dcd7cc; background: #1c1a17; }
+    a { color: #8fd19e; }
+  }
+  @media print {
+    body { background: none; color: #000; }
+  }
+</style>
+</head>
+<body>
+  <h1>${slug} — skill payload (v${version})</h1>
+  <ul>
+${items}
+  </ul>
+  <p class="back"><a href="${skillPageHref}">&larr; ${slug} skill install page</a></p>
+</body>
+</html>
+`;
+}
+
+/** Writes `destDir/index.html` for a payload tree already copied into place. */
+function writeSkillIndexHtml(destDir, slug, version) {
+  writeFileSync(
+    path.join(destDir, 'index.html'),
+    skillIndexHtml(slug, version, listPayloadFiles(destDir), `/${slug}/skill/`)
+  );
+}
+
 async function main() {
   let sweep;
   try {
@@ -157,7 +261,9 @@ async function main() {
 
       // Current — mirrors the live topics/<slug>/skill/.
       const currentSkillSrc = path.join(REPO_ROOT, 'topics', slug, 'skill');
-      copyTree(currentSkillSrc, path.join(skillsDir, slug));
+      const currentSkillDest = path.join(skillsDir, slug);
+      copyTree(currentSkillSrc, currentSkillDest);
+      writeSkillIndexHtml(currentSkillDest, slug, topic.version);
       await writeZip(currentSkillSrc, path.join(skillsDir, `${slug}.zip`), slug);
 
       // Archived — every version below the live one, mirroring
@@ -165,7 +271,9 @@ async function main() {
       // /[topic]/v/[n]/'s own enumeration in generateStaticParams).
       for (let n = 1; n < topic.version; n++) {
         const archivedSkillSrc = path.join(REPO_ROOT, 'topics', slug, 'versions', `v${n}`, 'skill');
-        copyTree(archivedSkillSrc, path.join(skillsDir, slug, 'v', String(n)));
+        const archivedSkillDest = path.join(skillsDir, slug, 'v', String(n));
+        copyTree(archivedSkillSrc, archivedSkillDest);
+        writeSkillIndexHtml(archivedSkillDest, slug, n);
         await writeZip(archivedSkillSrc, path.join(skillsDir, slug, 'v', `${n}.zip`), slug);
       }
     }

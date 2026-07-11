@@ -34,6 +34,11 @@ def test_topic_changelog_renders_the_founding_entry_with_its_permalink(cluster, 
     # test_topic_versions_fixture.py's test_changelog_page_lists_both_versions_newest_first.
     expect(site_page.locator(".toc-rail a[href='#v1']")).to_be_visible()
 
+    # The entry heading's own quiet permalink affordance (its right-edge
+    # `#vN` anchor) must actually navigate the URL hash, not just render.
+    changelog.click_entry_permalink(1)
+    expect(site_page).to_have_url(re.compile(r"#v1$"))
+
 
 def test_topic_history_marks_the_only_version_current_with_a_real_skill_link(cluster, site_page: Page, surfaces):
     history = TopicHistoryPage(site_page, surfaces["site"]["reach"])

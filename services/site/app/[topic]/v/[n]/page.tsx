@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowUpRight } from 'lucide-react';
 import { getArchivedVersion, getTopic, getTopicCutDate, getTopicSlugs } from '@/lib/content';
+import { ICON_STROKE_WIDTH } from '@/lib/icons';
 import { formatDisplayDate } from '@/lib/format-date';
 import { TocRail } from '@/components/article/toc-rail';
 import { ArchivedBanner } from '@/components/article/archived-banner';
@@ -111,7 +112,7 @@ export default async function ArchivedVersionPage({ params }: PageProps) {
                 <span className="badge badge-sourced">Sourced</span>
                 <a className="provenance-source-link" href={source.url} target="_blank" rel="noreferrer">
                   {source.title}
-                  <ArrowUpRight size={14} aria-hidden="true" />
+                  <ArrowUpRight size={14} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />
                 </a>
                 <span className="provenance-meta">
                   {' — accessed '}

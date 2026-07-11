@@ -42,7 +42,10 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
  * the TOC rail lists the same set (version + date) so a reader can jump
  * straight to an entry without scrolling — built here from the
  * `ChangelogEntry[]` directly (not from a single `RenderedDoc.toc`, since
- * this page concatenates several rendered docs into one DOM).
+ * this page concatenates several rendered docs into one DOM). The heading
+ * also carries its own quiet `#vN` anchor at its right edge (the wireframe's
+ * permalink affordance) — a second, always-visible way to grab the entry's
+ * own URL besides copying the address bar after a TOC jump.
  *
  * `ArticleEnhancements` is mounted here exactly as it is on `/[topic]/` and
  * `/[topic]/v/[n]/`: an entry's `bodyMd` goes through the identical
@@ -69,7 +72,16 @@ export default async function TopicChangelogPage({ params }: PageProps) {
         <div className="article-body">
           {entries.map((entry) => (
             <section key={entry.version} aria-labelledby={`v${entry.version}`}>
-              <h2 id={`v${entry.version}`}>{`v${entry.version} — ${formatDisplayDate(entry.date)}`}</h2>
+              <h2 id={`v${entry.version}`} className="changelog-entry-heading">
+                <span>{`v${entry.version} — ${formatDisplayDate(entry.date)}`}</span>
+                <a
+                  href={`#v${entry.version}`}
+                  className="changelog-entry-permalink"
+                  aria-label={`Permalink to v${entry.version}`}
+                >
+                  {`#v${entry.version}`}
+                </a>
+              </h2>
               <div dangerouslySetInnerHTML={{ __html: entry.bodyHtml }} />
             </section>
           ))}

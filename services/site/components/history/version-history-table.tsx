@@ -34,57 +34,64 @@ export interface VersionHistoryTableProps {
  * does). The skill/archived-payload links elsewhere in the row need to stay
  * independently clickable on top of that overlay — doc-shell.css lifts them
  * with `position: relative; z-index: 2` against the overlay's `z-index: 1`.
+ *
+ * Wrapped in its own horizontal-scroll container (Tables spec: a table whose
+ * content can force it wider than the reading column at narrow viewports
+ * gets one, rather than shipping a sideways-scrolling page) — static/always-
+ * on, matching `components/skill/install-block.tsx`'s identical convention
+ * for its own single guaranteed structural surface, since `/[topic]/history/`
+ * never mounts `ArticleEnhancements`' dynamic `enhanceScrollableRegions` pass.
  */
 export function VersionHistoryTable({ slug, currentVersion, rows }: VersionHistoryTableProps) {
   return (
-    <table className="version-history-table">
-      <thead>
-        <tr>
-          <th scope="col">Version</th>
-          <th scope="col">Cut</th>
-          <th scope="col">Stance</th>
-          <th scope="col">Skill</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => {
-          const isCurrent = row.version === currentVersion;
-          const versionHref = `/${slug}/v/${row.version}/`;
-          return (
-            <tr key={row.version}>
-              <td>
-                <Link
-                  href={versionHref}
-                  className={isCurrent ? 'badge version-history-row-link' : 'badge badge-superseded version-history-row-link'}
-                >
-                  {`v${row.version}`}
-                </Link>
-                <span className="version-history-state">{isCurrent ? 'current' : 'archived'}</span>
-              </td>
-              <td className="version-history-cut">
-                <time dateTime={row.cutDate}>{formatDisplayDate(row.cutDate)}</time>
-              </td>
-              <td>{row.stance ?? '—'}</td>
-              <td>
-                {isCurrent ? (
-                  <Link href={`/${slug}/skill/`}>
-                    skill →
+    <div className="version-history-scroll" tabIndex={0} role="region" aria-label="Version history table">
+      <table className="version-history-table">
+        <thead>
+          <tr>
+            <th scope="col">Version</th>
+            <th scope="col">Cut</th>
+            <th scope="col">Stance</th>
+            <th scope="col">Skill</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const isCurrent = row.version === currentVersion;
+            const versionHref = `/${slug}/v/${row.version}/`;
+            return (
+              <tr key={row.version}>
+                <td>
+                  <Link
+                    href={versionHref}
+                    className={
+                      isCurrent ? 'badge version-history-row-link' : 'badge badge-superseded version-history-row-link'
+                    }
+                  >
+                    {`v${row.version}`}
                   </Link>
-                ) : (
-                  <span className="version-history-skill-note">
-                    {`skill (renders v${row.version} — `}
-                    <Link href={`/${slug}/skill/`}>
-                      install current →
-                    </Link>
-                    {') '}
-                    <a href={`/skills/${slug}/v/${row.version}/`}>archived payload</a>
-                  </span>
-                )}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+                  <span className="version-history-state">{isCurrent ? 'current' : 'archived'}</span>
+                </td>
+                <td className="version-history-cut">
+                  <time dateTime={row.cutDate}>{formatDisplayDate(row.cutDate)}</time>
+                </td>
+                <td>{row.stance ?? '—'}</td>
+                <td>
+                  {isCurrent ? (
+                    <Link href={`/${slug}/skill/`}>skill →</Link>
+                  ) : (
+                    <span className="version-history-skill-note">
+                      {`skill (renders v${row.version} — `}
+                      <Link href={`/${slug}/skill/`}>install current →</Link>
+                      {') '}
+                      <a href={`/skills/${slug}/v/${row.version}/`}>archived payload</a>
+                    </span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }

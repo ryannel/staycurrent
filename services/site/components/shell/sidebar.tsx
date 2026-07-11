@@ -4,7 +4,14 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ArrowUpRight, ChevronRight, Menu, Rss, X } from 'lucide-react';
+import { ICON_STROKE_WIDTH } from '@/lib/icons';
 import { ThemeToggle } from './theme-toggle';
+
+// The site-wide (not per-topic) pages the `.site-pages` list links — kept as
+// named constants rather than repeating the literal strings at both the
+// `href` and the `pathname` comparison site, so the two can never drift.
+const CHANGELOG_PAGE_HREF = '/changelog/';
+const ABOUT_PAGE_HREF = '/about/';
 
 // The GitHub repository behind this site — the sidebar footer's third
 // cluster item (Footer cluster spec, docs/design-system.md § Graphical UI).
@@ -95,7 +102,11 @@ export function Sidebar({ topics }: SidebarProps) {
           aria-expanded={isOpen}
           onClick={() => setIsOpen((open) => !open)}
         >
-          {isOpen ? <X size={16} aria-hidden="true" /> : <Menu size={16} aria-hidden="true" />}
+          {isOpen ? (
+            <X size={16} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />
+          ) : (
+            <Menu size={16} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />
+          )}
         </button>
         <Link href="/" className="wordmark">
           Stay Current
@@ -119,12 +130,16 @@ export function Sidebar({ topics }: SidebarProps) {
 
         <ul className="site-pages">
           <li>
-            <Link href="/changelog/" onClick={close}>
+            <Link
+              href={CHANGELOG_PAGE_HREF}
+              aria-current={pathname === CHANGELOG_PAGE_HREF ? 'page' : undefined}
+              onClick={close}
+            >
               Changelog
             </Link>
           </li>
           <li>
-            <Link href="/about/" onClick={close}>
+            <Link href={ABOUT_PAGE_HREF} aria-current={pathname === ABOUT_PAGE_HREF ? 'page' : undefined} onClick={close}>
               About
             </Link>
           </li>
@@ -135,10 +150,26 @@ export function Sidebar({ topics }: SidebarProps) {
           {topics.length === 0 && <li className="topic-tree-empty">No topics yet.</li>}
           {topics.map((topic) => {
             const articleHref = `/${topic.slug}/`;
-            const isActive = pathname === articleHref;
+            const changelogHref = `/${topic.slug}/changelog/`;
+            const historyHref = `/${topic.slug}/history/`;
+            const skillHref = `/${topic.slug}/skill/`;
+            const isArticleActive = pathname === articleHref;
+            const isChangelogActive = pathname === changelogHref;
+            const isHistoryActive = pathname === historyHref;
+            const isSkillActive = pathname === skillHref;
+            // Whether ANY of this topic's four faces is the current page —
+            // drives the disclosure's auto-open below (Sidebar anatomy spec:
+            // the active face must be visible on load, not hidden behind a
+            // closed <details>). `open` is passed once per render rather
+            // than tracked in its own state: since this value only changes
+            // across a navigation (a fresh page load in a static export, not
+            // a client-side state flip), React never fights a reader's own
+            // manual toggle of an already-rendered disclosure — it only ever
+            // sets the attribute when this computed value itself changes.
+            const isTopicActive = isArticleActive || isChangelogActive || isHistoryActive || isSkillActive;
             return (
               <li key={topic.slug}>
-                <details className="topic-disclosure">
+                <details className="topic-disclosure" open={isTopicActive}>
                   <summary>
                     {/* Committed Lucide `chevron-right` (Iconography spec: 16px,
                         stroke 1.5) replacing the former Unicode `▸` marker —
@@ -148,7 +179,7 @@ export function Sidebar({ topics }: SidebarProps) {
                         marker it replaces. */}
                     <ChevronRight
                       size={16}
-                      strokeWidth={1.5}
+                      strokeWidth={ICON_STROKE_WIDTH}
                       aria-hidden="true"
                       className="topic-disclosure-chevron"
                     />
@@ -165,22 +196,22 @@ export function Sidebar({ topics }: SidebarProps) {
                   </summary>
                   <ul className="topic-faces">
                     <li>
-                      <Link href={articleHref} aria-current={isActive ? 'page' : undefined} onClick={close}>
+                      <Link href={articleHref} aria-current={isArticleActive ? 'page' : undefined} onClick={close}>
                         Article
                       </Link>
                     </li>
                     <li>
-                      <Link href={`/${topic.slug}/changelog/`} onClick={close}>
+                      <Link href={changelogHref} aria-current={isChangelogActive ? 'page' : undefined} onClick={close}>
                         Changelog
                       </Link>
                     </li>
                     <li>
-                      <Link href={`/${topic.slug}/history/`} onClick={close}>
+                      <Link href={historyHref} aria-current={isHistoryActive ? 'page' : undefined} onClick={close}>
                         History
                       </Link>
                     </li>
                     <li>
-                      <Link href={`/${topic.slug}/skill/`} onClick={close}>
+                      <Link href={skillHref} aria-current={isSkillActive ? 'page' : undefined} onClick={close}>
                         Skill
                       </Link>
                     </li>
@@ -199,7 +230,7 @@ export function Sidebar({ topics }: SidebarProps) {
               prebuild). Points straight at the static feed artifact, not a Next
               route — a plain anchor, matching the framework repo link beside it. */}
           <a href="/rss.xml" className="btn-ghost" aria-label="RSS feed">
-            <Rss size={16} aria-hidden="true" />
+            <Rss size={16} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />
           </a>
           {/* Footer cluster's framework repo link. */}
           <a
@@ -209,7 +240,7 @@ export function Sidebar({ topics }: SidebarProps) {
             className="btn-ghost"
             aria-label="Framework repository on GitHub"
           >
-            <ArrowUpRight size={16} aria-hidden="true" />
+            <ArrowUpRight size={16} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />
           </a>
         </div>
       </nav>

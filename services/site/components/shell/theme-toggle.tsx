@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from 'react';
 import { useTheme } from 'next-themes';
 import { Monitor, Moon, Sun } from 'lucide-react';
+import { ICON_STROKE_WIDTH } from '@/lib/icons';
 
 type StoredTheme = 'light' | 'dark' | 'system';
 
@@ -60,9 +61,9 @@ export function ThemeToggle() {
           JSX, not a component reference assigned to a variable, so React
           never treats the icon as newly created on every render
           (react-hooks/static-components). */}
-      {current === 'light' && <Sun size={16} aria-hidden="true" />}
-      {current === 'dark' && <Moon size={16} aria-hidden="true" />}
-      {current === 'system' && <Monitor size={16} aria-hidden="true" />}
+      {current === 'light' && <Sun size={16} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />}
+      {current === 'dark' && <Moon size={16} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />}
+      {current === 'system' && <Monitor size={16} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />}
     </button>
   );
 }

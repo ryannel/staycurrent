@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowUpRight } from 'lucide-react';
 import { formatDisplayDate } from '@/lib/format-date';
+import { ICON_STROKE_WIDTH } from '@/lib/icons';
 import type { TopicCard } from '@/lib/content';
 
 // "The framework" the empty state points at is Stay Current itself — the
@@ -33,7 +34,7 @@ export function TopicLibrary({ cards }: TopicLibraryProps) {
         No topics yet. The first research run creates one.{' '}
         <a href={FRAMEWORK_DOCS_URL} target="_blank" rel="noreferrer">
           Framework docs
-          <ArrowUpRight size={14} aria-hidden="true" />
+          <ArrowUpRight size={14} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />
         </a>
       </p>
     );

@@ -2,25 +2,26 @@
 
 import { useEffect, useRef } from 'react';
 import { useTheme } from 'next-themes';
+import { ICON_STROKE_WIDTH } from '@/lib/icons';
 
 const COPY_LABEL = 'Copy code';
 const COPIED_LABEL = 'Copied';
 
 // Inlined Lucide `Copy`/`Check` icon markup (lucide-react's own path data,
-// stroke conventions: viewBox 0 0 24 24, stroke=currentColor, stroke-width 2,
-// round caps/joins) — the copy button is DOM-injected here, outside React,
-// so importing the React icon components isn't an option (Iconography spec,
-// docs/design-system.md § Graphical UI: every icon in the product is Lucide,
-// never a text glyph).
+// stroke conventions: viewBox 0 0 24 24, stroke=currentColor, round caps/
+// joins, `ICON_STROKE_WIDTH` per the Iconography spec) — the copy button is
+// DOM-injected here, outside React, so importing the React icon components
+// isn't an option (docs/design-system.md § Graphical UI: every icon in the
+// product is Lucide, never a text glyph).
 const COPY_ICON_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
-  'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  `stroke="currentColor" stroke-width="${ICON_STROKE_WIDTH}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
   '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>' +
   '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>' +
   '</svg>';
 const CHECK_ICON_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
-  'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  `stroke="currentColor" stroke-width="${ICON_STROKE_WIDTH}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
   '<path d="M20 6 9 17l-5-5"/>' +
   '</svg>';
 
@@ -53,16 +54,27 @@ function enhanceCodeBlocks(): () => void {
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const onClick = () => {
-      void navigator.clipboard?.writeText(codeText).catch(() => {});
-      button.innerHTML = CHECK_ICON_SVG;
-      button.classList.add('is-copied');
-      button.setAttribute('aria-label', COPIED_LABEL);
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        button.innerHTML = COPY_ICON_SVG;
-        button.classList.remove('is-copied');
-        button.setAttribute('aria-label', COPY_LABEL);
-      }, 1500);
+      // Only confirm on an actual successful write — ported from
+      // `components/skill/install-block.tsx`'s identical gate: a browser/
+      // context lacking the Clipboard API (or a write the platform rejects)
+      // must not report a confirmation it didn't deliver. `?.` short-
+      // circuits the ENTIRE chain (including the trailing `.then`) to
+      // `undefined` when `navigator.clipboard` itself is absent, so this
+      // never throws either.
+      void navigator.clipboard?.writeText(codeText).then(
+        () => {
+          button.innerHTML = CHECK_ICON_SVG;
+          button.classList.add('is-copied');
+          button.setAttribute('aria-label', COPIED_LABEL);
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => {
+            button.innerHTML = COPY_ICON_SVG;
+            button.classList.remove('is-copied');
+            button.setAttribute('aria-label', COPY_LABEL);
+          }, 1500);
+        },
+        () => {}
+      );
     };
 
     button.addEventListener('click', onClick);

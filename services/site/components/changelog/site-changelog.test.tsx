@@ -82,13 +82,36 @@ describe('SiteChangelog', () => {
   });
 
   // `-webkit-line-clamp` only hides overflow visually — a link past the
-  // 4-line clamp stays keyboard-focusable unless the preview is pulled out
-  // of the tab order entirely.
-  it('renders the clamped card body inert, out of the tab order', () => {
+  // 4-line clamp stays keyboard-focusable unless neutralized. Fix: the whole
+  // preview is no longer `inert` (that also pulled the surrounding prose out
+  // of the accessibility tree) — only the interactive `<a>`s inside it are
+  // unwrapped to plain, non-focusable `<span>`s.
+  it('does not mark the clamped card body inert, keeping its prose exposed to assistive tech', () => {
     render(<SiteChangelog entries={ENTRIES} />);
 
     const bodies = document.querySelectorAll('.changelog-card-body');
     expect(bodies).toHaveLength(ENTRIES.length);
-    bodies.forEach((body) => expect(body).toHaveAttribute('inert'));
+    bodies.forEach((body) => expect(body).not.toHaveAttribute('inert'));
+  });
+
+  it("neutralizes the preview's own links (unwrapped, no href, out of the tab order) while its prose stays in the DOM", () => {
+    render(
+      <SiteChangelog
+        entries={[
+          {
+            topicSlug: 'databases',
+            topicTitle: 'Databases',
+            version: 2,
+            date: '2026-06-12',
+            bodyHtml: '<p>See <a href="https://example.com/detail">the detail</a> for more.</p>',
+          },
+        ]}
+      />
+    );
+
+    const body = document.querySelector('.changelog-card-body') as HTMLElement;
+    expect(body.querySelector('a')).toBeNull();
+    expect(body.querySelector('span')).not.toBeNull();
+    expect(body.textContent).toContain('the detail');
   });
 });

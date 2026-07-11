@@ -392,10 +392,73 @@ def test_archived_skill_payload_tree_and_zip_are_byte_identical_and_carry_the_ve
             "expected a single top-level <slug>/ directory in the archived zip too — "
             "never loose files at the archive root"
         )
+        assert not any(n.endswith("index.html") for n in names), (
+            "expected the archived zip to carry only the payload — never the "
+            "browsable tree's own index.html"
+        )
         zip_skill_md = zf.read(f"{SLUG}/SKILL.md").decode()
 
     assert zip_skill_md == tree_skill_md, (
         "expected the browsable v/1 tree's SKILL.md bytes to equal the zip's — both "
         "sourced directly from the same gate-validated versions/v1/skill/ snapshot, "
         "never re-derived"
+    )
+
+
+def test_archived_skill_payload_tree_serves_a_minimal_index_naming_skill_md(widgets_fixture_build):
+    """GitHub Pages serves no directory listing of its own — the archived
+    branch of the payload tree (`public/skills/<slug>/v/<n>/`) needs the same
+    minimal index.html the current tree gets, or the History table's
+    superseded-row link and the Archived Version page's own
+    superseded-skill-archive-link both dead-end."""
+    index_path = widgets_fixture_build / "skills" / SLUG / "v" / "1" / "index.html"
+    assert index_path.exists(), f"expected a minimal index.html at {index_path}"
+    html = index_path.read_text()
+    assert "SKILL.md" in html, "expected the index to list SKILL.md as a relative link"
+    assert f"/{SLUG}/skill/" in html, "expected a link back to the topic's skill install page"
+
+
+def test_archived_banner_stays_visible_below_the_mobile_topbar_when_scrolled_deep(
+    widgets_fixture_build, cluster, site_page: Page, surfaces
+):
+    """Fix (doc-shell.css): below the 900px drawer breakpoint, `.mobile-topbar`
+    and `.archived-banner` both used `position: sticky; top: 0` — the topbar's
+    higher z-index painted straight over the banner, and since the CONDENSED
+    banner is only 32px tall (entirely inside the topbar's own
+    `--mobile-topbar-height` band), a reader scrolled deep saw no archived
+    banner at all ("history must never masquerade as current, however deep
+    the reader scrolls" broke silently at this breakpoint). The banner's own
+    sticky offset must sit below the topbar, at every scroll depth."""
+    site_page.set_viewport_size({"width": 375, "height": 812})
+    version_page = TopicVersionPage(site_page, surfaces["site"]["reach"])
+    version_page.goto(f"/{SLUG}/v/1/")
+    site_page.wait_for_load_state("networkidle")
+
+    site_page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+
+    banner = site_page.locator(".archived-banner")
+    expect(banner).to_be_visible()
+
+    topbar_box = site_page.locator(".mobile-topbar").bounding_box()
+    banner_box = banner.bounding_box()
+    assert topbar_box is not None and banner_box is not None, (
+        "expected both the mobile topbar and the archived banner to have a bounding box"
+    )
+    assert banner_box["y"] >= topbar_box["y"] + topbar_box["height"] - 1, (
+        "expected the archived banner's sticky offset to sit below the mobile "
+        "topbar, not underneath it"
+    )
+
+    mid_x = banner_box["x"] + banner_box["width"] / 2
+    mid_y = banner_box["y"] + banner_box["height"] / 2
+    hits_banner = site_page.evaluate(
+        "([x, y]) => {"
+        " const el = document.elementFromPoint(x, y);"
+        " return el != null && el.closest('.archived-banner') !== null;"
+        "}",
+        [mid_x, mid_y],
+    )
+    assert hits_banner, (
+        "expected the banner's own midpoint to hit the banner itself, not the "
+        "topbar painted over it"
     )

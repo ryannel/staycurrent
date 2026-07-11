@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono, Literata } from 'next/font/google'
-import { Toaster } from 'sonner'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Sidebar, type TopicNavEntry } from '@/components/shell/sidebar'
 import { FreshnessCorrection } from '@/components/shell/freshness-correction'
@@ -159,7 +158,6 @@ export default async function RootLayout({
                 {children}
               </main>
             </div>
-            <Toaster position="bottom-right" richColors closeButton />
             <FreshnessCorrection />
           </Providers>
         </ThemeProvider>
