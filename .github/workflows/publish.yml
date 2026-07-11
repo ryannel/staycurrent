@@ -1,0 +1,156 @@
+name: Publish
+
+# One workflow, two triggers (04-publish-workflow.md; 02-data-flows.md's Publish
+# Flow (CI)): push to main runs the full pipeline and deploys; pull_request runs
+# the identical pipeline minus the deploy step — verification only. The
+# repository is the trust boundary, not the operator's machine: this is the
+# only path to production, and every step here fails closed — a failing step
+# stops the run before the next one starts (default step semantics; no
+# continue-on-error anywhere except the one advisory doc-currency check below).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  # Setup docs (docs/getting-started/setup.md) name Node 24+, pnpm 11+ as the
+  # baseline this repo's lockfiles (lockfileVersion 9.0) were produced against.
+  NODE_VERSION: "24"
+  PNPM_VERSION: "11"
+
+jobs:
+  build:
+    name: Gate, build, verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # --- install (03-api-design.md's CI seam; Publish Flow's first stage) ---
+      - name: Install core dependencies (frozen lockfile)
+        working-directory: core
+        run: pnpm install --frozen-lockfile
+
+      # core/dist is gitignored — it must exist before the gate step (which
+      # imports the compiled package directly) and before services/site's
+      # `file:../../core` dependency resolves to real output.
+      - name: Build core
+        working-directory: core
+        run: pnpm build
+
+      # --- gate (Publish Flow: full-tree, every push, through content-core —
+      # ADR 0003, never a re-implementation in this YAML) ---
+      - name: Full-tree publish gate (every topic, through @staycurrent/core)
+        run: node scripts/publish-gate.mjs
+
+      - name: Install site dependencies (frozen lockfile)
+        working-directory: services/site
+        run: pnpm install --frozen-lockfile
+
+      # --- build (Site Build Data Flow, unmodified: prebuild [RSS + skill
+      # payloads] runs automatically via the npm `prebuild` lifecycle hook,
+      # then `next build`) ---
+      - name: Build site (prebuild -> next build)
+        working-directory: services/site
+        run: pnpm build
+
+      - name: Core unit tests
+        working-directory: core
+        run: pnpm test
+
+      - name: Site unit tests
+        working-directory: services/site
+        run: pnpm test
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8.3.2
+
+      # Mirrors docs/getting-started/setup.md's system-test environment setup
+      # exactly (`uv venv` + `uv pip install -e .`), so CI and a fresh local
+      # clone follow the identical recipe.
+      - name: Install system-test environment
+        working-directory: tests
+        run: |
+          uv venv
+          uv pip install -e .
+
+      - name: Install Playwright Chromium
+        working-directory: tests
+        run: uv run playwright install --with-deps chromium
+
+      # The same static export `next build` just produced, served the way
+      # GitHub Pages will serve it — `pnpm run serve:static` (no rebuild),
+      # the `site` surface's fixed reach (tests/conftest.py: localhost:4173).
+      - name: Serve the static export
+        working-directory: services/site
+        run: |
+          pnpm run serve:static > /tmp/serve-static.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:4173/ >/dev/null 2>&1; then
+              echo "static export is serving on :4173"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "static export did not become ready in time" >&2
+          cat /tmp/serve-static.log >&2
+          exit 1
+
+      # The bet-independent verification suites — a deploy can never outrun a
+      # red suite. Bet-progress tests (tests/bets/) are not part of this gate;
+      # they are archived at bet close, never a permanent CI dependency.
+      - name: System suite (bet-independent gates)
+        working-directory: tests
+        env:
+          GROUNDWORK_REQUIRE_SERVICES: "1"
+        run: uv run pytest system/
+
+      # The ONE sanctioned non-blocking step (G4's original intent): reports
+      # doc-currency drift, never gates deploy on it.
+      - name: GroundWork doc-currency check (advisory)
+        continue-on-error: true
+        run: npx --yes groundwork-method check
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: services/site/out
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

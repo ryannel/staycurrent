@@ -95,7 +95,7 @@ def test_pipeline_order_is_install_gate_build_deploy():
 
     install_i = first_index(["--frozen-lockfile"])
     gate_i = first_index(["runPublishGate", "gate"])
-    build_i = first_index(["next build", "pnpm build", "run build"])
+    build_i = first_index(["next build"])
     deploy_i = first_index(["deploy-pages", "Deploy"])
 
     assert install_i is not None, "expected pnpm install --frozen-lockfile as the install step"
