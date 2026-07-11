@@ -74,7 +74,8 @@ type GateCheckId =
   | 'slug-matches-dirname'
   | 'reserved-slug'
   | 'cadence-date-valid'
-  | 'frontmatter-schema';
+  | 'frontmatter-schema'
+  | 'changelog-schema';
 
 interface GateFailure {
   check: GateCheckId;
@@ -344,9 +345,9 @@ RenderedDoc { html: string, toc: TocEntry[] }
 
 ---
 
-**Publish gate.** The ten mechanical checks from `docs/design-system.md` (Verification requirements), `domain/version.md`'s invariants, and the frontmatter schema, formalized as one contract.
+**Publish gate.** The eleven mechanical checks from `docs/design-system.md` (Verification requirements), `domain/version.md`'s invariants, and the content schemas, formalized as one contract.
 
-**How N is derived.** Every check resolves against one shared `N`: the highest version number present as a `versions/vN/` subdirectory inside `dir`. This makes the gate mode-agnostic — `dir` may be an already-committed `topics/<slug>/` (CI's per-topic re-validation, `cut`'s idempotency probe) or the staged tree at `.staycurrent/staged/<slug>/` (the `gate` command's pre-cut report, `cut`'s pre-commit check) — the same ten checks, the same code path, run either way (ADR 0003). This is also why `stageCut` seeds the staged tree as a complete copy of the committed topic rather than a diff: the gate must see the complete `versions/` set to compute `N` and check it end to end.
+**How N is derived.** Every check resolves against one shared `N`: the highest version number present as a `versions/vN/` subdirectory inside `dir`. This makes the gate mode-agnostic — `dir` may be an already-committed `topics/<slug>/` (CI's per-topic re-validation, `cut`'s idempotency probe) or the staged tree at `.staycurrent/staged/<slug>/` (the `gate` command's pre-cut report, `cut`'s pre-commit check) — the same eleven checks, the same code path, run either way (ADR 0003). This is also why `stageCut` seeds the staged tree as a complete copy of the committed topic rather than a diff: the gate must see the complete `versions/` set to compute `N` and check it end to end.
 
 | # | id | inspects | failure message (`GateFailure.message`) |
 |---|----|----------|-------------------------------------------|
@@ -360,12 +361,13 @@ RenderedDoc { html: string, toc: TocEntry[] }
 | 8 | `reserved-slug` | live `article.md` frontmatter `topic` vs `['skills','changelog','about','rss.xml']` | `article.md: topic slug '${topic}' collides with a reserved root path` |
 | 9 | `cadence-date-valid` | `cadence` matches `/^\d+d$/`; `last_researched` and every `versions/vM/article.md`'s `cut` (M in 1..N) are valid ISO 8601 dates on or before `opts.now ?? new Date()` | `${file}: ${field} '${value}' is not a valid date on or before today` or `article.md: cadence '${value}' does not match <int>d` |
 | 10 | `frontmatter-schema` | live `article.md` frontmatter passes `validateTopicFrontmatter` — the module-internal validator the loaders share (one schema, one code path: types, status enum, non-blank `title`/`stance`); every issue the validator reports becomes one failure | `article.md: ${issue}` — one failure per schema issue, where `${issue}` is the same string `ContentValidationError.issues` carries on the load path, verbatim (change-proposal-6: a gate-passed cut must never land content the loaders reject) |
+| 11 | `changelog-schema` | `dir/changelog.md` parses through the module-internal changelog parser `loadChangelog` wraps — the same parse-and-validate code path, pointed at the tree under gate (heading grammar, descending contiguity to v1, stance-line rules); a `ContentValidationError` becomes one failure per issue, a missing file its own failure | `changelog.md: ${issue}` — one failure per schema issue, the same strings `ContentValidationError.issues` carries on the load path, verbatim; a missing file reports check 1's shape, `missing required artifact: changelog.md` (change-proposal-7: change-proposal-6's principle applied to the changelog store) |
 
 Every `message` names the exact missing or offending artifact path — that is a shape requirement, not a style: `GateFailure.path` always carries the same `dir`-relative path the message names (e.g. `versions/v6/provenance.md`, `skill/SKILL.md`), and the halt template's `Cause:` line and the `gate` command's per-failure lines are built directly from `check` + `message`, never a paraphrase.
 
 **`runPublishGate(dir: string, opts?: PublishGateOptions): GateResult`**
 
-**Purpose:** The one place gate logic exists (ADR 0003) — validates that `dir`, treated as a topic tree, is internally consistent across all ten checks above.
+**Purpose:** The one place gate logic exists (ADR 0003) — validates that `dir`, treated as a topic tree, is internally consistent across all eleven checks above.
 
 **Request:**
 ```
@@ -383,7 +385,7 @@ GateResult { ok: boolean, failures: GateFailure[], dir: string }
 - Never throws for content problems — every violation becomes a `GateFailure` entry, not an exception. This is the one function in the module deliberately designed not to throw on invalid content, because invalid content is its entire subject matter; a caller scripting against it (CI, the `gate` command) needs the complete list, not a stack unwound at the first problem.
 - May propagate a raw fs error if `dir` itself does not exist — a usage error, not a content violation.
 
-**Design rationale:** Runs all ten checks and aggregates every failure rather than failing fast, so an operator debugging a failed cut sees every problem in one pass instead of iterating the gate check-by-check. Check 10 deliberately re-covers check 9's cadence and date territory at the schema level — one bad cadence may yield two failures, and that double-reporting is aggregation by design (change-proposal-6), never a signal to dedupe. `opts.now` makes check 9 deterministic under test without mocking the system clock. `dir` is echoed into the result so a `GateResult` is bound to the tree it certified — `executeCut` refuses a result for any other directory (change-proposal-1: a pass for one tree must not authorize landing another). `stageCut`/`executeCut` never re-validate; every caller — the `gate` and `cut` commands, CI pre-deploy — calls exactly this function against exactly this directory shape.
+**Design rationale:** Runs all eleven checks and aggregates every failure rather than failing fast, so an operator debugging a failed cut sees every problem in one pass instead of iterating the gate check-by-check. Check 10 deliberately re-covers check 9's cadence and date territory at the schema level, and check 11 re-covers check 2's top-heading territory — one bad artifact may yield two failures, and that double-reporting is aggregation by design (change-proposals 6 and 7), never a signal to dedupe. `opts.now` makes check 9 deterministic under test without mocking the system clock. `dir` is echoed into the result so a `GateResult` is bound to the tree it certified — `executeCut` refuses a result for any other directory (change-proposal-1: a pass for one tree must not authorize landing another). `stageCut`/`executeCut` never re-validate; every caller — the `gate` and `cut` commands, CI pre-deploy — calls exactly this function against exactly this directory shape.
 
 ---
 

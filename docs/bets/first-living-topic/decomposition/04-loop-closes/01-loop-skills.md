@@ -6,7 +6,7 @@
 
 **Complexity:** M
 
-**Prerequisite:** none (Milestone 3 delivered — the gate carries ten checks; the site serves the trust apparatus)
+**Prerequisite:** none (Milestone 3 delivered — the gate carries eleven checks (change-proposal-7); the site serves the trust apparatus)
 
 ## Scope
 
