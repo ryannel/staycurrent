@@ -139,7 +139,7 @@ export default async function ArchivedVersionPage({ params }: PageProps) {
             {'This skill renders '}
             <strong>{`v${archived.version}`}</strong>
             {' of the stance. '}
-            <Link href={`/${slug}/skill/`} prefetch={false} className="superseded-skill-link">
+            <Link href={`/${slug}/skill/`} className="superseded-skill-link">
               Install the current version instead →
             </Link>
           </p>

@@ -11,13 +11,11 @@ every swept route responds < 400 (a 404 response would fail that gate for
 every OTHER route too).
 """
 
-import re
 import warnings
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page
 
-from pages.base_page import BasePage
 from pages.not_found_page import NotFoundPage
 
 AXE_CDN_URL = "https://cdn.jsdelivr.net/npm/axe-core@4.10.2/axe.min.js"
@@ -30,48 +28,18 @@ def test_unmatched_route_reaches_the_designed_404(cluster, site_page: Page, surf
     )
 
 
-def test_milestone_3_face_link_reaches_the_designed_404(cluster, site_page: Page, surfaces):
-    """The skill face route is Slice 3.3 scope; until then it reaches the
-    designed 404 — the one remaining mid-ladder state (Slice 3.2 closed the
-    changelog/history faces this test targeted before — see
-    tests/bets/first-living-topic/test_slice_11_site_trust-routes.py, which
-    now proves those routes are real)."""
+def test_face_shaped_miss_reaches_the_designed_404(cluster, site_page: Page, surfaces):
+    """Slice 3.3 (distribution) landed the last mid-ladder face — `skill` —
+    as a real route (see
+    tests/bets/first-living-topic/test_slice_12_site_distribution.py), so
+    every face the sidebar's topic-tree lists (article/changelog/history/
+    skill) is now real. `/databases/research-log/` is a plausible-looking
+    topic sub-path with real backing content (`research-log.md` exists) but
+    no route ever built for it in this bet's decomposition — a permanently
+    mid-ladder path, keeping the designed-404 class pinned to something this
+    static export genuinely never generates."""
     not_found = NotFoundPage(site_page, surfaces["site"]["reach"])
-    not_found.goto("/databases/skill/").expect_designed_dead_end()
-
-
-def test_sidebar_face_link_reaches_the_designed_404(cluster, site_page: Page, surfaces):
-    """The test above proves the route itself dead-ends correctly, but
-    reaches it by typing the URL directly — it would stay green even if the
-    sidebar's own topic-faces list pointed somewhere else entirely. This
-    walks the real navigation path instead: expand the databases entry in
-    the sidebar and follow its Skill face link (the changelog/history faces
-    this test used to exercise are real routes as of Slice 3.2 — see
-    tests/bets/first-living-topic/test_slice_11_site_trust-routes.py — so
-    Skill, the one face still mid-ladder until Slice 3.3, is what's left to
-    prove the sidebar's own dead-end wiring with).
-
-    Desktop viewport (matching test_visual_regression.py's DESKTOP
-    convention) keeps the sidebar in its sticky, always-visible mode rather
-    than the closed overlay drawer, so the click is deterministic.
-    """
-    site_page.set_viewport_size({"width": 1280, "height": 800})
-    shell = BasePage(site_page, surfaces["site"]["reach"])
-    shell.goto("/")
-    shell.click_sidebar_face_link("Databases", "Skill")
-
-    # The link's own href carries the trailing slash (`/databases/skill/`,
-    # confirmed against the rendered DOM), but Next's client-side router
-    # deterministically drops it from the address bar when a soft navigation
-    # resolves to the not-found boundary for a route this static export never
-    # generates — reproduced consistently against the served build, unlike a
-    # direct `goto()` (test_milestone_3_face_link_reaches_the_designed_404),
-    # which preserves whatever was typed. The optional trailing slash below
-    # tolerates that real client-router quirk without cementing it as pass/fail
-    # signal — the load-bearing assertion is landing on /databases/skill,
-    # which expect_designed_dead_end() below confirms is the real 404.
-    expect(site_page).to_have_url(re.compile(r"/databases/skill/?$"))
-    NotFoundPage(site_page, surfaces["site"]["reach"]).expect_designed_dead_end()
+    not_found.goto("/databases/research-log/").expect_designed_dead_end()
 
 
 def test_404_is_axe_clean(cluster, site_page: Page, surfaces):

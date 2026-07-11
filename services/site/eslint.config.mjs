@@ -127,5 +127,16 @@ export default tseslint.config(
     rules: {
       "no-restricted-syntax": "off",
     },
+  },
+  {
+    // scripts/prebuild.mjs is a standalone Node CLI build step (the npm
+    // `prebuild` lifecycle hook), never a browser/React surface — its
+    // console output is the operator/CI-visible record of what it wrote
+    // (or why it failed closed), the same role the workbench CLI's own
+    // stdout/stderr plays elsewhere in this project.
+    files: ["scripts/**/*.mjs"],
+    rules: {
+      "no-console": "off",
+    },
   }
 );

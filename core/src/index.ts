@@ -19,6 +19,8 @@ export { loadChangelog } from './loaders/loadChangelog.js';
 export { loadVersion } from './loaders/loadVersion.js';
 export { loadResearchLog } from './loaders/loadResearchLog.js';
 
+export { buildRss } from './buildRss.js';
+
 export { runPublishGate } from './runPublishGate.js';
 
 export { createTopic } from './cut/createTopic.js';

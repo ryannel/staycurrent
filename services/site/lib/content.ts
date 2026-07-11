@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   listTopics,
@@ -8,6 +8,7 @@ import {
   type ChangelogEntry,
   type ProvenanceRecord,
   type RenderedDoc,
+  type SiteConfig,
   type Topic,
   type TopicSummary,
 } from '@staycurrent/core';
@@ -29,6 +30,45 @@ import {
 const REPO_ROOT = process.env.STAYCURRENT_REPO_ROOT
   ? path.resolve(process.env.STAYCURRENT_REPO_ROOT)
   : path.resolve(process.cwd(), '..', '..');
+
+/**
+ * Reads `site.config.json` from the repo root (03-api-design.md, `buildRss`:
+ * "read by the site's prebuild script from site.config.json at the repo root
+ * and passed in") — the one place `services/site` resolves this instance's
+ * identity, so no page hardcodes `config.url` itself. Fails closed for BOTH
+ * an outright-missing file and a malformed one (bad JSON, a field with the
+ * wrong type) — no instance value is hardcoded in `services/site` (RC1), so
+ * there is no default left to degrade to. Every real deploy of this
+ * repository ships a `site.config.json` at its root (see `/site.config.json`)
+ * and every fixture root a build runs against must now stage its own (bet-
+ * progress fixture harnesses under `tests/` were updated alongside this
+ * change). `services/site/scripts/prebuild.mjs` mirrors this exact
+ * validation shape (it cannot import this module — see that file's own
+ * comment).
+ */
+export function getSiteConfig(root: string = REPO_ROOT): SiteConfig {
+  const configPath = path.join(root, 'site.config.json');
+  if (!existsSync(configPath)) {
+    throw new Error(
+      `${configPath}: site.config.json not found — no instance value is hardcoded in ` +
+        'services/site, so every repo root a build runs against must stage its own'
+    );
+  }
+  const raw: unknown = JSON.parse(readFileSync(configPath, 'utf-8'));
+  if (
+    typeof raw !== 'object' ||
+    raw === null ||
+    typeof (raw as Partial<SiteConfig>).name !== 'string' ||
+    typeof (raw as Partial<SiteConfig>).url !== 'string' ||
+    typeof (raw as Partial<SiteConfig>).description !== 'string' ||
+    typeof (raw as Partial<SiteConfig>).author !== 'string'
+  ) {
+    throw new Error(
+      `${configPath}: must be a JSON object with string fields name, url, description, author`
+    );
+  }
+  return raw as SiteConfig;
+}
 
 /**
  * Sweeps `topics/` and fails closed per 03-api-design.md: "the site's build

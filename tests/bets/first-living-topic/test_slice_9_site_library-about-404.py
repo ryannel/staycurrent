@@ -89,15 +89,17 @@ def test_browser_nonexistent_route_renders_the_designed_404(cluster, site_page: 
 
 
 def test_face_link_to_a_milestone_3_route_reaches_the_designed_404(cluster, site_page: Page):
-    """changelog/history/skill face routes are Milestone 3 scope; until then they must
-    reach the designed 404 — the accepted mid-ladder state. The slice prose scopes this
-    "until Milestone 3 lands them": slice 3.2 landed changelog/history, so the one face
-    still mid-ladder is skill (lands in slice 3.3) — the target moved with the ladder,
-    recorded in slice 3.2's delivery commit."""
-    site_page.goto(f"/{SLUG}/skill/", wait_until="load")
+    """changelog/history/skill face routes were Milestone 3 scope; until it landed them
+    they had to reach the designed 404 — the accepted mid-ladder state, scoped by the
+    slice prose's own "until Milestone 3 lands them". The ladder closed face by face
+    (target moved in slices 3.2 and 3.3's delivery commits); with every real face now
+    live, the capability this traces to (RC4: ANY unmatched route renders the designed
+    404, never a host default) is pinned against a face-shaped path that never becomes
+    a route — the same class of miss a stale or mistyped face link produces."""
+    site_page.goto(f"/{SLUG}/research-log/", wait_until="load")
 
     body_text = site_page.locator("body").inner_text()
     assert "This page doesn't exist." in body_text, (
-        f"expected /{SLUG}/skill/ (not yet a real route — slice 3.3 lands it) to "
+        f"expected /{SLUG}/research-log/ (a face-shaped path that is not a route) to "
         "reach the designed 404"
     )

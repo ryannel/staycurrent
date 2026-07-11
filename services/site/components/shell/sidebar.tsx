@@ -3,13 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ArrowUpRight, ChevronRight, Menu, X } from 'lucide-react';
+import { ArrowUpRight, ChevronRight, Menu, Rss, X } from 'lucide-react';
 import { ThemeToggle } from './theme-toggle';
 
 // The GitHub repository behind this site — the sidebar footer's third
 // cluster item (Footer cluster spec, docs/design-system.md § Graphical UI).
-// The RSS glyph link is the fourth and lands in Milestone 3, once /changelog/
-// exists to feed it.
 const FRAMEWORK_REPO_URL = 'https://github.com/ryannel/staycurrent';
 
 export interface TopicNavEntry {
@@ -32,12 +30,13 @@ const DRAWER_QUERY = '(max-width: 899px)';
  * toggle. Sticky at >= 900px; an overlay drawer below it (Shell zone rule,
  * 01-ui-design.md).
  *
- * `changelog`/`history` face links and the site-wide `/changelog/` page are
- * real routes as of Slice 3.2 and prefetch normally, same as `/about/`. The
- * `skill` face link stays `prefetch={false}` — that route lands in Slice
- * 3.3, and until then Next's viewport prefetcher must never issue a
- * background request for a route this export doesn't generate (which would
- * otherwise surface as a failed-request in the render-smoke gate).
+ * Every topic-face link (`changelog`/`history`/`skill`) and the site-wide
+ * `/changelog/` page are real routes as of Slice 3.3 and prefetch normally,
+ * same as `/about/` — Slice 3.2 kept the (then not-yet-built) `skill` face
+ * at `prefetch={false}` so Next's viewport prefetcher never issued a
+ * background request for a route the export didn't generate yet (which
+ * would otherwise surface as a failed-request in the render-smoke gate);
+ * that carve-out is gone now that the route lands.
  */
 export function Sidebar({ topics }: SidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -181,7 +180,7 @@ export function Sidebar({ topics }: SidebarProps) {
                       </Link>
                     </li>
                     <li>
-                      <Link href={`/${topic.slug}/skill/`} prefetch={false} onClick={close}>
+                      <Link href={`/${topic.slug}/skill/`} onClick={close}>
                         Skill
                       </Link>
                     </li>
@@ -194,10 +193,15 @@ export function Sidebar({ topics }: SidebarProps) {
 
         <div className="sidebar-footer">
           <ThemeToggle />
-          {/* Footer cluster's framework repo link (docs/design-system.md § Graphical
-              UI: "theme toggle, RSS glyph link, framework repo link"). The RSS glyph
-              link is the remaining item and lands in Milestone 3, once /changelog/
-              exists to feed it — deliberately not added here. */}
+          {/* Footer cluster's RSS glyph link (docs/design-system.md § Graphical UI:
+              "theme toggle, RSS glyph link, framework repo link"), the item deferred
+              from Milestone 2 until /rss.xml existed to feed it (Slice 3.3's
+              prebuild). Points straight at the static feed artifact, not a Next
+              route — a plain anchor, matching the framework repo link beside it. */}
+          <a href="/rss.xml" className="btn-ghost" aria-label="RSS feed">
+            <Rss size={16} aria-hidden="true" />
+          </a>
+          {/* Footer cluster's framework repo link. */}
           <a
             href={FRAMEWORK_REPO_URL}
             target="_blank"

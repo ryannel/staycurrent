@@ -184,14 +184,32 @@ describe('sanitizeUrlProtocols', () => {
       return value.replace(LEADING_TRAILING_C0_RE, '').replace(/[\t\n\r]/g, '');
     }
 
-    function resolveAgainstBase(value: string): URL {
+    function resolvedProtocol(value: string): string | null {
       const httpsBase = 'https://example.com/';
       try {
-        return new URL(value, httpsBase);
+        return new URL(value, httpsBase).protocol;
       } catch {
         const schemeMatch = /^([a-z][a-z0-9+.-]*):/i.exec(cleanForSchemeMatch(value));
-        if (!schemeMatch) throw new Error(`unresolvable with no scheme to retry against: ${value}`);
-        return new URL(value, `${schemeMatch[1].toLowerCase()}://example.com/`);
+        // Scheme-less AND unparseable against a base: a network-path
+        // reference with an empty/invalid authority ("//", "\/" — WHATWG
+        // treats backslash as a slash in special URLs, "/\"). Browsers
+        // cannot resolve such an href in any context — the link is inert,
+        // so no protocol whatsoever can travel through it: trivially safe.
+        if (!schemeMatch) return null;
+        const scheme = schemeMatch[1].toLowerCase();
+        try {
+          return new URL(value, `${scheme}://example.com/`).protocol;
+        } catch {
+          // A special scheme whose authority is empty or absent after its
+          // "//" marker ("https://", "http://") is unparseable by WHATWG
+          // rules against ANY base — browsers treat such an href as an
+          // inert, unresolvable link, so no protocol at all can travel
+          // through it. The property's question is "can a non-allowlisted
+          // scheme survive?", so classify the value by its own scheme and
+          // let the allowlist assertion below give the verdict: an allowed
+          // scheme's empty-authority quirk passes, a hostile one still fails.
+          return `${scheme}:`;
+        }
       }
     }
 
@@ -214,9 +232,12 @@ describe('sanitizeUrlProtocols', () => {
           // oracle: anything sanitizeUrlProtocols leaves in place must either
           // carry no scheme of its own (resolves against the https base,
           // covering relative paths, fragments, and protocol-relative URLs
-          // alike) or carry one of the three allowed schemes.
-          const resolved = resolveAgainstBase(String(survived));
-          expect(['http:', 'https:', 'mailto:']).toContain(resolved.protocol);
+          // alike), carry one of the three allowed schemes, or be an inert
+          // unresolvable reference no protocol can travel through (null).
+          const protocol = resolvedProtocol(String(survived));
+          if (protocol !== null) {
+            expect(['http:', 'https:', 'mailto:']).toContain(protocol);
+          }
         }),
         { numRuns: 500 }
       );

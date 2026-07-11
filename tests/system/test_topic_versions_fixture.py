@@ -18,10 +18,12 @@ in a `finally`, so the real served build other tests in this suite expect is
 left intact regardless of outcome.
 """
 
+import json
 import os
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -33,7 +35,23 @@ from pages.topic_version_page import TopicVersionPage
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SITE_DIR = REPO_ROOT / "services" / "site"
 OUT_DIR = SITE_DIR / "out"
+PUBLIC_DIR = SITE_DIR / "public"
+RSS_PATH = PUBLIC_DIR / "rss.xml"
+SKILLS_DIR = PUBLIC_DIR / "skills"
 SLUG = "widgets"
+
+# A DISTINCTIVE origin — deliberately not staycurrent.dev (the repo's own
+# site.config.json) and not any string the engine ever hardcoded — so a page
+# or feed carrying it proves site.config.json's OWN value flowed through the
+# build, closing the "indistinguishable from a hardcoded fallback" oracle gap
+# now that services/site fails closed on a missing config (RC1) rather than
+# degrading to one.
+FIXTURE_SITE_CONFIG = {
+    "name": "Fixture Site",
+    "url": "https://fixture.example.test",
+    "description": "A fixture site.config.json proving config-driven origin flows through the build.",
+    "author": "fixture author",
+}
 
 ARTICLE_MD = """---
 topic: widgets
@@ -115,6 +133,7 @@ def widgets_fixture_build():
         fixture_root = tmp_path / "fixture-root"
         topic_dir = fixture_root / "topics" / SLUG
         topic_dir.mkdir(parents=True)
+        (fixture_root / "site.config.json").write_text(json.dumps(FIXTURE_SITE_CONFIG))
         (topic_dir / "article.md").write_text(ARTICLE_MD)
         (topic_dir / "changelog.md").write_text(CHANGELOG_MD)
         versions_dir = topic_dir / "versions"
@@ -138,6 +157,22 @@ def widgets_fixture_build():
         out_backup = tmp_path / "out-backup"
         if out_existed_before:
             shutil.copytree(OUT_DIR, out_backup)
+
+        # The prebuild script rmSync's and rewrites the REAL
+        # services/site/public/rss.xml + public/skills/ on every `pnpm build`
+        # (CONFIRMED pollution: left unrestored, the fixture's rss.xml/skill
+        # payloads sit in public/ — and get picked up by the NEXT real
+        # build's output — until a real build overwrites them again). Back
+        # these up and restore them exactly like out/ above.
+        rss_existed_before = RSS_PATH.exists()
+        rss_backup = tmp_path / "rss-backup.xml"
+        if rss_existed_before:
+            shutil.copy2(RSS_PATH, rss_backup)
+
+        skills_existed_before = SKILLS_DIR.exists()
+        skills_backup = tmp_path / "skills-backup"
+        if skills_existed_before:
+            shutil.copytree(SKILLS_DIR, skills_backup)
 
         try:
             # Turbopack's persistent cache (services/site/.next/) does not
@@ -167,6 +202,37 @@ def widgets_fixture_build():
                 # build sitting there would plant fixture content as if it
                 # were a real build for every OTHER test that reads out/.
                 shutil.rmtree(OUT_DIR, ignore_errors=True)
+
+            if rss_existed_before:
+                shutil.copy2(rss_backup, RSS_PATH)
+            else:
+                RSS_PATH.unlink(missing_ok=True)
+
+            if skills_existed_before:
+                shutil.rmtree(SKILLS_DIR, ignore_errors=True)
+                shutil.copytree(skills_backup, SKILLS_DIR)
+            else:
+                shutil.rmtree(SKILLS_DIR, ignore_errors=True)
+
+
+def test_config_driven_origin_flows_into_the_install_one_liner_and_the_rss_feed(widgets_fixture_build):
+    """Now that services/site fails closed on a missing site.config.json
+    (RC1: "no instance value is hardcoded in services/site") instead of
+    degrading to a hardcoded default, a page or feed carrying the fixture's
+    OWN url proves the config actually flowed through the build — not merely
+    that the build produced SOME url, which a reintroduced hardcoded default
+    would also satisfy indistinguishably."""
+    skill_html = (widgets_fixture_build / SLUG / "skill" / "index.html").read_text()
+    assert f"{FIXTURE_SITE_CONFIG['url']}/skills/{SLUG}.zip" in skill_html, (
+        "expected the install one-liner to be built from this fixture's OWN "
+        "site.config.json url, not a hardcoded engine default"
+    )
+
+    rss_xml = (widgets_fixture_build / "rss.xml").read_text()
+    assert FIXTURE_SITE_CONFIG["url"] in rss_xml, (
+        "expected rss.xml's channel/item links to carry this fixture's OWN "
+        "site.config.json url, not a hardcoded engine default"
+    )
 
 
 def test_archived_version_renders_the_frozen_snapshot_with_superseded_banner_and_skill_pointer(
@@ -300,3 +366,36 @@ def test_archived_banner_condenses_to_exactly_32px_tall(widgets_fixture_build, c
     # resolved style until it settles or the default timeout elapses, which
     # is what actually makes this deterministic.
     expect(banner).to_have_css("height", "32px")
+
+
+def test_archived_skill_payload_tree_and_zip_are_byte_identical_and_carry_the_version_binding(
+    widgets_fixture_build,
+):
+    """The distribution contract's archived half (03-api-design.md): every
+    version below the live one gets its own browsable tree AND zip under
+    `public/skills/<slug>/v/<n>/`. The repository's own single-version
+    `databases` topic never exercises this archived branch of
+    `scripts/prebuild.mjs`'s materialization loop at all — only a >= 2-version
+    fixture does."""
+    tree_skill_md_path = widgets_fixture_build / "skills" / SLUG / "v" / "1" / "SKILL.md"
+    assert tree_skill_md_path.exists(), (
+        f"expected the browsable archived skill tree at {tree_skill_md_path}"
+    )
+    tree_skill_md = tree_skill_md_path.read_text()
+    assert "article_version: 1" in tree_skill_md
+
+    zip_path = widgets_fixture_build / "skills" / SLUG / "v" / "1.zip"
+    assert zip_path.exists(), f"expected the archived skill zip at {zip_path}"
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+        assert all(n.startswith(f"{SLUG}/") for n in names), (
+            "expected a single top-level <slug>/ directory in the archived zip too — "
+            "never loose files at the archive root"
+        )
+        zip_skill_md = zf.read(f"{SLUG}/SKILL.md").decode()
+
+    assert zip_skill_md == tree_skill_md, (
+        "expected the browsable v/1 tree's SKILL.md bytes to equal the zip's — both "
+        "sourced directly from the same gate-validated versions/v1/skill/ snapshot, "
+        "never re-derived"
+    )

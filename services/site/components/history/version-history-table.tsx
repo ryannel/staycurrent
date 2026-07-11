@@ -67,13 +67,13 @@ export function VersionHistoryTable({ slug, currentVersion, rows }: VersionHisto
               <td>{row.stance ?? '—'}</td>
               <td>
                 {isCurrent ? (
-                  <Link href={`/${slug}/skill/`} prefetch={false}>
+                  <Link href={`/${slug}/skill/`}>
                     skill →
                   </Link>
                 ) : (
                   <span className="version-history-skill-note">
                     {`skill (renders v${row.version} — `}
-                    <Link href={`/${slug}/skill/`} prefetch={false}>
+                    <Link href={`/${slug}/skill/`}>
                       install current →
                     </Link>
                     {') '}

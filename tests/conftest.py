@@ -323,6 +323,12 @@ def site_page(browser, surfaces):
     if base is None:
         pytest.skip("surface 'site' has no reachable base URL (is its service in docker-compose.yml?)")
     context = browser.new_context(base_url=base)
+    # A real Chrome auto-grants clipboard-write for a user-gesture-triggered
+    # navigator.clipboard.writeText() (e.g. the skill install page's copy
+    # affordance) without a permission prompt; Playwright's default context
+    # does not, so grant it explicitly here rather than at every test that
+    # exercises a copy-to-clipboard flow.
+    context.grant_permissions(["clipboard-read", "clipboard-write"], origin=base)
     page = context.new_page()
     yield page
     context.close()

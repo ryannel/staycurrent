@@ -5,6 +5,7 @@ This test is RED by design. It defines the target state for Milestone 3.
 Run './dev test bet first-living-topic' to see it fail; it will pass when Delivery is complete.
 """
 
+import html
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -55,7 +56,15 @@ def test_per_topic_trust_routes_render_with_the_canonical_install_line():
         assert path.exists(), f"{path.relative_to(REPO_ROOT)} does not exist yet"
 
     skill_html = (OUT_DIR / SLUG / "skill" / "index.html").read_text()
-    assert INSTALL_ONE_LINER in skill_html, (
+    # The install command renders as an ordinary JSX text child (patch review
+    # of Slice 3.3), so React's server renderer HTML-escapes it in the raw
+    # static export (` && ` becomes `&amp;&amp;`) — the correct behavior for
+    # real markup, and no longer the raw dangerouslySetInnerHTML injection
+    # that byte-for-byte grep once forced into product code. This assertion
+    # compares RENDERED TEXT, not raw bytes: unescape the HTML entities
+    # before checking containment. What it proves — the canonical one-liner
+    # appears on the install page — is unchanged.
+    assert INSTALL_ONE_LINER in html.unescape(skill_html), (
         "expected the install page to render the canonical one-liner verbatim"
     )
 

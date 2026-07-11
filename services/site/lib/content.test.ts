@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ContentNotFoundError, ContentValidationError } from '@staycurrent/core';
 import {
   getArchivedVersion,
+  getSiteConfig,
   getTopic,
   getTopicChangelog,
   getTopicCutDate,
@@ -539,6 +540,43 @@ describe('listSiteChangelog', () => {
     const entries = listSiteChangelog(root);
 
     expect(entries.map((e) => e.topicSlug)).toEqual(['databases', 'testing']);
+  });
+});
+
+describe('getSiteConfig', () => {
+  it('reads name/url/description/author from site.config.json at the repo root', () => {
+    const root = makeTmpRoot();
+    fs.writeFileSync(
+      path.join(root, 'site.config.json'),
+      JSON.stringify({
+        name: 'Fixture Site',
+        url: 'https://fixture.example',
+        description: 'A fixture description.',
+        author: 'fixture author',
+      })
+    );
+
+    expect(getSiteConfig(root)).toEqual({
+      name: 'Fixture Site',
+      url: 'https://fixture.example',
+      description: 'A fixture description.',
+      author: 'fixture author',
+    });
+  });
+
+  // Fail-closed (RC1: "no instance value is hardcoded in services/site") —
+  // every repo root a build runs against, real or fixture, must stage its
+  // own site.config.json now that there is no default to degrade to.
+  it('throws when site.config.json is absent', () => {
+    const root = makeTmpRoot();
+    expect(() => getSiteConfig(root)).toThrow(/site\.config\.json/);
+  });
+
+  it('throws when site.config.json exists but is missing a required field', () => {
+    const root = makeTmpRoot();
+    fs.writeFileSync(path.join(root, 'site.config.json'), JSON.stringify({ name: 'Fixture Site' }));
+
+    expect(() => getSiteConfig(root)).toThrow(/site\.config\.json/);
   });
 });
 

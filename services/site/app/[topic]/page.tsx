@@ -92,10 +92,7 @@ export default async function TopicPage({ params }: PageProps) {
             history
           </Link>
           <span aria-hidden="true">·</span>
-          {/* skill lands in Slice 3.3 — prefetch={false} keeps Next's
-              viewport prefetcher from issuing a background request for a
-              route this export doesn't generate yet (see sidebar.tsx). */}
-          <Link href={`/${slug}/skill/`} prefetch={false}>
+          <Link href={`/${slug}/skill/`}>
             skill
           </Link>
           {/* Always rendered (never conditionally omitted) so the client-side

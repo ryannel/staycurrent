@@ -19,6 +19,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CORE_INDEX_URI = (REPO_ROOT / "core" / "dist" / "index.js").as_uri()
 SITE_DIR = REPO_ROOT / "services" / "site"
 OUT_DIR = SITE_DIR / "out"
+PUBLIC_DIR = SITE_DIR / "public"
+RSS_PATH = PUBLIC_DIR / "rss.xml"
+SKILLS_DIR = PUBLIC_DIR / "skills"
 
 
 def _run_node(script: str, timeout: int = 30) -> subprocess.CompletedProcess:
@@ -153,6 +156,12 @@ def test_site_build_strips_a_hostile_link_from_the_exported_article_html():
         fixture_root = tmp_path / "fixture-root"
         fixture_topic_dir = fixture_root / "topics" / "databases"
         shutil.copytree(REPO_ROOT / "topics" / "databases", fixture_topic_dir)
+        # Fail-closed since RC1 (services/site/lib/content.ts's getSiteConfig
+        # no longer degrades a missing file to a hardcoded default) — every
+        # STAYCURRENT_REPO_ROOT-pointed build must now stage its own
+        # site.config.json. The real one is copied verbatim; this test's own
+        # proof is about the sanitizer, not about config content.
+        shutil.copy2(REPO_ROOT / "site.config.json", fixture_root / "site.config.json")
 
         article = fixture_topic_dir / "article.md"
         original = article.read_text()
@@ -162,6 +171,21 @@ def test_site_build_strips_a_hostile_link_from_the_exported_article_html():
         out_backup = tmp_path / "out-backup"
         if out_existed_before:
             shutil.copytree(OUT_DIR, out_backup)
+
+        # The prebuild script rmSync's and rewrites the REAL
+        # services/site/public/rss.xml + public/skills/ on every `pnpm
+        # build` this fixture now successfully completes (same pollution
+        # test_topic_versions_fixture.py's harness backs up) — restore them
+        # alongside out/ in the `finally` below.
+        rss_existed_before = RSS_PATH.exists()
+        rss_backup = tmp_path / "rss-backup.xml"
+        if rss_existed_before:
+            shutil.copy2(RSS_PATH, rss_backup)
+
+        skills_existed_before = SKILLS_DIR.exists()
+        skills_backup = tmp_path / "skills-backup"
+        if skills_existed_before:
+            shutil.copytree(SKILLS_DIR, skills_backup)
 
         try:
             env = {**os.environ, "STAYCURRENT_REPO_ROOT": str(fixture_root)}
@@ -194,6 +218,17 @@ def test_site_build_strips_a_hostile_link_from_the_exported_article_html():
             if out_existed_before:
                 shutil.rmtree(OUT_DIR, ignore_errors=True)
                 shutil.copytree(out_backup, OUT_DIR)
+
+            if rss_existed_before:
+                shutil.copy2(rss_backup, RSS_PATH)
+            else:
+                RSS_PATH.unlink(missing_ok=True)
+
+            if skills_existed_before:
+                shutil.rmtree(SKILLS_DIR, ignore_errors=True)
+                shutil.copytree(skills_backup, SKILLS_DIR)
+            else:
+                shutil.rmtree(SKILLS_DIR, ignore_errors=True)
 
         # The repository's own content tree is never touched by this proof.
         real_article = (REPO_ROOT / "topics" / "databases" / "article.md").read_text()

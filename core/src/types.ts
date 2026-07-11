@@ -160,3 +160,12 @@ export interface ReconcileOptions {
 export interface ReconcileReport {
   reverted: string[]; // slugs whose status was reverted in-research → current (filesystem wins)
 }
+
+// --- RSS (03-api-design.md, "buildRss") ---
+
+export interface SiteConfig {
+  name: string;
+  url: string; // canonical origin, no trailing slash — e.g. 'https://staycurrent.dev'
+  description: string;
+  author: string;
+}
