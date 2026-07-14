@@ -1,5 +1,5 @@
 ---
-status: validation
+status: delivered
 surfaces: [site, workbench]
 ---
 
