@@ -13,14 +13,22 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SLUG = "databases"
 
 
-def _git_log_grep(pattern: str) -> list:
+def _git_commits_with_subject(subject: str) -> list:
+    """Commits whose SUBJECT LINE is exactly `subject`.
+
+    A plain `git log --grep` matches the whole message (subject + body), so an
+    unrelated commit that merely *mentions* the resolution's subject in its body
+    — e.g. the slice 4.2 delivery commit describing the no-cut rehearsal path —
+    would be miscounted as a second resolution and break the exactly-one check.
+    Matching the subject line exactly counts the real machinery commit and only it.
+    """
     result = subprocess.run(
-        ["git", "log", "--oneline", "--fixed-strings", f"--grep={pattern}"],
+        ["git", "log", "--format=%s"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
     )
-    return [line for line in result.stdout.splitlines() if line.strip()]
+    return [line for line in result.stdout.splitlines() if line == subject]
 
 
 # ---------------------------------------------------------------------------
@@ -40,13 +48,13 @@ def test_research_run_resolves_to_a_v2_cut_or_an_honest_no_cut():
     research_log_path = topic_dir / "research-log.md"
     v2_dir = topic_dir / "versions" / "v2"
 
-    cut_v2_commits = _git_log_grep(f"cut({SLUG}): v2")
+    cut_v2_commits = _git_commits_with_subject(f"cut({SLUG}): v2")
     has_v2_changelog = changelog_path.exists() and bool(
         re.search(r"(?m)^## v2 — \d{4}-\d{2}-\d{2}", changelog_path.read_text())
     )
     cut_resolution = has_v2_changelog and v2_dir.is_dir() and len(cut_v2_commits) == 1
 
-    no_cut_commits = _git_log_grep(f"log({SLUG}): no-cut")
+    no_cut_commits = _git_commits_with_subject(f"log({SLUG}): no-cut")
     has_no_cut_entry = research_log_path.exists() and bool(
         re.search(r"(?m)^## \d{4}-\d{2}-\d{2} — no-cut", research_log_path.read_text())
     )
