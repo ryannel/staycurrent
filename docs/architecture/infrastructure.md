@@ -1,6 +1,6 @@
 ---
 title: Infrastructure
-description: Boot topology, health checks, and the deploy pipeline for Stay Current — one native runner, no containers, and a GitHub Pages pipeline landing with the first bet.
+description: Boot topology, health checks, and the deploy pipeline for Stay Current — one native runner, no containers, and a GitHub Pages pipeline (live as of the founding bet).
 type: index
 generation_mode: authored
 source_of_truth:
@@ -62,7 +62,7 @@ site's runner and health check are live today — `./dev status` and `./dev star
 
 workbench has no runner because its scaffold is `manual`: no generator produced it, so `./dev status` reports nothing for it — there is no process to track. Its operational expectation is a deterministic CLI at `workbench/cli.mjs` plus the Claude Code skills that drive research runs, and its health signal is that CLI exiting `0` on `status`. Neither the CLI nor the skills exist yet; both arrive with the first bet. Until then, the health signal fails by absence — there is no `workbench/cli.mjs` to run.
 
-content-core — the embedded capability core both surfaces call ([architecture §4](index.md)) — is in the same scaffold state: an embedded library at `core/`, not yet created, arriving with the first bet; until then the repo has no mappable core source and no content pipeline.
+content-core — the embedded capability core both surfaces call ([architecture §4](index.md)) — is built at `core/` (`@staycurrent/core`): the Loading API, cut/session mechanics, the fail-closed publish gate, and `buildRss`, called in-process by both surfaces at build/run time. Its captured contract lives at [`docs/architecture/api/content-core/`](api/content-core/).
 
 ## System tests
 
@@ -75,7 +75,7 @@ content-core — the embedded capability core both surfaces call ([architecture 
 | Browser | Playwright chromium, installed via `uv run playwright install chromium` |
 | Test paths | `tests/system/` (permanent suite), `tests/bets/<slug>/` (bet-progress suites, archived at delivery) |
 
-`tests/conftest.py` derives a `surfaces` fixture from the surface registry: `site` maps to `playwright` at `http://localhost:4173`, `workbench` maps to `subprocess-cli` at `node workbench/cli.mjs`. No workbench tests exist in `tests/system/` yet — and because the workbench's launch command is already registered in the fixture, the first workbench test written will execute `node workbench/cli.mjs` and fail red until the CLI lands with the first bet; it will not skip.
+`tests/conftest.py` derives a `surfaces` fixture from the surface registry: `site` maps to `playwright` at `http://localhost:4173`, `workbench` maps to `subprocess-cli` at `node workbench/cli.mjs`. Both surfaces are now exercised: the site through render/a11y/token/route system tests, the workbench through the operator-contract and loop-rehearsal modules that subprocess `node workbench/cli.mjs` against fixture trees.
 
 The shared `cluster` fixture health-gates every test on the running stack: it polls every URL-reach surface (the site at `http://localhost:4173`) and every service `docker-compose.yml` declares. It probes the Jaeger query API only when compose declares a `jaeger` service — this project provisions none by design, so no Jaeger probe runs. Against the booted stack the suite reports 4 passed, 6 skipped (`pytest system/ -rs`). The skips: the visual-regression test, opt-in behind `GROUNDWORK_VISUAL_REGRESSION=1`; four service-parametrized tests whose `svc` parameter set is empty because `docker-compose.yml` declares no services; and one CRUD placeholder marked "real CRUD lands in Phase 4".
 
@@ -108,7 +108,7 @@ sequenceDiagram
     end
 ```
 
-No workflow file exists yet at `.github/workflows/`. It lands with the first bet's M2 publish-pipeline slice — until then, the sequence above describes the pipeline's committed shape, not a running one.
+The workflow lives at `.github/workflows/publish.yml` (founding bet): one workflow, two triggers — every push to `main` deploys, every pull request verifies without deploying — running install → full-tree gate → prebuild + build → suites → advisory `groundwork check` → Pages deploy, fail-closed at each step. The custom domain (`staycurrent.dev`) binds through the repository's Pages settings and DNS, not the exported `CNAME` file (Actions-based Pages deploys ignore it).
 
 ## Capability footprints
 

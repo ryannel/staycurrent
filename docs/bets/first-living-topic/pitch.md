@@ -1,5 +1,5 @@
 ---
-status: delivery
+status: validation
 surfaces: [site, workbench]
 ---
 

@@ -48,4 +48,11 @@ running.
 
 ## Capability Ledger
 
-No capability rows yet — bet validation writes rows here as capabilities ship.
+One row per user-meaningful capability. States: `delivered (<bet>)`, `planned (<ref>)`,
+`omitted — <rationale>`, `n/a` (no payload). Validation is the only writer.
+
+| Capability | site | workbench |
+|---|---|---|
+| `first-living-topic/living-article` | delivered (`first-living-topic`) — the reader-facing living article with its full trust apparatus: currency header, stance callout, TOC, themed diagrams, provenance, changelog, history, archived versions, site-wide feed | n/a — the workbench is the operator's tool, not a reader surface; it has no read/browse path |
+| `first-living-topic/research-loop` | n/a — the site is read-only (`output: 'export'`, no write path); it never convenes or cuts | delivered (`first-living-topic`) — the gated research loop: convene → ranked digest → cut/no-cut verdict → the fail-closed eleven-check gate → one commit, zero hand-edits |
+| `first-living-topic/skill-distribution` | delivered (`first-living-topic`) — the distribution *mechanism*: the install page's canonical one-liner, the payload tree and per-version zips, honestly labelled where a reader meets it. Authored companion-skill *content* is deferred to a future skill-design bet (change-proposal-2), tracked in discovery notes | n/a — the workbench authors and cuts the payload into `topics/`; it is not itself a distribution surface a reader fetches from |
