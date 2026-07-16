@@ -19,6 +19,7 @@ from playwright.sync_api import Page, expect
 
 from pages.base_page import BasePage
 from pages.topic_skill_page import TopicSkillPage
+from topic_state import live_topic_version
 
 SLUG = "databases"
 
@@ -27,7 +28,9 @@ def test_install_page_shows_the_one_liner_version_binding_and_placeholder_label(
     cluster, site_page: Page, surfaces
 ):
     skill = TopicSkillPage(site_page, surfaces["site"]["reach"])
-    skill.goto(f"/{SLUG}/skill/").expect_one_liner(SLUG).expect_version_binding(1).expect_placeholder_labelled()
+    skill.goto(f"/{SLUG}/skill/").expect_one_liner(SLUG).expect_version_binding(
+        live_topic_version(SLUG)
+    ).expect_placeholder_labelled()
 
 
 def test_install_skill_button_and_ghost_copy_icon_both_confirm_the_copy(cluster, site_page: Page, surfaces):

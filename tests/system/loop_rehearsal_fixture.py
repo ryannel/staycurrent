@@ -161,21 +161,28 @@ def read_frontmatter(path: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# v2 staged authoring — exactly per .agents/skills/staycurrent-writer/SKILL.md
+# Next-version staged authoring — exactly per
+# .agents/skills/staycurrent-writer/SKILL.md
 # ---------------------------------------------------------------------------
 
 
-def author_v2_staged_set(staged_dir: Path, today: str) -> None:
-    """Authors a small, realistic v2 delta into an already-convened staged
-    tree: the article rewrite (version bump + one new finding paragraph), the
-    changelog's prepended '## v2' mini-essay with a line-start (never
-    bulleted) Stance line, versions/v2/{article.md, skill/, provenance.md}
-    with >=1 sourced and >=1 synthesis provenance entry, and both skill
-    copies riding the bumped article_version — content unchanged per
-    change-proposal-2, only the version binding moves."""
+def author_next_version_staged_set(staged_dir: Path, today: str) -> int:
+    """Authors a small, realistic next-version delta into an already-convened
+    staged tree, version-agnostically: the live version N is read from the
+    staged article (convene seeds it from the live tree) and the set is
+    authored as N+1, so the rehearsal keeps working after every real cut
+    advances the topic. The set: the article rewrite (version bump + one new
+    finding paragraph), the changelog's prepended '## v<N+1>' mini-essay with
+    a line-start (never bulleted) Stance line, versions/v<N+1>/{article.md,
+    skill/, provenance.md} with >=1 sourced and >=1 synthesis provenance
+    entry, and both skill copies riding the bumped article_version — content
+    unchanged per change-proposal-2, only the version binding moves. Returns
+    the authored version number N+1."""
 
     article_path = staged_dir / "article.md"
     original = article_path.read_text()
+    live_version = read_frontmatter(article_path)["version"]
+    next_version = live_version + 1
 
     new_subsection = (
         "\n### Postgres 18 narrows the gap further\n\n"
@@ -190,24 +197,35 @@ def author_v2_staged_set(staged_dir: Path, today: str) -> None:
     assert anchor in original, "expected the fixture article to carry its known closing section"
     updated = original.replace(anchor, new_subsection + anchor, 1)
 
-    updated = re.sub(r"(?m)^version: 1$", "version: 2", updated, count=1)
+    bumped = re.sub(
+        rf"(?m)^version: {live_version}$", f"version: {next_version}", updated, count=1
+    )
+    # re.sub silently no-ops on a miss (e.g. a padded or quoted frontmatter
+    # value YAML still parses as the same int) — an unbumped article must fail
+    # here, at the cause, not downstream at the gate.
+    assert bumped != updated, (
+        f"article version bump regex matched nothing — expected a literal 'version: {live_version}' line"
+    )
     updated = re.sub(
-        r"(?m)^last_researched: \d{4}-\d{2}-\d{2}$", f"last_researched: {today}", updated, count=1
+        r"(?m)^last_researched: \d{4}-\d{2}-\d{2}$", f"last_researched: {today}", bumped, count=1
     )
     article_path.write_text(updated)
 
-    # versions/v2/article.md — the frozen pair's article half: frontmatter
+    # versions/v<N+1>/article.md — the frozen pair's article half: frontmatter
     # reduced to exactly `version` + `cut`, no `status` field.
     body_only = updated.split("---", 2)[2].lstrip("\n")
-    v2_dir = staged_dir / "versions" / "v2"
-    v2_dir.mkdir(parents=True, exist_ok=True)
-    (v2_dir / "article.md").write_text(f"---\nversion: 2\ncut: {today}\n---\n\n{body_only}")
+    next_dir = staged_dir / "versions" / f"v{next_version}"
+    next_dir.mkdir(parents=True, exist_ok=True)
+    (next_dir / "article.md").write_text(
+        f"---\nversion: {next_version}\ncut: {today}\n---\n\n{body_only}"
+    )
 
-    # changelog.md — prepend the v2 mini-essay above the existing v1 entry.
+    # changelog.md — prepend the next version's mini-essay above the existing
+    # entries.
     changelog_path = staged_dir / "changelog.md"
     changelog = changelog_path.read_text()
-    v2_entry = (
-        f"## v2 — {today}\n\n"
+    next_entry = (
+        f"## v{next_version} — {today}\n\n"
         "**What moved:** Postgres 18 shipped asynchronous I/O for sequential "
         "scans and vacuum, narrowing one more operational gap that used to "
         "justify a second analytical engine for read-heavy workloads.\n\n"
@@ -220,15 +238,15 @@ def author_v2_staged_set(staged_dir: Path, today: str) -> None:
         "general-purpose-first stance rather than testing it.\n\n"
     )
     heading, _, rest = changelog.partition("\n\n")
-    changelog_path.write_text(f"{heading}\n\n{v2_entry}{rest}")
+    changelog_path.write_text(f"{heading}\n\n{next_entry}{rest}")
 
     # provenance.md — two sections, at least one entry each.
-    provenance_path = v2_dir / "provenance.md"
+    provenance_path = next_dir / "provenance.md"
     provenance_path.write_text(
         "## Sources\n\n"
         "- [PostgreSQL Documentation](https://www.postgresql.org/docs/current/release-18.html) "
         f"— accessed {today} — supports: the asynchronous I/O feature for "
-        "sequential scans and vacuum cited in the v2 changelog entry.\n\n"
+        "sequential scans and vacuum cited in the changelog entry.\n\n"
         "## Synthesis\n\n"
         "- The absorption argument extends: each additional in-core capability "
         "(here, asynchronous I/O closing an OLTP-adjacent gap) is one more "
@@ -236,16 +254,26 @@ def author_v2_staged_set(staged_dir: Path, today: str) -> None:
         "justify on performance grounds alone.\n"
     )
 
-    # Skill snapshot — both staged copies bump article_version to 2; content
-    # rides unchanged (change-proposal-2), only the version binding moves.
+    # Skill snapshot — both staged copies bump article_version; content rides
+    # unchanged (change-proposal-2), only the version binding moves.
     live_skill_path = staged_dir / "skill" / "SKILL.md"
+    original_skill = live_skill_path.read_text()
     bumped_skill = re.sub(
-        r"(?m)^article_version: 1$", "article_version: 2", live_skill_path.read_text(), count=1
+        rf"(?m)^article_version: {live_version}$",
+        f"article_version: {next_version}",
+        original_skill,
+        count=1,
+    )
+    assert bumped_skill != original_skill, (
+        f"skill version bump regex matched nothing — expected a literal "
+        f"'article_version: {live_version}' line (does SKILL.md's binding match the article's version?)"
     )
     live_skill_path.write_text(bumped_skill)
-    v2_skill_dir = v2_dir / "skill"
-    v2_skill_dir.mkdir(parents=True, exist_ok=True)
-    (v2_skill_dir / "SKILL.md").write_text(bumped_skill)
+    next_skill_dir = next_dir / "skill"
+    next_skill_dir.mkdir(parents=True, exist_ok=True)
+    (next_skill_dir / "SKILL.md").write_text(bumped_skill)
+
+    return next_version
 
 
 # ---------------------------------------------------------------------------
@@ -254,13 +282,15 @@ def author_v2_staged_set(staged_dir: Path, today: str) -> None:
 
 
 def run_cut_path(tmp_path: Path) -> dict:
-    """Fresh fixture -> convene -> author the v2 staged set -> gate -> cut.
-    Runs the full choreography synchronously (cut's own cleanup removes the
-    session file and staged tree at the end), so the dict also carries the
-    convene-time checkpoint facts (session file / staged tree presence, the
-    live article's stamped status) a caller cannot observe after the fact."""
+    """Fresh fixture -> convene -> author the next-version staged set -> gate
+    -> cut. Runs the full choreography synchronously (cut's own cleanup
+    removes the session file and staged tree at the end), so the dict also
+    carries the convene-time checkpoint facts (session file / staged tree
+    presence, the live article's stamped status) a caller cannot observe
+    after the fact, plus the live/next version pair the assertions key on."""
     fixture_root = build_fixture_repo(tmp_path)
     baseline = baseline_sha(fixture_root)
+    live_version = read_frontmatter(fixture_root / "topics" / SLUG / "article.md")["version"]
     convene_result = run_cli(fixture_root, ["convene", SLUG])
     # UTC, mirroring the CLI's own todayIso() (workbench/cli.mjs) and the gate's
     # Date.UTC(...) clock (runPublishGate.checkCadenceDateValid) — a local-time
@@ -272,17 +302,20 @@ def run_cut_path(tmp_path: Path) -> dict:
     session_file_existed_after_convene = session_file.exists()
     staged_dir_existed_after_convene = staged_dir.is_dir()
     live_status_after_convene = None
+    next_version = None
     if convene_result.returncode == 0:
         live_status_after_convene = read_frontmatter(
             fixture_root / "topics" / SLUG / "article.md"
         ).get("status")
-        author_v2_staged_set(staged_dir, today)
+        next_version = author_next_version_staged_set(staged_dir, today)
     gate_result = run_cli(fixture_root, ["gate", SLUG])
     cut_result = run_cli(fixture_root, ["cut", SLUG])
     return {
         "fixture_root": fixture_root,
         "baseline": baseline,
         "today": today,
+        "live_version": live_version,
+        "next_version": next_version,
         "convene_result": convene_result,
         "gate_result": gate_result,
         "cut_result": cut_result,
@@ -313,11 +346,13 @@ def run_discard_path(tmp_path: Path) -> dict:
     """Fresh fixture -> convene -> discard."""
     fixture_root = build_fixture_repo(tmp_path)
     baseline = baseline_sha(fixture_root)
+    live_version = read_frontmatter(fixture_root / "topics" / SLUG / "article.md")["version"]
     convene_result = run_cli(fixture_root, ["convene", SLUG])
     discard_result = run_cli(fixture_root, ["discard", SLUG])
     return {
         "fixture_root": fixture_root,
         "baseline": baseline,
+        "live_version": live_version,
         "convene_result": convene_result,
         "discard_result": discard_result,
     }

@@ -43,35 +43,39 @@ def test_cut_path_lands_exactly_one_commit_through_the_real_gate_and_cut_mechani
     result = run_cut_path(tmp_path)
     fixture_root = result["fixture_root"]
     baseline = result["baseline"]
+    next_version = result["next_version"]
+    assert next_version == result["live_version"] + 1, (
+        "the rehearsal's staged set must be authored exactly one version above the live tree"
+    )
 
     assert result["convene_result"].returncode == 0, result["convene_result"].stderr
     assert result["gate_result"].returncode == 0, (
-        f"expected the staged v2 set to PASS the gate.\n{result['gate_result'].stdout}"
+        f"expected the staged v{next_version} set to PASS the gate.\n{result['gate_result'].stdout}"
     )
     assert result["cut_result"].returncode == 0, result["cut_result"].stderr
 
     subjects = git_log_subjects(fixture_root)
-    assert subjects.count(f"cut({SLUG}): v2") == 1, (
-        f"expected exactly one 'cut({SLUG}): v2' commit, found: {subjects}"
+    assert subjects.count(f"cut({SLUG}): v{next_version}") == 1, (
+        f"expected exactly one 'cut({SLUG}): v{next_version}' commit, found: {subjects}"
     )
     assert len(subjects) == 2, f"expected baseline + one cut commit only, found: {subjects}"
 
     topic_dir = fixture_root / "topics" / SLUG
     live_fm = read_frontmatter(topic_dir / "article.md")
-    assert live_fm["version"] == 2
+    assert live_fm["version"] == next_version
     assert live_fm["status"] == "current"
 
-    v2_dir = topic_dir / "versions" / "v2"
-    assert (v2_dir / "article.md").exists()
-    assert (v2_dir / "skill" / "SKILL.md").exists()
-    assert (v2_dir / "provenance.md").exists()
+    next_dir = topic_dir / "versions" / f"v{next_version}"
+    assert (next_dir / "article.md").exists()
+    assert (next_dir / "skill" / "SKILL.md").exists()
+    assert (next_dir / "provenance.md").exists()
 
     changelog_text = (topic_dir / "changelog.md").read_text()
     top_heading = next(
         (line for line in changelog_text.splitlines() if line.strip().startswith("## ")), None
     )
-    assert top_heading is not None and top_heading.strip().startswith("## v2 —"), (
-        f"expected the changelog's top entry to be a '## v2' heading, got {top_heading!r}"
+    assert top_heading is not None and top_heading.strip().startswith(f"## v{next_version} —"), (
+        f"expected the changelog's top entry to be a '## v{next_version}' heading, got {top_heading!r}"
     )
 
     assert not (fixture_root / ".staycurrent" / "sessions" / f"{SLUG}.md").exists()
@@ -105,7 +109,9 @@ def test_discard_path_leaves_zero_trace(tmp_path):
 
     live_fm = read_frontmatter(fixture_root / "topics" / SLUG / "article.md")
     assert live_fm["status"] == "current"
-    assert live_fm["version"] == 1
+    assert live_fm["version"] == result["live_version"], (
+        "a discard must leave the live version exactly where the baseline had it"
+    )
 
     assert is_repo_clean(fixture_root)
     assert changed_paths_since(fixture_root, baseline) == set(), (

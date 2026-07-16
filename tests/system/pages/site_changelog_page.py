@@ -9,7 +9,11 @@ class SiteChangelogPage(BasePage):
     """The cross-topic feed, every topic's entries merged newest-first."""
 
     def expect_topic_entry(self, topic_title: str) -> "SiteChangelogPage":
-        expect(self.page.locator(".changelog-card", has_text=topic_title)).to_be_visible()
+        """At least one card for the topic is visible. A topic past its
+        founding cut contributes one card per entry to the merged feed, so
+        the locator must not assume a single match — `.first` (the feed is
+        newest-first) keeps the assertion strict-mode-safe at any version."""
+        expect(self.page.locator(".changelog-card", has_text=topic_title).first).to_be_visible()
         return self
 
     def expect_read_entry_link(self, slug: str, version: int) -> "SiteChangelogPage":

@@ -15,6 +15,7 @@ core — see `pages/topic_article_page.py`.
 from playwright.sync_api import Page
 
 from pages.topic_article_page import TopicArticlePage
+from topic_state import live_topic_version
 
 SLUG = "databases"
 ARTICLE_PATH = f"/{SLUG}/"
@@ -45,7 +46,9 @@ def test_databases_article_trust_header_states_currency(cluster, site_page: Page
     "currency is never guessed" (loadTopic's ContentValidationError propagates when
     a topic cannot state either)."""
     article = TopicArticlePage(site_page, surfaces["site"]["reach"])
-    article.goto(ARTICLE_PATH).expect_trust_header_version("v1").expect_trust_header_last_researched()
+    article.goto(ARTICLE_PATH).expect_trust_header_version(
+        f"v{live_topic_version(SLUG)}"
+    ).expect_trust_header_last_researched()
 
 
 def test_databases_article_renders_provenance_sources_and_synthesis(cluster, site_page: Page, surfaces):

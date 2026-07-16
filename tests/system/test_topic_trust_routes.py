@@ -5,9 +5,10 @@ current-version redirect, and the site-wide changelog.
 
 Driven off the `cluster`-gated `site_page` fixture against the built static
 export the runner serves at http://localhost:4173, same convention as
-`test_topic_article.py`/`test_topic_article_shell.py`. The real `databases`
-topic is single-version (v1 is current), so the archived-render and
-superseded-banner states are proven separately, through a 2-version fixture
+`test_topic_article.py`/`test_topic_article_shell.py`. Version-sensitive
+assertions read the live version from `topics/` (topic_state.py) rather than
+pinning the founding-era v1; the archived-render and superseded-banner states
+are additionally proven version-independently through a 2-version fixture
 topic — see `test_topic_versions_fixture.py`.
 """
 
@@ -20,6 +21,7 @@ from pages.site_changelog_page import SiteChangelogPage
 from pages.topic_changelog_page import TopicChangelogPage
 from pages.topic_history_page import TopicHistoryPage
 from pages.topic_version_page import TopicVersionPage
+from topic_state import live_topic_version
 
 SLUG = "databases"
 
@@ -28,8 +30,8 @@ def test_topic_changelog_renders_the_founding_entry_with_its_permalink(cluster, 
     changelog = TopicChangelogPage(site_page, surfaces["site"]["reach"])
     changelog.goto(f"/{SLUG}/changelog/").expect_entry_permalink(1).expect_entry_prose("Founding cut")
     # The TOC rail's own href="#vN" entry must resolve to the hand-authored
-    # <h2 id="vN"> anchor it names — the real databases tree is
-    # single-version, so this only pins #v1; the multi-version v2 -> v1 case
+    # <h2 id="vN"> anchor it names — the founding entry's #v1 anchor is
+    # permanent whatever the live version is; the multi-version ordering case
     # is pinned against the widgets fixture in
     # test_topic_versions_fixture.py's test_changelog_page_lists_both_versions_newest_first.
     expect(site_page.locator(".toc-rail a[href='#v1']")).to_be_visible()
@@ -40,14 +42,17 @@ def test_topic_changelog_renders_the_founding_entry_with_its_permalink(cluster, 
     expect(site_page).to_have_url(re.compile(r"#v1$"))
 
 
-def test_topic_history_marks_the_only_version_current_with_a_real_skill_link(cluster, site_page: Page, surfaces):
+def test_topic_history_marks_the_live_version_current_with_a_real_skill_link(cluster, site_page: Page, surfaces):
     history = TopicHistoryPage(site_page, surfaces["site"]["reach"])
-    history.goto(f"/{SLUG}/history/").expect_current_row("v1", SLUG)
+    n = live_topic_version(SLUG)
+    history.goto(f"/{SLUG}/history/").expect_current_row(f"v{n}", SLUG)
+    if n > 1:
+        history.expect_superseded_row("v1", SLUG, 1)
 
 
 def test_current_version_url_redirects_to_the_live_article(cluster, site_page: Page, surfaces):
     version_page = TopicVersionPage(site_page, surfaces["site"]["reach"])
-    version_page.goto(f"/{SLUG}/v/1/").expect_redirected_to_live_article(f"/{SLUG}/")
+    version_page.goto(f"/{SLUG}/v/{live_topic_version(SLUG)}/").expect_redirected_to_live_article(f"/{SLUG}/")
     expect(site_page.locator("h1")).to_contain_text("Databases")
 
 
@@ -55,7 +60,9 @@ def test_site_wide_changelog_lists_the_databases_entry_and_links_its_own_changel
     cluster, site_page: Page, surfaces
 ):
     site_changelog = SiteChangelogPage(site_page, surfaces["site"]["reach"])
-    site_changelog.goto("/changelog/").expect_topic_entry("Databases").expect_read_entry_link(SLUG, 1)
+    site_changelog.goto("/changelog/").expect_topic_entry("Databases").expect_read_entry_link(
+        SLUG, live_topic_version(SLUG)
+    )
 
 
 def test_sidebar_changelog_and_history_faces_navigate_to_the_real_routes(cluster, site_page: Page, surfaces):

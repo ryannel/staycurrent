@@ -19,15 +19,19 @@ zero-topic sweep (`lib/content.test.ts`).
 from playwright.sync_api import Page, expect
 
 from pages.library_page import LibraryPage
+from topic_state import live_topic_version
 
 SLUG = "databases"
 
 
 def test_library_renders_the_databases_card(cluster, site_page: Page, surfaces):
     """The card states title, stance one-liner, and version badge —
-    `listTopics`' `TopicSummary` sweep (03-api-design.md)."""
+    `listTopics`' `TopicSummary` sweep (03-api-design.md). The badge asserts
+    the live version read from `topics/`, not a founding-era constant."""
     library = LibraryPage(site_page, surfaces["site"]["reach"])
-    library.goto("/").expect_topic_card("Databases", "general-purpose relational database", "v1")
+    library.goto("/").expect_topic_card(
+        "Databases", "general-purpose relational database", f"v{live_topic_version(SLUG)}"
+    )
 
 
 def test_clicking_a_card_navigates_to_the_topic_article(cluster, site_page: Page, surfaces):
