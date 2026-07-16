@@ -1,5 +1,12 @@
 # Databases — Research Log
 
+## 2026-07-16 — cut v2
+
+Operator-initiated editorial run against the Designing Data-Intensive Applications bar, not a cadence run.
+Examined: PostgreSQL transaction-isolation and streaming-replication documentation, PostgreSQL 18 release notes, Kleppmann's Hermitage suite and CP/AP critique, Abadi's PACELC paper (re-read), Stonebraker and Pavlo's 2024 "What Goes Around Comes Around... And Around", and DDIA's second-edition publication record.
+Added transactions/isolation, replication, partitioning, and the data-model pendulum; folded PG18 async I/O and skip scan into convergence — the 2026-07-14 carry-forward is closed.
+Stance held at v2; audit trims were formula repetition, not sections.
+
 ## 2026-07-14 — no-cut
 
 Reviewed PostgreSQL 18 (async I/O, skip scan), 2026 pgvector scaling benchmarks, and distributed-Postgres GA (Aurora DSQL, CockroachDB) — all confirm the Postgres-first stance and its named breaking points; none moves the position.
