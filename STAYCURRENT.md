@@ -102,5 +102,8 @@ the filesystem is the shared ground truth both operator and agent read.
   progress, the findings digest, the cut/no-cut verdict.
 - `.agents/skills/staycurrent-writer/` — what a cut's staged artifacts must be: the
   article rewrite, the changelog entry, provenance, the skill snapshot.
+- `.agents/skills/staycurrent-style/` — the house voice: sentence-level tone and
+  craft for every prose surface, workbench conversation included. Not phase-bound —
+  in force whenever words are written.
 
 Load the skill for the phase in flight; this file carries no methodology of its own.

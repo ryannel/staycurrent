@@ -21,6 +21,13 @@ This is also the entry point for **maintenance**: when you want to "update Groun
 orchestrator and it routes to the update lane. Do not go hunting for a CLI command or a
 specific skill — the orchestrator is always the front door.
 
+## House voice
+
+Every word written in this project — articles, docs, bet prose, commit and PR
+messages, and chat replies alike — follows the **`staycurrent-style`** skill
+(`.agents/skills/staycurrent-style/`). Load it before drafting anything longer
+than a sentence; it binds conversation, not just files.
+
 ## Where things live
 
 - **Registered skills** (auto-loaded): `.agents/skills/` — the orchestrator, `groundwork-check`,

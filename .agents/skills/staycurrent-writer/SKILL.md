@@ -5,15 +5,18 @@ description: >
   the changelog entry, provenance.md, and the skill snapshot — into the
   staged tree ahead of `cut <slug>`. Every prose artifact a cut produces is
   authored through this skill, never freehand; pairs with
-  staycurrent-research, which runs the choreography that precedes it.
+  staycurrent-research, which runs the choreography that precedes it, and
+  staycurrent-style, which owns the voice the prose is written in.
 ---
 
 # Stay Current — Writer Skill
 
-Renders `docs/design-system.md`'s Document Architecture and Tone & Posture as
-executable authoring rules — the mechanism by which ten research runs a year read as
-one author. A cut whose prose bypassed this skill is a process violation even when
-the mechanical gate passes (design system, Skill Anatomy).
+Renders `docs/design-system.md`'s Document Architecture as executable authoring
+rules — the anatomy of every cut artifact. Sentence-level voice and craft come from
+staycurrent-style, loaded alongside this skill for every artifact; together they are
+the mechanism by which ten research runs a year read as one author. A cut whose
+prose bypassed either skill is a process violation even when the mechanical gate
+passes (design system, Skill Anatomy).
 
 ## Where artifacts go
 

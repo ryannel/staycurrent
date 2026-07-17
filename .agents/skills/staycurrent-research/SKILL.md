@@ -15,7 +15,9 @@ Encodes the run choreography from `docs/design-system.md` § Agentic Protocol an
 Research Progress & Findings Digest, Verdict). The microcopy quoted below is verbatim
 and normative — no paraphrase, no synonym for the closed status vocabulary
 (`current`, `due`, `in-research`, `superseded`, `cut`, `no-cut`, `sourced`,
-`synthesis`).
+`synthesis`). Conversational prose between these templates — progress lines, digest
+framing, the argument — is written in the staycurrent-style voice; the templates
+themselves stay verbatim.
 
 ## Preconditions
 
