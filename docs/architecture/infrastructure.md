@@ -8,7 +8,7 @@ source_of_truth:
   - docker-compose.yml
   - .github/workflows/
   - services/site/
-last_reviewed: 2026-07-09
+last_reviewed: 2026-07-18
 ---
 
 # Infrastructure
