@@ -103,3 +103,14 @@ The session file's `## Draft` section holds the resume narrative — the propose
 changelog entry text plus a one-paragraph rationale — and is never the artifact
 source. The staged tree (`.staycurrent/staged/<slug>/`) is the artifact source,
 authored by this skill. Nothing in `## Draft` substitutes for the real files above.
+
+## After authoring — the editorial pass
+
+Staged artifacts are not presented for the operator's go until staycurrent-editor
+has reviewed them in fresh context — a reviewer that did not write the draft,
+because the v3 cut showed a same-context edit fixes only what it can count.
+Findings return as quote → named rule → suggested rewrite and are applied through
+this skill and staycurrent-style, never freehand; one revise-and-re-review round,
+then the operator decides with the findings attached. A cut whose prose skipped
+the pass is a process violation even when the mechanical gate passes — the same
+sentence that opens this file, now extended to the editor.

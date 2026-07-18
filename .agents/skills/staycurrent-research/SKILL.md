@@ -93,6 +93,21 @@ founding draft has not landed. An orphaned `in-research` stamp (a stamp with no
 session file) resolves via `status` first — its reconciliation reverts the stamp to
 `current` — before convening fresh.
 
+## Editorial pass
+
+When the verdict is a cut and the staged artifacts are authored, invoke
+staycurrent-editor before requesting the operator's go: an isolated
+fresh-context subagent receiving only the slug, the mode `staged`, and at most
+one line of context — never this conversation, whose knowledge of intent is
+exactly what the review must not inherit. Relay the returned verdict and
+findings to the operator verbatim. On `REVISE`, apply the findings through
+staycurrent-writer and staycurrent-style — never freehand — and re-invoke
+once, fresh again; a second `REVISE` goes to the operator with the findings
+attached. The operator's explicit go resolves it either way — the one
+authority rule with no exception — so the go is requested only once the
+editor's report sits in front of the operator: the argue-or-approve window in
+the Verdict template now carries that report inside it.
+
 ## Session-file phases and write duty
 
 `workbench/cli.mjs` writes only the session file's frontmatter (`create`/`convene`
@@ -104,6 +119,8 @@ never the CLI's. A session left un-narrated cannot be resumed, only reread:
   the session file's `phase:` frontmatter from `researching` to `arguing`.
 - When the verdict is stated, advance `phase:` to `deciding` and write `## Draft`:
   the proposed changelog entry text plus a one-paragraph rationale.
+- When the editorial pass returns, record its verdict and findings verbatim under
+  `## Editorial` — `phase:` stays `deciding`; the operator's go is what moves it.
 
 Resume re-enters from exactly these sections, never from memory: the session file is
 the RESUME source; the staged tree is the ARTIFACT source, authored by this skill and
