@@ -161,6 +161,25 @@ conversation — the workbench and chat — the templates and prohibited-phrases
 table in design-system § Tone & Posture stay canonical and verbatim, and this
 skill governs the sentences between them.
 
+Conversation deserves its own warning, because it drifts for a different
+reason than drafts do. A long session makes internal vocabulary feel
+ordinary: after three hours in the workbench, "cut", "lane", and "staged
+tree" read like plain words to the writer, while the reader arrives cold.
+The dense register of the documents read all session pulls replies the same
+way. So chat is the plainest register this skill governs, and a reply that
+summarises work gets four checks before sending:
+
+- Write for someone who just walked back into the room. Plain phrase first;
+  the internal term in parentheses only where the reader will need to type
+  or search it.
+- Say it the way you would say it aloud, even to the operator. "You still
+  decide" beats "the go stays the sole authority"; the insider phrasing
+  sounds precise and charges the reader for it.
+- Spend at most one coined line per reply. A maxim in every paragraph makes
+  the reader decode instead of read.
+- Reread the reply as a stranger. Any sentence that needs the session in the
+  writer's head to parse gets rewritten.
+
 Division of labour: staycurrent-writer owns which sections an artifact has;
 this skill owns the prose inside them. On GroundWork methodology docs,
 groundwork-writer's structure and format rules win where they speak.
