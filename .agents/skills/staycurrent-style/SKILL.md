@@ -125,6 +125,13 @@ connector, mirrored constructions ("X, not Y") multiply, and stock intensifiers
 creep in. The research on this is clear that such tells come out most reliably
 in revision, so treat the edit as part of writing, not an extra.
 
+The v3 databases cut measured this pass's own limits. That edit moved every
+tell this file counted — sentence length, the over-thirty share, the dashes —
+and left the two it only described exactly where they were: ten mirrored
+constructions and nineteen bold spans, unchanged to the digit. What gets
+counted gets fixed; what gets described survives. The surviving tells
+therefore carry numbers below.
+
 The pass: read the draft aloud. Split any sentence you would breathe twice in,
 and let full stops, "because", "so", and "and" do the connecting an em-dash was
 doing. Where a point arrives as "not X but Y", try stating Y directly. Check
@@ -134,9 +141,15 @@ flourish per section that earns its place; retire the rest.
 Calibration, from measuring our own drafts against the anchors: our first
 passes ran 27–30 words per sentence, half of them over thirty, with an em-dash
 every couple of sentences. Kleppmann averages about 24 words with almost no
-dashes; ByteByteGo about 12; the live databases article about 17. The gap is
-rhythm, not vocabulary, and it closes in the edit, mostly by splitting
-sentences and letting plain connectors carry the logic.
+dashes; ByteByteGo about 12; the live databases article 19. Numbers here come
+from one tool, `scripts/prose-metrics.mjs`, so every draft is measured the
+same way a quoted number was. For the tells that survived v3's edit, the same
+tool reads the live article at one mirrored construction per five hundred
+words and one bold span per two hundred and fifty — a spend the fifth
+principle's budget already prices as high, so those figures are the measured
+drift to edit against, never a target to write toward. The gap is rhythm, not
+vocabulary, and it closes in the edit, mostly by splitting sentences and
+letting plain connectors carry the logic.
 
 ## One voice, three kinds of writing
 
