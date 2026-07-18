@@ -1,5 +1,13 @@
 # Databases — Changelog
 
+## v3 — 2026-07-17
+
+What moved is the voice, not the claims. This is an operator-initiated editorial cut: the article re-edited sentence by sentence under staycurrent-style, the house writing skill built and evaluated this week on the writers this publication learns from (Kleppmann, Ousterhout, and ByteByteGo). Every claim, number, table, and diagram carries over from v2 unchanged; the whole edit moved the word count by nineteen words in four and a half thousand. What changed is rhythm. Long dash-interrupted sentences became short plain ones: average sentence length fell from 22 words to 19, sentences over thirty words halved from 20 percent to 11, and em-dash density fell from 1.2 per hundred words to 0.4, which is the range the publication's anchor authors measure at.
+
+What it means for practice: nothing about databases moved, so yesterday's guidance is today's guidance. What it means for reading: the article now sounds the way the next ten versions will sound. The same argument, easier to follow, for a broader audience. If v2 sat half-read, v3 is the version to finish.
+
+**Stance:** held — a voice edit by definition: the position carried over verbatim, re-argued in plainer sentences.
+
 ## v2 — 2026-07-16
 
 What moved is the article, not the field. This is an operator-initiated editorial cut raising the entry to the mechanics bar its own benchmark sets — Designing Data-Intensive Applications, whose second edition (Kleppmann and Riccomini, 2026) confirms that bar is current. Four sections are new: the sixty-year data-model pendulum, transactions and isolation, replication and its lag anomalies, and partitioning; an index-economics lead-in now opens the storage section, and CAP/PACELC folds into the replication section where its mechanics live. The convergence section lands the carry-forward from the 14 July no-cut run — PostgreSQL 18's async I/O and B-tree skip scan — and Stonebraker and Pavlo's 2024 retrospective, in which the instigator of the specialised-engine era reads the pendulum as swung back toward the relational core.

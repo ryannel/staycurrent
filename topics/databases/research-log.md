@@ -1,5 +1,12 @@
 # Databases — Research Log
 
+## 2026-07-17 — cut v3
+
+Operator-initiated voice run under the staycurrent-style skill (repo commit 9cd0d53), not a cadence run; no new field sources examined.
+Inputs: the skill's three-iteration eval record and a per-section rhythm audit of the v2 article against the anchor measurements.
+Re-edited sentences only: whole-article average fell 22 to 19 words per sentence, over-thirty share 20 to 11 percent, em-dash density 1.23 to 0.36 per hundred words; claims, numbers, diagrams, and structure unchanged.
+Stance held at v3 by construction.
+
 ## 2026-07-16 — cut v2
 
 Operator-initiated editorial run against the Designing Data-Intensive Applications bar, not a cadence run.
