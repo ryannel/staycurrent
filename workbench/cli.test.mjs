@@ -83,8 +83,8 @@ function authorNextVersion(slug, n) {
   const entry =
     `## v${n} — ${today}\n\n` +
     'What moved: routine research refresh.\n' +
-    'What it means: no material change to the practice.\n' +
-    'Stance: held — position unchanged.\n';
+    'What it means: no material change to the practice.\n\n' +
+    '**Stance:** held — position unchanged.\n';
   fs.writeFileSync(changelogPath, `${h1}\n\n${entry}\n${rest}`);
 
   const vDir = path.join(dir, 'versions', `v${n}`);
