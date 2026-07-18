@@ -2,12 +2,12 @@
 title: Stay Current
 description: A self-researching publication system for opinionated engineering writing and the AI skills that implement it — living articles and companion skills kept current together, with version history, changelogs, and honest provenance.
 type: product-brief
-last_reviewed: 2026-07-02
+last_reviewed: 2026-07-18
 ---
 
 # Stay Current — Product Brief
 
-Stay Current is a publication system whose content maintains itself. Each topic it covers produces a matched pair: a living article — an opinionated, stance-carrying synthesis of a broad practice area such as observability, testing, or cost engineering in cloud environments — and a distributable AI skill that encodes the same stance so an engineer's AI agents implement the practice, not just read about it. A recurring research loop keeps both halves current, rewriting the article and its skill together as the field moves. Every topic carries a version-controlled history, a changelog that explains each change, and the provenance behind each version.
+Stay Current is a publication system whose content maintains itself. Each topic it covers produces a matched pair: a living article — an opinionated, stance-carrying synthesis of a practice area such as observability or testing, or of a focused piece within a larger one — and a distributable AI skill that encodes the same stance so an engineer's AI agents implement the practice, not just read about it. A recurring research loop keeps both halves current, rewriting the article and its skill together as the field moves. Every topic carries a version-controlled history, a changelog that explains each change, and the provenance behind each version.
 
 The product is two things sharing one engine. The **framework** is open source: anyone can use it to run a self-researching site on their own topics. The **first site**, staycurrent.dev, is the operator's own publication — the proving ground that keeps the framework honest, covering engineering practice areas for the operator and for other engineers in the same field.
 
@@ -61,7 +61,7 @@ The reader pays twice. A newcomer cannot tell whether the definitive-sounding ar
 
 #### Capabilities
 
-**Living articles.** Each topic is one article: an opinionated synthesis of a broad practice area, written with a stance — what to do, what to reject, and why. The article is always the current truth; when the field moves, the article is rewritten, not appended to. Topics are broad ("testing", "observability", "cost engineering in cloud environments"), so each article is a deep, structured essay rather than a post.
+**Living articles.** Each topic is one article: an opinionated synthesis written with a stance — what to do, what to reject, and why. The article is always the current truth; when the field moves, the article is rewritten, not appended to. The grain of a topic follows the field. A self-contained practice area is a single deep essay ("testing", "observability"). A broad area is served by a catalogue of finer-grained stance-topics fronted by a hub that maps them and routes the reader. Either way, a topic is one stance in one deep article, never a post.
 
 **Companion skills.** Each topic ships a distributable AI skill that renders the article's stance executable: an engineer installs it and their coding agents implement the practice the article describes. The article and the skill are one opinion in two forms — prose for the human, instructions for the agent — and a version cut updates both together, so the skill can never lag the writing it implements.
 

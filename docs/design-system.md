@@ -2,7 +2,7 @@
 title: Design System
 description: Implementation-ready design specification for Stay Current — the brand foundation, the website's visual system, and the workbench's protocol design.
 type: design-system
-last_reviewed: 2026-07-09
+last_reviewed: 2026-07-18
 ---
 
 # Stay Current — Design System
@@ -37,7 +37,7 @@ One closed vocabulary, used identically in site copy, frontmatter, skill files, 
 
 | Term | Meaning |
 |---|---|
-| topic | A broad practice area: one living article + one companion skill + their history |
+| topic | One living article + one companion skill + their history, carrying one stance; a self-contained practice area is a single topic, a broad area is a catalogue of finer-grained topics fronted by a hub |
 | article | The living, current-truth essay for a topic |
 | skill | The distributable AI skill rendering the article's stance executable |
 | version | One atomic cut of article + skill + changelog entry + provenance |
