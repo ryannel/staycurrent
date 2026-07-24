@@ -1,0 +1,218 @@
+=== Experiment 3: DETACH vs DELETE — Fri Jul 24 09:39:11 SAST 2026 ===
+
+--- starting state: rows per partition, and the flat twin's size ---
+
+$ psql -c "SELECT tableoid::regclass AS partition, count(*) FROM events GROUP BY 1 ORDER BY 1;"
+   partition    | count  
+----------------+--------
+ events_2025_01 | 203855
+ events_2025_02 | 184128
+ events_2025_03 | 203856
+ events_2025_04 | 197280
+ events_2025_05 | 203831
+ events_2025_06 | 197250
+ events_2025_07 | 203825
+ events_2025_08 | 203825
+ events_2025_09 | 197250
+ events_2025_10 | 203825
+ events_2025_11 | 197250
+ events_2025_12 | 203825
+(12 rows)
+
+
+$ psql -c "SELECT count(*) AS flat_rows, pg_size_pretty(pg_total_relation_size('events_flat')) AS flat_size FROM events_flat;"
+ flat_rows | flat_size 
+-----------+-----------
+   2400000 | 208 MB
+(1 row)
+
+
+================================================================
+=== A. PARTITIONED — detach three months, one statement each
+================================================================
+
+--- month 2025-01 ---
+
+$ psql -c "SELECT count(*) AS rows_in_this_partition FROM events_2025_01;"
+ rows_in_this_partition 
+------------------------
+                 203855
+(1 row)
+
+
+$ psql -c "\timing on" -c "ALTER TABLE events DETACH PARTITION events_2025_01;"
+Timing is on.
+ALTER TABLE
+Time: 2.312 ms
+
+$ psql -c "SELECT count(*) AS rows_left_in_events FROM events;"
+ rows_left_in_events 
+---------------------
+             2196145
+(1 row)
+
+
+--- month 2025-02 ---
+
+$ psql -c "SELECT count(*) AS rows_in_this_partition FROM events_2025_02;"
+ rows_in_this_partition 
+------------------------
+                 184128
+(1 row)
+
+
+$ psql -c "\timing on" -c "ALTER TABLE events DETACH PARTITION events_2025_02;"
+Timing is on.
+ALTER TABLE
+Time: 2.153 ms
+
+$ psql -c "SELECT count(*) AS rows_left_in_events FROM events;"
+ rows_left_in_events 
+---------------------
+             2012017
+(1 row)
+
+
+--- month 2025-03 ---
+
+$ psql -c "SELECT count(*) AS rows_in_this_partition FROM events_2025_03;"
+ rows_in_this_partition 
+------------------------
+                 203856
+(1 row)
+
+
+$ psql -c "\timing on" -c "ALTER TABLE events DETACH PARTITION events_2025_03;"
+Timing is on.
+ALTER TABLE
+Time: 1.884 ms
+
+$ psql -c "SELECT count(*) AS rows_left_in_events FROM events;"
+ rows_left_in_events 
+---------------------
+             1808161
+(1 row)
+
+
+--- the detached tables still exist, intact, outside the parent ---
+
+$ psql -c "SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE relname LIKE 'events_2025_0[123]' ORDER BY relname;"
+ relname | n_live_tup 
+---------+------------
+(0 rows)
+
+
+================================================================
+=== B. FLAT TWIN — delete the same three months
+================================================================
+
+--- deleting [2025-01-01, 2025-02-01) ---
+
+$ psql -c "SELECT count(*) AS rows_to_delete FROM events_flat WHERE occurred_at >= '2025-01-01' AND occurred_at < '2025-02-01';"
+ rows_to_delete 
+----------------
+         203855
+(1 row)
+
+
+$ psql -c "\timing on" -c "DELETE FROM events_flat WHERE occurred_at >= '2025-01-01' AND occurred_at < '2025-02-01';"
+Timing is on.
+DELETE 203855
+Time: 124.934 ms
+
+$ psql -c "SELECT count(*) AS rows_left_in_flat FROM events_flat;"
+ rows_left_in_flat 
+-------------------
+           2196145
+(1 row)
+
+
+--- deleting [2025-02-01, 2025-03-01) ---
+
+$ psql -c "SELECT count(*) AS rows_to_delete FROM events_flat WHERE occurred_at >= '2025-02-01' AND occurred_at < '2025-03-01';"
+ rows_to_delete 
+----------------
+         184128
+(1 row)
+
+
+$ psql -c "\timing on" -c "DELETE FROM events_flat WHERE occurred_at >= '2025-02-01' AND occurred_at < '2025-03-01';"
+Timing is on.
+DELETE 184128
+Time: 104.757 ms
+
+$ psql -c "SELECT count(*) AS rows_left_in_flat FROM events_flat;"
+ rows_left_in_flat 
+-------------------
+           2012017
+(1 row)
+
+
+--- deleting [2025-03-01, 2025-04-01) ---
+
+$ psql -c "SELECT count(*) AS rows_to_delete FROM events_flat WHERE occurred_at >= '2025-03-01' AND occurred_at < '2025-04-01';"
+ rows_to_delete 
+----------------
+         203856
+(1 row)
+
+
+$ psql -c "\timing on" -c "DELETE FROM events_flat WHERE occurred_at >= '2025-03-01' AND occurred_at < '2025-04-01';"
+Timing is on.
+DELETE 203856
+Time: 112.535 ms
+
+$ psql -c "SELECT count(*) AS rows_left_in_flat FROM events_flat;"
+ rows_left_in_flat 
+-------------------
+           1808161
+(1 row)
+
+
+================================================================
+=== C. the aftermath — what each approach left behind
+================================================================
+
+$ psql -c "SELECT relname, n_live_tup, n_dead_tup, last_vacuum, last_autovacuum FROM pg_stat_user_tables WHERE relname = 'events_flat';"
+   relname   | n_live_tup | n_dead_tup |          last_vacuum          | last_autovacuum 
+-------------+------------+------------+-------------------------------+-----------------
+ events_flat |    1808121 |     591839 | 2026-07-24 07:38:23.554227+00 | 
+(1 row)
+
+
+$ psql -c "SELECT pg_size_pretty(pg_total_relation_size('events_flat')) AS flat_size_after_delete;"
+ flat_size_after_delete 
+------------------------
+ 208 MB
+(1 row)
+
+
+$ psql -c "SELECT pg_size_pretty(sum(pg_total_relation_size(c.oid))) AS remaining_partitions_total FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid WHERE i.inhparent = 'events'::regclass;"
+ remaining_partitions_total 
+----------------------------
+ 157 MB
+(1 row)
+
+
+--- and what VACUUM does or does not give back ---
+
+$ psql -c "\timing on" -c "VACUUM events_flat;"
+Timing is on.
+VACUUM
+Time: 101.718 ms
+
+$ psql -c "SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = 'events_flat';"
+   relname   | n_live_tup | n_dead_tup 
+-------------+------------+------------
+ events_flat |    1808055 |          0
+(1 row)
+
+
+$ psql -c "SELECT pg_size_pretty(pg_total_relation_size('events_flat')) AS flat_size_after_vacuum;"
+ flat_size_after_vacuum 
+------------------------
+ 208 MB
+(1 row)
+
+
+=== Experiment 3 complete — Fri Jul 24 09:39:14 SAST 2026 ===

@@ -1,0 +1,101 @@
+=== Experiment 4: range vs hash under a time-ordered stream — Fri Jul 24 09:40:03 SAST 2026 ===
+
+--- two tables, 12 partitions each, on the same key ---
+
+$ psql -c "DROP TABLE IF EXISTS ev_range; CREATE TABLE ev_range (id bigint, occurred_at timestamptz NOT NULL) PARTITION BY RANGE (occurred_at);"
+NOTICE:  table "ev_range" does not exist, skipping
+DROP TABLE
+CREATE TABLE
+
+$ psql -c "DROP TABLE IF EXISTS ev_hash; CREATE TABLE ev_hash (id bigint, occurred_at timestamptz NOT NULL) PARTITION BY HASH (occurred_at);"
+NOTICE:  table "ev_hash" does not exist, skipping
+DROP TABLE
+CREATE TABLE
+created ev_range (12 monthly range partitions) and ev_hash (12 hash partitions)
+
+--- the stream: 120,000 rows, strictly increasing, all inside ONE day ---
+--- (this is what 'today's writes' looks like to a table partitioned by month) ---
+
+$ psql -c "INSERT INTO ev_range (id, occurred_at) SELECT g, timestamptz '2025-07-15 00:00:00' + (g || ' milliseconds')::interval FROM generate_series(1, 120000) g;"
+INSERT 0 120000
+
+$ psql -c "INSERT INTO ev_hash (id, occurred_at) SELECT g, timestamptz '2025-07-15 00:00:00' + (g || ' milliseconds')::interval FROM generate_series(1, 120000) g;"
+INSERT 0 120000
+
+--- where the rows landed: RANGE ---
+
+$ psql -c "SELECT tableoid::regclass AS partition, count(*) FROM ev_range GROUP BY 1 ORDER BY 2 DESC;"
+  partition  | count  
+-------------+--------
+ ev_range_07 | 120000
+(1 row)
+
+
+--- where the rows landed: HASH ---
+
+$ psql -c "SELECT tableoid::regclass AS partition, count(*) FROM ev_hash GROUP BY 1 ORDER BY 1;"
+ partition  | count 
+------------+-------
+ ev_hash_0  | 10187
+ ev_hash_1  | 10100
+ ev_hash_2  |  9907
+ ev_hash_3  |  9762
+ ev_hash_4  |  9995
+ ev_hash_5  | 10091
+ ev_hash_6  | 10048
+ ev_hash_7  |  9872
+ ev_hash_8  | 10059
+ ev_hash_9  | 10027
+ ev_hash_10 | 10001
+ ev_hash_11 |  9951
+(12 rows)
+
+
+--- the other side of the trade: a range scan over one hour ---
+
+=== RANGE-partitioned: how many partitions does the plan touch? ===
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Seq Scan on ev_range_07 ev_range
+         Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+(3 rows)
+
+partition scan nodes:
+1
+
+=== HASH-partitioned: the same scan ===
+                                                                             QUERY PLAN                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Append
+         ->  Seq Scan on ev_hash_0 ev_hash_1
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_1 ev_hash_2
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_2 ev_hash_3
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_3 ev_hash_4
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_4 ev_hash_5
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_5 ev_hash_6
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_6 ev_hash_7
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_7 ev_hash_8
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_8 ev_hash_9
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_9 ev_hash_10
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_10 ev_hash_11
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+         ->  Seq Scan on ev_hash_11 ev_hash_12
+               Filter: ((occurred_at >= '2025-07-15 00:00:00+00'::timestamp with time zone) AND (occurred_at < '2025-07-15 01:00:00+00'::timestamp with time zone))
+(26 rows)
+
+partition scan nodes:
+12
+
+=== Experiment 4 complete — Fri Jul 24 09:40:06 SAST 2026 ===

@@ -1,0 +1,117 @@
+=== Experiment 3: monotonic reads — Fri Jul 24 09:32:06 SAST 2026 ===
+
+--- step 1: reset to a known, fully-replicated baseline ---
+
+$ psql@sbb -c "SELECT pg_wal_replay_resume();"
+ pg_wal_replay_resume 
+----------------------
+ 
+(1 row)
+
+
+$ psql@primary -c "DROP TABLE IF EXISTS comments; CREATE TABLE comments (id serial PRIMARY KEY, author text, body text);"
+DROP TABLE
+CREATE TABLE
+
+$ psql@primary -c "INSERT INTO comments (author, body) VALUES ('user7', 'sentinel-aaa111 — the first comment');"
+INSERT 0 1
+
+$ psql@sba -c "SELECT id, body FROM comments;"
+ id |                body                 
+----+-------------------------------------
+  1 | sentinel-aaa111 — the first comment
+(1 row)
+
+
+$ psql@sbb -c "SELECT id, body FROM comments;"
+ id |                body                 
+----+-------------------------------------
+  1 | sentinel-aaa111 — the first comment
+(1 row)
+
+Baseline: both replicas show exactly 1 comment.
+
+--- step 2: standby B is pinned at this point; standby A keeps streaming ---
+
+$ psql@sbb -c "SELECT pg_wal_replay_pause();"
+ pg_wal_replay_pause 
+---------------------
+ 
+(1 row)
+
+
+--- step 3: the user posts a second comment; the primary commits it ---
+
+$ psql@primary -c "INSERT INTO comments (author, body) VALUES ('user7', 'sentinel-bbb222 — the second comment') RETURNING id, body;"
+ id |                 body                 
+----+--------------------------------------
+  2 | sentinel-bbb222 — the second comment
+(1 row)
+
+INSERT 0 1
+
+--- step 4: four refreshes from ONE user, round-robined across the two replicas ---
+--- The count must never go down. Watch it go down. ---
+
+--- refresh #1 (A) routed to sba  (wall clock 09:32:10.579) ---
+ visible_comments | newest_id 
+------------------+-----------
+                2 |         2
+(1 row)
+
+
+--- refresh #2 (B) routed to sbb  (wall clock 09:32:10.670) ---
+ visible_comments | newest_id 
+------------------+-----------
+                1 |         1
+(1 row)
+
+
+--- refresh #3 (A) routed to sba  (wall clock 09:32:10.748) ---
+ visible_comments | newest_id 
+------------------+-----------
+                2 |         2
+(1 row)
+
+
+--- refresh #4 (B) routed to sbb  (wall clock 09:32:10.830) ---
+ visible_comments | newest_id 
+------------------+-----------
+                1 |         1
+(1 row)
+
+
+--- step 5: what each replica had replayed at that moment ---
+
+$ psql@primary -c "SELECT application_name, sent_lsn, replay_lsn, pg_wal_lsn_diff(sent_lsn, replay_lsn) AS replay_lag_bytes FROM pg_stat_replication ORDER BY application_name;"
+ application_name | sent_lsn  | replay_lsn | replay_lag_bytes 
+------------------+-----------+------------+------------------
+ sba              | 0/4081310 | 0/4081310  |                0
+ sbb              | 0/4081310 | 0/4081240  |              208
+(2 rows)
+
+
+--- step 6: resume B; both replicas converge ---
+
+$ psql@sbb -c "SELECT pg_wal_replay_resume();"
+ pg_wal_replay_resume 
+----------------------
+ 
+(1 row)
+
+
+$ psql@sba -c "SELECT count(*) AS a_final FROM comments;"
+ a_final 
+---------
+       2
+(1 row)
+
+
+$ psql@sbb -c "SELECT count(*) AS b_final FROM comments;"
+ b_final 
+---------
+       2
+(1 row)
+
+
+=== Experiment 3 complete — Fri Jul 24 09:32:13 SAST 2026 ===

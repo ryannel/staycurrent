@@ -1,13 +1,6 @@
 ---
-topic: databases
-title: Databases
-stance: >-
-  Start on a general-purpose relational database — in 2026 that means
-  Postgres — and leave it only when a measured access pattern forces you out.
 version: 4
-status: current
-cadence: 90d
-last_researched: 2026-07-24
+cut: 2026-07-24
 ---
 
 # Databases
