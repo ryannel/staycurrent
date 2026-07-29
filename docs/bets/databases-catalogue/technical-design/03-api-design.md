@@ -134,10 +134,14 @@ export interface CatalogueEntry {
   title: string;
   stance: string;
   version: number;
-  register: TopicRegister;        // 'foundation' | 'profile' | 'hub'
-  movement?: string;               // present iff register === 'foundation'
-  readingOrder?: number;           // present iff register === 'foundation' | 'profile'
-  core?: boolean;                  // present iff register === 'profile'; true for the featured trio
+  register?: TopicRegister;       // absent on an ungrouped entry whose authored register was
+                                  // missing or unrecognized (core extraction drops both to
+                                  // undefined — indistinguishable downstream, by design)
+  movement?: string;               // upper bound: present only when register === 'foundation'
+  readingOrder?: number;           // upper bound: register === 'foundation' | 'profile'
+  core?: boolean;                  // upper bound: register === 'profile'; true for the featured trio
+                                   // (an ungrouped entry may carry register with a field missing —
+                                   // e.g. 'foundation' without movement)
 }
 
 export interface CatalogueMovement {
@@ -330,3 +334,29 @@ parity in one pass, ADR 0006 standard." Verified against the design above:
   `runPublishGate.ts` and the corresponding `issues`-raising branch in `validateTopicFrontmatter`
   in the same pass, never one without the other. Nothing in this bet does that; it is named here
   so the next bet that touches these fields does not have to rediscover the rule.
+
+---
+
+### Refinements recorded at delivery (slice 1.2 review, 2026-07-29)
+
+Review-approved resolutions of cases the design left unstated, recorded per the amendment
+protocol rather than left as code-only knowledge:
+
+1. `CatalogueEntry.register` is optional (interface above) — the design's required typing was
+   internally inconsistent with its own ungrouped definition; a fourth sentinel value or a
+   separate entry type were both judged worse at review.
+2. "Register missing" and "register unrecognized" are indistinguishable downstream — core
+   extraction drops both to absent; `ungrouped` cannot report which defect occurred.
+3. Ordering when `reading_order` is absent: such entries sort last within their bucket, a
+   movement whose members all lack it sorts last among movements, ties fall back to
+   slug-ascending; movement-carrying foundations without `reading_order` remain path members,
+   count in `totalInPath`, and can be returned as `next`.
+4. `Catalogue.ungrouped` is slug-ascending (the sweep's own order).
+5. `getReadingPosition`'s "Errors: none — a total function" is scoped to frontmatter input
+   classes; it still propagates `sweepOrThrow` on a malformed sweep or mis-resolved root,
+   per flow (b) step 2 composing on flow (a)'s fail-closed path.
+6. Area ordering uses `localeCompare` (the repo's existing `listTopics` convention) — "sorted
+   ascending" means that comparator, which is case-insensitive-ish.
+7. Prereq links derived for the rail drop blank or whitespace-only authored entries entirely
+   (absence-is-resting-state) — the rail never renders blank text or an empty href (flow (b)
+   step 3's own requirement, closed against `prereqs: [""]` which passes extraction).

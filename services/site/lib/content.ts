@@ -10,6 +10,8 @@ import {
   type RenderedDoc,
   type SiteConfig,
   type Topic,
+  type TopicFrontmatter,
+  type TopicRegister,
   type TopicSummary,
 } from '@staycurrent/core';
 
@@ -142,6 +144,252 @@ export function listTopicCards(root: string = REPO_ROOT): TopicCard[] {
     version: t.version,
     lastResearched: t.last_researched,
   }));
+}
+
+/**
+ * One topic as it appears inside a `Catalogue` (03-api-design.md,
+ * `getCatalogues`). `movement`/`readingOrder`/`core` are present only when
+ * `register` makes them meaningful — see the field comments below — matching
+ * the "present iff" contract the design fixes.
+ *
+ * `register` is optional, not `TopicRegister`, to represent one real state
+ * the design's own routing table names but its type table's prose omits: a
+ * topic whose `area` is set but whose `register` is missing or not one of the
+ * three known values still lands in `Catalogue.ungrouped` (02-data-flows.md,
+ * flow (a), step 3) — and such a topic has no real register value to report.
+ * Every entry actually reachable through `hub`, `movements`, or `profiles`
+ * still carries a real, defined `register`.
+ */
+export interface CatalogueEntry {
+  slug: string;
+  title: string;
+  stance: string;
+  version: number;
+  register?: TopicRegister;
+  movement?: string; // present iff register === 'foundation'
+  readingOrder?: number; // present iff register === 'foundation' | 'profile'
+  core?: boolean; // present iff register === 'profile'
+}
+
+export interface CatalogueMovement {
+  name: string; // verbatim movement label, e.g. "Single Node"
+  entries: CatalogueEntry[]; // ordered by readingOrder ascending
+}
+
+export interface Catalogue {
+  area: string;
+  hub: CatalogueEntry | null;
+  movements: CatalogueMovement[]; // ordered by the lowest readingOrder any member carries
+  profiles: CatalogueEntry[]; // ordered by readingOrder ascending
+  ungrouped: CatalogueEntry[]; // register missing/unrecognized, or 'foundation' without movement
+}
+
+function toCatalogueEntry(t: TopicSummary): CatalogueEntry {
+  return {
+    slug: t.topic,
+    title: t.title,
+    stance: t.stance,
+    version: t.version,
+    ...(t.register !== undefined && { register: t.register }),
+    ...(t.register === 'foundation' && t.movement !== undefined && { movement: t.movement }),
+    ...((t.register === 'foundation' || t.register === 'profile') &&
+      t.reading_order !== undefined && { readingOrder: t.reading_order }),
+    ...(t.register === 'profile' && t.core !== undefined && { core: t.core }),
+  };
+}
+
+/** An entry missing `readingOrder` sorts last rather than throwing — `reading_order` is unvalidated, optional display data (03-api-design.md). */
+function readingOrderOf(entry: CatalogueEntry): number {
+  return entry.readingOrder ?? Number.POSITIVE_INFINITY;
+}
+
+function lowestReadingOrder(entries: CatalogueEntry[]): number {
+  return Math.min(...entries.map(readingOrderOf));
+}
+
+/**
+ * The single grouping accessor behind both the Topic Library grid and the
+ * root layout's sidebar tree (03-api-design.md, `getCatalogues`). Sweeps
+ * every topic through the same fail-closed path every other whole-catalogue
+ * accessor uses (`sweepOrThrow`), then buckets by `area` and, within an area,
+ * by `register` — realizing flow (a) in 02-data-flows.md.
+ *
+ * Takes no area argument and assumes no single area exists: `getCatalogues`
+ * returns one `Catalogue` per distinct `area` value the sweep actually finds,
+ * sorted by `area` ascending, and `[]` when no topic carries an `area` at
+ * all — `services/site` "never names the instance" (docs/architecture/index.md
+ * §4).
+ */
+export function getCatalogues(root: string = REPO_ROOT): Catalogue[] {
+  const topics = sweepOrThrow(root);
+
+  // `topics` is already slug-ascending (listTopics' own sort order); grouping
+  // by area preserves that order within each group, which is what makes the
+  // duplicate-hub tie-break below ("slug-alphabetical first wins") correct
+  // without a second sort.
+  const byArea = new Map<string, TopicSummary[]>();
+  for (const t of topics) {
+    if (t.area === undefined) continue;
+    const members = byArea.get(t.area);
+    if (members) {
+      members.push(t);
+    } else {
+      byArea.set(t.area, [t]);
+    }
+  }
+
+  const areas = [...byArea.keys()].sort((a, b) => a.localeCompare(b));
+
+  return areas.map((area) => {
+    const members = byArea.get(area)!;
+
+    let hub: CatalogueEntry | null = null;
+    const profiles: CatalogueEntry[] = [];
+    const ungrouped: CatalogueEntry[] = [];
+    const movementBuckets = new Map<string, CatalogueEntry[]>();
+
+    for (const t of members) {
+      if (t.register === 'hub') {
+        if (hub === null) {
+          hub = toCatalogueEntry(t);
+        } else {
+          // A second (or later) topic claiming register: 'hub' in the same
+          // area is an authoring defect the build tolerates rather than
+          // fails on — the slug-alphabetical first hub wins (members is
+          // already slug-ascending); every later claimant lands in
+          // `ungrouped` instead of silently overwriting the first.
+          ungrouped.push(toCatalogueEntry(t));
+        }
+        continue;
+      }
+      if (t.register === 'profile') {
+        profiles.push(toCatalogueEntry(t));
+        continue;
+      }
+      if (t.register === 'foundation' && t.movement !== undefined) {
+        const bucket = movementBuckets.get(t.movement);
+        if (bucket) {
+          bucket.push(toCatalogueEntry(t));
+        } else {
+          movementBuckets.set(t.movement, [toCatalogueEntry(t)]);
+        }
+        continue;
+      }
+      // register missing/unrecognized, or 'foundation' without movement.
+      ungrouped.push(toCatalogueEntry(t));
+    }
+
+    profiles.sort((a, b) => readingOrderOf(a) - readingOrderOf(b));
+    for (const bucket of movementBuckets.values()) {
+      bucket.sort((a, b) => readingOrderOf(a) - readingOrderOf(b));
+    }
+
+    // Movement order is a property of the data — the lowest readingOrder any
+    // member carries — never separately authored (02-data-flows.md, flow a).
+    const movements: CatalogueMovement[] = [...movementBuckets.entries()]
+      .map(([name, entries]) => ({ name, entries }))
+      .sort((a, b) => lowestReadingOrder(a.entries) - lowestReadingOrder(b.entries));
+
+    return { area, hub, movements, profiles, ungrouped };
+  });
+}
+
+/** `slug` humanized for a dangling `ReadingPathLink` fallback: `distributed-transactions` → "Distributed Transactions" (02-data-flows.md, flow b, step 3). */
+function humanizeSlug(slug: string): string {
+  return slug
+    .split('-')
+    .filter((word) => word.length > 0)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+export interface ReadingPathLink {
+  slug: string;
+  title: string; // the linked topic's real title if it exists in the sweep; otherwise its slug humanized
+}
+
+export interface ReadingPosition {
+  movement: string;
+  indexInPath: number; // 1-based position among this area's path members
+  totalInPath: number;
+  indexInMovement: number; // 1-based position within just this movement
+  totalInMovement: number;
+  prereqs: ReadingPathLink[]; // [] when the topic authored none
+  next: ReadingPathLink | null; // the following foundation in reading order; null on the last piece
+}
+
+/**
+ * Resolves a foundation's position in its area's reading path — its index
+ * and count within the path and within its own movement, its prereqs
+ * resolved to real (or best-effort) titles, and the next piece to read
+ * (03-api-design.md, `getReadingPosition`; 02-data-flows.md, flow b).
+ *
+ * `frontmatter` is the topic's own, already-loaded frontmatter — the caller
+ * already holds it from `getTopic(slug)` for the page's other needs — matching
+ * `getTopicVersion`'s "read once, pass in" precedent.
+ *
+ * A total function: never throws. Returns `null` when `register` is not
+ * `'foundation'`, `area` is blank, `reading_order` is not a valid positive
+ * integer, or — defensively — this topic's own slug is not found among its
+ * area's resolved foundations once those checks pass. `reading_order` and
+ * `movement` are unvalidated additive fields (04-data-design.md): a
+ * foundation missing them renders normally, without a rail, rather than
+ * failing the build.
+ */
+export function getReadingPosition(
+  frontmatter: TopicFrontmatter,
+  root: string = REPO_ROOT
+): ReadingPosition | null {
+  if (frontmatter.register !== 'foundation') return null;
+  if (frontmatter.area === undefined || frontmatter.area.trim() === '') return null;
+  if (
+    typeof frontmatter.reading_order !== 'number' ||
+    !Number.isInteger(frontmatter.reading_order) ||
+    frontmatter.reading_order <= 0
+  ) {
+    return null;
+  }
+
+  const catalogue = getCatalogues(root).find((c) => c.area === frontmatter.area);
+  if (!catalogue) return null;
+
+  // The flattened movements list IS the reading path (02-data-flows.md, flow
+  // b, step 2) — movements are a presentational partition of it, not a
+  // second ordering.
+  const path = catalogue.movements.flatMap((m) => m.entries);
+  const ownIndex = path.findIndex((e) => e.slug === frontmatter.topic);
+  if (ownIndex === -1) return null;
+
+  const ownEntry = path[ownIndex];
+  const movement = catalogue.movements.find((m) => m.name === ownEntry.movement)!;
+  const indexInMovement = movement.entries.findIndex((e) => e.slug === frontmatter.topic) + 1;
+
+  // A blank/whitespace-only prereqs entry (`prereqs: [""]` passes core's
+  // extractPrereqs — every element just needs to be a string) would otherwise
+  // resolve to a blank slug and a blank humanizeSlug fallback: a blank-text
+  // link to an empty href. `prereqs` names pieces to read first; an entry
+  // that names nothing links to nothing, so it is dropped rather than
+  // rendered — the same absence-is-resting-state degrade the rest of this
+  // rail already applies, and it keeps the design's "never shows a raw slug
+  // or blank text" (02-data-flows.md, flow b, step 3) true by construction.
+  const prereqs: ReadingPathLink[] = (frontmatter.prereqs ?? [])
+    .filter((slug) => slug.trim() !== '')
+    .map((slug) => {
+      const found = path.find((e) => e.slug === slug);
+      return { slug, title: found ? found.title : humanizeSlug(slug) };
+    });
+
+  const nextEntry = path[ownIndex + 1] ?? null;
+
+  return {
+    movement: movement.name,
+    indexInPath: ownIndex + 1,
+    totalInPath: path.length,
+    indexInMovement,
+    totalInMovement: movement.entries.length,
+    prereqs,
+    next: nextEntry ? { slug: nextEntry.slug, title: nextEntry.title } : null,
+  };
 }
 
 // The mermaid-fence transform's marker container, as emitted by
