@@ -1,9 +1,9 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono, Literata } from 'next/font/google'
 import { ThemeProvider } from '@/components/theme-provider'
-import { Sidebar, type TopicNavEntry } from '@/components/shell/sidebar'
+import { Sidebar, type SidebarCatalogue, type TopicNavEntry } from '@/components/shell/sidebar'
 import { FreshnessCorrection } from '@/components/shell/freshness-correction'
-import { getTopic, getTopicCutDate, getTopicSlugs } from '@/lib/content'
+import { getCatalogues, getTopic, getTopicCutDate, getTopicSlugs, type CatalogueEntry } from '@/lib/content'
 import { isFresh } from '@/lib/freshness'
 import './globals.css'
 
@@ -61,25 +61,75 @@ export const viewport: Viewport = {
 }
 
 /**
- * Sidebar topic-tree data (App Shell spec). Reuses the content-layer entry
- * points this slice's constraints name — `getTopicSlugs`/`getTopic` — plus
- * `getTopicCutDate` (both still `@staycurrent/core`'s public Loading API, via
- * `loadVersion`, never a direct `topics/` read). Errors propagate uncaught: a
- * broken `topics/` tree fails the whole build here exactly as it fails the
- * per-page render (02-data-flows.md, "currency is never guessed").
+ * Sidebar tree data (App Shell spec; databases-catalogue bet,
+ * 01-ui-design.md "Topic Library and Sidebar"). Reuses the content-layer
+ * entry points this slice's constraints name — `getTopicSlugs`/`getTopic`/
+ * `getCatalogues` — plus `getTopicCutDate` (all still `@staycurrent/core`'s
+ * public Loading API, via `loadVersion`, never a direct `topics/` read).
+ * Errors propagate uncaught: a broken `topics/` tree fails the whole build
+ * here exactly as it fails the per-page render (02-data-flows.md, "currency
+ * is never guessed").
  *
  * Freshness keys on the CURRENT VERSION'S CUT DATE, not `last_researched` — a
- * no-cut research run updates the latter without lighting the dot.
+ * no-cut research run updates the latter without lighting the dot. Computed
+ * once per slug and looked up by both the grouped catalogue entries and the
+ * leftover flat list below, rather than re-derived per branch.
+ *
+ * `getCatalogues` only groups topics that carry a non-blank `area`; every
+ * topic it groups is excluded from the returned `topics` (flat) list so it
+ * renders exactly once, inside its catalogue — "topics outside any
+ * catalogue render exactly as today" (Required Capabilities). A topic whose
+ * `area` is set but whose `register` didn't resolve to hub/foundation/profile
+ * (`Catalogue.ungrouped`) is deliberately NOT treated as "inside" a catalogue
+ * here — it has no group to render into (01-ui-design.md's wireframes name
+ * no such group) — so it falls through to the flat list instead of vanishing
+ * from the sidebar entirely.
  */
-function buildTopicNavEntries(): TopicNavEntry[] {
-  return getTopicSlugs()
-    .slice()
-    .sort()
+function buildSidebarData(): { topics: TopicNavEntry[]; catalogues: SidebarCatalogue[] } {
+  const slugs = getTopicSlugs().slice().sort()
+  const freshBySlug = new Map<string, { isFresh: boolean; cutDate: string }>()
+  for (const slug of slugs) {
+    const { frontmatter } = getTopic(slug)
+    const cutDate = getTopicCutDate(slug, frontmatter.version)
+    freshBySlug.set(slug, { isFresh: isFresh(cutDate), cutDate })
+  }
+
+  const toNavEntry = (entry: CatalogueEntry): TopicNavEntry => {
+    const fresh = freshBySlug.get(entry.slug)!
+    return {
+      slug: entry.slug,
+      title: entry.title,
+      isFresh: fresh.isFresh,
+      cutDate: fresh.cutDate,
+      ...(entry.core !== undefined && { core: entry.core }),
+    }
+  }
+
+  const groupedSlugs = new Set<string>()
+  const catalogues: SidebarCatalogue[] = getCatalogues().map((catalogue) => {
+    if (catalogue.hub) groupedSlugs.add(catalogue.hub.slug)
+    catalogue.movements.forEach((movement) => movement.entries.forEach((entry) => groupedSlugs.add(entry.slug)))
+    catalogue.profiles.forEach((entry) => groupedSlugs.add(entry.slug))
+    return {
+      area: catalogue.area,
+      hub: catalogue.hub ? toNavEntry(catalogue.hub) : null,
+      movements: catalogue.movements.map((movement) => ({
+        name: movement.name,
+        entries: movement.entries.map(toNavEntry),
+      })),
+      profiles: catalogue.profiles.map(toNavEntry),
+    }
+  })
+
+  const topics: TopicNavEntry[] = slugs
+    .filter((slug) => !groupedSlugs.has(slug))
     .map((slug) => {
       const { frontmatter } = getTopic(slug)
-      const cutDate = getTopicCutDate(slug, frontmatter.version)
-      return { slug, title: frontmatter.title, isFresh: isFresh(cutDate), cutDate }
+      const fresh = freshBySlug.get(slug)!
+      return { slug, title: frontmatter.title, isFresh: fresh.isFresh, cutDate: fresh.cutDate }
     })
+
+  return { topics, catalogues }
 }
 
 export default async function RootLayout({
@@ -89,7 +139,7 @@ export default async function RootLayout({
 }>) {
 
   const { default: Providers } = await import('@/components/providers/default')
-  const topics = buildTopicNavEntries()
+  const { topics, catalogues } = buildSidebarData()
 
   return (
     <html
@@ -153,7 +203,7 @@ export default async function RootLayout({
               Skip to content
             </a>
             <div className="doc-shell">
-              <Sidebar topics={topics} />
+              <Sidebar topics={topics} catalogues={catalogues} />
               <main id="main-content" className="doc-shell-main">
                 {children}
               </main>

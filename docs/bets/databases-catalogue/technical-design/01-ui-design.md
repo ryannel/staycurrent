@@ -371,3 +371,31 @@ in `docs/design-system.md` so the next bet inherits them instead of re-deriving 
 3. **Rollup content depth** (View 1) — *resolved 2026-07-28 (operator)*: one aggregate line (total, fresh count, most-recent). The per-register breakout stays available to a future bet if the single line proves too thin in use.
 4. **Register-group default state** (View 2) — *resolved 2026-07-28 (operator)*: open on first load, matching "recognition over recall."
 5. **Movement display names** (View 2, View 3) — *resolved 2026-07-29 (operator)*: the plain-language set "Capacity," "Single Node," "Distributed," "Caches & Derived Data," "Operations" — names that state the contents; the earlier gerund/metaphor forms were rejected. These exact strings are what authors hand-type into all 17 pieces of frontmatter.
+
+---
+
+#### Refinements recorded at delivery (slice 2.1 review, 2026-07-29)
+
+Review-approved resolutions of cases this design left unstated, plus one clause struck:
+
+1. **In-area `ungrouped` topics** (register present but unrecognized, or a foundation without
+   `movement`) render in the flat leftover "Topics" section rather than under the area label —
+   never silently dropped, per flow (a)'s binding constraint — while still counting in the
+   area's freshness-rollup total per flow (c). The visible inconsistency (a mistyped register
+   files a piece outside the area whose rollup counts it) is accepted as the honest surfacing
+   of an authoring defect; the sidebar/library prop shapes carry no in-area ungrouped bucket.
+2. **The rollup ships without a freshness-dot glyph** — the wireframe and resolved decision 3
+   (one aggregate line) governed; the Motion clause's "reused freshness-dot glyph is static"
+   presumed a dot that does not exist and is struck.
+3. **The reading rail's two landmarks carry distinct labels**: header "Reading path position",
+   footer "Continue reading".
+4. **`.page-title` widens** from the utility-page `<h1>` convention to also serve the library's
+   area `<h2>` (same `--text-h2` numbers; documented at the CSS site).
+5. **Area label casing**: the sidebar renders the raw `area` string uppercased by CSS; the
+   library humanizes it. Identical at "databases"; settle a single humanization rule before a
+   second area exists (deferred to the next catalogue adopter, recorded so it isn't a surprise).
+6. **Force-reopen fires on entering a group, not on movement within it**: a reader who
+   collapses a group while already inside it and then navigates to a sibling in the same
+   group keeps their collapse (no `containsActive` transition fires); a hard reload resets
+   to open. The force-open-on-entry and manual-collapse-persists clauses are in tension
+   exactly there, and the group boundary is the recorded resolution.

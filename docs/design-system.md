@@ -125,6 +125,12 @@ Top to bottom:
 
 Active states: the current page's entry carries `--color-accent` text and a 2px accent bar flush left (replacing, not adding to, its left padding — no layout shift). Hover: text moves from `--color-text-secondary` to `--color-text-body`, background `--color-hover-wash`, 120ms.
 
+**Grouped catalogue nav** (databases-catalogue bet, `01-ui-design.md` "Topic Library and Sidebar — Databases-Area Grouping"). When a topic carries an `area`, the flat `Topics` label/tree above is replaced, for that area, by: the area's own section label (the area value itself, e.g. `databases` — uppercased by the same section-label style, no separate display-title field), the hub entry (an ordinary topic-tree entry, first), then one or two **Register-Group Disclosures**. A topic with no `area` at all keeps rendering in the plain `Topics` list unchanged — the two coexist when some topics are grouped and others aren't yet.
+
+- **Register-Group Disclosure** — `.topic-disclosure`'s exact recipe one level up (same summary typography, hover wash, rotate-90° chevron), open by default ("recognition over recall"), carrying a trailing mono count right of the label (`Foundations (17)`, `Profiles (7)`) in the same register the version badge already uses for counts. A register with zero members doesn't render at all — no `Foundations (0)` placeholder; absence is the resting state, the same convention the freshness dot already uses.
+- **Movement Divider** — `.nav-section-label`'s exact recipe (11px/600 sans, uppercase, tracking 0.08em, `--color-text-faint`), non-interactive (never focusable, no hover state), nested one level inside a Foundations group so it reads as part of that list rather than a competing heading. Sidebar-only — the library grid stays un-sub-grouped by movement (a card carries enough visual weight on its own; the finer structure a nav tree needs would fragment a grid instead of clarifying it).
+- Every per-topic disclosure nested inside a register group is the unchanged item from point 4 above — only its DOM depth changes; it still carries `[core]` (see Badges) when the topic is a featured profile.
+
 ### Trust header — the article's masthead
 
 Every article opens with the trust header before the `<h1>`. It is instrumentation density: one line of mono-set metadata, wrapping to two on narrow viewports.
@@ -137,6 +143,15 @@ v5 · researched 12 Jun 2026 · changelog · history · skill      [fresh●]
 - Version chip: `v5` in a badge (see Badges) — accent-tinted background, mono.
 - The freshness marker appears when the current version is ≤ 14 days old: a 6px accent dot with the label `fresh`, animated only per the motion spec's one exception.
 - On `/[topic]/v/[n]` pages the header is replaced by the **archived banner** (see Error & Honesty Choreography).
+
+### Instrumentation Strip
+
+A reusable flush band for any single-purpose trust fact that doesn't belong in the trust header itself (databases-catalogue bet, `01-ui-design.md`): a `--text-label` heading (`.nav-section-label`'s exact recipe) over a `--text-meta` body line, closed by the trust header's own `--space-4`-padding / 1px-`--color-rule`-bottom-rule / `--space-6`-margin rhythm. Flush on `--color-surface` — no well, no shadow — because it is a continuation of the same trust apparatus the page's own trust header opens with, not a second competing container. Compared or in-place-changing figures render in tabular numerals (`font-variant-numeric: tabular-nums`); every link inside uses the standard link-hover recipe (`--color-accent` → `--color-accent-strong`, underline to full alpha, `--duration-fast`/`--ease-standard`).
+
+Two named instances:
+
+- **Catalogue Freshness Rollup** (the `/databases`-style hub view) — one aggregate line: total count, fresh count (≤ 14 days), and the most-recently-cut topic (a real link), e.g. `25 pieces · 6 fresh (≤14d) · most recently cut: Partitioning, 16 Jul 2026`. True live values, never a hardcoded number — correct at every wave of a catalogue's rollout by construction, since it re-sweeps the same content tree every build.
+- **Reading-Order Rail** (a foundation topic page) — a header instance stating the reader's position (`Single node · piece 5 of 17 · 4th of 5 in this movement`) plus a "Read first" line naming every prerequisite as a real link, absent entirely (never "no prerequisites") when none exist; and a footer instance that mirrors the *opening* half of the same rhythm instead (`--color-rule` top rule, `--space-9`/`--space-6` margin/padding — the shape `.provenance` already uses), carrying a single "Continue: `<next piece>` →" pointer, or "Continue: back to the chooser and map →" on the sequence's last piece. The header and footer are each their own `<nav>` landmark — landmarked distinctly from the trust header and the main article, and from each other: the header is `<nav aria-label="Reading path position">` (states where the reader is), the footer is `<nav aria-label="Continue reading">` (offers where to go next) — two different labels because they're two different landmarks separated by the whole article body, not one instrument split visually. Either is reachable directly without reading the whole thing as prose.
 
 ### Context preservation
 
@@ -426,9 +441,13 @@ MVP has no forms; the spec exists so the first input (palette search, later) isn
                     box-shadow: inset 0 0 0 1px currentColor; }  /* provenance label */
 .badge-sourced    { background: transparent; color: var(--color-accent);
                     box-shadow: inset 0 0 0 1px currentColor; }
+.badge-core       { background: transparent; color: var(--color-text-secondary);
+                    box-shadow: inset 0 0 0 1px currentColor; }  /* featured (★) catalogue profile */
 ```
 
 The freshness dot (sidebar, trust header): 6px circle in `--color-accent`, rendered only while the current version is ≤ 14 days old — there is no non-fresh variant; absence is the resting state. Always paired with text (`fresh`, a date) — never colour alone.
+
+`badge-core` (databases-catalogue bet, `01-ui-design.md`) marks a catalogue's featured (★) profile trio — sidebar tree and library cards both, text "core" always present, never a bare glyph. Deliberately not accent-colored: the accent budget is already spent on links, active-nav, version badges, and the freshness dot; a third recurring accent touch would blow it.
 
 ### Code blocks
 
@@ -439,6 +458,8 @@ Syntax palette: one house theme per site theme, built from the token palette (in
 ### Tables
 
 Reading furniture, print-styled: no zebra, no cell borders. `--text-ui` (data tables) or `--text-body` at 0.9375rem (prose tables); header row `--text-label` style with `--color-rule-strong` rule below; row separation by 1px `--color-rule`; cell padding `var(--space-3) var(--space-4)`; numeric columns right-aligned in `--font-mono`. Wide tables scroll within their own `overflow-x: auto` container — the page never scrolls horizontally.
+
+**Comparison Matrix** (databases-catalogue bet, `01-ui-design.md` — the hub's seven-profile matrix) — **a forward recipe, named now, CSS not shipped yet**: the recipe below lands with the wave-6 hub re-cut, once the matrix itself is authored content (`01-ui-design.md`: the chooser/matrix/tree land in the hub's final wave, not this slice). Recorded here so that build inherits the name instead of re-deriving it, not because the styling exists in `doc-shell.css` today. A variant of the plain prose table above, not a new component — it stays a markdown table through the existing rendering pipeline, so authoring it costs nothing. Adds three things to the base recipe: the first column (the thing being compared) stays pinned via `position: sticky; left: 0`, with an explicit opaque `--color-surface` background (so scrolling columns don't bleed through beneath it) and a 1px `--color-rule` inline-end edge so the pinned boundary reads as deliberate; a row-hover wash (`background: var(--color-hover-wash)` at `--duration-fast`/`--ease-standard`, declared on the row's base rule so the fade-out on pointer-leave animates too — `.version-history-table tbody tr`'s existing convention); and tabular numerals on every compared figure. Any future table comparing more than a handful of things side by side inherits this recipe by name instead of re-deriving it.
 
 ### Blockquotes & asides
 

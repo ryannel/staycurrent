@@ -1,12 +1,23 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowUpRight } from 'lucide-react';
-import { getTopic, getTopicSlugs, getTopicVersion } from '@/lib/content';
+import type { TopicFrontmatter } from '@staycurrent/core';
+import {
+  getCatalogues,
+  getReadingPosition,
+  getTopic,
+  getTopicCutDate,
+  getTopicSlugs,
+  getTopicVersion,
+  type CatalogueEntry,
+} from '@/lib/content';
 import { ICON_STROKE_WIDTH } from '@/lib/icons';
-import { isFresh } from '@/lib/freshness';
+import { isFresh, summarizeCatalogueFreshness, type CatalogueFreshness } from '@/lib/freshness';
 import { formatDisplayDate } from '@/lib/format-date';
 import { TocRail } from '@/components/article/toc-rail';
 import { ArticleEnhancements } from '@/components/article/enhancements';
+import { CatalogueFreshnessRollup } from '@/components/article/catalogue-freshness-rollup';
+import { ReadingOrderRailFooter, ReadingOrderRailHeader } from '@/components/article/reading-order-rail';
 
 type PageParams = { topic: string };
 type PageProps = { params: Promise<PageParams> };
@@ -25,6 +36,53 @@ export function generateStaticParams(): PageParams[] {
 // to an on-demand loadTopic render (dev-server behaviour; prod is a static
 // export, which has no server to render on demand anyway).
 export const dynamicParams = false;
+
+/**
+ * The Catalogue Freshness Rollup's live numbers for a hub topic
+ * (02-data-flows.md, flow c). `null` whenever this topic's `area` doesn't
+ * resolve to a real `Catalogue` — a hub authored without an `area` yet has
+ * nothing to group into, so it renders with no rollup band rather than a
+ * partial one, the same fail-soft posture `getReadingPosition` takes for a
+ * foundation missing its own additive fields.
+ *
+ * Flattens hub + every movement's entries + profiles + `ungrouped` — the
+ * rollup counts every topic in the area, including `ungrouped` ones (flow c's
+ * own key decision: "a claim about the area, not about the grouping's
+ * cleanliness").
+ */
+function buildCatalogueFreshness(frontmatter: TopicFrontmatter): CatalogueFreshness | null {
+  if (frontmatter.area === undefined || frontmatter.area.trim() === '') return null;
+  const catalogue = getCatalogues().find((c) => c.area === frontmatter.area);
+  if (!catalogue) return null;
+
+  const allEntries: CatalogueEntry[] = [
+    ...(catalogue.hub ? [catalogue.hub] : []),
+    ...catalogue.movements.flatMap((movement) => movement.entries),
+    ...catalogue.profiles,
+    ...catalogue.ungrouped,
+  ];
+  const inputs = allEntries.map((entry) => ({
+    slug: entry.slug,
+    title: entry.title,
+    cutDate: getTopicCutDate(entry.slug, entry.version),
+  }));
+  return summarizeCatalogueFreshness(inputs);
+}
+
+/**
+ * The Reading-Order Rail footer's fallback target on the last piece in the
+ * path — the area's hub page (01-ui-design.md: "there is no next foundation
+ * to point to, so the footer redirects to the hub rather than disappearing").
+ * Falls back to `/` in the defensive case an area has no hub at all — an
+ * authoring defect `getCatalogues` itself already tolerates rather than
+ * fails on (03-api-design.md's duplicate-hub design rationale) — so the
+ * footer link never points at a slug the sweep hasn't proven exists.
+ */
+function resolveHubHref(frontmatter: TopicFrontmatter): string {
+  if (frontmatter.area === undefined) return '/';
+  const catalogue = getCatalogues().find((c) => c.area === frontmatter.area);
+  return catalogue?.hub ? `/${catalogue.hub.slug}/` : '/';
+}
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { topic: slug } = await params;
@@ -61,6 +119,14 @@ export default async function TopicPage({ params }: PageProps) {
   // see lib/content.ts's doc comment for why this is a single accessor.
   const { cutDate, provenance } = getTopicVersion(slug, frontmatter.version);
   const fresh = isFresh(cutDate);
+
+  // databases-catalogue bet (01-ui-design.md): the hub's Catalogue Freshness
+  // Rollup and the foundation's Reading-Order Rail are mutually exclusive —
+  // `register` is a closed union, so a topic is never both `'hub'` and
+  // `'foundation'` — but each guards independently rather than assuming that.
+  const catalogueFreshness = frontmatter.register === 'hub' ? buildCatalogueFreshness(frontmatter) : null;
+  const readingPosition = getReadingPosition(frontmatter);
+  const hubHref = readingPosition && readingPosition.next === null ? resolveHubHref(frontmatter) : null;
 
   return (
     <div className="doc-shell-content">
@@ -105,7 +171,10 @@ export default async function TopicPage({ params }: PageProps) {
             fresh
           </span>
         </p>
+        {catalogueFreshness && <CatalogueFreshnessRollup freshness={catalogueFreshness} />}
+        {readingPosition && <ReadingOrderRailHeader position={readingPosition} />}
         <div className="article-body" dangerouslySetInnerHTML={{ __html: body.html }} />
+        {readingPosition && <ReadingOrderRailFooter next={readingPosition.next} hubHref={hubHref ?? '/'} />}
         {/* Provenance, rendered inline at the essay's close (01-ui-design.md's
             micro-polish spec, design decision): the design system pins
             provenance.md's two-section anatomy (## Sources / ## Synthesis)
