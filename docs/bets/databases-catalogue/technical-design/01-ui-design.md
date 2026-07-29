@@ -3,10 +3,10 @@
 *The `databases-catalogue` bet has one surface, `site` (`graphical-ui`). Every view below is a
 display patch over the shell `docs/design-system.md` § Graphical UI already specifies — no new
 route, no new page type, no content-contract change. The locked topology this design draws
-against: 17 foundations (bare-noun slugs) in five movements — sizing lens (capacity-planning);
-single-node (data-models, storage-engines, schema-design, transactions, query-execution);
+against: 17 foundations (bare-noun slugs) in five movements — capacity (capacity-planning);
+single node (data-models, storage-engines, schema-design, transactions, query-execution);
 distributed (replication, consensus, partitioning, distributed-transactions, multi-region);
-deriving & serving (caching, derived-data); operating & evolving (schema-migrations,
+caches & derived data (caching, derived-data); operations (schema-migrations,
 connection-pooling, backup-recovery, database-observability; the 2026-07-28 practice-tier
 amendment, `04-data-design.md`) — 7 profiles (`<class>-database` slugs; relational,
 key-value, and columnar are the ★ core trio; document, column-family, vector, and graph are the
@@ -80,8 +80,8 @@ code surface; the axes, matrix, path, and tree are the writer's job, not the bui
 │           │  ↑ first column stays put; the axis columns scroll under it │
 │           │                                                    │      │
 │           │ ## The reading path                               │      │
-│           │ Sizing lens → Single-node (5) → Distributed (5) → │      │
-│           │ Deriving & serving (2) → Operating & evolving (4).│      │
+│           │ Capacity → Single node (5) → Distributed (5) → │      │
+│           │ Caches & derived data (2) → Operations (4).│      │
 │           │ 17 pieces, each linked.                           │      │
 │           │                                                    │      │
 │           │ ## Which one do I need?                           │      │
@@ -160,9 +160,9 @@ the same logic; they differ only in how much of it a card grid versus a nav tree
 │ ▸ Databases                    [fresh●] │    now named for its one area
 │                                          │
 │ ▾ Foundations (17)                      │  ← NEW: register group, collapsible
-│    SIZING LENS                          │  ← NEW: movement divider, static
+│    CAPACITY                          │  ← NEW: movement divider, static
 │    ▸ Capacity Planning                  │
-│    SINGLE-NODE                          │
+│    SINGLE NODE                          │
 │    ▸ Data Models                        │
 │    ▸ Storage Engines                    │
 │    ▸ Schema Design                      │
@@ -174,10 +174,10 @@ the same logic; they differ only in how much of it a card grid versus a nav tree
 │    ▸ Partitioning                       │
 │    ▸ Distributed Transactions           │
 │    ▸ Multi-Region                       │
-│    DERIVING & SERVING                   │
+│    CACHES & DERIVED DATA                   │
 │    ▸ Caching                            │
 │    ▸ Derived Data                       │
-│    OPERATING & EVOLVING                 │
+│    OPERATIONS                 │
 │    ▸ Schema Migrations                  │
 │    ▸ Connection Pooling                 │
 │    ▸ Backup & Recovery                  │
@@ -253,7 +253,7 @@ the reflow behavior at any width is exactly what `.topic-grid` already does toda
 - Reader collapses a group, then navigates within the same tab → the collapsed state persists (`sessionStorage`, per-tab), the same rule that already governs per-topic disclosure state.
 - Reader clicks a topic's own `▸` disclosure (inside a register group) → unchanged: reveals Article / Changelog / History / Skill.
 - Reader clicks a card in the library grid → navigates to that topic; hover washes the card background — both unchanged from `.topic-card` today.
-- Movement dividers ("SIZING LENS," "SINGLE-NODE," …) are plain text, not interactive — they never receive focus or a hover state.
+- Movement dividers ("CAPACITY," "SINGLE NODE," …) are plain text, not interactive — they never receive focus or a hover state.
 
 **Micro-polish spec:**
 
@@ -280,14 +280,14 @@ search — needs two facts before investing in a deep mechanism essay: where thi
 the 17-piece sequence, and what it assumes they've already read. This element answers both, in
 one small instrument, only on the 17 foundation pages — never on a profile, never on the hub.
 
-**Wireframe** (`/transactions` — piece 5 of 17, fourth of five in Single-node):
+**Wireframe** (`/transactions` — piece 5 of 17, fourth of five in Single node):
 
 ```
 ┌─ sidebar ─┬─ /transactions ─────────────────────────────────┬─ TOC ─┐
 │           │ [v3]·researched 14 Jul 2026·changelog·history·   │       │
 │           │ skill                                   [fresh●] │       │
 │           ├──────────────────────────────────────────────────┤       │
-│           │ Single-node · piece 5 of 17 · 4th of 5 in this    │       │
+│           │ Single node · piece 5 of 17 · 4th of 5 in this    │       │
 │           │ movement                                          │       │
 │           │ Read first: Data Models · Storage Engines ·       │       │
 │           │ Schema Design                                     │       │
@@ -307,7 +307,7 @@ absent entirely, not replaced with "no prerequisites" — the same convention th
 already uses (absence is the resting state, not a negative message to design):
 
 ```
-│ Sizing lens · piece 1 of 17 · 1st of 1 in this movement          │
+│ Capacity · piece 1 of 17 · 1st of 1 in this movement          │
 ├────────────────────────────────────────────────────────────────┤
 │ ┃ (stance callout)                                              │
 │ # Capacity Planning                                              │
@@ -370,4 +370,4 @@ in `docs/design-system.md` so the next bet inherits them instead of re-deriving 
 2. **Reading-order rail — header-and-footer** (View 3) — *resolved*: both halves, unconditionally. `04-data-design.md` decision 5's derived `next` makes the forward "Continue" link structurally unable to dangle, so no editorial mitigation is needed.
 3. **Rollup content depth** (View 1) — *resolved 2026-07-28 (operator)*: one aggregate line (total, fresh count, most-recent). The per-register breakout stays available to a future bet if the single line proves too thin in use.
 4. **Register-group default state** (View 2) — *resolved 2026-07-28 (operator)*: open on first load, matching "recognition over recall."
-5. **Movement display names** (View 2, View 3) — this spec uses the pitch's own words in Title Case ("Sizing Lens," "Single-Node," "Distributed," "Deriving & Serving," and the amendment's provisional "Operating & Evolving"). Low-stakes, but confirm the display form before it's hand-typed into 17 pieces of frontmatter. The four settled names are confirmed by use (the pilot authors "Single-Node"); "Operating & Evolving" awaits the operator's confirmation before that movement's first authored frontmatter.
+5. **Movement display names** (View 2, View 3) — *resolved 2026-07-29 (operator)*: the plain-language set "Capacity," "Single Node," "Distributed," "Caches & Derived Data," "Operations" — names that state the contents; the earlier gerund/metaphor forms were rejected. These exact strings are what authors hand-type into all 17 pieces of frontmatter.

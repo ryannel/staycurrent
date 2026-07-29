@@ -55,7 +55,7 @@ cadence: 180d
 last_researched: 2026-08-01
 area: databases
 register: foundation
-movement: Single-Node
+movement: Single Node
 reading_order: 5
 prereqs: [data-models, storage-engines, schema-design]
 ---
@@ -136,20 +136,20 @@ program commits to authoring, not as a new store:
 
 | Movement | Foundations (reading order) | Reading-order range |
 |---|---|---|
-| Sizing Lens | capacity-planning | 1 |
-| Single-Node | data-models, storage-engines, schema-design, transactions, query-execution | 2–6 |
+| Capacity | capacity-planning | 1 |
+| Single Node | data-models, storage-engines, schema-design, transactions, query-execution | 2–6 |
 | Distributed | replication, consensus, partitioning, distributed-transactions, multi-region | 7–11 |
-| Deriving & Serving | caching, derived-data | 12–13 |
-| Operating & Evolving | schema-migrations, connection-pooling, backup-recovery, database-observability | 14–17 |
+| Caches & Derived Data | caching, derived-data | 12–13 |
+| Operations | schema-migrations, connection-pooling, backup-recovery, database-observability | 14–17 |
 
 The fifth movement is the 2026-07-28 amendment (below): the operator committed to
-Postgres-deep operational leverage as dedicated pieces, not folded prose. Its display name
-is provisional until the operator confirms it before the movement's first authored
-frontmatter — the pilot (`query-execution`, Single-Node) does not touch it.
+Postgres-deep operational leverage as dedicated pieces, not folded prose. All five display
+names are the operator's plain-language set, confirmed 2026-07-29 — the earlier
+gerund-and-metaphor forms were rejected in favor of names that state the contents.
 
 This table is the authoring target, not a validated invariant. Nothing in this design enforces
 that a movement's members carry contiguous `reading_order` values, or that every author spells
-"Single-Node" identically — an accidental "single-node" vs. "Single-Node" split silently
+"Single Node" identically — an accidental "single-node" vs. "Single Node" split silently
 produces two movement buckets instead of one (`02-data-flows.md` flow a). Both are
 editorial-discipline risks in the same class `research/content-model-audit.md` already accepts
 for cross-piece consistency generally ("comparability is a writer-skill convention, enforced
@@ -163,23 +163,23 @@ into a gate check, per this bet's no-gos.
 | Slug | Register | Movement | Reading order | Notes |
 |---|---|---|---|---|
 | `databases` | hub | — | — | the re-cut chooser/map (01-ui-design.md); this bet's only re-cut, everything else is net-new |
-| `capacity-planning` | foundation | Sizing Lens | 1 | |
-| `data-models` | foundation | Single-Node | 2 | |
-| `storage-engines` | foundation | Single-Node | 3 | |
-| `schema-design` | foundation | Single-Node | 4 | |
-| `transactions` | foundation | Single-Node | 5 | |
-| `query-execution` | foundation | Single-Node | 6 | |
+| `capacity-planning` | foundation | Capacity | 1 | |
+| `data-models` | foundation | Single Node | 2 | |
+| `storage-engines` | foundation | Single Node | 3 | |
+| `schema-design` | foundation | Single Node | 4 | |
+| `transactions` | foundation | Single Node | 5 | |
+| `query-execution` | foundation | Single Node | 6 | |
 | `replication` | foundation | Distributed | 7 | |
 | `consensus` | foundation | Distributed | 8 | |
 | `partitioning` | foundation | Distributed | 9 | |
 | `distributed-transactions` | foundation | Distributed | 10 | |
 | `multi-region` | foundation | Distributed | 11 | |
-| `caching` | foundation | Deriving & Serving | 12 | |
-| `derived-data` | foundation | Deriving & Serving | 13 | |
-| `schema-migrations` | foundation | Operating & Evolving | 14 | amendment 2026-07-28 |
-| `connection-pooling` | foundation | Operating & Evolving | 15 | amendment 2026-07-28 |
-| `backup-recovery` | foundation | Operating & Evolving | 16 | amendment 2026-07-28 |
-| `database-observability` | foundation | Operating & Evolving | 17 | amendment 2026-07-28 |
+| `caching` | foundation | Caches & Derived Data | 12 | |
+| `derived-data` | foundation | Caches & Derived Data | 13 | |
+| `schema-migrations` | foundation | Operations | 14 | amendment 2026-07-28 |
+| `connection-pooling` | foundation | Operations | 15 | amendment 2026-07-28 |
+| `backup-recovery` | foundation | Operations | 16 | amendment 2026-07-28 |
+| `database-observability` | foundation | Operations | 17 | amendment 2026-07-28 |
 | `relational-database` | profile | — | 1 | core (★) |
 | `key-value-database` | profile | — | 2 | core (★) |
 | `columnar-database` | profile | — | 3 | core (★) |
@@ -248,6 +248,27 @@ serves.
 
 ---
 
+### The evidence directory, as data
+
+Foundations and profiles that rest on measured claims publish their lab harness in-repo at
+`topics/<slug>/evidence/` — driver scripts, environment records, immutable raw logs, and
+per-lab notes stating what each lab does *not* establish. This is an already-proven shape,
+not a new contract surface: the live `topics/databases/evidence/` tree landed with the v4
+cut through the unmodified publish gate, because `executeCut` syncs the whole staged tree
+while the gate's eleven checks and the loaders read named artifacts only — an `evidence/`
+directory is invisible to both, lands in git, and never enters the public export or the
+skill payload. Nothing below validates it, exactly as with the seven additive keys.
+
+The authoring standard that produces it — witnessed evidence at measured resolution, the
+1,100–1,700-word single-question piece band, and the pre-cut gates (mechanical intake,
+accuracy-vs-logs audit, blind reader review) — is an **authoring convention recorded here
+per the pitch's own framing** (the profile skeleton clause: "recorded as authoring
+convention beside the existing writer-skill rules — a methodology edit, not a workbench
+capability change"). It is operator-side methodology, sanctioned 2026-07-28; the gate never
+enforces it, the editorial pass and the operator's go do.
+
+---
+
 ### Decisions for the operator
 
 1. **A seventh additive key, `core: boolean`, beyond the six this bet's brief names.** Needed
@@ -296,8 +317,8 @@ sitting. Recorded here so the design reads as one contract, not a document plus 
    frontmatter; the reading rail renders header and footer unconditionally.
 2. **The practice tier: four foundation slugs added** — `schema-migrations`,
    `connection-pooling`, `backup-recovery`, `database-observability`, reading order 14–17,
-   grouped as the fifth movement (Operating & Evolving, display name provisional until the
-   operator confirms it before that movement's first authored frontmatter). Reason: the
+   grouped as the fifth movement (Operations — part of the plain-language naming set the
+   operator confirmed 2026-07-29). Reason: the
    operator committed to Postgres-deep operational leverage as dedicated pieces; folding
    migrations, pooling, backup, and monitoring into the existing thirteen would re-create
    the monolith's depth cap one level down. All four fit `SLUG_RE` and collide with nothing

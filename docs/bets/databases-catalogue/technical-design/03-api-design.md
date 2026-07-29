@@ -103,7 +103,7 @@ unchanged by construction, not by a second manual update — see Gate↔loader p
 strings. This is a deliberate asymmetry. `foundation`/`profile`/`hub` describe the *shape* of a
 hub-and-spoke catalogue generically — any future area built on this pattern reuses these three
 words, the way every topic already reuses `status: 'current' | 'in-research'` regardless of
-instance — while `area` (`"databases"`) and `movement` (`"Single-Node"`) are this instance's own
+instance — while `area` (`"databases"`) and `movement` (`"Single Node"`) are this instance's own
 editorial taxonomy, exactly as instance-specific as a topic's `title`. A closed-union `register`
 costs nothing extra to extract leniently (it still never raises an issue on a bad value) and
 buys real type safety for every downstream consumer.
@@ -141,7 +141,7 @@ export interface CatalogueEntry {
 }
 
 export interface CatalogueMovement {
-  name: string;                    // verbatim movement label, e.g. "Single-Node"
+  name: string;                    // verbatim movement label, e.g. "Single Node"
   entries: CatalogueEntry[];       // ordered by readingOrder ascending
 }
 

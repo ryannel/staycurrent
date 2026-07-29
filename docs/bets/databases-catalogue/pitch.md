@@ -36,8 +36,8 @@ surfaces: [site]
   low-stakes.
 - **Solution:** Decompose the monolith into a foundations-first, hub-and-spoke catalogue of 25
   stance-topics (24 new + the hub re-cut) in three registers: **17 foundation pieces** (deep
-  mechanism essays in five movements — sizing lens; single-node; distributed; deriving &
-  serving; operating & evolving, the 2026-07-28 practice-tier amendment), **7 tech profiles** (comparable engine entries — each its coordinates on 8 canonical
+  mechanism essays in five movements — capacity; single node; distributed; deriving &
+  serving; operations, the 2026-07-28 practice-tier amendment), **7 tech profiles** (comparable engine entries — each its coordinates on 8 canonical
   decision axes, with a ★ core trio of relational / key-value / columnar featured above the four
   specialized escape hatches), and the **`databases` hub re-cut as chooser and map** (axes,
   master comparison matrix, reading path, decision tree). The spine follows the field's
@@ -47,7 +47,9 @@ surfaces: [site]
   it — with four anchor systems (feed, ledger, metrics store, typeahead) threaded through every
   layer; the profile skeleton and quadruple are designed in Design Foundations and recorded as
   authoring convention beside the existing writer-skill rules (a methodology edit, not a
-  workbench capability change). Delivery runs in six waves under one standing invariant — no
+  workbench capability change), as is the witnessed-evidence standard every measured piece
+  carries — in-repo `topics/<slug>/evidence/` harnesses and the operator's pre-cut gates,
+  per `technical-design/04-data-design.md` § The evidence directory. Delivery runs in six waves under one standing invariant — no
   dead links (the hub re-cut therefore lands last) — plus a depth invariant that arms when the
   site gains readership: pre-audience (operator rollout decision, 2026-07-28), waves land as
   they finish and the deployed catalogue may show mid-growth; once live to readers, the hub
