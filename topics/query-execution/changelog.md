@@ -1,0 +1,9 @@
+# Query Execution — Changelog
+
+## v1 — 2026-07-29
+
+What moved is the databases catalogue itself: `query-execution` is its first foundation, Single Node movement, reading order 6. The founding stance: the schema names what an index makes available, the plan names what the planner actually chose, and `EXPLAIN ANALYZE` is the only way to read that choice instead of guessing at it. An index is a suggestion the planner prices against statistics about your data and is free to refuse, and it refuses correctly more often than the reflex "add an index" assumes.
+
+The claims rest on two labs run 2026-07-29, PostgreSQL 16.14 (`postgres:16-alpine`) in Docker on a laptop, with the harness — driver scripts, environment records, immutable raw logs — published beside the article at `topics/query-execution/evidence/`. A selectivity lab flips the same indexed predicate between an `Index Scan` at 1% selectivity and a `Seq Scan` at 95%, watches a covering index sit unused until `VACUUM` populates the visibility map, and catches the planner mis-costing a fresh bulk insert at `rows=1` against an actual 500,000. A slow-query lab walks one join from 26,933 buffers with no indexes on the join columns down to 1,800 with two, and closes by reading `pg_stat_user_indexes` to confirm which of the added indexes the planner actually used. Every measured figure in the article traces to a named raw log in that directory.
+
+What it means for practice: before touching the schema, read the plan. The estimate-versus-actual gap at each node is the trigger — a `rows=1` node feeding straight to the client cost this run 13–18 ms, and the same misestimate one join upstream is what the slow-query lab's fix arc exists to price. `pg_stat_user_indexes` answers, after the fact, whether an index anyone added is actually being scanned.
