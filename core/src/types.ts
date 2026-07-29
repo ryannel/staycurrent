@@ -3,6 +3,22 @@
 // types". Implementation bodies live elsewhere; this module is the compiled,
 // type-checked record of the shapes every caller programs against.
 
+// databases-catalogue bet — engine-level vocabulary for the hub-and-spoke
+// catalogue shape (03-api-design.md, 04-data-design.md "The register model").
+export type TopicRegister = 'foundation' | 'profile' | 'hub';
+
+// databases-catalogue bet — the 8 canonical decision axes (04-data-design.md).
+export interface ProfileAxes {
+  consistency_model?: string;
+  partition_strategy?: string;
+  query_language?: string;
+  scaling_axis?: string;
+  latency_profile?: string;
+  durability_guarantee?: string;
+  transaction_support?: string;
+  operational_maturity?: string;
+}
+
 export interface TopicFrontmatter {
   topic: string; // kebab-case slug; must equal the parent directory name
   title: string;
@@ -11,6 +27,14 @@ export interface TopicFrontmatter {
   status: 'current' | 'in-research'; // the only two stored values, ever — `due` is never stored
   cadence: `${number}d`; // research interval, e.g. '90d'
   last_researched: string; // ISO 8601 date, YYYY-MM-DD
+  // --- additive display fields (databases-catalogue bet) — optional, unvalidated ---
+  area?: string;
+  register?: TopicRegister;
+  movement?: string;
+  reading_order?: number;
+  prereqs?: string[];
+  core?: boolean;
+  axes?: ProfileAxes;
 }
 
 export interface TopicSummary extends TopicFrontmatter {
