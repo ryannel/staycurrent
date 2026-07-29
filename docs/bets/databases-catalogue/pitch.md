@@ -1,5 +1,5 @@
 ---
-status: discovery
+status: decomposition
 surfaces: [site]
 ---
 
@@ -21,22 +21,23 @@ surfaces: [site]
 - **Appetite:** Worth a sustained multi-wave editorial program — this is the site's core value
   proposition, not a feature beside it, and the operator has committed to the full seven-profile,
   full-foundations scope ("all in"). The bound is per-wave, not per-program: each of the six
-  waves must leave the deployed site strictly better standing alone, so the program can pause at
-  any wave boundary with full value banked. Scope flexes by consolidating pieces under the
+  waves must leave the deployed site strictly better standing alone — more published, current
+  material banked per wave, under the rollout posture the Solution records — so the program can
+  pause at any wave boundary with full value banked. Scope flexes by consolidating pieces under the
   no-stance-no-topic test — never by shipping thin pieces. Steady-state maintenance is priced
-  and accepted: ~30 research runs/year (~2.5/month) at per-piece cadences that track volatility.
+  and accepted: ~35 research runs/year (~3/month) at per-piece cadences that track volatility.
 - **Stakes:** Medium-high blast radius, high reversibility. The public catalogue is the product,
-  and this program grows it from 1 to 21 topics, consuming most of the ~25-topic design
+  and this program grows it from 1 to 25 topics, consuming the full ~25-topic design
   headroom. Two one-way doors: topic slugs are permanent (no rename migration exists; `SLUG_RE`
-  caps them at 3 words) and this program mints 20 new ones, and published stances are
+  caps them at 3 words) and this program mints 24 new ones, and published stances are
   commitments the changelog must honestly walk back if wrong. Everything else is a single
   revertible git commit per cut, gated fail-closed before it lands. Review load per increment
   is bounded: one piece, one gate pass, one operator go. The display patch is display-only and
   low-stakes.
-- **Solution:** Decompose the monolith into a foundations-first, hub-and-spoke catalogue of 21
-  stance-topics (20 new + the hub re-cut) in three registers: **13 foundation pieces** (deep
-  mechanism essays in four movements — sizing lens; single-node; distributed; deriving &
-  serving), **7 tech profiles** (comparable engine entries — each its coordinates on 8 canonical
+- **Solution:** Decompose the monolith into a foundations-first, hub-and-spoke catalogue of 25
+  stance-topics (24 new + the hub re-cut) in three registers: **17 foundation pieces** (deep
+  mechanism essays in five movements — sizing lens; single-node; distributed; deriving &
+  serving; operating & evolving, the 2026-07-28 practice-tier amendment), **7 tech profiles** (comparable engine entries — each its coordinates on 8 canonical
   decision axes, with a ★ core trio of relational / key-value / columnar featured above the four
   specialized escape hatches), and the **`databases` hub re-cut as chooser and map** (axes,
   master comparison matrix, reading path, decision tree). The spine follows the field's
@@ -46,9 +47,11 @@ surfaces: [site]
   it — with four anchor systems (feed, ledger, metrics store, typeahead) threaded through every
   layer; the profile skeleton and quadruple are designed in Design Foundations and recorded as
   authoring convention beside the existing writer-skill rules (a methodology edit, not a
-  workbench capability change). Delivery runs in six waves under two invariants: no depth
-  regression (the hub sheds a deep section only after its expanded replacement is live) and no
-  dead links (the hub re-cut therefore lands last). All content lands as normal stance-topics
+  workbench capability change). Delivery runs in six waves under one standing invariant — no
+  dead links (the hub re-cut therefore lands last) — plus a depth invariant that arms when the
+  site gains readership: pre-audience (operator rollout decision, 2026-07-28), waves land as
+  they finish and the deployed catalogue may show mid-growth; once live to readers, the hub
+  sheds a deep section only after its expanded replacement is live. All content lands as normal stance-topics
   through the existing content loop; per `research/content-model-audit.md` the only code change
   is a display-only site patch — area grouping, reading order, hub freshness rollup — via
   additive frontmatter the validator already tolerates. This deliberately refines the product
@@ -68,26 +71,28 @@ surfaces: [site]
   published in the bet's validation. **(2) Reader journeys:** from `/databases`, any of the 7
   profiles is reachable in ≤2 clicks via the matrix; the reading path is navigable end to end;
   a manual link sweep finds zero dead cross-links. **(3) Wave integrity:** after every wave the
-  site builds green through the fail-closed gate and net published depth on every mechanism
-  never decreased. A no on any check is as informative as a yes: it names the wave where the
-  structure failed.
+  site builds green through the fail-closed gate, and — from the moment the depth invariant
+  arms at readership (Solution, rollout decision 2026-07-28) — net published depth on every
+  mechanism never decreases thereafter. A no on any check is as informative as a yes: it names
+  the wave where the structure failed.
 
 ### Topology
 
 ```mermaid
 graph TD
-  A[Reader] --> B[site — Next.js static export]
-  B --> C["@staycurrent/core loaders"]
-  C --> D[(topics/ — 21 stance-topic trees)]
-  E[Operator + research loop] -->|convene → write → gate → cut| D
-  B -.->|display patch: grouping, reading order, rollup| C
+  Reader --> Site[site — Next.js static export]
+  Site --> Lib["services/site/lib<br/>getCatalogues · getReadingPosition · summarizeCatalogueFreshness"]
+  Lib --> Core["@staycurrent/core loaders<br/>validateTopicFrontmatter — tolerant of the 7 additive keys"]
+  Core --> Topics[("topics/ — 25 stance-topic trees<br/>area · register · movement · reading_order · prereqs · axes")]
+  Operator["Operator + research loop"] -->|convene → write → gate → cut| Topics
+  Site -.->|display patch: area grouping · reading rail · freshness rollup| Lib
 ```
 
 ## Rabbit Holes & No-Gos
 
 **Rabbit Holes**
 
-- [ ] Risk: 21 research runs balloon — each convene is a full sources → digest → verdict loop.
+- [ ] Risk: 25 research runs balloon — each convene is a full sources → digest → verdict loop.
   Guard: research is pre-seeded by the three committed discovery digests under `research/`
   (interview rubric, pedagogy teardown, content-model audit); pieces are authored one at a time
   inside wave boundaries that are legal stop points; the no-stance-no-topic test merges thin
@@ -98,7 +103,7 @@ graph TD
 - [ ] Risk: profiles re-teach mechanisms and balloon into essays. Guard: the profile skeleton is
   an authoring convention — 8-axis coordinates plus links to foundations, never re-teaching —
   and the hub matrix makes a bloated profile visibly non-comparable.
-- [ ] Risk: slug regret — slugs are permanent and this program mints 20 new ones. Guard: the
+- [ ] Risk: slug regret — slugs are permanent and this program mints 24 new ones. Guard: the
   full slug set is locked in Design Foundations against `SLUG_RE` and future-catalogue semantics
   (foundations unprefixed as site-level primitives; profiles typed) before the first cut.
 - [ ] Risk: mermaid-heavy pieces hit the known caption-channel gap (no alt/caption contract on
@@ -120,8 +125,8 @@ graph TD
 - [ ] No stream/batch-processing piece and no encoding/schema-evolution piece — DDIA Part III
   proper and serialization are data-engineering scope, not this resource's reader; each gets a
   fold-note (derived-data and schema-design respectively), not a topic.
-- [ ] No search — the parking-lot instinct says revisit at ~25 topics; this program lands at 21.
-  Re-raise in the first post-program bet discovery, not here.
+- [ ] No search — the parking-lot instinct says revisit at ~25 topics; this program lands at 25,
+  so the trigger arrives at program end. Re-raise in the first post-program bet discovery, not here.
 - [ ] No new workbench capability — the loop's existing commands already handle N topics.
 
 **Surface no-gos**

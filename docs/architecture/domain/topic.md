@@ -2,7 +2,7 @@
 title: Topic
 description: The unit of publication — a living article, its companion skill, and its version history under `topics/<slug>/`.
 status: active
-last_reviewed: 2026-07-09
+last_reviewed: 2026-07-18
 ---
 
 # Topic
@@ -13,7 +13,10 @@ last_reviewed: 2026-07-09
 
 A topic is a practice area Stay Current maintains a committed position on — the living
 article, its companion skill, and its full version history, all rooted at
-`topics/<slug>/`. The article's frontmatter *is* the topic's state; there is no parallel
+`topics/<slug>/`. The grain follows the field: a self-contained practice area is a single
+topic, while a broad area is served by a catalogue of finer-grained topics fronted by a
+hub that maps and routes to them — each still carrying exactly one stance. The article's
+frontmatter *is* the topic's state; there is no parallel
 registry, so state can never drift from the thing that states it. The invariant a topic
 exists to enforce: at any moment there is exactly one current stance per topic, and it is
 always the thing readers, the skill, and the operator all see.
