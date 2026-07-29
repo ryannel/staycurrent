@@ -29,6 +29,9 @@ export default defineConfig({
       // Slice 2.1 (databases-catalogue bet) bet-progress test — same
       // rationale as above.
       "../../tests/bets/databases-catalogue/test_slice_2_site_grouped_views.tsx",
+      // Milestone 1 (databases-catalogue bet) front-door bet-progress test —
+      // same rationale as above.
+      "../../tests/bets/databases-catalogue/test_milestone_1_catalogue_contract.ts",
     ],
     alias: {
       "@": path.resolve(__dirname, "./"),
