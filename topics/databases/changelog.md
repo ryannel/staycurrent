@@ -1,5 +1,13 @@
 # Databases — Changelog
 
+## v5 — 2026-07-29
+
+What moved is the article's role, not its text. It now fronts the databases catalogue as its hub — two frontmatter keys, `area: databases` and `register: hub` — and the body carries over byte-identical from v4, beside the catalogue's first foundation, `query-execution`, cut the same day.
+
+What it means for practice: nothing about databases changed, so yesterday's guidance is today's guidance unaltered. What changed is where this article sits: the same piece now stands at the head of a catalogue that will grow foundation by foundation, and its eventual re-cut as a chooser-and-map lands only when every piece it must link to is live.
+
+**Stance:** held — a metadata cut by definition; the position carries over verbatim.
+
 ## v4 — 2026-07-24
 
 What moved is the evidence, not the position. Three sections — transactions, replication, partitioning — previously argued entirely from the documentation and the literature. They now rest on experiments run for this cut on PostgreSQL 16.14 in Docker on a laptop, and the harness that produced them is published beside the article at `topics/databases/evidence/`: the driver scripts, the immutable raw logs, the environment records, and per-lab notes stating what each lab does *not* establish. Every measured figure in the article traces to a named log in that directory.
