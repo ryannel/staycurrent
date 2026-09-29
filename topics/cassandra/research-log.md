@@ -1,0 +1,9 @@
+# Cassandra and ScyllaDB — Research Log
+
+## 2026-09-29 — cut v1
+
+Founding run for the profile. The Cassandra and ScyllaDB documentation sites, the Apache wiki, DataStax, AWS, Instaclustr, the ScyllaDB forum and blog, Wikipedia, and several third-party write-ups were all blocked by the environment's proxy, so the documentation was read from source: the `doc/modules` AsciiDoc files in the apache/cassandra repository (5.0 branch and trunk), `conf/cassandra.yaml`, `CHANGES.txt`, `NEWS.txt`, and `build.xml` on the 5.0, 6.0, and trunk branches, the cassandra-website repository for the download page and the 5.0 announcement, and the `docs/` reStructuredText files, `db/config.cc`, and the licence text in the scylladb/scylladb repository. Release dates came from the Apache distribution archive listing.
+
+Around fifty sources examined. Confirmed from indexed search content rather than fetched: the Instaclustr note on Accord's second-half-2026 target, the DataStax pages for the four Paxos round trips and the 100 MB / 100,000-cell partition guidance, the ScyllaDB licensing announcement and 2026.3 release notes, Astra DB and Amazon Keyspaces pricing, and ScyllaDB's pricing page. Those are flagged in the provenance for re-verification on the next run.
+
+Not sourced and stated as such in the text: any documented throughput-per-node figure for either engine, a data-per-node recommendation from the Cassandra project, ScyllaDB Cloud per-vCPU pricing, and the exact release date of Cassandra 6.0-alpha1 (the archive listing shows a re-stamped date). The web search budget ran out part way through, so the remaining gaps were filled from repository sources only.
