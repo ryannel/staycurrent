@@ -67,7 +67,7 @@ sequenceDiagram
     participant G as Gateway node
     participant L as Leaseholder (Raft leader)
     participant F as Followers
-    C->>G: BEGIN; INSERT ...
+    C->>G: BEGIN then INSERT
     G->>G: parse, plan, TxnCoordSender starts txn
     G->>L: DistSender routes BatchRequest via meta2 cache
     L->>L: latch keys, check lock table and timestamp cache
@@ -76,10 +76,10 @@ sequenceDiagram
     L->>L: apply to Pebble (WAL + memtable)
     L-->>G: intent written (pipelined)
     C->>G: COMMIT
-    G->>L: txn record -> STAGING, wait for in-flight writes
+    G->>L: txn record to STAGING, wait for in-flight writes
     L-->>G: all intents replicated
     G-->>C: COMMIT OK
-    G->>L: async: record -> COMMITTED, resolve intents
+    G->>L: async, record to COMMITTED, resolve intents
 ```
 
 1. The gateway parses and plans; a plan that touches many rows is distributed (DistSQL) so processors run next to the data. The `TxnCoordSender` picks an HLC timestamp, tracks every key the transaction touches, and heartbeats the transaction. The `DistSender` looks up each key's range in its `meta2` cache and sends the request to the leaseholder.
