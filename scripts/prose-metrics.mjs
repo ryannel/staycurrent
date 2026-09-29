@@ -1,43 +1,21 @@
 #!/usr/bin/env node
-// scripts/prose-metrics.mjs — the house measuring tool for the countable
-// prose tells (staycurrent-style § The editing pass). Measurement, never
-// judgment: it prints facts about a markdown file's prose and exits. The
-// calibration bands the numbers are read against are judgment, and they live
-// in the skill that quotes them (staycurrent-style) — never here. Nothing
-// imports this file from the site build, and nothing ever should: prose
-// measurement stays an arm's length from publishing.
+// scripts/prose-metrics.mjs — counts the prose tells staycurrent-style's
+// editing pass names: words per sentence, the share of sentences over thirty
+// words, em-dashes, "X, not Y" constructions, bold spans, filler words, and
+// acronyms with no expansion nearby. Measurement only; the bands the numbers
+// are read against live in the skill. Nothing in the site build imports it.
 //
-// Consumers: the research skill's editing pass, the skill evals, and anyone
-// editing prose by hand. Before this script existed, three
-// measurements of the live databases article circulated (17, 19, and 19.7
-// words per sentence) because every measurement re-invented its tokenizer.
-// This file is the one tokenizer; a number quoted without it is a guess.
+// Usage: node scripts/prose-metrics.mjs <file.md> [--json]
 //
-// Tokenization, precisely (the numbers are only reproducible because this
-// is pinned): YAML frontmatter is stripped; fenced code blocks (```…```)
-// are stripped; heading lines (#…) and table lines (|…) are dropped;
-// leading list markers (-, *, +, 1.) are stripped so a bullet's text reads
-// as plain prose; blockquote `>` rides along and the word pattern ignores
-// it. Bold spans are counted on that body as `**…**` pairs. Words are
-// [\w'’-] runs containing at least one word character (a bare hyphen is
-// never a word). Sentences split after . ! or ? followed by whitespace and
-// an opener ([A-Z`"(*>]); fragments of two or fewer word-tokens are
-// dropped. Flab markers: multi-word phrases and stems match anywhere,
-// single words only at word boundaries ("very" must never count "every").
-// Acronym candidates are 2–5 capital tokens listed at first occurrence
-// with a yes/no "expansion nearby" reading of that sentence — expansion
-// means an adjacent parenthetical, a parenthesized mention, a multi-word
-// comma-appositive ("OLTP, online transaction processing,"), or a "short
-// for"/"stands for" phrase. The text block prints only the cold candidates;
-// --json carries the full list with flags. Candidates for a human to
-// check, never verdicts.
+// Frontmatter, fenced code, headings, and table lines are stripped before
+// counting; list markers are stripped so a bullet reads as prose. Acronym
+// candidates are listed for a human to check, never as verdicts.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Banned-flab union: staycurrent-style eval 2's markers + mechanics.md's
-// Zinsser set. `phrase` entries match anywhere (stems included); `word`
+// The flab markers staycurrent-style's editing pass names. `phrase` entries match anywhere (stems included); `word`
 // entries require word boundaries.
 export const FLAB_MARKERS = [
   { marker: 'it is important to note', kind: 'phrase' },

@@ -6,7 +6,6 @@ stance: >-
   you out. In 2026 the specialised engines are escape hatches with three
   well-marked doors, not starting points.
 version: 1
-status: current
 cadence: 90d
 last_researched: 2026-09-29
 ---

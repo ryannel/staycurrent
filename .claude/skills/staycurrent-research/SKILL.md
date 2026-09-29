@@ -1,24 +1,18 @@
 ---
 name: staycurrent-research
 description: >
-  Use when running a Stay Current research run on a topic — checking what is
-  due, researching what has changed in the field, presenting the findings,
-  arguing the stance with the operator, and then cutting a new version or
-  logging a no-cut. Also use when creating a new topic. Owns the shape of
-  every file under topics/; pairs with staycurrent-style, which owns the
-  prose inside them.
+  Use when researching a topic for Stay Current: checking what is due,
+  finding what has changed in the field, arguing the stance with the
+  operator, and then cutting a new version or logging a no-cut. Also use when
+  creating a topic. Owns the shape of every file under topics/; pairs with
+  staycurrent-style, which owns the prose inside them.
 ---
 
-# Stay Current — Research Skill
+# Stay Current — Research
 
-A research run keeps one topic current. The system researches, drafts, and
-recommends; the operator argues the stance and decides. **Nothing is committed
-without the operator's explicit go.** That is the one rule with no exception.
-
-Write everything in the staycurrent-style voice. Status words are a closed set:
-a topic is `current` or `due`; a version is `current` or `superseded`; a run ends
-`cut` or `no-cut`; a provenance claim is `sourced` or `synthesis`; a changelog
-entry's stance is `held`, `bent`, or `reversed`. Never a synonym.
+A research run keeps one topic current. You research, draft, and recommend; the
+operator argues the stance and decides. **Nothing under `topics/` is committed
+without the operator's explicit go.**
 
 ## What is where
 
@@ -29,112 +23,66 @@ topics/<slug>/
   research-log.md            every run, cut or no-cut, newest first
   versions/vN/article.md     frozen copy of the article at vN (frontmatter: version, cut)
   versions/vN/provenance.md  "## Sources" and "## Synthesis" for vN
-  evidence/<lab>/            harness, environment record, raw logs, fact notes
+  evidence/<lab>/            optional: harness, environment record, raw logs, notes
 ```
 
-The site (`src/`) reads these files at build time and nothing else. Every
-version page, changelog entry, history row, and feed item comes from them.
+The site reads these files at build time and nothing else.
 
-## Opening a session
+## A run
 
-Sweep `topics/*/article.md` frontmatter. A topic is due when
-`last_researched + cadence < today`. Open with the state and a proposal, never
-an open question:
+A topic is due when `last_researched + cadence` is in the past. Sweep the
+frontmatter, say what is due, and propose which topic to run rather than asking.
 
-```
-databases          v5   researched 29 Jul 2026   due — 62 days over
-query-execution    v1   researched 29 Jul 2026   current — next run 25 Jan 2027
-```
-…followed by "databases is furthest over — convene it?"
+Then, against the current version, find what has changed in the field:
+releases, deprecations, standards that stabilised, benchmarks, opinions that
+moved. Prefer primary sources (vendor docs, release notes, papers, licence
+texts) and record the URL and access date of everything you rely on. Present
+the findings ranked by consequence, saying which touch a claim, a number, or
+the stance itself, and give a verdict with its reason: cut a version when a
+finding materially changes a claim or the stance; log a no-cut when it does
+not. The operator can overrule either way, and the run waits for their go.
 
-## The run
-
-**Convene.** `Convening <topic> against v<N> (last researched <date>). Sources
-first, digest when I have it.`
-
-**Research.** Investigate what has changed in the field since the current
-version: releases, deprecations, standards that stabilised, benchmarks, the
-opinions that moved. Report completed facts, never activity: `12 sources
-examined; 3 findings of consequence.` A source that fails to fetch after three
-tries is dropped and recorded as a gap (below); no halt.
-
-**Digest.** A ranked table of finding · source · what it touches (a claim, a
-number, the stance itself), most consequential first. Say which findings touch
-the stance and why the ranking is what it is.
-
-**Verdict.** State a position and invite pushback:
-- `Verdict: cut. <n> findings, <m> touch the stance — <one-line reason>. Draft entry below; argue or approve.`
-- `Verdict: no-cut. What moved doesn't touch the claims or the stance — logging the run. Overrule if you read it differently.`
-
-A finding that materially changes a claim, a number, or the stance cuts a
-version. Noise does not. The operator can overrule either way.
-
-## Cutting a version (after the go)
+## Cutting a version
 
 With N the new version number and today's date:
 
 1. **Rewrite `article.md`.** The article is always the current truth: rewrite,
-   never append or annotate with "updated". Bump `version: N`, set
-   `last_researched: today`. Anatomy: frontmatter → `# Title` → a stance
-   blockquote of at most three sentences (this run's stance, whether it held,
-   bent, or reversed) → the essay in `##` and `###` sections only.
-2. **Freeze the snapshot.** Copy the rewritten body to
-   `versions/vN/article.md` with frontmatter reduced to `version: N` and
-   `cut: today`.
+   never append or annotate with "updated". Set `version: N` and
+   `last_researched`. Shape: frontmatter, `# Title`, a stance blockquote of at
+   most three sentences, then the essay in `##` and `###` sections.
+2. **Freeze the snapshot.** Copy the body to `versions/vN/article.md` with
+   frontmatter `version: N` and `cut: <date>`.
 3. **Write `versions/vN/provenance.md`.** Two sections, every consequential
-   claim under exactly one:
-   - `## Sources` — one bullet per citable input:
-     `- [Title](URL) — accessed YYYY-MM-DD — supports: <which claims>.`
-   - `## Synthesis` — one bullet per claim drawn from the agent's own
-     knowledge, stated plainly. A dropped source is one more bullet:
-     `- Research gap — <source> unreachable after bounded retries; would have supported <claim>.`
-   The two sections may not both be empty.
-4. **Prepend the changelog entry** to `changelog.md` as `## vN — YYYY-MM-DD`.
-   A self-contained mini-essay a reader current on v(N−1) can stop at: what
-   moved in the field, what it means for practice, and a final line that
-   starts the line, never bulleted: `**Stance:** held — <one sentence>.`
-   The founding `## v1` entry has no Stance line.
-5. **Prepend the research-log entry** to `research-log.md` as
-   `## YYYY-MM-DD — cut vN`, two to four factual lines: what was examined,
-   what moved, what the stance did.
-6. **Edit.** Read the draft aloud per staycurrent-style's editing pass, and
-   measure it: `node scripts/prose-metrics.mjs topics/<slug>/article.md`.
-7. **Build.** `pnpm build` must pass; open the built pages if anything about
-   the shape changed.
-8. **Commit** everything under `topics/<slug>/` as one commit:
-   `cut(<slug>): vN`. Then report:
-   `Cut v<N> — article, changelog entry, provenance; the site rebuilds on push.`
+   claim under exactly one. `## Sources`: one bullet per citable input,
+   `- [Title](URL) — accessed YYYY-MM-DD — supports: <which claims>.`
+   `## Synthesis`: one bullet per claim from your own knowledge, stated
+   plainly and never dressed as a citation.
+4. **Prepend the changelog entry** as `## vN — YYYY-MM-DD`: what moved in the
+   field, what it means for practice, written so a reader current on the
+   previous version can stop there. End every entry after the first with a
+   line that starts `**Stance:** held`, `bent`, or `reversed`, then one
+   sentence; the site parses that word.
+5. **Prepend the research-log entry** as `## YYYY-MM-DD — cut vN`: a few
+   factual lines on what was examined and what moved.
+6. **Edit** per staycurrent-style, then `pnpm build` must pass.
+7. **Commit** `topics/<slug>/` as one commit, `cut(<slug>): vN`.
 
-## Logging a no-cut (after the go)
-
-Set `last_researched: today` in `article.md`. Prepend
-`## YYYY-MM-DD — no-cut` to `research-log.md` with two to four lines on what was
-examined and why nothing warranted a version. Commit as `log(<slug>): no-cut`.
+A no-cut sets `last_researched`, prepends `## YYYY-MM-DD — no-cut` to the
+research log with why nothing warranted a version, and commits as
+`log(<slug>): no-cut`.
 
 ## Creating a topic
 
-`topics/<slug>/` with `article.md` at `version: 1`, `status: current`, a
-`cadence` such as `90d`, `last_researched: today`, and the catalogue fields
-where they apply (`area`, `register: hub | foundation | profile`, `movement`,
-`reading_order`, `prereqs`, `core`). Slugs are kebab-case, at most three words,
-noun-form, and permanent: `changelog`, `about`, and `rss.xml` are taken. The
-founding run authors v1 through the same steps as any cut.
+`topics/<slug>/article.md` at `version: 1` with a `cadence` such as `90d`, and
+the catalogue fields where a field is served by several pieces (`area`,
+`register: hub | foundation | profile`, `movement`, `reading_order`,
+`prereqs`). Slugs are kebab-case, short, noun-form, and permanent; `changelog`,
+`about`, and `rss.xml` are taken. The founding run authors v1 through the same
+steps as any cut.
 
 ## Measured claims
 
-When a claim is measured for the article rather than sourced, the harness goes
-in `evidence/<lab>/`: setup and driver scripts, an environment record, raw logs
-that are never edited after the run, and fact notes stating what the lab does
-and does not establish. Every measured figure in the article names the log it
-came from.
-
-## Halting
-
-Anything that stops the run renders this and nothing else:
-
-```
-Blocked: <what stopped, one line>
-Cause:   <why — the file, the value, the check that failed>
-State:   <topic, last durable step — what is safely on disk>
-Action:  <the one thing the operator should do>
-```
+When a claim is measured rather than sourced, keep the harness in
+`evidence/<lab>/`: the scripts, an environment record, raw logs never edited
+after the run, and notes on what the lab does and does not establish. Every
+measured figure in the article names the log it came from.

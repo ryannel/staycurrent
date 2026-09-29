@@ -16,7 +16,6 @@ const articles = defineCollection({
     title: z.string(),
     stance: z.string(),
     version: z.number().int().positive(),
-    status: z.enum(['current', 'in-research']).default('current'),
     cadence: z.string().regex(/^\d+d$/),
     last_researched: z.coerce.date(),
     area: z.string().optional(),
