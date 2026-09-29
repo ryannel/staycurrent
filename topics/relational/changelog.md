@@ -1,0 +1,9 @@
+# PostgreSQL and MySQL — Changelog
+
+## v1 — 2026-09-29
+
+The founding cut. This piece is the deep dive under the databases map for the relational family, with Postgres as the spine and a paragraph in every section on where MySQL's InnoDB differs, plus a short section on SQLite.
+
+It walks the process-per-connection model and why pooling matters, the heap, page, and TOAST layout, MVCC with `xmin` and `xmax`, VACUUM, bloat, and transaction ID wraparound, the write path through shared buffers, WAL, checkpoints, and `synchronous_commit`, the six index types plus pgvector, partial, covering, and expression indexes, index-only scans and HOT updates, the three isolation levels with SSI and 40001 retries, row and advisory locks, physical and logical replication, replication slots, synchronous standbys, Patroni failover and what asynchronous replication loses, partitioning, Citus, and the point at which people leave, backups, PITR, `pg_upgrade`, autovacuum tuning, and monitoring, the managed tier, and PostgreSQL 18 and the 19 beta. On the MySQL side it covers the clustered primary-key B-tree and primary-key choice, undo-log MVCC without VACUUM, repeatable read with gap and next-key locks, the redo log and doublewrite buffer, binlog replication with semi-sync, GTIDs, and Group Replication, online DDL and gh-ost, Vitess, XtraBackup and Clone, MySQL 9.7 LTS and the 26.x track, and MariaDB 12.3. The SQLite section covers the library model, WAL mode and the single-writer rule, `busy_timeout`, and the Litestream, libSQL, and Turso patterns. The interview section has fifteen questions, including a capacity worked example, two on MySQL, and one on running production on SQLite.
+
+The stance: Postgres is the relational engine to reach for in 2026, MySQL where a team already runs it well or needs Vitess-style sharding today, and both have one primary, so the ceiling is write throughput on one machine.
