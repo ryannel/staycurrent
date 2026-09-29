@@ -126,7 +126,7 @@ When a claim is measured for the article rather than sourced, the harness goes
 in `evidence/<lab>/`: setup and driver scripts, an environment record, raw logs
 that are never edited after the run, and fact notes stating what the lab does
 and does not establish. Every measured figure in the article names the log it
-came from. `topics/databases/evidence/` is the model.
+came from.
 
 ## Halting
 

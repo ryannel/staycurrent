@@ -10,7 +10,7 @@ One place developers look to stay current on the major topics and fields of thei
 | `src/` | The Astro site: content collections over `topics/`, six page types, and the feed |
 | `scripts/prose-metrics.mjs` | The measuring tool for the house voice's countable tells |
 | `.claude/skills/` | The two skills a research run uses: `staycurrent-research` and `staycurrent-style` |
-| `docs/` | The product brief and the content-research notes for the databases catalogue |
+| `docs/` | The product brief |
 
 ## Running it
 
