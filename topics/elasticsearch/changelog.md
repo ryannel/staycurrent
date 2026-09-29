@@ -1,0 +1,9 @@
+# Elasticsearch and OpenSearch — Changelog
+
+## v1 — 2026-09-29
+
+The founding cut. This piece profiles Elasticsearch and its fork OpenSearch as one technology with two vendors: what Lucene stores in a segment and why immutability shapes everything above it, how a write moves from the coordinating node through the primary and its in-sync replicas to the translog, and how refresh and flush separate durability from visibility. It covers the mapping model and the dynamic-mapping trap, analysis, `_source` and synthetic source, and the vector index types on both engines, from HNSW through int8, int4, BBQ, and DiskBBQ on Elasticsearch to Faiss binary quantisation and 1-bit scalar quantisation on OpenSearch.
+
+The consistency story is laid out plainly: no transactions, optimistic concurrency per document with sequence numbers and primary terms, what "eventually consistent" means when replication is synchronous but visibility is not, and the dirty-read window on an isolated primary. Replication and failover walk through the in-sync set, the fault-detection and election timings, delayed allocation, cross-cluster replication, and OpenSearch's segment replication and remote-backed storage. Scaling covers shard sizing, split, shrink, and reindex, custom routing and its hot-shard cost, data streams, lifecycle management, and the data tiers. Operations covers snapshots, rolling upgrades, the signals to watch, the common failure modes, and the capacity arithmetic. The piece closes with the case for staying on Postgres full-text search, eleven interview questions, and the 2025 to 2026 timeline for both engines.
+
+The stance at founding: these are the default engines for full-text search, log analytics, and hybrid vector search; they trade transactions, exact counts, and operational simplicity for ranking and scale; and the fork is a licence story, so choose by ecosystem.
