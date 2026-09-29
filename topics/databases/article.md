@@ -8,6 +8,8 @@ stance: >-
 version: 1
 cadence: 90d
 last_researched: 2026-09-29
+area: databases
+register: hub
 ---
 
 # Databases
@@ -17,6 +19,17 @@ last_researched: 2026-09-29
 This is a map of the database landscape as of September 2026: what's out there, how each kind of engine works underneath, what problem it was built for, what it gives up, and where it stops being a good fit. I've written it for someone who has to pick a database for a system and defend the choice, so the mechanisms get as much space as the product names. Products change every year. The mechanisms, and the trade-offs they force on you, have been the same for decades.
 
 One idea organises the rest: a database is a data structure you rent over a network. Every engine, whatever it's called, comes down to a handful of decisions about that data structure. Once you can see the decisions, two hundred products collapse into about a dozen shapes.
+
+This page is the overview. Each major technology has its own deep dive, written to the depth a system-design interview goes to: architecture, indexing, transactions, replication, scaling, operations, and the questions you'd be asked.
+
+- [PostgreSQL and MySQL](/relational/), with SQLite
+- [DynamoDB](/dynamodb/)
+- [Cassandra and ScyllaDB](/cassandra/)
+- [MongoDB](/mongodb/)
+- [Redis and Valkey](/redis/)
+- [Distributed SQL: Spanner and CockroachDB](/distributed-sql/)
+- [Elasticsearch and OpenSearch](/elasticsearch/)
+- [ClickHouse](/clickhouse/)
 
 ## How to read a database
 
@@ -80,6 +93,8 @@ Use it for transactional workloads of any ordinary shape, and for anything that 
 
 Its limit is that writes go through one primary, and it has no built-in way to spread a table across machines. Read replicas lag. If you need more write throughput than one large machine can take, or you need writes accepted in more than one region, you've outgrown it. That does happen, but it happens much later than most teams leave.
 
+The [relational deep dive](/relational/) covers the internals, indexing, replication, and scaling in detail, for Postgres and MySQL side by side.
+
 ### MySQL and MariaDB
 
 MySQL is still the second most deployed database by the DB-Engines count, and the one behind more of the web's history than any other. In 2026 not much about it is changing, and that's part of its appeal.
@@ -88,7 +103,7 @@ InnoDB stores the table inside its primary-key B-tree, so rows are physically in
 
 MySQL 9.7 shipped in April 2026 as the first long-term-support release since 8.4, with a new hypergraph optimiser and JavaScript stored programs, and Oracle moved the faster innovation track to a "26.x" numbering. There's been a `VECTOR` column type since 9.0, but the community edition has no index over it; approximate vector search lives in Oracle's HeatWave and Google's Cloud SQL. MariaDB, the community fork, reached 12.3 LTS in May 2026 and has had vector search since 11.8.
 
-It suits read-heavy workloads that scan by primary key, teams with deep MySQL experience, and anyone who needs Vitess (below) to shard it. It has the same single-primary limit as Postgres and a much smaller extension story; most of the things Postgres does through extensions, MySQL doesn't do.
+It suits read-heavy workloads that scan by primary key, teams with deep MySQL experience, and anyone who needs Vitess (below) to shard it. It has the same single-primary limit as Postgres and a much smaller extension story; most of the things Postgres does through extensions, MySQL doesn't do. The [relational deep dive](/relational/) goes into InnoDB, replication, and Vitess.
 
 ### SQLite
 
@@ -98,7 +113,7 @@ It's a single-file B-tree. In its default mode a writer locks out readers. In wr
 
 Releases are steady (3.53 in mid-2026, 3.54 due in October), and the interesting movement is around it rather than in it. Turso is rewriting SQLite in Rust as a file-compatible engine with concurrent writers and asynchronous I/O; it's still pre-1.0. Its earlier fork, libSQL, adds replication to edge locations. One SQLite file per tenant, replicated to the edge, is now a real architecture rather than a hack.
 
-Use it for embedded and mobile apps, command-line tools, per-tenant data, test fixtures, and any service whose whole dataset fits on one disk and is written by one process. Don't use it where more than one process writes, or where it has to be reached over a network without something in front of it.
+Use it for embedded and mobile apps, command-line tools, per-tenant data, test fixtures, and any service whose whole dataset fits on one disk and is written by one process. Don't use it where more than one process writes, or where it has to be reached over a network without something in front of it. The [relational deep dive](/relational/) has a section on WAL mode, locking, and the edge-replication patterns.
 
 ## Postgres with different storage underneath
 
@@ -129,7 +144,7 @@ Aurora DSQL reached general availability in May 2025 as Amazon's entry. It's a d
 
 Reach for this tier when you have a system of record that has to survive a region going down, a global product whose users write from three continents and all need to see one truth, or a dataset that has to be one logical database at a scale no single machine reaches.
 
-The cost is that every commit is a consensus round, and across regions that's tens of milliseconds, which no setting removes. CockroachDB's documentation is direct about it: surviving a region failure means every write consults at least one other region. Single-row latency on a small dataset will be several times what Postgres gives you. Compatibility with Postgres is close but not exact, and the operations are different. If you can't say which region failure you're protecting against, or what write volume a single Postgres couldn't take, you probably don't need this yet.
+The cost is that every commit is a consensus round, and across regions that's tens of milliseconds, which no setting removes. CockroachDB's documentation is direct about it: surviving a region failure means every write consults at least one other region. Single-row latency on a small dataset will be several times what Postgres gives you. Compatibility with Postgres is close but not exact, and the operations are different. If you can't say which region failure you're protecting against, or what write volume a single Postgres couldn't take, you probably don't need this yet. The [distributed SQL deep dive](/distributed-sql/) covers Spanner and CockroachDB in depth and compares YugabyteDB, TiDB, and Aurora DSQL.
 
 ## Document stores
 
@@ -143,7 +158,7 @@ MongoDB 8.0 in late 2024 was mostly about performance. MongoDB 8.2 in September 
 
 It fits aggregates that are read and written whole, schemas that genuinely vary per record, and teams that think in JSON and want the packaging Atlas gives them.
 
-It's a poor fit for relationships across documents: every cross-document join is either denormalised, and then has to be kept consistent by hand, or done in your application. Analytics over lots of documents is slow. And I'd say this plainly: a `jsonb` column in Postgres with a GIN index covers most of what people pick MongoDB for, inside one system that also has real joins.
+It's a poor fit for relationships across documents: every cross-document join is either denormalised, and then has to be kept consistent by hand, or done in your application. Analytics over lots of documents is slow. And I'd say this plainly: a `jsonb` column in Postgres with a GIN index covers most of what people pick MongoDB for, inside one system that also has real joins. The [MongoDB deep dive](/mongodb/) covers replica sets, sharding, and schema design.
 
 ### Couchbase and Firestore
 
@@ -161,7 +176,7 @@ On-demand pricing was halved in November 2024, to $0.625 per million writes and 
 
 Use it for key-addressed workloads at any scale where you want single-digit-millisecond latency and no operations: sessions, carts, user state, event sourcing by key.
 
-Its limit is any query the key design didn't anticipate. Every access pattern has to be designed into the table and its indexes up front, and a hot key hits a partition ceiling no matter how big the table is. Items over 400 KB and anything analytical live somewhere else.
+Its limit is any query the key design didn't anticipate. Every access pattern has to be designed into the table and its indexes up front, and a hot key hits a partition ceiling no matter how big the table is. Items over 400 KB and anything analytical live somewhere else. The [DynamoDB deep dive](/dynamodb/) covers partitions, capacity, single-table design, and global tables.
 
 ### Apache Cassandra and ScyllaDB
 
@@ -173,7 +188,7 @@ Cassandra 5.0 (September 2024, at 5.0.9 in August 2026) added storage-attached i
 
 These fit write-heavy, append-mostly data at high volume, replicated across datacentres, where every query includes the partition key: telemetry, messaging, activity feeds at scale.
 
-They don't fit read-modify-write patterns, heavy deletes, ad-hoc queries, or anything that wants a transaction across keys today. You have to know your queries before you design the tables, and getting that wrong is expensive to fix later.
+They don't fit read-modify-write patterns, heavy deletes, ad-hoc queries, or anything that wants a transaction across keys today. You have to know your queries before you design the tables, and getting that wrong is expensive to fix later. The [Cassandra and ScyllaDB deep dive](/cassandra/) covers the ring, compaction, consistency levels, and data modelling.
 
 ### Bigtable and Cosmos DB
 
@@ -191,7 +206,7 @@ Redis changed its licence in March 2024 from BSD to a pair of source-available l
 
 Use these for caches, sessions, rate limiters, leaderboards, pub/sub, lightweight queues, and anywhere a sorted set or a stream is the natural structure.
 
-Don't use them as a system of record. The dataset has to fit in memory, replication can lose acknowledged writes, and a cluster doesn't give you strong consistency. If you treat everything in Redis as something you could rebuild from elsewhere, it won't surprise you.
+Don't use them as a system of record. The dataset has to fit in memory, replication can lose acknowledged writes, and a cluster doesn't give you strong consistency. If you treat everything in Redis as something you could rebuild from elsewhere, it won't surprise you. The [Redis and Valkey deep dive](/redis/) covers persistence, Sentinel and Cluster, and the common patterns.
 
 ## Analytical engines and the lakehouse
 
@@ -201,7 +216,7 @@ Transactional engines are built for many small reads and writes by key. Analytic
 
 ClickHouse's MergeTree engine writes each insert as an immutable sorted "part" and merges parts in the background. That makes ingestion very fast and, historically, point updates very slow: an `ALTER UPDATE` was an asynchronous mutation that rewrote whole columns. Since 25.7 a normal SQL `UPDATE` writes small "patch parts" that are visible immediately and get folded in on merge. The open-source edition is shared-nothing; ClickHouse Cloud runs a variant on object storage with stateless compute. It's Apache 2.0 and at 26.9 as of September 2026.
 
-It's the engine to reach for when you have events, logs, or observability data arriving fast and you want sub-second aggregations over billions of rows. It's a poor fit for heavy point updates, big distributed joins, and anything transactional.
+It's the engine to reach for when you have events, logs, or observability data arriving fast and you want sub-second aggregations over billions of rows. It's a poor fit for heavy point updates, big distributed joins, and anything transactional. The [ClickHouse deep dive](/clickhouse/) covers MergeTree, the sorting key, replication, and sharding.
 
 ### DuckDB
 
@@ -229,7 +244,7 @@ Between the warehouse and the transactional store there's a tier for dashboards 
 
 Elasticsearch and OpenSearch are both Lucene underneath and both use BM25 by default. Elastic moved away from Apache 2.0 in 2021, which is what produced the AWS-backed OpenSearch fork, and then added AGPLv3 back as an option in September 2024; the two have been drifting apart since. Both now double as vector stores, and Elasticsearch 9.2 stores quantised vectors on disk. Meilisearch and Typesense are the lighter options for product search. Typesense keeps its whole index in memory (its docs quote 14 gigabytes of RAM for 28 million books), which is fast and predictable.
 
-Use a search engine for text relevance, faceting, typo tolerance, log search, and hybrid text-plus-vector retrieval at scale. Don't use one as a source of truth, and don't reach for one at small scale. Postgres's built-in full-text search (a `tsvector` column with a GIN index) is transactional, needs no sync pipeline, and is enough for a lot of applications. Its ranking isn't BM25 and it has no fuzzy matching; the ParadeDB extension adds BM25 inside Postgres if you need it. Run a separate search cluster once you've measured that the built-in one isn't enough.
+Use a search engine for text relevance, faceting, typo tolerance, log search, and hybrid text-plus-vector retrieval at scale. Don't use one as a source of truth, and don't reach for one at small scale. Postgres's built-in full-text search (a `tsvector` column with a GIN index) is transactional, needs no sync pipeline, and is enough for a lot of applications. Its ranking isn't BM25 and it has no fuzzy matching; the ParadeDB extension adds BM25 inside Postgres if you need it. Run a separate search cluster once you've measured that the built-in one isn't enough. The [Elasticsearch and OpenSearch deep dive](/elasticsearch/) covers Lucene, shards, refresh and durability, and sizing.
 
 ## Vector search
 
