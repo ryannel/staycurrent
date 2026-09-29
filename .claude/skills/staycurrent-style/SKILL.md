@@ -6,9 +6,9 @@ description: >
   systems easy to follow for the broadest possible audience. Governs every
   word written in this project, not only publication artifacts: articles,
   changelog entries, docs, commit messages, PR descriptions, and chat replies
-  including workbench conversation. Load it whenever prose is about to be
+  including conversation with the operator. Load it whenever prose is about to be
   written, rewritten, or reviewed — drafting an article section, answering
-  the operator, writing a commit message — even when nobody asked about style. Pairs with staycurrent-writer,
+  the operator, writing a commit message — even when nobody asked about style. Pairs with staycurrent-research,
   which owns document anatomy while this skill owns the sentences inside it.
 ---
 
@@ -24,8 +24,7 @@ starts doubting. So the goal that everything here serves: prose that is easy
 to follow for the broadest audience that could care about the topic. Whenever
 two pieces of guidance seem to pull apart, the reader's ease wins.
 
-The persona is already defined in `docs/design-system.md` (§ Brand Direction,
-§ Tone & Posture): a senior colleague who shows their work — calm, direct, no
+The persona is a senior colleague who shows their work — calm, direct, no
 theatre. The craft comes from the three writers this publication learns from:
 Martin Kleppmann, John Ousterhout, and ByteByteGo. What they share is not
 cleverness. It is patience: ordinary words, ideas built in order, terms
@@ -41,8 +40,8 @@ applies to this file itself — it is written in the voice it teaches.
 ## The five principles
 
 **Open with the point, stated as something the reader learns.** The inverted
-pyramid is protocol law here (design-system § Document Architecture): a reader
-who stops after one sentence still leaves with the truth. That only works if
+pyramid is the rule here: a reader who stops after one sentence still leaves
+with the truth. That only works if
 the first sentence teaches. "Connection pooling keeps Postgres fast at scale,
 because every connection costs a whole process" informs; "Pool your
 connections" merely orders, and a reader who doesn't yet know why has learned
@@ -75,9 +74,10 @@ different from hedging, which avoids naming anything.
 one per section does real work; more than that and the writing becomes about
 the writer. The same budget covers bold (a term at its definition, at most one
 key sentence per screen) and bullets (lists of things; reasoning gets prose).
-One vocabulary is off-budget entirely: the closed status set in design-system
-§ Shared Vocabulary is reused verbatim, everywhere, because an operator greps
-the exact string a reader sees.
+One vocabulary is off-budget entirely: the closed status set (`current`,
+`superseded`, `cut`, `no-cut`, `sourced`, `synthesis`; a stance is `held`,
+`bent`, or `reversed`) is reused verbatim, everywhere, because an operator
+greps the exact string a reader sees.
 
 ## Exemplars
 
@@ -156,14 +156,13 @@ Published pieces — articles and changelog entries — use everything here.
 Working prose — docs, pitches, change proposals, commit and PR messages — uses
 the same principles without the teaching machinery; a commit message is its
 conventional prefix plus one plain sentence on what moved and why. In
-conversation — the workbench and chat — the templates and prohibited-phrases
-table in design-system § Tone & Posture stay canonical and verbatim, and this
-skill governs the sentences between them.
+conversation — a research run and chat — the report templates in the research
+skill stay verbatim, and this skill governs the sentences between them.
 
 Conversation deserves its own warning, because it drifts for a different
 reason than drafts do. A long session makes internal vocabulary feel
-ordinary: after three hours in the workbench, "cut", "lane", and "staged
-tree" read like plain words to the writer, while the reader arrives cold.
+ordinary: after three hours in a research run, "cut", "no-cut", and "provenance"
+read like plain words to the writer, while the reader arrives cold.
 The dense register of the documents read all session pulls replies the same
 way. So chat is the plainest register this skill governs, and a reply that
 summarises work gets four checks before sending:
@@ -179,7 +178,7 @@ summarises work gets four checks before sending:
 - Reread the reply as a stranger. Any sentence that needs the session in the
   writer's head to parse gets rewritten.
 
-Division of labour: staycurrent-writer owns which sections an artifact has;
+Division of labour: staycurrent-research owns which sections an artifact has;
 this skill owns the prose inside them.
 
 ## Going deeper

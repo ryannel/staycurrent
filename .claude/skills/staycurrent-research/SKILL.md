@@ -1,141 +1,140 @@
 ---
 name: staycurrent-research
 description: >
-  Use when running or resuming a Stay Current research run — convening a
-  topic, reporting research progress, presenting the ranked findings digest,
-  and stating the cut/no-cut verdict. Loaded for the `convene <slug>`
-  choreography; pairs with staycurrent-writer, which authors the cut's
-  artifacts once the verdict is a cut.
+  Use when running a Stay Current research run on a topic — checking what is
+  due, researching what has changed in the field, presenting the findings,
+  arguing the stance with the operator, and then cutting a new version or
+  logging a no-cut. Also use when creating a new topic. Owns the shape of
+  every file under topics/; pairs with staycurrent-style, which owns the
+  prose inside them.
 ---
 
 # Stay Current — Research Skill
 
-Encodes the run choreography from `docs/design-system.md` § Agentic Protocol (Convene,
-Research Progress & Findings Digest, Verdict). The microcopy quoted below is verbatim
-and normative — no paraphrase, no synonym for the closed status vocabulary
-(`current`, `due`, `in-research`, `superseded`, `cut`, `no-cut`, `sourced`,
-`synthesis`). Conversational prose between these templates — progress lines, digest
-framing, the argument — is written in the staycurrent-style voice; the templates
-themselves stay verbatim.
+A research run keeps one topic current. The system researches, drafts, and
+recommends; the operator argues the stance and decides. **Nothing is committed
+without the operator's explicit go.** That is the one rule with no exception.
 
-## Preconditions
+Write everything in the staycurrent-style voice. Status words are a closed set:
+a topic is `current` or `due`; a version is `current` or `superseded`; a run ends
+`cut` or `no-cut`; a provenance claim is `sourced` or `synthesis`; a changelog
+entry's stance is `held`, `bent`, or `reversed`. Never a synonym.
 
-Before convening, check `.staycurrent/sessions/<slug>.md`. If it exists, the run is
-resumed or discarded — never silently restarted. `node workbench/cli.mjs convene
-<slug>` refuses (exit 2) exactly this case, naming the file.
+## What is where
 
-## Convene
-
-Fresh convene (no open session):
 ```
-Convening <topic> against v<N> (last researched <date>). Sources first, digest when I have it.
-```
-
-Resume case (a session file already exists for the topic):
-```
-<topic> has an open session from <date>, phase: <phase>. Resume it or discard it?
-```
-A bounded prompt — resuming vs. discarding is a genuinely open editorial choice the
-filesystem alone cannot settle.
-
-## Research progress
-
-Report completed facts only, never activity narration:
-```
-12 sources examined; 3 findings of consequence.
-```
-Never "let me now look at…" — the operator sees what is done, not what is happening.
-
-**Degraded-source rule:** a fetch or search that fails retries 3× (1s/2s/4s backoff,
-`recoverable` severity) — silent unless it exhausts. If it exhausts, continue without
-that source and record the gap in the cut's `provenance.md` as a `## Synthesis`
-bullet in its one legal form — the parser rejects everything else:
-```
-- Research gap — <source> unreachable after bounded retries; would have supported <claim>.
-```
-Surface exactly one factual digest line naming it. No halt.
-
-## Findings digest
-
-When research completes, present the ranked digest: a table of *finding · source ·
-consequence for the stance*, ranked by consequence. No fixed microcopy beyond the
-table shape itself — the table is the artifact.
-
-## Verdict
-
-State a position, never an open question — the system holds an informed view and
-invites pushback, it does not defer.
-
-Cut:
-```
-Verdict: cut. <finding count> findings, <n> touch the stance — <one-line reason>. Draft entry below; argue or approve.
-```
-The draft changelog entry and every other prospective artifact are authored — by this
-skill and staycurrent-writer — directly into the staged tree
-`.staycurrent/staged/<slug>/`, which `cut <slug>` will gate. `topics/` itself is
-mutated only through `workbench/cli.mjs` — `create`, `convene`, `cut`, and `log`
-mutate it (and `discard` mutates session state); `gate` is a read-only dry-run.
-Hand-editing `topics/` outside this contract is a `violation` — a hard stop, never
-overridable in-session.
-
-No-cut:
-```
-Verdict: no-cut. What moved doesn't touch the claims or the stance — logging the run. Overrule if you read it differently.
+topics/<slug>/
+  article.md                 the living article; frontmatter is the topic's state
+  changelog.md               newest entry first: "## vN — YYYY-MM-DD"
+  research-log.md            every run, cut or no-cut, newest first
+  versions/vN/article.md     frozen copy of the article at vN (frontmatter: version, cut)
+  versions/vN/provenance.md  "## Sources" and "## Synthesis" for vN
+  evidence/<lab>/            harness, environment record, raw logs, fact notes
 ```
 
-The operator's explicit go resolves it — the one authority rule with no exception:
-`cut <slug>` on approval, `log <slug> --line <text>…` on confirmed no-cut, `discard
-<slug>` to abandon. Two exceptions to that default no-cut route: a founding run (the
-topic was `create`d but never founded — no `topics/<slug>/article.md` yet) resolves
-no-cut via `discard`, never `log` — `recordNoCut` requires the live article, which a
-founding draft has not landed. An orphaned `in-research` stamp (a stamp with no
-session file) resolves via `status` first — its reconciliation reverts the stamp to
-`current` — before convening fresh.
+The site (`src/`) reads these files at build time and nothing else. Every
+version page, changelog entry, history row, and feed item comes from them.
 
-## Editorial pass
+## Opening a session
 
-When the verdict is a cut and the staged artifacts are authored, invoke
-staycurrent-editor before requesting the operator's go: an isolated
-fresh-context subagent receiving only the slug, the mode `staged`, and at most
-one line of context — never this conversation, whose knowledge of intent is
-exactly what the review must not inherit. Relay the returned verdict and
-findings to the operator verbatim. On `REVISE`, apply the findings through
-staycurrent-writer and staycurrent-style — never freehand — and re-invoke
-once, fresh again; a second `REVISE` goes to the operator with the findings
-attached. The operator's explicit go resolves it either way — the one
-authority rule with no exception — so the go is requested only once the
-editor's report sits in front of the operator: the argue-or-approve window in
-the Verdict template now carries that report inside it.
+Sweep `topics/*/article.md` frontmatter. A topic is due when
+`last_researched + cadence < today`. Open with the state and a proposal, never
+an open question:
 
-## Session-file phases and write duty
+```
+databases          v5   researched 29 Jul 2026   due — 62 days over
+query-execution    v1   researched 29 Jul 2026   current — next run 25 Jan 2027
+```
+…followed by "databases is furthest over — convene it?"
 
-`workbench/cli.mjs` writes only the session file's frontmatter (`create`/`convene`
-seed it; `log`/`discard` delete it) — every body section is this skill's write duty,
-never the CLI's. A session left un-narrated cannot be resumed, only reread:
-- As each source is examined, append its finding to `## Findings` immediately —
-  never batched for the end of the run.
-- When the digest is presented, record the argument under `## Argument` and advance
-  the session file's `phase:` frontmatter from `researching` to `arguing`.
-- When the verdict is stated, advance `phase:` to `deciding` and write `## Draft`:
-  the proposed changelog entry text plus a one-paragraph rationale.
-- When the editorial pass returns, record its verdict and findings verbatim under
-  `## Editorial` — `phase:` stays `deciding`; the operator's go is what moves it.
+## The run
 
-Resume re-enters from exactly these sections, never from memory: the session file is
-the RESUME source; the staged tree is the ARTIFACT source, authored by this skill and
-staycurrent-writer.
+**Convene.** `Convening <topic> against v<N> (last researched <date>). Sources
+first, digest when I have it.`
 
-## Escalation
+**Research.** Investigate what has changed in the field since the current
+version: releases, deprecations, standards that stabilised, benchmarks, the
+opinions that moved. Report completed facts, never activity: `12 sources
+examined; 3 findings of consequence.` A source that fails to fetch after three
+tries is dropped and recorded as a gap (below); no halt.
 
-Two `blocking`/`violation` halts in one session → recommend closing it: "Session
-paused twice on blocking issues — the session file preserves everything; resume in
-fresh context." Nothing published self-repairs; only bounded, transient research I/O
-retries.
+**Digest.** A ranked table of finding · source · what it touches (a claim, a
+number, the stance itself), most consequential first. Say which findings touch
+the stance and why the ranking is what it is.
 
-## Staged-tree surface
+**Verdict.** State a position and invite pushback:
+- `Verdict: cut. <n> findings, <m> touch the stance — <one-line reason>. Draft entry below; argue or approve.`
+- `Verdict: no-cut. What moved doesn't touch the claims or the stance — logging the run. Overrule if you read it differently.`
 
-Draft artifacts — the article rewrite, `versions/vN/`, the changelog entry,
-`provenance.md`, skill deltas — are authored directly into
-`.staycurrent/staged/<slug>/` (seeded by `create`/`convene`). `topics/` stays
-untouched by hand; only `cut <slug>` lands it, through the gate. See
-staycurrent-writer for the artifact rules themselves.
+A finding that materially changes a claim, a number, or the stance cuts a
+version. Noise does not. The operator can overrule either way.
+
+## Cutting a version (after the go)
+
+With N the new version number and today's date:
+
+1. **Rewrite `article.md`.** The article is always the current truth: rewrite,
+   never append or annotate with "updated". Bump `version: N`, set
+   `last_researched: today`. Anatomy: frontmatter → `# Title` → a stance
+   blockquote of at most three sentences (this run's stance, whether it held,
+   bent, or reversed) → the essay in `##` and `###` sections only.
+2. **Freeze the snapshot.** Copy the rewritten body to
+   `versions/vN/article.md` with frontmatter reduced to `version: N` and
+   `cut: today`.
+3. **Write `versions/vN/provenance.md`.** Two sections, every consequential
+   claim under exactly one:
+   - `## Sources` — one bullet per citable input:
+     `- [Title](URL) — accessed YYYY-MM-DD — supports: <which claims>.`
+   - `## Synthesis` — one bullet per claim drawn from the agent's own
+     knowledge, stated plainly. A dropped source is one more bullet:
+     `- Research gap — <source> unreachable after bounded retries; would have supported <claim>.`
+   The two sections may not both be empty.
+4. **Prepend the changelog entry** to `changelog.md` as `## vN — YYYY-MM-DD`.
+   A self-contained mini-essay a reader current on v(N−1) can stop at: what
+   moved in the field, what it means for practice, and a final line that
+   starts the line, never bulleted: `**Stance:** held — <one sentence>.`
+   The founding `## v1` entry has no Stance line.
+5. **Prepend the research-log entry** to `research-log.md` as
+   `## YYYY-MM-DD — cut vN`, two to four factual lines: what was examined,
+   what moved, what the stance did.
+6. **Edit.** Read the draft aloud per staycurrent-style's editing pass, and
+   measure it: `node scripts/prose-metrics.mjs topics/<slug>/article.md`.
+7. **Build.** `pnpm build` must pass; open the built pages if anything about
+   the shape changed.
+8. **Commit** everything under `topics/<slug>/` as one commit:
+   `cut(<slug>): vN`. Then report:
+   `Cut v<N> — article, changelog entry, provenance; the site rebuilds on push.`
+
+## Logging a no-cut (after the go)
+
+Set `last_researched: today` in `article.md`. Prepend
+`## YYYY-MM-DD — no-cut` to `research-log.md` with two to four lines on what was
+examined and why nothing warranted a version. Commit as `log(<slug>): no-cut`.
+
+## Creating a topic
+
+`topics/<slug>/` with `article.md` at `version: 1`, `status: current`, a
+`cadence` such as `90d`, `last_researched: today`, and the catalogue fields
+where they apply (`area`, `register: hub | foundation | profile`, `movement`,
+`reading_order`, `prereqs`, `core`). Slugs are kebab-case, at most three words,
+noun-form, and permanent: `changelog`, `about`, and `rss.xml` are taken. The
+founding run authors v1 through the same steps as any cut.
+
+## Measured claims
+
+When a claim is measured for the article rather than sourced, the harness goes
+in `evidence/<lab>/`: setup and driver scripts, an environment record, raw logs
+that are never edited after the run, and fact notes stating what the lab does
+and does not establish. Every measured figure in the article names the log it
+came from. `topics/databases/evidence/` is the model.
+
+## Halting
+
+Anything that stops the run renders this and nothing else:
+
+```
+Blocked: <what stopped, one line>
+Cause:   <why — the file, the value, the check that failed>
+State:   <topic, last durable step — what is safely on disk>
+Action:  <the one thing the operator should do>
+```

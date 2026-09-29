@@ -3,13 +3,12 @@
 // prose tells (staycurrent-style § The editing pass). Measurement, never
 // judgment: it prints facts about a markdown file's prose and exits. The
 // calibration bands the numbers are read against are judgment, and they live
-// in the skills that quote them (staycurrent-style, staycurrent-editor) —
-// never here. Nothing imports this file from workbench/cli.mjs, core/, or
-// CI, and nothing ever should: the publish gate stays structural-only
-// (ADR 0003), and prose measurement stays an arm's length from it.
+// in the skill that quotes them (staycurrent-style) — never here. Nothing
+// imports this file from the site build, and nothing ever should: prose
+// measurement stays an arm's length from publishing.
 //
-// Consumers: staycurrent-editor's calibration block, the skill evals, and
-// anyone editing prose by hand. Before this script existed, three
+// Consumers: the research skill's editing pass, the skill evals, and anyone
+// editing prose by hand. Before this script existed, three
 // measurements of the live databases article circulated (17, 19, and 19.7
 // words per sentence) because every measurement re-invented its tokenizer.
 // This file is the one tokenizer; a number quoted without it is a guess.
