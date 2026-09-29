@@ -1,0 +1,9 @@
+# Redis and Valkey — Changelog
+
+## v1 — 2026-09-29
+
+The founding cut. This profile covers Redis and its Linux Foundation fork Valkey as they stand in September 2026, with Memcached and Dragonfly as the alternatives: who builds each, the licence history from BSD through the March 2024 source-available change to the AGPLv3 option in Redis 8, and the release lines (Redis 8.10.2, Valkey 9.1.2 with 9.2 at release candidate).
+
+It then works through the mechanisms a Staff+ engineer is asked about: the single-threaded event loop and why it's fast, I/O threads in Redis 6, 8 and Valkey 8 to 9.1, the cost of slow commands, every data type with its encodings and memory thresholds, expiry sampling, the eviction policies and the difference between running as a cache and as a store, MULTI/EXEC and WATCH without rollback, Lua and Functions, asynchronous replication with PSYNC and the backlog, WAIT and its documented limit, Sentinel and Cluster failover with what each loses, the 16,384-slot cluster with hash tags and atomic slot migration, hot and big keys, snapshots with fork and copy-on-write (and Valkey 9.2's forkless option), the multi-part AOF, monitoring signals, capacity arithmetic, and the ElastiCache price list. Twelve interview questions close it, including a distributed lock with Kleppmann's critique, a sliding-window rate limiter, and a failover walk-through.
+
+The stance: Redis and Valkey are the fastest way to serve data that fits in memory and can be rebuilt from somewhere else. Use them for caches, counters, sessions, queues and locks, and never as the only copy of anything, because replication is asynchronous and an acknowledged write can be lost on failover.
