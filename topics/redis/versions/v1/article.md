@@ -122,7 +122,7 @@ The **cost model** on ElastiCache, from the AWS price list for us-east-1 dated 1
 
 Latency on one box is dominated by the network. The latency guide measures intrinsic latency at 115 microseconds worst case on a good bare-metal host, against close to 10 milliseconds on a busy virtual machine. A 1 Gbit network hop is about 200 microseconds and a Unix socket about 30. Throughput is the benchmark figures above: several hundred thousand commands a second per instance with pipelining, and over a million with Valkey's I/O threads on a many-core host.
 
-The hard limits: values and keys up to 512 MB (`proto-max-bulk-len`); 2^32 − 1 elements in any list, set, hash or sorted set; JSON nesting to 128; 16,384 slots and a practical 1,000 nodes; `maxclients` 10,000 by default and bounded by file descriptors; a fixed 1 GB query buffer per client; 16 databases outside cluster mode. There is no row or document limit beyond memory, and memory is the limit that actually arrives.
+The hard limits: values and keys up to 512 MB (`proto-max-bulk-len`); 2^32 − 1 elements in any list, set, hash or sorted set; JSON nesting to 128; 16,384 slots and a practical 1,000 nodes; `maxclients` 10,000 by default and bounded by file descriptors; a 1 GB query buffer per client; 16 databases outside cluster mode. There is no row or document limit beyond memory, and memory is the limit that actually arrives.
 
 ## When to use it, and when not to
 
