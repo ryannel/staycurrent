@@ -87,6 +87,33 @@ anchors run 12 to 24 words per sentence with almost no dashes; a draft over 24
 on average, or with more than a third of its sentences over thirty words, needs
 another pass. What gets counted gets fixed; what only gets described survives.
 
+## What sounds like a machine
+
+These are the tells that make prose read as generated even when every fact is
+right. Check for them in the editing pass and remove them.
+
+- **A punchline on every paragraph.** Aphoristic closers ("no amount of
+  hardware changes that", "you are not here yet") once in a while are a voice;
+  on every paragraph they are a pattern. Most paragraphs should end on an
+  ordinary sentence.
+- **Stacked metaphors.** Escape hatches, well-marked doors, taxes, stings,
+  locked doors. One coined image per piece, reused; the rest said plainly.
+- **Abstract nouns for concrete things.** "When a measured access pattern
+  forces you out" means "until you hit a problem you can point at". Say the
+  thing.
+- **Throat-clearing that poses as confidence.** "It should be said plainly",
+  "the honest test:", "it is worth being precise about why". Cut the preamble
+  and say it.
+- **Template labels.** Repeating *Under the hood / What changed / Where it
+  shines* on every section makes an article read as assembled. Write prose
+  subsections that flow.
+- **Nobody talking.** No "you", no "I'd", no "in practice", no admission that
+  something is a judgement call. A person explaining this to a colleague uses
+  contractions, addresses the reader, and says when they are giving an
+  opinion. Do the same, sparingly.
+- **Mirrored antithesis as a reflex.** "X, not Y" and "buys A with B" work once.
+  Repeated, they turn a summary into a chant.
+
 ## In conversation
 
 Replies to the operator are the plainest register here, and they drift for a
