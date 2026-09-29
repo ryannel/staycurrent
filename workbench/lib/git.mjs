@@ -1,5 +1,5 @@
-// The only two git commits this system ever makes (03-api-design.md, Cut
-// mechanics: "cut and log are the only two commands that construct git commits").
+// The only two git commits this system ever makes: `cut` and `log` are the only
+// two commands that construct git commits.
 // content-core never shells out to git (executeCut/recordNoCut are fs-only) — this
 // is the one module in the whole system that does.
 
@@ -16,7 +16,7 @@ export function gitAddCommit(root, addPath, message) {
 /**
  * True iff `git status --porcelain -- <pathspec>` reports anything — staged,
  * unstaged, or untracked. The crash-window probe both committing commands share
- * (change-proposal-1 Addendum): `cut` skips its commit when the landing is
+ * `cut` skips its commit when the landing is
  * already committed (commit landed, cleanup lost), and `log` detects a resolved-
  * but-uncommitted run (resolution applied, commit lost).
  */

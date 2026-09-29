@@ -68,4 +68,4 @@ would also strain the filesystem-as-store decision.
 - **Docs-site generator (e.g. Docusaurus, VitePress):** rejected — these tools are
   hard-wired to a single `docs/`-shaped content tree and page hierarchy; Stay Current
   needs routes a docs generator's model doesn't express — per-topic version pages
-  (`/[topic]/v/[n]`) and skill-install pages (`/[topic]/skill`) bound to article versions.
+  (`/[topic]/v/[n]`) frozen at each cut.

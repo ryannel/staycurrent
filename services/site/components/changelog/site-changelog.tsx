@@ -39,7 +39,7 @@ function neutralizeLinks(html: string): string {
 }
 
 /**
- * `/changelog/` — Site-Wide Changelog (01-ui-design.md). Presentational:
+ * `/changelog/` — Site-Wide Changelog. Presentational:
  * `app/changelog/page.tsx` (a Server Component) supplies the merged,
  * newest-first `SiteChangelogEntry[]` via `lib/content.ts`'s
  * `listSiteChangelog` — this component owns only the populated-list /

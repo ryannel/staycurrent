@@ -5,12 +5,9 @@ import { ICON_STROKE_WIDTH } from '@/lib/icons';
 import type { TopicCard } from '@/lib/content';
 
 // "The framework" the empty state points at is Stay Current itself — the
-// living-topic machinery a future instance operator would install, whose
-// docs the framework-extraction bet will mint. No canonical docs URL exists
-// yet (01-ui-design.md names the link but pins no destination), so this
-// points at the product's repository as the honest placeholder — never at
-// groundwork-method, which is this repo's development methodology, not the
-// product's framework.
+// living-topic machinery a future instance operator would install. No
+// canonical docs URL exists yet, so this points at the product's repository
+// as the honest placeholder.
 const FRAMEWORK_DOCS_URL = 'https://github.com/ryannel/staycurrent';
 
 // One card's shape wherever it's rendered — a leftover (ungrouped) card and a
@@ -27,11 +24,10 @@ interface LibraryCardData {
 }
 
 /**
- * One area's grouped shape for the library grid (databases-catalogue bet,
- * 01-ui-design.md "Topic Library and Sidebar — Databases-Area Grouping").
- * Built by `app/page.tsx` from `lib/content.ts`'s `getCatalogues` merged with
- * `listTopicCards`' `lastResearched` (the one field `CatalogueEntry` omits,
- * 03-api-design.md's own design rationale for why) — this component stays a
+ * One area's grouped shape for the library grid. Built by `app/page.tsx`
+ * from `lib/content.ts`'s `getCatalogues` merged with `listTopicCards`'
+ * `lastResearched` (the one field `CatalogueEntry` omits) — this component
+ * stays a
  * plain presentational consumer, same as `cards` below.
  *
  * `foundations` is already flattened across movements, in reading order —
@@ -48,9 +44,8 @@ export interface LibraryCatalogue {
 }
 
 export interface TopicLibraryProps {
-  // Topics outside any catalogue — renders exactly as today, in the plain
-  // un-headed grid (01-ui-design.md, Required Capabilities parity with the
-  // sidebar's "topics outside any catalogue render exactly as today").
+  // Topics outside any catalogue — renders in the plain un-headed grid,
+  // matching the sidebar's flat list for the same topics.
   cards: TopicCard[];
   // Grouped areas — defaults to `[]` so every existing caller/test that never
   // passes this prop keeps today's flat rendering unchanged.
@@ -59,8 +54,7 @@ export interface TopicLibraryProps {
 
 /**
  * "databases" -> "Databases"; "cost-engineering" -> "Cost Engineering" — the
- * library's area heading (01-ui-design.md: "the first heading this page has
- * ever carried"). Mirrors `lib/content.ts`'s own `humanizeSlug` transform
+ * library's area heading. Mirrors `lib/content.ts`'s own `humanizeSlug` transform
  * (kebab-case -> Title Case words); duplicated here rather than imported
  * because it is a presentational transform on an already-resolved string,
  * not catalogue-grouping logic, and `humanizeSlug` itself isn't exported.
@@ -73,7 +67,7 @@ function humanizeArea(area: string): string {
     .join(' ');
 }
 
-/** One card tile — the existing `.topic-card` recipe, now also carrying the optional `badge-core` marker (01-ui-design.md micro-polish: "deliberately not accent-colored"). */
+/** One card tile — the `.topic-card` recipe, also carrying the optional `badge-core` marker (deliberately not accent-colored). */
 function TopicCardTile({ card }: { card: LibraryCardData }) {
   return (
     <Link href={`/${card.slug}/`} className="topic-card">
@@ -83,10 +77,9 @@ function TopicCardTile({ card }: { card: LibraryCardData }) {
         {/* A single interpolated string, not adjacent JSX children — see
             app/[topic]/page.tsx's trust header for why (a hydration
             comment marker would split the literal "v1"). The "researched"
-            label matches that same trust header's vocabulary
-            (01-ui-design.md's card wireframe: "[v5] researched 12 Jun
-            2026") — it is part of the meta row, not implied by the date
-            alone. */}
+            label matches that same trust header's vocabulary ("[v5]
+            researched 12 Jun 2026") — it is part of the meta row, not
+            implied by the date alone. */}
         <span className="badge">{`v${card.version}`}</span>
         <span>{`researched ${formatDisplayDate(card.lastResearched)}`}</span>
         {card.core && <span className="badge badge-core">core</span>}
@@ -96,7 +89,7 @@ function TopicCardTile({ card }: { card: LibraryCardData }) {
 }
 
 /**
- * `/` — Topic Library (01-ui-design.md). Presentational: `app/page.tsx`
+ * `/` — Topic Library. Presentational: `app/page.tsx`
  * (a Server Component) supplies the `TopicCard[]` sweep via
  * `lib/content.ts`'s `listTopicCards` — this component owns only the
  * populated-grid / first-run-empty-state rendering choice, kept here (rather
@@ -128,9 +121,8 @@ export function TopicLibrary({ cards, catalogues = [] }: TopicLibraryProps) {
           <h2 className="page-title">{humanizeArea(catalogue.area)}</h2>
 
           {/* The hub, standalone, ahead of both registers — its own
-              `.topic-grid` instance (the RAM pattern run a third time,
-              01-ui-design.md: "run three times (hub / foundations /
-              profiles) instead of once"). */}
+              `.topic-grid` instance (the RAM pattern run three times — hub /
+              foundations / profiles — instead of once). */}
           {catalogue.hub && (
             <div className="topic-grid">
               <TopicCardTile card={catalogue.hub} />

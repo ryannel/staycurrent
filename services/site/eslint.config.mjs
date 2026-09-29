@@ -74,7 +74,7 @@ export default tseslint.config(
       // not linted here (ESLint does not lint CSS). Catches inline-style hex/px,
       // raw gradients, and Tailwind arbitrary values (colour, length, shadow, blur,
       // gradient) — the atmosphere layer (elevation, blur, gradients, surface
-      // treatments) is projected from brand-tokens.json into token utilities, so a
+      // treatments) lives in app/brand.css and is surfaced as token utilities, so a
       // literal recipe in a component is drift. Token utilities and CSS-variable
       // references pass.
       "no-restricted-syntax": [
@@ -101,7 +101,7 @@ export default tseslint.config(
         },
         {
           selector: "JSXAttribute[name.name='className'] Literal[value=/(shadow|drop-shadow)-\\[/]",
-          message: "Tailwind arbitrary shadow (e.g. shadow-[0_1px_2px]) — use an elevation token utility (shadow-low/mid/high) projected from brand-tokens.json, not a literal stack.",
+          message: "Tailwind arbitrary shadow (e.g. shadow-[0_1px_2px]) — use an elevation token utility (shadow-low/mid/high) defined in the token layer, not a literal stack.",
         },
         {
           selector: "JSXAttribute[name.name='className'] Literal[value=/(backdrop-blur|blur)-\\[/]",

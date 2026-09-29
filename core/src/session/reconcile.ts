@@ -49,7 +49,7 @@ function revertIfOrphaned(root: string, slug: string, sessionExists: boolean, re
  * The filesystem-wins rule as a function: for every topic — or just `slug` when
  * given — whose stored `status` is `in-research` but whose session file does not
  * exist *as reported by the caller*, revert `status` to `current` in the working
- * tree (03-api-design.md, `reconcile`). Session-file existence arrives as an
+ * tree. Session-file existence arrives as an
  * argument, never a probe — core never reads `.staycurrent/sessions/`.
  *
  * Fail-safe default: a topic whose existence fact is absent from `opts.sessions`

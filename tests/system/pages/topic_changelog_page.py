@@ -1,4 +1,4 @@
-"""Page object for `/<topic>/changelog/` — Changelog (01-ui-design.md)."""
+"""Page object for `/<topic>/changelog/` — Changelog."""
 
 from playwright.sync_api import expect
 

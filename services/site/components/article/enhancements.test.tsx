@@ -45,8 +45,7 @@ describe('ArticleEnhancements — copy affordance', () => {
     expect(button).toHaveAttribute('aria-label', 'Copy code');
 
     // Confirmation is gated on the clipboard write's own promise resolving
-    // (ported from install-block.tsx's identical pattern) — no longer
-    // synchronous with the click, so the assertion below awaits it.
+    // — not synchronous with the click, so the assertion below awaits it.
     await act(async () => {
       fireEvent.click(button);
     });

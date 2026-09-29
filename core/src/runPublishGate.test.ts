@@ -7,8 +7,8 @@ import { makeTmpRoot } from './loaders/fixtures.testutil.js';
 import { isoDaysAgo, writeGateFixture } from './runPublishGate.testutil.js';
 
 // A fixed reference date, independent of the real system clock, for the
-// cadence-date-valid tests below (03-api-design.md: "opts.now makes check 9
-// deterministic under test without mocking the system clock").
+// cadence-date-valid tests below: `opts.now` makes check 7 deterministic under
+// test without mocking the system clock.
 const FIXED_NOW = new Date('2026-07-09T00:00:00Z');
 const FIXED_CUT = '2026-06-09'; // 30 days before FIXED_NOW
 const FIXED_LAST_RESEARCHED = '2026-06-29'; // 10 days before FIXED_NOW
@@ -21,7 +21,7 @@ function fixtureDir(root: string, slug = 'fixture-topic'): string {
  * Upgrades a `writeGateFixture`'d v1 baseline (default `n`/`version` of 1) to
  * carry a real v2 layer, mirroring the actual authoring path
  * (core/src/cut/updateCut.test.ts's `authorV2`) — the only way to exercise a
- * NON-founding changelog entry (check 11's real territory) without leaving
+ * NON-founding changelog entry (check 9's real territory) without leaving
  * every other check broken by an incomplete versions/ tree. `changelogV2Body`
  * is the raw markdown under the new '## v2 — <date>' heading; the caller
  * controls the Stance line's shape.
@@ -45,20 +45,12 @@ function upgradeToV2(dir: string, changelogV2Body: string): void {
       changelog.slice(firstEntryIdx)
   );
 
-  const skillPath = path.join(dir, 'skill', 'SKILL.md');
-  fs.writeFileSync(
-    skillPath,
-    fs.readFileSync(skillPath, 'utf8').replace(/^article_version: 1$/m, 'article_version: 2')
-  );
-  const skillMd = fs.readFileSync(skillPath);
-
   const v2Dir = path.join(dir, 'versions', 'v2');
-  fs.mkdirSync(path.join(v2Dir, 'skill'), { recursive: true });
+  fs.mkdirSync(v2Dir, { recursive: true });
   fs.writeFileSync(
     path.join(v2Dir, 'article.md'),
     `---\nversion: 2\ncut: ${cutDate}\n---\n\n# Fixture Topic\n\nFrozen body.\n`
   );
-  fs.writeFileSync(path.join(v2Dir, 'skill', 'SKILL.md'), skillMd);
   fs.writeFileSync(
     path.join(v2Dir, 'provenance.md'),
     '## Sources\n\n' +
@@ -131,26 +123,6 @@ describe('runPublishGate', () => {
       ]);
     });
 
-    it('fails when versions/vN/skill/SKILL.md is missing — co-firing with skill-byte-identical', () => {
-      const dir = fixtureDir(makeTmpRoot());
-      writeGateFixture(dir, 'fixture-topic', { omitVersionArtifact: 'skill' });
-
-      const result = runPublishGate(dir);
-
-      expect(result.failures).toEqual([
-        {
-          check: 'snapshot-complete',
-          path: 'versions/v1/skill/SKILL.md',
-          message: 'missing required artifact: versions/v1/skill/SKILL.md',
-        },
-        {
-          check: 'skill-byte-identical',
-          path: 'skill/SKILL.md',
-          message: 'skill/SKILL.md differs from versions/v1/skill/SKILL.md',
-        },
-      ]);
-    });
-
     it('fails when versions/vN/provenance.md is missing — co-firing with provenance-non-empty', () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic', { omitVersionArtifact: 'provenance' });
@@ -173,15 +145,15 @@ describe('runPublishGate', () => {
   });
 
   describe('changelog-top-entry', () => {
-    it('fails when the top heading names a version other than N — co-firing with changelog-schema (change-proposal-7)', () => {
+    it('fails when the top heading names a version other than N — co-firing with changelog-schema', () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic', { changelogHeading: '## v2 — {date}' });
 
       const result = runPublishGate(dir);
 
       // The lone entry is now genuinely a non-founding '## v2' with no
-      // '**Stance:**' line, so check 11 co-fires alongside check 2 — the same
-      // aggregation-by-design the docs record for checks 9/10.
+      // '**Stance:**' line, so check 9 co-fires alongside check 2 — the same
+      // aggregation-by-design checks 7/8 share.
       expect(result.failures).toEqual([
         {
           check: 'changelog-top-entry',
@@ -255,99 +227,6 @@ describe('runPublishGate', () => {
     ]);
   });
 
-  it('fails skill-version-match — and only it — when the live skill/SKILL.md article_version does not equal N', () => {
-    const dir = fixtureDir(makeTmpRoot());
-    // frozenSkillArticleVersion follows skillArticleVersion in the fixture, so
-    // byte-identity holds and this isolates the integer-field check.
-    writeGateFixture(dir, 'fixture-topic', { skillArticleVersion: 2 });
-
-    const result = runPublishGate(dir);
-
-    expect(result.failures).toEqual([
-      {
-        check: 'skill-version-match',
-        path: 'skill/SKILL.md',
-        message: 'skill/SKILL.md frontmatter article_version is 2, expected 1',
-      },
-    ]);
-  });
-
-  describe('skill-byte-identical', () => {
-    it('fails when the live skill/SKILL.md differs from versions/vN/skill/SKILL.md', () => {
-      const dir = fixtureDir(makeTmpRoot());
-      writeGateFixture(dir, 'fixture-topic', {
-        liveSkillExtraLine: 'Extra live-only line for a deliberate byte mismatch.',
-      });
-
-      const result = runPublishGate(dir);
-
-      expect(result.failures).toEqual([
-        {
-          check: 'skill-byte-identical',
-          path: 'skill/SKILL.md',
-          message: 'skill/SKILL.md differs from versions/v1/skill/SKILL.md',
-        },
-      ]);
-    });
-
-    it('fails for a file present only in the live skill/ tree', () => {
-      const dir = fixtureDir(makeTmpRoot());
-      writeGateFixture(dir, 'fixture-topic');
-      fs.mkdirSync(path.join(dir, 'skill', 'references'), { recursive: true });
-      fs.writeFileSync(path.join(dir, 'skill', 'references', 'extra.md'), 'live-only depth file\n');
-
-      const result = runPublishGate(dir);
-
-      expect(result.failures).toEqual([
-        {
-          check: 'skill-byte-identical',
-          path: 'skill/references/extra.md',
-          message: 'skill/references/extra.md differs from versions/v1/skill/references/extra.md',
-        },
-      ]);
-    });
-
-    it('fails for a file present only in the frozen versions/vN/skill/ tree', () => {
-      const dir = fixtureDir(makeTmpRoot());
-      writeGateFixture(dir, 'fixture-topic');
-      const frozenRefs = path.join(dir, 'versions', 'v1', 'skill', 'references');
-      fs.mkdirSync(frozenRefs, { recursive: true });
-      fs.writeFileSync(path.join(frozenRefs, 'frozen-only.md'), 'frozen-only depth file\n');
-
-      const result = runPublishGate(dir);
-
-      expect(result.failures).toEqual([
-        {
-          check: 'skill-byte-identical',
-          path: 'skill/references/frozen-only.md',
-          message: 'skill/references/frozen-only.md differs from versions/v1/skill/references/frozen-only.md',
-        },
-      ]);
-    });
-
-    it('recurses into references/ and fails on a nested file whose bytes differ', () => {
-      const dir = fixtureDir(makeTmpRoot());
-      writeGateFixture(dir, 'fixture-topic');
-      fs.mkdirSync(path.join(dir, 'skill', 'references'), { recursive: true });
-      fs.mkdirSync(path.join(dir, 'versions', 'v1', 'skill', 'references'), { recursive: true });
-      fs.writeFileSync(path.join(dir, 'skill', 'references', 'depth.md'), 'live content\n');
-      fs.writeFileSync(
-        path.join(dir, 'versions', 'v1', 'skill', 'references', 'depth.md'),
-        'frozen content\n'
-      );
-
-      const result = runPublishGate(dir);
-
-      expect(result.failures).toEqual([
-        {
-          check: 'skill-byte-identical',
-          path: 'skill/references/depth.md',
-          message: 'skill/references/depth.md differs from versions/v1/skill/references/depth.md',
-        },
-      ]);
-    });
-  });
-
   it('fails provenance-non-empty — and only it — when versions/vN/provenance.md has no bullets', () => {
     const dir = fixtureDir(makeTmpRoot());
     writeGateFixture(dir, 'fixture-topic', { emptyProvenance: true });
@@ -386,7 +265,7 @@ describe('runPublishGate', () => {
     expect(failure.message).not.toContain('has no entries');
   });
 
-  it('fails slug-matches-dirname, aggregated with frontmatter-schema — the schema shares the topic/slug check (check-10 overlap)', () => {
+  it('fails slug-matches-dirname, aggregated with frontmatter-schema — the schema shares the topic/slug check (check-8 overlap)', () => {
     const dir = fixtureDir(makeTmpRoot());
     writeGateFixture(dir, 'fixture-topic', { topicField: 'other-topic' });
 
@@ -407,10 +286,10 @@ describe('runPublishGate', () => {
   });
 
   it('fails reserved-slug — and only it — when the topic slug collides with a reserved root path', () => {
-    // dirname === topic === 'skills' so slug-matches-dirname stays green — isolates
-    // this check from check 7.
-    const dir = fixtureDir(makeTmpRoot(), 'skills');
-    writeGateFixture(dir, 'skills');
+    // dirname === topic === 'about' so slug-matches-dirname stays green — isolates
+    // this check from check 5.
+    const dir = fixtureDir(makeTmpRoot(), 'about');
+    writeGateFixture(dir, 'about');
 
     const result = runPublishGate(dir);
 
@@ -418,13 +297,13 @@ describe('runPublishGate', () => {
       {
         check: 'reserved-slug',
         path: 'article.md',
-        message: "article.md: topic slug 'skills' collides with a reserved root path",
+        message: "article.md: topic slug 'about' collides with a reserved root path",
       },
     ]);
   });
 
   describe('cadence-date-valid', () => {
-    it('fails when cadence does not match <int>d — aggregated with frontmatter-schema, never deduped (change-proposal-6)', () => {
+    it('fails when cadence does not match <int>d — aggregated with frontmatter-schema, never deduped', () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic', { cadence: '90days' });
 
@@ -545,7 +424,7 @@ describe('runPublishGate', () => {
       ]);
     });
 
-    it('adds no check-10 failures for an otherwise complete, schema-valid tree', () => {
+    it('adds no check-8 failures for an otherwise complete, schema-valid tree', () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic');
 
@@ -556,22 +435,22 @@ describe('runPublishGate', () => {
     });
   });
 
-  describe('changelog-schema (change-proposal-7)', () => {
+  describe('changelog-schema', () => {
     it("fails naming the stance issue when a non-founding entry's Stance line is bullet-prefixed — the sandbox-proven slip", () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic'); // n=1, otherwise complete and gate-passing
       upgradeToV2(
         dir,
         'What moved: the pitch.\n\n' +
-          "- **Stance:** held — the natural misreading of the writer skill's bulleted anatomy."
+          "- **Stance:** held — the natural misreading of the changelog entry's bulleted anatomy."
       );
 
       const result = runPublishGate(dir);
 
       // The bullet prefix ('- **Stance:** …') is invisible to the line-start-anchored
-      // parser (loadChangelog's STANCE_LINE_RE) — the exact failure change-proposal-7
-      // discovered escaping to a committed tree. Every other check stays green, so
-      // this failure is check 11's alone.
+      // parser (loadChangelog's STANCE_LINE_RE) — the exact failure once found
+      // escaping to a committed tree. Every other check stays green, so
+      // this failure is check 9's alone.
       expect(result.failures).toEqual([
         {
           check: 'changelog-schema',
@@ -582,7 +461,7 @@ describe('runPublishGate', () => {
       ]);
     });
 
-    it('adds no check-11 failures for a well-formed multi-entry changelog', () => {
+    it('adds no check-9 failures for a well-formed multi-entry changelog', () => {
       const dir = fixtureDir(makeTmpRoot());
       writeGateFixture(dir, 'fixture-topic');
       upgradeToV2(
@@ -620,11 +499,11 @@ describe('runPublishGate', () => {
       ]);
     });
 
-    it("createTopic's founding stub ('## v1', no Stance line) passes check 11 cleanly", () => {
+    it("createTopic's founding stub ('## v1', no Stance line) passes check 9 cleanly", () => {
       const root = makeTmpRoot();
       const staged = createTopic(root, 'fixture-topic', { title: 'Fixture Topic' });
       // The freshly seeded skeleton deliberately fails the gate elsewhere (empty
-      // provenance, check 6) — author just that so this test isolates check 11's
+      // provenance, check 4) — author just that so this test isolates check 9's
       // own verdict on the founding stub.
       fs.writeFileSync(
         path.join(staged.dir, 'versions', 'v1', 'provenance.md'),
@@ -660,14 +539,14 @@ describe('runPublishGate', () => {
 
     it('N=0 with matching version:0 frontmatter still fails — the fail-open hole is closed', () => {
       const dir = fixtureDir(makeTmpRoot());
-      writeGateFixture(dir, 'fixture-topic', { version: 0, skillArticleVersion: 0 });
+      writeGateFixture(dir, 'fixture-topic', { version: 0 });
       fs.rmSync(path.join(dir, 'versions'), { recursive: true });
 
       const result = runPublishGate(dir);
 
       expect(result.ok).toBe(false);
       // The N-derivation failure blocks alone among the N-relative checks — no
-      // "expected v0" guidance is emitted — but frontmatter-schema (check 10) is
+      // "expected v0" guidance is emitted — but frontmatter-schema (check 8) is
       // N-independent and still fires on its own: `version: 0` fails
       // validateTopicFrontmatter's positive-integer rule regardless of N.
       expect(result.failures).toEqual([
@@ -710,7 +589,6 @@ describe('runPublishGate', () => {
       writeGateFixture(dir, 'fixture-topic', {
         n: 10,
         version: 10,
-        skillArticleVersion: 10,
         changelogHeading: '## v10 — {date}',
       });
       fs.mkdirSync(path.join(dir, 'versions', 'v9'), { recursive: true });
@@ -722,7 +600,7 @@ describe('runPublishGate', () => {
       // complete, nothing past N is inspected, and no version-match check misfires.
       const expected = [];
       for (let m = 1; m <= 9; m++) {
-        for (const artifact of ['article.md', 'skill/SKILL.md', 'provenance.md']) {
+        for (const artifact of ['article.md', 'provenance.md']) {
           expected.push({
             check: 'snapshot-complete',
             path: `versions/v${m}/${artifact}`,
@@ -731,7 +609,7 @@ describe('runPublishGate', () => {
         }
       }
       // The lone changelog entry is genuinely a non-founding '## v10' with no
-      // '**Stance:**' line — check 11 co-fires once, appended after every
+      // '**Stance:**' line — check 9 co-fires once, appended after every
       // snapshot-complete failure (call order in runPublishGate).
       expected.push({
         check: 'changelog-schema',

@@ -23,8 +23,7 @@ export interface TopicNavEntry {
   isFresh: boolean;
   cutDate: string;
   // Present only for a Profiles-register catalogue entry, true for the
-  // featured (★) trio — renders the `badge-core` marker (databases-catalogue
-  // bet, 01-ui-design.md "Topic Library and Sidebar" view).
+  // featured (★) trio — renders the `badge-core` marker.
   core?: boolean;
 }
 
@@ -35,9 +34,7 @@ export interface SidebarMovement {
 }
 
 /**
- * One area's grouped shape for the sidebar tree (databases-catalogue bet,
- * 01-ui-design.md "Topic Library and Sidebar — Databases-Area Grouping").
- * Built by `app/layout.tsx` from `lib/content.ts`'s `getCatalogues` plus a
+ * One area's grouped shape for the sidebar tree. Built by `app/layout.tsx` from `lib/content.ts`'s `getCatalogues` plus a
  * per-topic freshness lookup — this component stays a plain presentational
  * consumer, same as `TopicNavEntry` above.
  */
@@ -49,9 +46,8 @@ export interface SidebarCatalogue {
 }
 
 interface SidebarProps {
-  // Topics outside any catalogue (no `area` at all) — renders exactly as
-  // today, under the plain "Topics" label (01-ui-design.md, Required
-  // Capabilities: "topics outside any catalogue render exactly as today").
+  // Topics outside any catalogue (no `area` at all) — renders under the
+  // plain "Topics" label, exactly as a flat, ungrouped list.
   topics: TopicNavEntry[];
   // Grouped areas — defaults to `[]` so every existing caller/test that never
   // passes this prop keeps today's flat rendering unchanged.
@@ -61,14 +57,9 @@ interface SidebarProps {
 // Matches doc-shell.css's own drawer breakpoint (`@media (max-width: 899px)`).
 const DRAWER_QUERY = '(max-width: 899px)';
 
-/** Whether any of a topic's four faces is the current page — the same test `renderTopicDisclosure` computes per-face, collapsed to one boolean for a register group's own active-membership check below. */
+/** Whether any of a topic's three faces is the current page — the same test `renderTopicDisclosure` computes per-face, collapsed to one boolean for a register group's own active-membership check below. */
 function topicIsActive(slug: string, pathname: string | null): boolean {
-  return (
-    pathname === `/${slug}/` ||
-    pathname === `/${slug}/changelog/` ||
-    pathname === `/${slug}/history/` ||
-    pathname === `/${slug}/skill/`
-  );
+  return pathname === `/${slug}/` || pathname === `/${slug}/changelog/` || pathname === `/${slug}/history/`;
 }
 
 /** Whether the currently active page belongs to any topic in this register group — drives `RegisterGroupDisclosure`'s force-reopen-on-navigate behavior below. */
@@ -135,16 +126,11 @@ function RegisterGroupDisclosure({ label, count, containsActive, children }: Reg
 /**
  * The App Shell's sidebar (docs/design-system.md § Graphical UI): wordmark,
  * site pages, `Topics` label, topic tree, footer cluster with the theme
- * toggle. Sticky at >= 900px; an overlay drawer below it (Shell zone rule,
- * 01-ui-design.md).
+ * toggle. Sticky at >= 900px; an overlay drawer below it.
  *
- * Every topic-face link (`changelog`/`history`/`skill`) and the site-wide
- * `/changelog/` page are real routes as of Slice 3.3 and prefetch normally,
- * same as `/about/` — Slice 3.2 kept the (then not-yet-built) `skill` face
- * at `prefetch={false}` so Next's viewport prefetcher never issued a
- * background request for a route the export didn't generate yet (which
- * would otherwise surface as a failed-request in the render-smoke gate);
- * that carve-out is gone now that the route lands.
+ * Every topic-face link (`changelog`/`history`) and the site-wide
+ * `/changelog/` page are real routes and prefetch normally, same as
+ * `/about/`.
  */
 export function Sidebar({ topics, catalogues = [] }: SidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -194,28 +180,25 @@ export function Sidebar({ topics, catalogues = [] }: SidebarProps) {
   const close = () => setIsOpen(false);
 
   /**
-   * One topic's disclosure row (title, freshness dot, `[core]` badge, four
-   * faces) — the existing per-topic markup, factored out so the flat
-   * "Topics" list, a catalogue's hub entry, its Foundations group, and its
-   * Profiles group all render the identical, unchanged recipe at whatever
-   * DOM depth they sit (01-ui-design.md micro-polish: "only its DOM depth
-   * changes").
+   * One topic's disclosure row (title, freshness dot, `[core]` badge, three
+   * faces) — the per-topic markup, factored out so the flat "Topics" list, a
+   * catalogue's hub entry, its Foundations group, and its Profiles group all
+   * render the identical recipe at whatever DOM depth they sit — only the
+   * DOM depth changes.
    */
   function renderTopicDisclosure(topic: TopicNavEntry) {
     const articleHref = `/${topic.slug}/`;
     const changelogHref = `/${topic.slug}/changelog/`;
     const historyHref = `/${topic.slug}/history/`;
-    const skillHref = `/${topic.slug}/skill/`;
     const isArticleActive = pathname === articleHref;
     const isChangelogActive = pathname === changelogHref;
     const isHistoryActive = pathname === historyHref;
-    const isSkillActive = pathname === skillHref;
     // See the field-level comment this logic replaced: `open` is passed once
     // per render, computed from `pathname`, never tracked in its own state —
     // React only touches the DOM `open` attribute when this computed value
     // itself changes, so a reader's own manual toggle of an inactive
     // disclosure survives a route change untouched.
-    const isTopicActive = isArticleActive || isChangelogActive || isHistoryActive || isSkillActive;
+    const isTopicActive = isArticleActive || isChangelogActive || isHistoryActive;
     return (
       <details className="topic-disclosure" open={isTopicActive}>
         <summary>
@@ -253,11 +236,6 @@ export function Sidebar({ topics, catalogues = [] }: SidebarProps) {
               History
             </Link>
           </li>
-          <li>
-            <Link href={skillHref} aria-current={isSkillActive ? 'page' : undefined} onClick={close}>
-              Skill
-            </Link>
-          </li>
         </ul>
       </details>
     );
@@ -266,8 +244,7 @@ export function Sidebar({ topics, catalogues = [] }: SidebarProps) {
   // Whether the plain "Topics" section should render at all — its own
   // "empty state" (the literal "No topics yet." message) is only the true
   // first-run state; once catalogues exist, a merely-empty leftover list is
-  // the resting state (absence, not an error) and renders nothing
-  // (01-ui-design.md, "Empty (interim, per register)").
+  // the resting state (absence, not an error) and renders nothing.
   const showFlatTopicsSection = catalogues.length === 0 || topics.length > 0;
 
   return (
@@ -327,9 +304,8 @@ export function Sidebar({ topics, catalogues = [] }: SidebarProps) {
           const foundationCount = catalogue.movements.reduce((sum, m) => sum + m.entries.length, 0);
           return (
             <Fragment key={catalogue.area}>
-              {/* The area label — "was 'Topics'; the area label, now named
-                  for its one area" (01-ui-design.md sidebar wireframe).
-                  Uppercased by `.nav-section-label`'s own CSS, same as every
+              {/* The area label — the "Topics" label, now named for its one
+                  area. Uppercased by `.nav-section-label`'s own CSS, same as every
                   other section label — the text content stays the area's
                   own case. */}
               <p className="nav-section-label">{catalogue.area}</p>
@@ -397,9 +373,8 @@ export function Sidebar({ topics, catalogues = [] }: SidebarProps) {
         <div className="sidebar-footer">
           <ThemeToggle />
           {/* Footer cluster's RSS glyph link (docs/design-system.md § Graphical UI:
-              "theme toggle, RSS glyph link, framework repo link"), the item deferred
-              from Milestone 2 until /rss.xml existed to feed it (Slice 3.3's
-              prebuild). Points straight at the static feed artifact, not a Next
+              "theme toggle, RSS glyph link, framework repo link"). Points straight
+              at the static feed artifact (scripts/prebuild.mjs writes it), not a Next
               route — a plain anchor, matching the framework repo link beside it. */}
           <a href="/rss.xml" className="btn-ghost" aria-label="RSS feed">
             <Rss size={16} strokeWidth={ICON_STROKE_WIDTH} aria-hidden="true" />

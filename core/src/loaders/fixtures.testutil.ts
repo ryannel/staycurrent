@@ -18,7 +18,7 @@ export interface TopicFixtureOptions {
   bodyMd?: string;
 }
 
-/** Writes topics/<slug>/article.md shaped per 04-data-design.md's frontmatter schema. */
+/** Writes topics/<slug>/article.md shaped per the topic frontmatter schema. */
 export function writeTopicFixture(root: string, slug: string, opts: TopicFixtureOptions = {}): void {
   const topicDir = path.join(root, 'topics', slug);
   fs.mkdirSync(topicDir, { recursive: true });

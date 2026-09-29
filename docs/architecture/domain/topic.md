@@ -1,8 +1,8 @@
 ---
 title: Topic
-description: The unit of publication — a living article, its companion skill, and its version history under `topics/<slug>/`.
+description: The unit of publication — a living article and its version history under `topics/<slug>/`.
 status: active
-last_reviewed: 2026-07-18
+last_reviewed: 2026-09-29
 ---
 
 # Topic
@@ -12,14 +12,14 @@ last_reviewed: 2026-07-18
 ## What it is
 
 A topic is a practice area Stay Current maintains a committed position on — the living
-article, its companion skill, and its full version history, all rooted at
+article and its full version history, all rooted at
 `topics/<slug>/`. The grain follows the field: a self-contained practice area is a single
 topic, while a broad area is served by a catalogue of finer-grained topics fronted by a
 hub that maps and routes to them — each still carrying exactly one stance. The article's
 frontmatter *is* the topic's state; there is no parallel
 registry, so state can never drift from the thing that states it. The invariant a topic
 exists to enforce: at any moment there is exactly one current stance per topic, and it is
-always the thing readers, the skill, and the operator all see.
+always the thing readers and the operator both see.
 
 ## Fields
 
@@ -70,7 +70,7 @@ so nothing here implies a publish channel.
 - `topic` equals its directory name (`topics/<topic>/`); the reconciliation check greps
   for drift.
 - `topic` is immutable once created; a rename is a migration, not an edit.
-- A topic slug colliding with a reserved root slug (`skills`, `changelog`, `about`,
+- A topic slug colliding with a reserved root slug (`changelog`, `about`,
   `rss.xml`) is rejected by the gate.
 - `version` only increments, and only as part of a cut.
 - Only content-core mutates a topic's directory, and only via stage → gate → commit; one
@@ -79,7 +79,7 @@ so nothing here implies a publish channel.
 ## Notes
 
 Topic creation is not a bootstrapped exception: the `create` operation writes the full
-directory (`article.md`, `changelog.md`, `skill/`, `versions/v1/`, `research-log.md`) and
+directory (`article.md`, `changelog.md`, `versions/v1/`, `research-log.md`) and
 its v1 cut through the identical publish gate any later version passes through.
 
 If `status: in-research` is found with no matching session file in

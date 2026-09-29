@@ -61,14 +61,12 @@ export const viewport: Viewport = {
 }
 
 /**
- * Sidebar tree data (App Shell spec; databases-catalogue bet,
- * 01-ui-design.md "Topic Library and Sidebar"). Reuses the content-layer
- * entry points this slice's constraints name — `getTopicSlugs`/`getTopic`/
- * `getCatalogues` — plus `getTopicCutDate` (all still `@staycurrent/core`'s
+ * Sidebar tree data (App Shell spec). Reuses the content-layer entry points
+ * — `getTopicSlugs`/`getTopic`/`getCatalogues` — plus `getTopicCutDate` (all still `@staycurrent/core`'s
  * public Loading API, via `loadVersion`, never a direct `topics/` read).
  * Errors propagate uncaught: a broken `topics/` tree fails the whole build
- * here exactly as it fails the per-page render (02-data-flows.md, "currency
- * is never guessed").
+ * here exactly as it fails the per-page render ("currency is never
+ * guessed").
  *
  * Freshness keys on the CURRENT VERSION'S CUT DATE, not `last_researched` — a
  * no-cut research run updates the latter without lighting the dot. Computed
@@ -81,8 +79,7 @@ export const viewport: Viewport = {
  * catalogue render exactly as today" (Required Capabilities). A topic whose
  * `area` is set but whose `register` didn't resolve to hub/foundation/profile
  * (`Catalogue.ungrouped`) is deliberately NOT treated as "inside" a catalogue
- * here — it has no group to render into (01-ui-design.md's wireframes name
- * no such group) — so it falls through to the flat list instead of vanishing
+ * here — it has no group to render into — so it falls through to the flat list instead of vanishing
  * from the sidebar entirely.
  */
 function buildSidebarData(): { topics: TopicNavEntry[]; catalogues: SidebarCatalogue[] } {

@@ -4,9 +4,8 @@ import { listTopics } from './loaders/listTopics.js';
 import { loadChangelog } from './loaders/loadChangelog.js';
 
 // The feed caps at the 50 most recent entries site-wide — a fixed constant,
-// not a `config` field (03-api-design.md, `buildRss` design rationale:
-// "revisit if the ~25-topic ceiling this project already assumes elsewhere
-// ... is raised").
+// not a `config` field — revisit if the ~25-topic ceiling this project already
+// assumes elsewhere is raised.
 const MAX_ITEMS = 50;
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -62,7 +61,7 @@ interface FlatEntry {
 }
 
 /**
- * Builds the site-wide `rss.xml` feed body (03-api-design.md, `buildRss`):
+ * Builds the site-wide `rss.xml` feed body:
  * every `ChangelogEntry` across every topic, newest first, capped at the 50
  * most recent — "the RSS item is the entry, verbatim" (design system). Sole
  * caller: `services/site`'s `prebuild` script, which reads `site.config.json`
@@ -113,8 +112,7 @@ export function buildRss(root: string, config: SiteConfig): string {
         `      <link>${escapeXml(link)}</link>`,
         // Non-permalink: the URL is real and fetchable, but it addresses a
         // fragment on a page whose surrounding content changes as later
-        // entries append above it (03-api-design.md, `buildRss` design
-        // rationale).
+        // entries append above it.
         `      <guid isPermaLink="false">${escapeXml(link)}</guid>`,
         `      <pubDate>${toRfc822(entry.date)}</pubDate>`,
         `      <author>${escapeXml(config.author)}</author>`,

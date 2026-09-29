@@ -2,7 +2,7 @@
 
 ## 2026-07-29 — cut v5
 
-Metadata-only cut, not a research run: no sources examined, no claims revisited. This is the databases-catalogue bet's slice 2.2 (hub tagging) — `docs/bets/databases-catalogue/decomposition/02-pilot-catalogue-live/02-hub-tagging-cut.md`. Frontmatter gains `area: databases` and `register: hub` per the hub example in `04-data-design.md`; the article's body and stance carry over from v4 unchanged. Companion-skill placeholder's `article_version` bump rides the standard snapshot mechanics.
+Metadata-only cut, not a research run: no sources examined, no claims revisited. This is the catalogue's hub-tagging step. Frontmatter gains `area: databases` and `register: hub`; the article's body and stance carry over from v4 unchanged.
 Stance held at v5 by construction — a metadata cut carries no position change to hold or bend.
 
 ## 2026-07-24 — cut v4

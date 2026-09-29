@@ -1,30 +1,21 @@
-"""Loop-rehearsal permanent coverage — Slice 4.2 (loop-rehearsal, bet
-first-living-topic).
+"""Loop-rehearsal permanent coverage.
 
-The bet-progress suite (tests/bets/first-living-topic/test_slice_15_workbench_
-loop-rehearsal.py) proves the loop's three resolutions (cut, no-cut, discard)
-end to end once, including the real site build, and is archived at bet close.
-This file is what stays: a permanent regression guard over the CLI-integration
-layer that mechanism relies on — `workbench/cli.mjs` subprocessed against a
-git-initialized fixture copy of the real `topics/databases/` tree, driving
-`convene`/`gate`/`cut`/`discard` through the real eleven-check publish gate
-and cut mechanics.
+A regression guard over the CLI-integration layer the research loop relies
+on — `workbench/cli.mjs` subprocessed against a git-initialized fixture copy
+of the real `topics/databases/` tree, driving `convene`/`gate`/`cut`/`discard`
+through the real publish gate and cut mechanics.
 
-Split rationale (this slice's rollout): the CUT path and the DISCARD path are
-promoted here, without the site build. Cut is the highest-value permanent
-guard — it is the only path that exercises the full gate + executeCut +
-commit chain a v2 version snapshot depends on. Discard is its zero-mutation
-complement, proving the guard rails hold when a run is abandoned. The NO-CUT
-path (`log`/`recordNoCut`) is left to the bet-progress archive rather than
-promoted alongside them: `recordNoCut` already carries its own permanent unit
-coverage at the core level (core/src/session/recordNoCut.test.ts), so the
-marginal permanent value of also pinning its CLI-subprocess wrapper here is
-lower than the cut path's, and the site build (the other, more expensive half
-of the bet-progress proof) stays out of this permanent module by design — it
-is proven once, structurally, not on every regression run; the site's own
-existing permanent coverage (tests/system/test_topic_versions_fixture.py)
-already pins the archived-version-page and changelog-ordering rendering this
-slice's site-build proof exercised.
+Split rationale: the CUT path and the DISCARD path are covered here, without
+the site build. Cut is the highest-value guard — it is the only path that
+exercises the full gate + executeCut + commit chain a new version snapshot
+depends on. Discard is its zero-mutation complement, proving the guard rails
+hold when a run is abandoned. The NO-CUT path (`log`/`recordNoCut`) is not
+pinned here: `recordNoCut` already carries its own unit coverage at the core
+level (core/src/session/recordNoCut.test.ts), so the marginal value of also
+pinning its CLI-subprocess wrapper is lower than the cut path's. The site
+build (the expensive half) stays out of this module by design — the
+archived-version-page and changelog-ordering rendering a cut produces is
+pinned in tests/system/test_topic_versions_fixture.py instead.
 """
 
 from loop_rehearsal_fixture import (
@@ -67,7 +58,6 @@ def test_cut_path_lands_exactly_one_commit_through_the_real_gate_and_cut_mechani
 
     next_dir = topic_dir / "versions" / f"v{next_version}"
     assert (next_dir / "article.md").exists()
-    assert (next_dir / "skill" / "SKILL.md").exists()
     assert (next_dir / "provenance.md").exists()
 
     changelog_text = (topic_dir / "changelog.md").read_text()

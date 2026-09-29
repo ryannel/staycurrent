@@ -2,8 +2,8 @@ import { ContentValidationError } from './errors.js';
 import { isIsoDate } from './dates.js';
 import type { ProvenanceRecord, Source } from './types.js';
 
-// 03-api-design.md, loadVersion Design rationale: the bullet grammar fixed here is
-// the parseable contract every provenance record must follow.
+// The bullet grammar fixed here is the parseable contract every provenance
+// record must follow.
 const SOURCE_BULLET_RE =
   /^-\s*\[(.+?)\]\((.+?)\)\s*—\s*accessed\s*(\d{4}-\d{2}-\d{2})\s*—\s*supports:\s*(.+)$/;
 const SYNTHESIS_BULLET_RE = /^-\s*(.+)$/;

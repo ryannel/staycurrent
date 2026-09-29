@@ -22,7 +22,7 @@ import {
  * (core/src/loaders/fixtures.testutil.ts) is a `src`-only test util, not part
  * of the package's published `dist/` — this data layer's tests write the same
  * shape directly against a scratch root, mirroring core's own loadTopic/
- * listTopics test fixtures (04-data-design.md's frontmatter schema).
+ * listTopics test fixtures (the frontmatter schema).
  */
 const tmpRoots: string[] = [];
 
@@ -130,7 +130,7 @@ describe('getTopicSlugs', () => {
   });
 
   // "the site's build treats a non-empty `errors` from `listTopics` as
-  // build-fatal" (03-api-design.md) — listTopics itself never throws for a
+  // build-fatal" — listTopics itself never throws for a
   // malformed topic (it collects `errors`); getTopicSlugs is the one place
   // that turns that report into the build-fatal throw generateStaticParams
   // relies on.
@@ -168,8 +168,7 @@ describe('listTopicCards', () => {
     });
   });
 
-  // The Topic Library's designed first-run empty state (01-ui-design.md)
-  // renders for a validly-empty topics/ directory — never an error.
+  // The Topic Library's designed first-run empty state renders for a validly-empty topics/ directory — never an error.
   it('returns an empty array for a root with an existing but empty topics/ directory', () => {
     const root = makeTmpRoot();
     fs.mkdirSync(path.join(root, 'topics'), { recursive: true });
@@ -211,7 +210,7 @@ describe('getTopic', () => {
     expect(topic.body.toc.some((entry) => entry.text === 'Overview')).toBe(true);
   });
 
-  // "currency is never guessed" (02-data-flows.md): a topic missing
+  // "currency is never guessed": a topic missing
   // version/last_researched, or otherwise failing schema validation, must
   // fail the build — proven here as real `loadTopic` throws propagating
   // uncaught through this data layer, not a scripted check standing in for it.

@@ -2,8 +2,8 @@
 //
 // The frontmatter parser (loaders/shared.ts) runs js-yaml with CORE_SCHEMA, which has
 // no timestamp type — an unquoted `YYYY-MM-DD` scalar stays a string, so every date
-// field validates uniformly through `isIsoDate` (03-api-design.md documents the
-// default-schema Date-coercion gotcha this design removes at the source). The Date
+// field validates uniformly through `isIsoDate` (the default schema would coerce
+// such a scalar to a Date; CORE_SCHEMA removes that gotcha at the source). The Date
 // branch below is a defensive guard only — with CORE_SCHEMA it should be unreachable.
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

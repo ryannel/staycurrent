@@ -33,10 +33,10 @@ function splitSections(raw: string): Section[] {
 
 /**
  * Parses changelog markdown text into structured, rendered entries, newest
- * first (03-api-design.md, `loadChangelog`) — the module-internal
+ * first — the module-internal
  * parse-and-validate core `loadChangelog` wraps for the read path, and that
- * `runPublishGate`'s check 11 (`changelog-schema`) calls directly against an
- * arbitrary directory's `changelog.md` (change-proposal-7). One code path,
+ * `runPublishGate`'s check 9 (`changelog-schema`) calls directly against an
+ * arbitrary directory's `changelog.md`. One code path,
  * never a re-implementation: `relPath` is caller-supplied so error messages
  * read correctly whether the caller is a `topics/<slug>/changelog.md` load or
  * a gate check pointed at a staged tree.
@@ -106,7 +106,7 @@ export function parseChangelogEntries(raw: string, slug: string, relPath: string
       bodyMd,
       // Namespace each entry's generated heading ids by its version so a
       // changelog page concatenating several rendered entries never collides
-      // on one DOM (03-api-design.md, renderMarkdown Design rationale).
+      // on one DOM.
       bodyHtml: renderMarkdown(bodyMd, { headingIdPrefix: `v${version}-` }).html,
       stance,
     });
@@ -141,8 +141,8 @@ export function parseChangelogEntries(raw: string, slug: string, relPath: string
 }
 
 /**
- * Loads and parses `topics/<slug>/changelog.md` (03-api-design.md,
- * `loadChangelog`). Thin wrapper over `parseChangelogEntries`: resolves the
+ * Loads and parses `topics/<slug>/changelog.md`. Thin wrapper over
+ * `parseChangelogEntries`: resolves the
  * root-relative read path and converts a missing file into
  * `ContentNotFoundError`; all parsing/validation lives in the shared core.
  */

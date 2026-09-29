@@ -54,7 +54,7 @@ describe('computeDue', () => {
 
   it('is independent of status — it only reads last_researched and cadence', () => {
     // computeDue takes no status argument at all; this pins that its signature
-    // and behavior stay that way (03-api-design.md: "computed independent of `status`").
+    // and behavior stay that way: `due` is computed independent of `status`.
     expect(computeDue.length).toBe(2);
   });
 });

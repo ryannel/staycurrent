@@ -1,4 +1,4 @@
-"""Page object for `/` — the Topic Library (01-ui-design.md).
+"""Page object for `/` — the Topic Library.
 
 Helpers are content-based (element/attribute/text), matching
 `topic_article_page.py`'s convention, so assertions survive a future

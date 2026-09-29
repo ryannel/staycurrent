@@ -25,9 +25,9 @@ describe('assertValidSlug', () => {
     ['dot segment', '.'],
     ['empty', ''],
     ['leading hyphen', '-databases'],
-    ['reserved: skills', 'skills'],
     ['reserved: changelog', 'changelog'],
     ['reserved: about', 'about'],
+    ['reserved: rss.xml', 'rss.xml'],
   ])('rejects %s (%s) with ContentValidationError', (_label, slug) => {
     expect(() => assertValidSlug(slug)).toThrow(ContentValidationError);
   });

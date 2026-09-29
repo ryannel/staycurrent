@@ -27,8 +27,7 @@ function splitSections(raw: string): Section[] {
 }
 
 /**
- * Parses `research-log.md` into structured entries, newest first
- * (03-api-design.md, `loadResearchLog`).
+ * Parses `research-log.md` into structured entries, newest first.
  */
 export function loadResearchLog(root: string, slug: string): ResearchLogEntry[] {
   const relPath = `topics/${slug}/research-log.md`;

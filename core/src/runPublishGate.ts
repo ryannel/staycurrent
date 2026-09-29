@@ -34,7 +34,7 @@ export interface VersionScan {
 
 /**
  * N is the highest version number present as a `versions/vN/` subdirectory inside
- * `dir` (03-api-design.md, Publish gate, "How N is derived") — a numeric max, not a
+ * `dir` — a numeric max, not a
  * lexicographic one ('v9' must not beat 'v10' by string comparison). Exported so
  * `executeCut` (Cut mechanics) derives the same N from the staged tree instead of
  * re-implementing the scan.
@@ -72,7 +72,7 @@ export function scanVersions(dir: string): VersionScan {
 /**
  * Reads a frontmatter file's `data` for gate inspection, never throwing: a missing
  * or unparseable artifact is itself the kind of content violation the gate reports
- * as a `GateFailure`, not an exception (03-api-design.md, `runPublishGate` Errors).
+ * as a `GateFailure`, not an exception.
  * Falls back to `{}` so downstream checks see absent fields rather than crashing.
  */
 function safeReadFrontmatter(filePath: string, slug: string, relPath: string): Record<string, unknown> {
@@ -83,56 +83,9 @@ function safeReadFrontmatter(filePath: string, slug: string, relPath: string): R
   }
 }
 
-// 'file' is byte-comparable regular content (directly or through a resolved
-// symlink); 'irregular' (FIFO, socket, device, broken symlink) can never be
-// byte-identical to anything — it fails closed as differing, never read.
-type FileKind = 'file' | 'irregular';
-
-/**
- * Recursively maps entries under `root` as `root`-relative POSIX paths. Symlinks
- * are resolved via statSync — the same treatment `scanVersions` gives directory
- * links — so a symlinked skill file participates in the byte comparison.
- */
-function listFilesRecursive(root: string): Map<string, FileKind> {
-  const result = new Map<string, FileKind>();
-  function walk(current: string, relBase: string): void {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
-      const full = path.join(current, entry.name);
-      let isDir = entry.isDirectory();
-      let isFile = entry.isFile();
-      if (entry.isSymbolicLink()) {
-        try {
-          const stat = fs.statSync(full);
-          isDir = stat.isDirectory();
-          isFile = stat.isFile();
-        } catch {
-          result.set(rel, 'irregular'); // broken link — fails closed as differing
-          continue;
-        }
-      }
-      if (isDir) {
-        walk(full, rel);
-      } else if (isFile) {
-        result.set(rel, 'file');
-      } else {
-        result.set(rel, 'irregular'); // FIFO, socket, device — never byte-comparable
-      }
-    }
-  }
-  walk(root, '');
-  return result;
-}
-
 function checkSnapshotComplete(dir: string, n: number, failures: GateFailure[]): void {
   for (let m = 1; m <= n; m++) {
-    for (const artifact of ['article.md', 'skill/SKILL.md', 'provenance.md']) {
+    for (const artifact of ['article.md', 'provenance.md']) {
       const rel = `versions/v${m}/${artifact}`;
       if (!pathExists(path.join(dir, rel))) {
         failures.push({
@@ -188,56 +141,6 @@ function checkArticleVersionMatch(
   }
 }
 
-function checkSkillVersionMatch(
-  skillData: Record<string, unknown>,
-  n: number,
-  failures: GateFailure[]
-): void {
-  const actual = skillData.article_version;
-  if (actual !== n) {
-    failures.push({
-      check: 'skill-version-match',
-      path: 'skill/SKILL.md',
-      message: `skill/SKILL.md frontmatter article_version is ${String(actual)}, expected ${n}`,
-    });
-  }
-}
-
-function checkSkillByteIdentical(dir: string, n: number, failures: GateFailure[]): void {
-  if (n === 0) return; // nothing frozen to compare the live skill against
-
-  const liveSkillDir = path.join(dir, 'skill');
-  const frozenSkillDir = path.join(dir, 'versions', `v${n}`, 'skill');
-  const liveFiles = listFilesRecursive(liveSkillDir);
-  const frozenFiles = listFilesRecursive(frozenSkillDir);
-  const allRel = new Set([...liveFiles.keys(), ...frozenFiles.keys()]);
-
-  for (const rel of Array.from(allRel).sort()) {
-    let differs = false;
-    let note = '';
-    if (liveFiles.get(rel) !== 'file' || frozenFiles.get(rel) !== 'file') {
-      // Missing on one side, or non-regular content — fails closed as differing.
-      differs = true;
-    } else {
-      try {
-        const liveBytes = fs.readFileSync(path.join(liveSkillDir, rel));
-        const frozenBytes = fs.readFileSync(path.join(frozenSkillDir, rel));
-        differs = !liveBytes.equals(frozenBytes);
-      } catch {
-        differs = true; // unreadable — fails closed rather than escaping as a raw throw
-        note = ' (unreadable)';
-      }
-    }
-    if (differs) {
-      failures.push({
-        check: 'skill-byte-identical',
-        path: `skill/${rel}`,
-        message: `skill/${rel} differs from versions/v${n}/skill/${rel}${note}`,
-      });
-    }
-  }
-}
-
 function checkProvenanceNonEmpty(dir: string, n: number, slug: string, failures: GateFailure[]): void {
   if (n === 0) return; // nothing frozen to inspect
 
@@ -257,7 +160,7 @@ function checkProvenanceNonEmpty(dir: string, n: number, slug: string, failures:
     } catch (err) {
       // The file exists but fails the bullet grammar: surface the parser's own
       // diagnostic — it names the offending bullet and the required grammar —
-      // rather than the false "has no entries" (milestone-1 experience audit).
+      // rather than the false "has no entries".
       // Still a GateFailure, never a throw.
       failures.push({
         check: 'provenance-non-empty',
@@ -281,14 +184,13 @@ function checkProvenanceNonEmpty(dir: string, n: number, slug: string, failures:
 }
 
 /**
- * Check 11, `changelog-schema` (03-api-design.md, Publish gate; change-proposal-7):
- * `dir/changelog.md` must parse through `parseChangelogEntries` — the identical
- * module-internal core `loadChangelog` wraps for the read path, never a
- * re-implementation of its heading grammar, descending-contiguity, or stance-line
- * rules. Re-covers check 2's top-heading territory by design (one bad artifact may
- * yield two failures — the same aggregation change-proposal-6 established for check
- * 10 against check 9). A missing file reports check 1's shape rather than a parse
- * error, since there is nothing to parse.
+ * Check 9, `changelog-schema`: `dir/changelog.md` must parse through
+ * `parseChangelogEntries` — the identical module-internal core `loadChangelog`
+ * wraps for the read path, never a re-implementation of its heading grammar,
+ * descending-contiguity, or stance-line rules. Re-covers check 2's top-heading
+ * territory by design (one bad artifact may yield two failures — the same
+ * aggregation check 8 applies against check 7). A missing file reports check 1's
+ * shape rather than a parse error, since there is nothing to parse.
  */
 function checkChangelogSchema(dir: string, slug: string, failures: GateFailure[]): void {
   const relPath = 'changelog.md';
@@ -393,12 +295,12 @@ function checkCadenceDateValid(
 }
 
 /**
- * Check 10, `frontmatter-schema` (03-api-design.md, Publish gate; change-proposal-6):
- * the live `article.md` frontmatter must pass `validateTopicFrontmatter` — the same
- * module-internal validator `loadTopic`/`listTopics` share, so a gate-passed cut can
- * never land content the loaders would then reject. Runs unconditionally, like checks
- * 7-9, whatever N resolved to. Deliberately not deduped against any other check's
- * territory (check 9's cadence/date shape, check 7's topic/slug match): one violated
+ * Check 8, `frontmatter-schema`: the live `article.md` frontmatter must pass
+ * `validateTopicFrontmatter` — the same module-internal validator
+ * `loadTopic`/`listTopics` share, so a gate-passed cut can never land content the
+ * loaders would then reject. Runs unconditionally, like checks 5-7, whatever N
+ * resolved to. Deliberately not deduped against any other check's territory
+ * (check 7's cadence/date shape, check 5's topic/slug match): one violated
  * field may surface as more than one `GateFailure`, and that double-reporting is
  * aggregation by design, not a bug to special-case away.
  */
@@ -419,15 +321,15 @@ function checkFrontmatterSchema(
 
 /**
  * The one place gate logic exists (ADR 0003): validates that `dir`, treated as a
- * topic-shaped directory, is internally consistent across all eleven `GateCheckId`
- * checks (03-api-design.md, Publish gate; change-proposal-7 added check 11). Never
+ * topic-shaped directory, is internally consistent across all nine `GateCheckId`
+ * checks. Never
  * throws for a content violation — every violation becomes a `GateFailure`; only a
  * nonexistent (or non-directory) `dir` propagates a raw fs error, a usage error
  * rather than a content problem.
  */
 export function runPublishGate(dir: string, opts: PublishGateOptions = {}): GateResult {
-  // Probe `dir` itself: ENOENT/ENOTDIR propagate raw and uncaught — 03's "may
-  // propagate a raw fs error if dir itself does not exist"; never a manufactured Error.
+  // Probe `dir` itself: ENOENT/ENOTDIR propagate raw and uncaught — a raw fs
+  // error if dir itself does not exist; never a manufactured Error.
   fs.readdirSync(dir);
 
   const slug = path.basename(dir);
@@ -438,7 +340,6 @@ export function runPublishGate(dir: string, opts: PublishGateOptions = {}): Gate
   const nImplausible = n - dirCount > N_PLAUSIBILITY_GAP;
 
   const articleData = safeReadFrontmatter(path.join(dir, 'article.md'), slug, 'article.md');
-  const skillData = safeReadFrontmatter(path.join(dir, 'skill', 'SKILL.md'), slug, 'skill/SKILL.md');
 
   const failures: GateFailure[] = [];
 
@@ -464,8 +365,6 @@ export function runPublishGate(dir: string, opts: PublishGateOptions = {}): Gate
     checkChangelogTopEntry(dir, n, failures);
     checkChangelogSchema(dir, slug, failures);
     checkArticleVersionMatch(articleData, n, failures);
-    checkSkillVersionMatch(skillData, n, failures);
-    checkSkillByteIdentical(dir, n, failures);
     checkProvenanceNonEmpty(dir, n, slug, failures);
   }
 
@@ -476,6 +375,6 @@ export function runPublishGate(dir: string, opts: PublishGateOptions = {}): Gate
   checkFrontmatterSchema(articleData, slug, failures);
 
   // `dir` binds this result to the tree it validated: executeCut refuses a
-  // GateResult produced for any other directory (change-proposal-1, rule d).
+  // GateResult produced for any other directory.
   return { ok: failures.length === 0, failures, dir };
 }

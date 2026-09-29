@@ -10,7 +10,7 @@ import { loadLiveArticle } from './shared.js';
  * Opens a research run in one core call: seeds the staged baseline by calling
  * `stageCut` internally — the one sanctioned core-calls-core composition — and THEN
  * stamps `status: in-research` in the live `article.md` frontmatter (working tree
- * only, no commit). Seed-before-stamp is change-proposal-1's ordering: the staged
+ * only, no commit). Seed-before-stamp is the ordering: the staged
  * baseline always reads `status: current`, so the tree that later lands as
  * published truth never carries the in-research stamp.
  */

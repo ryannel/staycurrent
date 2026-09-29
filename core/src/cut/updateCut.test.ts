@@ -12,8 +12,8 @@ import { isoDaysAgo } from '../runPublishGate.testutil.js';
 import { makeTmpRoot } from '../loaders/fixtures.testutil.js';
 
 // The v2 update-cut, real producers end to end: founding cut → convene → author v2
-// into the staged tree → gate PASS → executeCut. Covers change-proposal-1's landing
-// contract where it differs from the founding path: status normalization on a live
+// into the staged tree → gate PASS → executeCut. Covers the landing contract
+// where it differs from the founding path: status normalization on a live
 // article stamped in-research, deletion-sync with CutReport.removed, the v1
 // snapshot surviving intact, and monotonicity rejecting a zero-authoring cut.
 
@@ -33,7 +33,7 @@ function landFoundingV1(root: string, slug: string, title: string): string {
   return path.join(root, 'topics', slug);
 }
 
-/** Authors a v2 into the convened staged tree the way the writer skill would. */
+/** Authors a v2 into the convened staged tree the way a research run would. */
 function authorV2(stagedDir: string): void {
   const cutDate = isoDaysAgo(1);
 
@@ -56,22 +56,13 @@ function authorV2(stagedDir: string): void {
       changelog.slice(firstEntryIdx)
   );
 
-  // skill: bump article_version, keep live and frozen v2 byte-identical.
-  const skillPath = path.join(stagedDir, 'skill', 'SKILL.md');
-  fs.writeFileSync(
-    skillPath,
-    fs.readFileSync(skillPath, 'utf8').replace(/^article_version: 1$/m, 'article_version: 2')
-  );
-  const skillMd = fs.readFileSync(skillPath);
-
-  // versions/v2/: snapshot article, byte-identical skill, non-empty provenance.
+  // versions/v2/: snapshot article, non-empty provenance.
   const v2Dir = path.join(stagedDir, 'versions', 'v2');
-  fs.mkdirSync(path.join(v2Dir, 'skill'), { recursive: true });
+  fs.mkdirSync(v2Dir, { recursive: true });
   fs.writeFileSync(
     path.join(v2Dir, 'article.md'),
     `---\nversion: 2\ncut: ${cutDate}\n---\n\n# Frozen v2\n\nFrozen body.\n`
   );
-  fs.writeFileSync(path.join(v2Dir, 'skill', 'SKILL.md'), skillMd);
   fs.writeFileSync(
     path.join(v2Dir, 'provenance.md'),
     '## Sources\n\n' +

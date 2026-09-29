@@ -1,13 +1,11 @@
-// Exported contract types — copied verbatim (field names and shapes) from
-// technical-design/03-api-design.md "Exported types" and "Additional supporting
-// types". Implementation bodies live elsewhere; this module is the compiled,
-// type-checked record of the shapes every caller programs against.
+// Exported contract types. Implementation bodies live elsewhere; this module is
+// the compiled, type-checked record of the shapes every caller programs against.
 
-// databases-catalogue bet — engine-level vocabulary for the hub-and-spoke
-// catalogue shape (03-api-design.md, 04-data-design.md "The register model").
+// Engine-level vocabulary for the hub-and-spoke catalogue shape (the register
+// model): a foundation topic, a per-engine profile, or a hub that links them.
 export type TopicRegister = 'foundation' | 'profile' | 'hub';
 
-// databases-catalogue bet — the 8 canonical decision axes (04-data-design.md).
+// The 8 canonical decision axes a profile topic may carry.
 export interface ProfileAxes {
   consistency_model?: string;
   partition_strategy?: string;
@@ -27,7 +25,7 @@ export interface TopicFrontmatter {
   status: 'current' | 'in-research'; // the only two stored values, ever — `due` is never stored
   cadence: `${number}d`; // research interval, e.g. '90d'
   last_researched: string; // ISO 8601 date, YYYY-MM-DD
-  // --- additive display fields (databases-catalogue bet) — optional, unvalidated ---
+  // --- additive display fields — optional, unvalidated ---
   area?: string;
   register?: TopicRegister;
   movement?: string;
@@ -88,8 +86,6 @@ export type GateCheckId =
   | 'snapshot-complete'
   | 'changelog-top-entry'
   | 'article-version-match'
-  | 'skill-version-match'
-  | 'skill-byte-identical'
   | 'provenance-non-empty'
   | 'slug-matches-dirname'
   | 'reserved-slug'
@@ -106,11 +102,11 @@ export interface GateFailure {
 export interface GateResult {
   ok: boolean;
   failures: GateFailure[]; // empty iff ok === true
-  dir: string; // the directory this result validated — binds a GateResult to its tree (change-proposal-1)
+  dir: string; // the directory this result validated — binds a GateResult to its tree
 }
 
-// --- Additional supporting types needed to give this slice's functions
-// complete, typeable signatures (03-api-design.md, "Additional supporting types") ---
+// --- Additional supporting types that give the exported functions complete,
+// typeable signatures ---
 
 export interface RenderMarkdownOptions {
   mermaid?: boolean; // default true — rewrite ```mermaid fences into the client-rendered diagram marker
@@ -132,7 +128,6 @@ export interface Version {
   meta: VersionSnapshot;
   article: RenderedDoc;
   articleMd: string;
-  skillDir: string; // root-relative fs path to versions/vN/skill/
   provenance: ProvenanceRecord;
 }
 
@@ -146,8 +141,7 @@ export interface TopicSweep {
   errors: TopicError[]; // every topic that did not — the sweep never fails fast
 }
 
-// --- Cut mechanics & Session mechanics supporting types (03-api-design.md,
-// "Additional supporting types") ---
+// --- Cut mechanics & Session mechanics supporting types ---
 
 export interface StagedCut {
   dir: string; // absolute path to .staycurrent/staged/<slug>/; basename == slug
@@ -163,7 +157,7 @@ export interface CutReport {
   topic: string;
   version: number;
   paths: string[]; // every artifact path written under topics/<slug>/, root-relative
-  removed: string[]; // files removed from topics/<slug>/ because the staged tree no longer carries them (landing is a sync — change-proposal-1)
+  removed: string[]; // files removed from topics/<slug>/ because the staged tree no longer carries them (landing is a sync)
 }
 
 export interface NoCutInput {
@@ -186,7 +180,7 @@ export interface ReconcileReport {
   reverted: string[]; // slugs whose status was reverted in-research → current (filesystem wins)
 }
 
-// --- RSS (03-api-design.md, "buildRss") ---
+// --- RSS (`buildRss`) ---
 
 export interface SiteConfig {
   name: string;

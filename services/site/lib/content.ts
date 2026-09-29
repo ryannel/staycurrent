@@ -16,8 +16,8 @@ import {
 } from '@staycurrent/core';
 
 /**
- * Thin server-side data layer over `@staycurrent/core`'s Loading API
- * (technical-design/03-api-design.md). Every function here is build-time-only
+ * Thin server-side data layer over `@staycurrent/core`'s Loading API. Every
+ * function here is build-time-only
  * (Node fs reads, `next build`/`generateStaticParams`/page render) and never
  * runs in the browser.
  *
@@ -25,8 +25,8 @@ import {
  * same way) always execute with `process.cwd()` set to `services/site/` —
  * two levels below the instance repo root that contains `topics/`. Set
  * `STAYCURRENT_REPO_ROOT` to override that default — this exists so a build
- * can be pointed at a fixture copy of the content tree (e.g. the fail-closed
- * half of a bet's proof, which must not touch the real `topics/`) and for CI
+ * can be pointed at a fixture copy of the content tree (e.g. a fail-closed
+ * build test, which must not touch the real `topics/`) and for CI
  * layouts where `process.cwd()` doesn't land two levels under the root.
  */
 const REPO_ROOT = process.env.STAYCURRENT_REPO_ROOT
@@ -34,17 +34,16 @@ const REPO_ROOT = process.env.STAYCURRENT_REPO_ROOT
   : path.resolve(process.cwd(), '..', '..');
 
 /**
- * Reads `site.config.json` from the repo root (03-api-design.md, `buildRss`:
- * "read by the site's prebuild script from site.config.json at the repo root
- * and passed in") — the one place `services/site` resolves this instance's
+ * Reads `site.config.json` from the repo root (`buildRss`'s contract: read
+ * by the site's prebuild script from site.config.json at the repo root and
+ * passed in) — the one place `services/site` resolves this instance's
  * identity, so no page hardcodes `config.url` itself. Fails closed for BOTH
  * an outright-missing file and a malformed one (bad JSON, a field with the
- * wrong type) — no instance value is hardcoded in `services/site` (RC1), so
- * there is no default left to degrade to. Every real deploy of this
- * repository ships a `site.config.json` at its root (see `/site.config.json`)
- * and every fixture root a build runs against must now stage its own (bet-
- * progress fixture harnesses under `tests/` were updated alongside this
- * change). `services/site/scripts/prebuild.mjs` mirrors this exact
+ * wrong type) — no instance value is hardcoded in `services/site`, so there
+ * is no default left to degrade to. Every real deploy of this repository
+ * ships a `site.config.json` at its root (see `/site.config.json`) and every
+ * fixture root a build runs against must stage its own.
+ * `services/site/scripts/prebuild.mjs` mirrors this exact
  * validation shape (it cannot import this module — see that file's own
  * comment).
  */
@@ -73,9 +72,9 @@ export function getSiteConfig(root: string = REPO_ROOT): SiteConfig {
 }
 
 /**
- * Sweeps `topics/` and fails closed per 03-api-design.md: "the site's build
- * treats a non-empty `errors` from `listTopics` as build-fatal — the same
- * fail-closed rule `loadTopic` enforces per page". `listTopics` itself never
+ * Sweeps `topics/` and fails closed: the site's build treats a non-empty
+ * `errors` from `listTopics` as build-fatal — the same fail-closed rule
+ * `loadTopic` enforces per page. `listTopics` itself never
  * throws for a malformed topic (it collects `errors` instead) — this is the
  * one place that turns that report into a build-fatal throw for the site.
  *
@@ -115,9 +114,9 @@ export function getTopicSlugs(root: string = REPO_ROOT): string[] {
 }
 
 /**
- * The Topic Library card grid's per-card shape (01-ui-design.md, `/` — Topic
- * Library): title, stance, version, and last-researched date, straight off
- * `listTopics`' `TopicSummary` sweep (03-api-design.md) — no direct `topics/`
+ * The Topic Library card grid's per-card shape (`/`): title, stance,
+ * version, and last-researched date, straight off `listTopics`'
+ * `TopicSummary` sweep — no direct `topics/`
  * reads from components, no new core API surface beyond the committed
  * Loading API. Sorted by slug ascending (`listTopics`' own order).
  */
@@ -131,8 +130,8 @@ export interface TopicCard {
 
 /**
  * Sweeps every topic for the Topic Library (`/`). Returns `[]` for a
- * validly-empty `topics/` directory — the first-run empty state
- * (01-ui-design.md's "/ — Topic Library" First-run empty state) — and fails
+ * validly-empty `topics/` directory — the Topic Library's first-run empty
+ * state — and fails
  * closed exactly as `getTopicSlugs` does for a malformed catalogue or a
  * mis-resolved root (`sweepOrThrow`).
  */
@@ -147,16 +146,14 @@ export function listTopicCards(root: string = REPO_ROOT): TopicCard[] {
 }
 
 /**
- * One topic as it appears inside a `Catalogue` (03-api-design.md,
- * `getCatalogues`). `movement`/`readingOrder`/`core` are present only when
+ * One topic as it appears inside a `Catalogue` (`getCatalogues`). `movement`/`readingOrder`/`core` are present only when
  * `register` makes them meaningful — see the field comments below — matching
  * the "present iff" contract the design fixes.
  *
  * `register` is optional, not `TopicRegister`, to represent one real state
  * the design's own routing table names but its type table's prose omits: a
  * topic whose `area` is set but whose `register` is missing or not one of the
- * three known values still lands in `Catalogue.ungrouped` (02-data-flows.md,
- * flow (a), step 3) — and such a topic has no real register value to report.
+ * three known values still lands in `Catalogue.ungrouped` — and such a topic has no real register value to report.
  * Every entry actually reachable through `hub`, `movements`, or `profiles`
  * still carries a real, defined `register`.
  */
@@ -198,7 +195,7 @@ function toCatalogueEntry(t: TopicSummary): CatalogueEntry {
   };
 }
 
-/** An entry missing `readingOrder` sorts last rather than throwing — `reading_order` is unvalidated, optional display data (03-api-design.md). */
+/** An entry missing `readingOrder` sorts last rather than throwing — `reading_order` is unvalidated, optional display data. */
 function readingOrderOf(entry: CatalogueEntry): number {
   return entry.readingOrder ?? Number.POSITIVE_INFINITY;
 }
@@ -209,10 +206,10 @@ function lowestReadingOrder(entries: CatalogueEntry[]): number {
 
 /**
  * The single grouping accessor behind both the Topic Library grid and the
- * root layout's sidebar tree (03-api-design.md, `getCatalogues`). Sweeps
+ * root layout's sidebar tree. Sweeps
  * every topic through the same fail-closed path every other whole-catalogue
  * accessor uses (`sweepOrThrow`), then buckets by `area` and, within an area,
- * by `register` — realizing flow (a) in 02-data-flows.md.
+ * by `register`.
  *
  * Takes no area argument and assumes no single area exists: `getCatalogues`
  * returns one `Catalogue` per distinct `area` value the sweep actually finds,
@@ -285,7 +282,7 @@ export function getCatalogues(root: string = REPO_ROOT): Catalogue[] {
     }
 
     // Movement order is a property of the data — the lowest readingOrder any
-    // member carries — never separately authored (02-data-flows.md, flow a).
+    // member carries — never separately authored.
     const movements: CatalogueMovement[] = [...movementBuckets.entries()]
       .map(([name, entries]) => ({ name, entries }))
       .sort((a, b) => lowestReadingOrder(a.entries) - lowestReadingOrder(b.entries));
@@ -294,7 +291,7 @@ export function getCatalogues(root: string = REPO_ROOT): Catalogue[] {
   });
 }
 
-/** `slug` humanized for a dangling `ReadingPathLink` fallback: `distributed-transactions` → "Distributed Transactions" (02-data-flows.md, flow b, step 3). */
+/** `slug` humanized for a dangling `ReadingPathLink` fallback: `distributed-transactions` → "Distributed Transactions". */
 function humanizeSlug(slug: string): string {
   return slug
     .split('-')
@@ -321,8 +318,7 @@ export interface ReadingPosition {
 /**
  * Resolves a foundation's position in its area's reading path — its index
  * and count within the path and within its own movement, its prereqs
- * resolved to real (or best-effort) titles, and the next piece to read
- * (03-api-design.md, `getReadingPosition`; 02-data-flows.md, flow b).
+ * resolved to real (or best-effort) titles, and the next piece to read.
  *
  * `frontmatter` is the topic's own, already-loaded frontmatter — the caller
  * already holds it from `getTopic(slug)` for the page's other needs — matching
@@ -332,7 +328,7 @@ export interface ReadingPosition {
  * `'foundation'`, `area` is blank, `reading_order` is not a valid positive
  * integer, or — defensively — this topic's own slug is not found among its
  * area's resolved foundations once those checks pass. `reading_order` and
- * `movement` are unvalidated additive fields (04-data-design.md): a
+ * `movement` are unvalidated additive fields: a
  * foundation missing them renders normally, without a rail, rather than
  * failing the build.
  */
@@ -353,8 +349,7 @@ export function getReadingPosition(
   const catalogue = getCatalogues(root).find((c) => c.area === frontmatter.area);
   if (!catalogue) return null;
 
-  // The flattened movements list IS the reading path (02-data-flows.md, flow
-  // b, step 2) — movements are a presentational partition of it, not a
+  // The flattened movements list IS the reading path — movements are a presentational partition of it, not a
   // second ordering.
   const path = catalogue.movements.flatMap((m) => m.entries);
   const ownIndex = path.findIndex((e) => e.slug === frontmatter.topic);
@@ -371,7 +366,7 @@ export function getReadingPosition(
   // that names nothing links to nothing, so it is dropped rather than
   // rendered — the same absence-is-resting-state degrade the rest of this
   // rail already applies, and it keeps the design's "never shows a raw slug
-  // or blank text" (02-data-flows.md, flow b, step 3) true by construction.
+  // or blank text" rule true by construction.
   const prereqs: ReadingPathLink[] = (frontmatter.prereqs ?? [])
     .filter((slug) => slug.trim() !== '')
     .map((slug) => {
@@ -396,13 +391,12 @@ export function getReadingPosition(
 // `@staycurrent/core`'s rehypeMermaid (core/src/render/rehypeMermaid.ts):
 // `<div class="mermaid-figure" data-mermaid="<source>">` with this exact
 // property order. content-core deliberately carries no reserved-space
-// behaviour — renderMarkdown's design rationale (03-api-design.md) names
-// sizing/CLS as "the site's rendering concern, not a rendering option [in
+// behaviour — renderMarkdown's design rationale names sizing/CLS as "the site's rendering concern, not a rendering option [in
 // renderMarkdown]". This is that concern: inject an explicit min-height that
-// absorbs the initial layout so the client mermaid render (Slice 2.2) never
+// absorbs the initial layout so the client mermaid render never
 // shifts *settled* text on arrival. A rendered figure may still extend taller
-// than the reservation (change-proposal-3: diagram growth beyond 320px is
-// accepted, not capped) — when it does, scroll anchoring is what preserves
+// than the reservation (diagram growth beyond 320px is accepted, not
+// capped) — when it does, scroll anchoring is what preserves
 // the reader's position, not a hard size cap.
 //
 // Anchored on the full open-tag prefix, not the class attribute alone: HTML
@@ -425,7 +419,7 @@ export function reserveMermaidSpace(html: string): string {
 /**
  * Loads one topic's full live state for `/[topic]/`. `ContentNotFoundError`
  * and `ContentValidationError` propagate uncaught — per the "currency is
- * never guessed" rule (02-data-flows.md), a topic that cannot state its
+ * never guessed" rule, a topic that cannot state its
  * `version`/`last_researched`, or otherwise fails schema validation, must
  * fail `next build` rather than render a partial page.
  */
@@ -447,8 +441,7 @@ export function getTopic(slug: string, root: string = REPO_ROOT): Topic {
  * read), fetched with a SINGLE `loadVersion` call.
  *
  * `/[topic]/` needs both facts for the same live version (the trust header's
- * freshness dot and the essay-close Provenance section, 01-ui-design.md's
- * micro-polish spec) — this accessor exists so that page loads the version
+ * freshness dot and the essay-close Provenance section) — this accessor exists so that page loads the version
  * once rather than twice. `getTopicCutDate` below stays the entry point for
  * callers that only need the date (the root layout's sidebar sweep, which
  * loops every topic and never touches its provenance) and now delegates here
@@ -483,11 +476,11 @@ export function getTopicCutDate(slug: string, version: number, root: string = RE
 
 /**
  * The topic's changelog entries for `/[topic]/changelog/` and `/changelog/`
- * (03-api-design.md, `loadChangelog`) — newest first, exactly as the loader
+ * (`loadChangelog`) — newest first, exactly as the loader
  * returns them. `bodyHtml` gets the same mermaid-space reservation `getTopic`
  * applies to the article body (`reserveMermaidSpace`): a changelog entry's
  * prose goes through the identical `renderMarkdown` pipeline as the article
- * (Slice 3.1's hardened pipeline included), so it can carry a mermaid fence
+ * (hardened pipeline included), so it can carry a mermaid fence
  * too, and the CLS-reservation concern applies equally there.
  *
  * Throw contract mirrors `loadChangelog`: `ContentNotFoundError` when
@@ -505,7 +498,7 @@ export function getTopicChangelog(slug: string, root: string = REPO_ROOT): Chang
 }
 
 /**
- * One row of the Version History ledger (01-ui-design.md, `/[topic]/history/`):
+ * One row of the Version History ledger (`/[topic]/history/`):
  * the version number, its snapshot's cut date (`loadVersion`'s
  * `VersionSnapshot.cut` — the same currency key the trust header's freshness
  * dot uses, never `last_researched`), and the stance disposition the
@@ -545,11 +538,7 @@ export function getVersionHistory(
 /**
  * One immutable snapshot's rendered form for `/[topic]/v/[n]/`'s archived
  * state (`n` < the live version) — `loadVersion`'s `meta`/`article`/
- * `provenance`, minus `articleMd` (no caller here needs the raw text) and
- * `skillDir` (a filesystem path with no reader on this page — the archived
- * skill payload's PUBLIC url, `/skills/<slug>/v/<n>/`, is a fixed string
- * template the page builds directly, per the Skill payload distribution
- * contract in 03-api-design.md, not a value this loader returns).
+ * `provenance`, minus `articleMd` (no caller here needs the raw text).
  *
  * `superseded`/`current` is deliberately NOT computed or returned here —
  * `loadVersion`'s own design rationale says that label is always a
@@ -576,7 +565,7 @@ export function getArchivedVersion(slug: string, n: number, root: string = REPO_
 
 /**
  * Every topic's changelog entries, flattened and merged newest-first, for
- * `/changelog/` — the Site-Wide Changelog (01-ui-design.md). Fails closed via
+ * `/changelog/` — the Site-Wide Changelog. Fails closed via
  * `sweepOrThrow` exactly like `listTopicCards`: a malformed topic or a
  * mis-resolved root must not ship a partial or silently-empty feed page.
  * Sorted by `date` descending — ties (same-day cuts across topics) keep

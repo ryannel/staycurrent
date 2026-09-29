@@ -8,7 +8,7 @@ import { renderMarkdown } from '../render/renderMarkdown.js';
 import { readMatterFile, readTextFile } from './shared.js';
 
 /**
- * Loads one immutable snapshot (03-api-design.md, `loadVersion`).
+ * Loads one immutable snapshot, `topics/<slug>/versions/vN/`.
  *
  * Throw contract: `ContentNotFoundError` is reserved strictly for a missing
  * `versions/vN/` directory. Any missing or malformed artifact *inside* an
@@ -60,7 +60,6 @@ export function loadVersion(root: string, slug: string, n: number): Version {
     meta,
     article: renderMarkdown(parsedArticle.content),
     articleMd: parsedArticle.content,
-    skillDir: `${versionRelDir}/skill`,
     provenance: parseProvenance(provenanceRaw, slug, provenanceRel),
   };
 }

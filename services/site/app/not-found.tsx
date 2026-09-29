@@ -9,11 +9,10 @@ export const metadata: Metadata = {
 };
 
 /**
- * Root 404 — Not Found (01-ui-design.md). Rendered for any unmatched route
- * under the static export: `next build` emits this as `out/404.html` (or
+ * Root 404 — Not Found. Rendered for any unmatched route under the static
+ * export: `next build` emits this as `out/404.html` (or
  * `out/404/index.html`), so the "designed dead end" replaces the host
- * default for every miss — including the changelog/history/skill face links
- * whose routes arrive in Milestone 3 (the accepted mid-ladder state).
+ * default for every miss.
  *
  * "The dead end contains the map" (Error & honesty choreography): the topic
  * tree renders inline as page content, not just relying on the sidebar that

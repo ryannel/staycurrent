@@ -2,12 +2,12 @@
 title: Design System
 description: Implementation-ready design specification for Stay Current — the brand foundation, the website's visual system, and the workbench's protocol design.
 type: design-system
-last_reviewed: 2026-07-18
+last_reviewed: 2026-09-29
 ---
 
 # Stay Current — Design System
 
-This document is the implementation-ready design specification for Stay Current. It carries the shared brand foundation and one section per interface type: the **Graphical UI** section specifies the reader-facing website to CSS-token precision; the **Agentic Protocol** section specifies the operator workbench and companion skills to schema precision. A developer or a generative tool implements from this document without making design decisions of their own — every value that belongs to design is committed here.
+This document is the implementation-ready design specification for Stay Current. It carries the shared brand foundation and one section per interface type: the **Graphical UI** section specifies the reader-facing website to CSS-token precision; the **Agentic Protocol** section specifies the operator workbench to schema precision. A developer or a generative tool implements from this document without making design decisions of their own — every value that belongs to design is committed here.
 # Part 1 — Foundation
 
 The foundation binds every interface type. Each type section translates it into its own medium; none may contradict it.
@@ -26,21 +26,20 @@ The foundation binds every interface type. Each type section translates it into 
 
 ## Product-Wide Constraints
 
-- **The version cut is atomic.** A version publishes with article, skill, changelog entry, provenance, and RSS item together, or not at all. Every surface treats a partially present version as a failure to surface, never a state to render around.
+- **The version cut is atomic.** A version publishes with article, changelog entry, provenance, and RSS item together, or not at all. Every surface treats a partially present version as a failure to surface, never a state to render around.
 - **Trust artifacts are first-class.** Version history, changelog, and provenance receive the same design investment as the article.
 - **Failures are loud and safe.** A failed research run never mutates published content. Halt and explain over silent degradation.
 - **Everything published is git-versioned.** The repo is the audit trail; no design decision may depend on state outside it. The one sanctioned exception is in-flight session quarantine (ephemeral by design, gitignored) — nothing published ever derives from it.
 
 ## Shared Vocabulary
 
-One closed vocabulary, used identically in site copy, frontmatter, skill files, and workbench conversation — the string an agent greps is the string a reader sees rendered:
+One closed vocabulary, used identically in site copy, frontmatter, and workbench conversation — the string an agent greps is the string a reader sees rendered:
 
 | Term | Meaning |
 |---|---|
-| topic | One living article + one companion skill + their history, carrying one stance; a self-contained practice area is a single topic, a broad area is a catalogue of finer-grained topics fronted by a hub |
+| topic | One living article + its history, carrying one stance; a self-contained practice area is a single topic, a broad area is a catalogue of finer-grained topics fronted by a hub |
 | article | The living, current-truth essay for a topic |
-| skill | The distributable AI skill rendering the article's stance executable |
-| version | One atomic cut of article + skill + changelog entry + provenance |
+| version | One atomic cut of article + changelog entry + provenance |
 | cut (verb) | To produce and publish a new version |
 | changelog | The topic's append-only timeline of standalone entries |
 | provenance | A version's sources-and-influences record |
@@ -83,7 +82,7 @@ The reader-facing website: staycurrent.dev and every site a builder deploys from
 
 - **No backend, no accounts, no sessions, no real-time.** RSS is the only push channel. The only *persisted* client state is the theme preference (`localStorage`, key `theme`, values `light | dark | system`); per-tab ephemeral UI state (sidebar scroll, disclosure) may use `sessionStorage` and dies with the tab. Nothing identifies or tracks the reader.
 - **Currency is never guessed.** Every article page renders its version and last-researched date from build-time data; if that data is missing the build fails — the site never ships a page that cannot state its currency.
-- **Honesty states are designed states**: archived-version banner, graceful 404, superseded-skill pointer. Specified in the Surface section; none of them are generic framework fallbacks.
+- **Honesty states are designed states**: archived-version banner, graceful 404. Specified in the Surface section; none of them are generic framework fallbacks.
 ## App Shell
 
 ### Layout skeleton — three zones
@@ -120,12 +119,12 @@ Top to bottom:
 1. **Wordmark** — "Stay Current" set in the display serif, 18px/500, links home. No logo glyph at MVP; the wordmark is the mark.
 2. **Site pages** — Changelog, About. Sans, 14px/450.
 3. **`Topics` label** — section label style (11px/600 sans, uppercase, tracking 0.08em, `--color-text-faint`).
-4. **Topic tree** — one entry per topic: topic title (sans 14px/500), carrying the freshness dot (see Badges) when the topic's current version is ≤ 14 days old — the workbench's `due` state is operator-facing and never renders on the public site. Topic entries expand (disclosure, rotate-90° chevron @ `--duration-base`) to their four faces: Article, Changelog, History, Skill (13px/450, indented `--space-4`).
+4. **Topic tree** — one entry per topic: topic title (sans 14px/500), carrying the freshness dot (see Badges) when the topic's current version is ≤ 14 days old — the workbench's `due` state is operator-facing and never renders on the public site. Topic entries expand (disclosure, rotate-90° chevron @ `--duration-base`) to their three faces: Article, Changelog, History (13px/450, indented `--space-4`).
 5. **Footer cluster** — theme toggle, RSS glyph link, framework repo link. Icon buttons, 16px glyphs.
 
 Active states: the current page's entry carries `--color-accent` text and a 2px accent bar flush left (replacing, not adding to, its left padding — no layout shift). Hover: text moves from `--color-text-secondary` to `--color-text-body`, background `--color-hover-wash`, 120ms.
 
-**Grouped catalogue nav** (databases-catalogue bet, `01-ui-design.md` "Topic Library and Sidebar — Databases-Area Grouping"). When a topic carries an `area`, the flat `Topics` label/tree above is replaced, for that area, by: the area's own section label (the area value itself, e.g. `databases` — uppercased by the same section-label style, no separate display-title field), the hub entry (an ordinary topic-tree entry, first), then one or two **Register-Group Disclosures**. A topic with no `area` at all keeps rendering in the plain `Topics` list unchanged — the two coexist when some topics are grouped and others aren't yet.
+**Grouped catalogue nav.** When a topic carries an `area`, the flat `Topics` label/tree above is replaced, for that area, by: the area's own section label (the area value itself, e.g. `databases` — uppercased by the same section-label style, no separate display-title field), the hub entry (an ordinary topic-tree entry, first), then one or two **Register-Group Disclosures**. A topic with no `area` at all keeps rendering in the plain `Topics` list unchanged — the two coexist when some topics are grouped and others aren't yet.
 
 - **Register-Group Disclosure** — `.topic-disclosure`'s exact recipe one level up (same summary typography, hover wash, rotate-90° chevron), open by default ("recognition over recall"), carrying a trailing mono count right of the label (`Foundations (17)`, `Profiles (7)`) in the same register the version badge already uses for counts. A register with zero members doesn't render at all — no `Foundations (0)` placeholder; absence is the resting state, the same convention the freshness dot already uses.
 - **Movement Divider** — `.nav-section-label`'s exact recipe (11px/600 sans, uppercase, tracking 0.08em, `--color-text-faint`), non-interactive (never focusable, no hover state), nested one level inside a Foundations group so it reads as part of that list rather than a competing heading. Sidebar-only — the library grid stays un-sub-grouped by movement (a card carries enough visual weight on its own; the finer structure a nav tree needs would fragment a grid instead of clarifying it).
@@ -136,7 +135,7 @@ Active states: the current page's entry carries `--color-accent` text and a 2px 
 Every article opens with the trust header before the `<h1>`. It is instrumentation density: one line of mono-set metadata, wrapping to two on narrow viewports.
 
 ```
-v5 · researched 12 Jun 2026 · changelog · history · skill      [fresh●]
+v5 · researched 12 Jun 2026 · changelog · history      [fresh●]
 ```
 
 - Set in `--font-mono` at 13px, `--color-text-secondary`; interactive segments are links in `--color-accent`.
@@ -146,7 +145,7 @@ v5 · researched 12 Jun 2026 · changelog · history · skill      [fresh●]
 
 ### Instrumentation Strip
 
-A reusable flush band for any single-purpose trust fact that doesn't belong in the trust header itself (databases-catalogue bet, `01-ui-design.md`): a `--text-label` heading (`.nav-section-label`'s exact recipe) over a `--text-meta` body line, closed by the trust header's own `--space-4`-padding / 1px-`--color-rule`-bottom-rule / `--space-6`-margin rhythm. Flush on `--color-surface` — no well, no shadow — because it is a continuation of the same trust apparatus the page's own trust header opens with, not a second competing container. Compared or in-place-changing figures render in tabular numerals (`font-variant-numeric: tabular-nums`); every link inside uses the standard link-hover recipe (`--color-accent` → `--color-accent-strong`, underline to full alpha, `--duration-fast`/`--ease-standard`).
+A reusable flush band for any single-purpose trust fact that doesn't belong in the trust header itself: a `--text-label` heading (`.nav-section-label`'s exact recipe) over a `--text-meta` body line, closed by the trust header's own `--space-4`-padding / 1px-`--color-rule`-bottom-rule / `--space-6`-margin rhythm. Flush on `--color-surface` — no well, no shadow — because it is a continuation of the same trust apparatus the page's own trust header opens with, not a second competing container. Compared or in-place-changing figures render in tabular numerals (`font-variant-numeric: tabular-nums`); every link inside uses the standard link-hover recipe (`--color-accent` → `--color-accent-strong`, underline to full alpha, `--duration-fast`/`--ease-standard`).
 
 Two named instances:
 
@@ -401,7 +400,7 @@ Chrome is nearly silent, so buttons are few and quiet. Three variants; all: `--t
 --radius-control: 6px;   /* buttons, inputs, badges-large */
 --radius-overlay: 10px;  /* drawer, menus — concentric: outer = inner + padding */
 
-.btn-primary {            /* one per view, at most: "Install skill", "Subscribe" */
+.btn-primary {            /* one per view, at most: "Subscribe" */
   background: var(--color-accent);
   color: var(--color-surface);           /* surface-on-accent: 5.6:1 light / 8.6:1 dark */
 }
@@ -447,7 +446,7 @@ MVP has no forms; the spec exists so the first input (palette search, later) isn
 
 The freshness dot (sidebar, trust header): 6px circle in `--color-accent`, rendered only while the current version is ≤ 14 days old — there is no non-fresh variant; absence is the resting state. Always paired with text (`fresh`, a date) — never colour alone.
 
-`badge-core` (databases-catalogue bet, `01-ui-design.md`) marks a catalogue's featured (★) profile trio — sidebar tree and library cards both, text "core" always present, never a bare glyph. Deliberately not accent-colored: the accent budget is already spent on links, active-nav, version badges, and the freshness dot; a third recurring accent touch would blow it.
+`badge-core` marks a catalogue's featured (★) profile trio — sidebar tree and library cards both, text "core" always present, never a bare glyph. Deliberately not accent-colored: the accent budget is already spent on links, active-nav, version badges, and the freshness dot; a third recurring accent touch would blow it.
 
 ### Code blocks
 
@@ -459,7 +458,7 @@ Syntax palette: one house theme per site theme, built from the token palette (in
 
 Reading furniture, print-styled: no zebra, no cell borders. `--text-ui` (data tables) or `--text-body` at 0.9375rem (prose tables); header row `--text-label` style with `--color-rule-strong` rule below; row separation by 1px `--color-rule`; cell padding `var(--space-3) var(--space-4)`; numeric columns right-aligned in `--font-mono`. Wide tables scroll within their own `overflow-x: auto` container — the page never scrolls horizontally.
 
-**Comparison Matrix** (databases-catalogue bet, `01-ui-design.md` — the hub's seven-profile matrix) — **a forward recipe, named now, CSS not shipped yet**: the recipe below lands with the wave-6 hub re-cut, once the matrix itself is authored content (`01-ui-design.md`: the chooser/matrix/tree land in the hub's final wave, not this slice). Recorded here so that build inherits the name instead of re-deriving it, not because the styling exists in `doc-shell.css` today. A variant of the plain prose table above, not a new component — it stays a markdown table through the existing rendering pipeline, so authoring it costs nothing. Adds three things to the base recipe: the first column (the thing being compared) stays pinned via `position: sticky; left: 0`, with an explicit opaque `--color-surface` background (so scrolling columns don't bleed through beneath it) and a 1px `--color-rule` inline-end edge so the pinned boundary reads as deliberate; a row-hover wash (`background: var(--color-hover-wash)` at `--duration-fast`/`--ease-standard`, declared on the row's base rule so the fade-out on pointer-leave animates too — `.version-history-table tbody tr`'s existing convention); and tabular numerals on every compared figure. Any future table comparing more than a handful of things side by side inherits this recipe by name instead of re-deriving it.
+**Comparison Matrix** (the hub's profile matrix) — **a forward recipe, named now, CSS not shipped yet**: the recipe below lands with the hub re-cut, once the matrix itself is authored content. Recorded here so that build inherits the name instead of re-deriving it, not because the styling exists in `doc-shell.css` today. A variant of the plain prose table above, not a new component — it stays a markdown table through the existing rendering pipeline, so authoring it costs nothing. Adds three things to the base recipe: the first column (the thing being compared) stays pinned via `position: sticky; left: 0`, with an explicit opaque `--color-surface` background (so scrolling columns don't bleed through beneath it) and a 1px `--color-rule` inline-end edge so the pinned boundary reads as deliberate; a row-hover wash (`background: var(--color-hover-wash)` at `--duration-fast`/`--ease-standard`, declared on the row's base rule so the fade-out on pointer-leave animates too — `.version-history-table tbody tr`'s existing convention); and tabular numerals on every compared figure. Any future table comparing more than a handful of things side by side inherits this recipe by name instead of re-deriving it.
 
 ### Blockquotes & asides
 
@@ -489,8 +488,7 @@ None ship at MVP (static site — content arrives with the page). If deferred lo
 
 - **Archived banner** (`/[topic]/v/[n]`) — replaces the trust header: full-width band, `--color-surface-alt` fill, 2px `--color-rule-strong` top rule (archived is quiet, not alarming — no status colour is borrowed), mono meta text: "You're reading **v3**, cut 14 Jan 2026. The current version is **v5**, updated 12 Jun 2026." with "Read current →" as `--color-accent` link. Sticky for the whole page — history must never masquerade as current, however deep the reader scrolls — condensing after the first viewport to a slim single line (`v3 · current is v5 →`, 32px tall) so persistence never crowds the reading.
 - **404** — display-serif "This page doesn't exist." + one sans sentence: "It may have moved when a topic was renamed." + the topic library rendered inline (the sidebar's tree as page content). The dead end contains the map.
-- **Superseded skill** — `/[topic]/skill` always installs the current version, so the superseded state renders where a reader meets an old skill: on archived version pages (`/[topic]/v/[n]`) and history rows that link to an archived payload, the pointer reads: "This skill renders **v3** of the stance. Install the current version instead →". The old artifact stays readable; the path forward is the emphasis.
-- **Diagram/image failure** — a failed diagram keeps its fenced source readable in the reserved container; never a broken-image glyph. Designed captions and `alt` text await the content contract's caption channel (the writer-skill/content-format bet designs it); until then figures carry heading-derived accessible names.
+- **Diagram/image failure** — a failed diagram keeps its fenced source readable in the reserved container; never a broken-image glyph. Designed captions and `alt` text await the content contract's caption channel; until then figures carry heading-derived accessible names.
 
 ### Responsive grid
 
@@ -514,7 +512,7 @@ The technique library for the settled aesthetic — an engineering press, printe
 Techniques deliberately not borrowed: Stripe's gradient heroes and Linear's glassmorphism (both violate print-flat); any command-palette chrome at MVP (no search until ~25 topics).
 # Agentic Protocol
 
-The operator workbench inside Claude Code and the companion skills adopters install. The "interface" is a structured conversation between a human, an agent, and a filesystem — this section specifies it to the same precision the Graphical UI section specifies pixels.
+The operator workbench inside Claude Code. The "interface" is a structured conversation between a human, an agent, and a filesystem — this section specifies it to the same precision the Graphical UI section specifies pixels.
 
 ## Constraints
 
@@ -522,11 +520,10 @@ The operator workbench inside Claude Code and the companion skills adopters inst
 
 - **Cold-start operational awareness in ≤ 3 file reads**: (1) the instance's root instruction file, (2) a frontmatter sweep of `topics/*/article.md`, (3) the file the task at hand needs. An agent that needs a fourth read to answer "what is due?" indicates a topology violation, not a bigger budget.
 - **The root instruction file is ≤ 150 lines.** It names the topology, the vocabulary, and the routes to the workbench skills — it never carries methodology content, which lives in the skills it points to.
-- **Companion skills follow skill-creator conventions**: a lean `SKILL.md` whose frontmatter description does the routing, depth in `references/` files loaded only when the task needs them. The standard carries the token discipline; no bespoke budget is layered on top.
 
 ### Verification requirements
 
-- **The publish gate is mechanical.** A version cut validates by filesystem inspection before anything publishes: `versions/vN/` contains `article.md`, `skill/`, and `provenance.md`; `changelog.md`'s top entry is `## vN`; the live `article.md` frontmatter carries `version: N`; the live `skill/SKILL.md` frontmatter carries `article_version: N` and the live `skill/` is byte-identical to `versions/vN/skill/` — the article-and-skill-never-disagree constraint is a gate check, not a promise. The gate also parses the staged `article.md` frontmatter and `changelog.md` through the **same loaders the site build uses**, so a gate-passed cut can never land content the site then rejects at render — the gate and the reader see one schema (established by the founding bet: the frontmatter-schema and changelog-schema checks). The gate runs pre-commit against the staged prospective tree: "live" means the state `topics/` will hold after the commit, so nothing is mutated before it validates. Any check failing blocks the cut with the exact missing or offending artifact named. The RSS item needs no separate check: the feed renders the changelog entry verbatim at site build, so the changelog check covers the fifth artifact. There is no human approval step — auditability is the compensating control, and it is enforced, not hoped for.
+- **The publish gate is mechanical.** A version cut validates by filesystem inspection before anything publishes: `versions/vN/` contains `article.md` and `provenance.md`; `changelog.md`'s top entry is `## vN`; the live `article.md` frontmatter carries `version: N`. The gate also parses the staged `article.md` frontmatter and `changelog.md` through the **same loaders the site build uses**, so a gate-passed cut can never land content the site then rejects at render — the gate and the reader see one schema (the frontmatter-schema and changelog-schema checks). The gate runs pre-commit against the staged prospective tree: "live" means the state `topics/` will hold after the commit, so nothing is mutated before it validates. Any check failing blocks the cut with the exact missing or offending artifact named. The RSS item needs no separate check: the feed renders the changelog entry verbatim at site build, so the changelog check covers the fourth artifact. There is no human approval step — auditability is the compensating control, and it is enforced, not hoped for.
 - **Provenance is a gate input, not an afterthought.** A version with an empty `## Sources` and `## Synthesis` section cannot cut.
 
 ### Authority boundaries
@@ -542,7 +539,6 @@ The operator workbench inside Claude Code and the companion skills adopters inst
 ### Interoperability guarantees
 
 - **Claude Code is the operator surface**; the workbench may use its facilities (skills, scheduled tasks, subagents).
-- **Companion skills are portable payloads**: plain markdown and files, no host-specific features, no network dependency, no executable install step. Any agent runtime that can read files can consume them.
 - **All state is flat, declarative, and greppable.** YAML frontmatter and markdown sections — an agent (or a shell one-liner) answers any status question without executing anything.
 ## Workspace Topology
 
@@ -557,11 +553,8 @@ The topic directory is the unit of everything; the atomic version cut is visible
     <topic-slug>/
       article.md              ← the living article; frontmatter IS the topic state
       changelog.md            ← append-only timeline; newest entry on top
-      skill/
-        SKILL.md              ← skill-creator anatomy
-        references/
       versions/
-        v1/ … vN/             ← immutable snapshots: article.md, skill/, provenance.md
+        v1/ … vN/             ← immutable snapshots: article.md, provenance.md
       research-log.md         ← every run recorded, including no-cut
   .staycurrent/
     sessions/<topic-slug>.md  ← in-flight research session state (quarantine; gitignored)
@@ -655,7 +648,7 @@ Body sections accumulate as the run progresses: `## Findings` (the digest table)
 
 ## Context Hierarchy
 
-The three layers are defined in Workspace Topology. Binding rules: L0 is read once per session, never re-read mid-session (it does not change); L1 is re-swept after any cut (it just changed); L2 is loaded per topic and released when the topic's work resolves — two topics' L2 in one context is the signal to split the session. Companion skills add their own hierarchy for adopters: `SKILL.md` is L0, each `references/` file is L2, loaded only when the task touches its subject.
+The three layers are defined in Workspace Topology. Binding rules: L0 is read once per session, never re-read mid-session (it does not change); L1 is re-swept after any cut (it just changed); L2 is loaded per topic and released when the topic's work resolves — two topics' L2 in one context is the signal to split the session.
 
 ## Document Architecture
 
@@ -717,7 +710,7 @@ The workbench speaks as the article does — the senior colleague who shows thei
 | "It might be worth considering…" | "Do X." or "X is worth it because Y." |
 | "Great question!", "Excitingly…", any enthusiasm filler | Nothing. Begin with the substance. |
 | "As an AI…" | Nothing. The persona is the counterpart, not the disclaimer. |
-| "…has been updated successfully!" | The factual report: "Cut v6 — article, skill, changelog entry, provenance; paths below." |
+| "…has been updated successfully!" | The factual report: "Cut v6 — article, changelog entry, provenance; paths below." |
 
 ### Propose-vs-prompt triggers
 
@@ -728,20 +721,9 @@ The workbench speaks as the article does — the senior colleague who shows thei
 - **Convene:** `Convening <topic> against v<N> (last researched <date>). Sources first, digest when I have it.`
 - **Verdict (cut):** `Verdict: cut. <finding count> findings, <n> touch the stance — <one-line reason>. Draft entry below; argue or approve.`
 - **Verdict (no-cut):** `Verdict: no-cut. What moved doesn't touch the claims or the stance — logging the run. Overrule if you read it differently.`
-- **Cut report:** `Cut v<N> — article, skill, changelog entry, provenance; RSS follows at site build. Paths: …`
+- **Cut report:** `Cut v<N> — article, changelog entry, provenance; RSS follows at site build. Paths: …`
 - **Resume:** `<topic> has an open session from <date>, phase: <phase>. Resume it or discard it?`
-## Skill Anatomy
-
-### Companion skills (the shipped product)
-
-Skill-creator conventions, plus house rules that make a companion skill this publication's:
-
-- **`SKILL.md`**: frontmatter `name` (the topic slug) and `description` written as routing triggers (when an agent should reach for this practice), then the body mirroring the article's shape: the stance callout first, the principles as imperatives an agent can execute, named anti-patterns, pointers into `references/`.
-- **Version binding**: the frontmatter carries `article_version: N` — a skill states which stance revision it renders, and the pair can never drift because both cut together.
-- **`references/`**: depth files loaded per-task (per skill-creator progressive disclosure). The article itself is not bundled — the skill is the executable rendering, the site is the readable one.
-- **Portability floor**: markdown and files only; no scripts required to function, no host-specific syntax, no network calls.
-
-### Workbench skills (the operator tooling)
+## Workbench Skills
 
 Each workbench skill (research run, topic creation, the writer skill) declares: **preconditions** it verifies before acting (state, session files, gate inputs), the **action contract** below, and its **report shape** (which template from Tone & Posture it ends with).
 
@@ -785,8 +767,8 @@ Factual voice, no apology theatre. A gate failure names its artifact: `Blocked: 
 
 ## Naming & Taxonomy
 
-- **Slugs**: kebab-case, ≤ 3 words, noun-form (`cost-engineering`, not `optimizing-costs`). The slug is permanent — it is the URL, the directory, and the skill name; renaming a topic is a migration, not an edit.
-- **Files**: exactly the topology's names — `article.md`, `changelog.md`, `provenance.md`, `research-log.md`, `SKILL.md`. No variants, no `-v2` suffixes, no dates in filenames (dates live in frontmatter and headings). The root instruction file's name is deliberately unfixed here — the agent-wiring convention owns it, settled in Architecture.
+- **Slugs**: kebab-case, ≤ 3 words, noun-form (`cost-engineering`, not `optimizing-costs`). The slug is permanent — it is the URL and the directory; renaming a topic is a migration, not an edit.
+- **Files**: exactly the topology's names — `article.md`, `changelog.md`, `provenance.md`, `research-log.md`. No variants, no `-v2` suffixes, no dates in filenames (dates live in frontmatter and headings). The root instruction file's name is deliberately unfixed here — the agent-wiring convention owns it, settled in Architecture.
 - **Operations**: verb-noun, the closed verb set: `convene <topic>` (start a research run — the brief's own verb), `cut <version>`, `log <run>`, `create <topic>`. The vocabulary table in Part 1 defines every noun; a term not in it does not appear in an interface.
 - **Self-test**: before a name ships — is it in the shared vocabulary? Does the string appear identically in frontmatter, conversation, and site? Would grep for it find every occurrence? Three yeses or it doesn't ship.
 
@@ -794,5 +776,4 @@ Factual voice, no apology theatre. A gate failure names its artifact: `Blocked: 
 
 - **Topic versions are monotonic integers**, editorial not semantic — `v6` means "the sixth cut stance," nothing about magnitude. Magnitude lives where judgment lives: the changelog entry's `Stance: held | bent | reversed` line. A reversal is the protocol's "breaking change" and earns the entry's fullest treatment.
 - **The changelog format is the versioning contract**: `## vN — YYYY-MM-DD` + the three-part anatomy (Document Architecture). The RSS item is the entry, verbatim — one written artifact serves feed and page.
-- **Companion skills inherit the topic's version** via `article_version` — there is no independent skill versioning to reconcile.
 - **The framework itself** (the open-source engine) versions by semver independently of any instance's topics; instance repos record which framework version they run in their root instructions. Framework upgrades never rewrite topic content — the content contract (schemas above) evolves only additively within a major version.

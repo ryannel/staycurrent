@@ -18,7 +18,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 /**
- * `/[topic]/history/` — Version History (01-ui-design.md). The full version
+ * `/[topic]/history/` — Version History. The full version
  * ledger, one row per cut, newest first — `getVersionHistory` joins each
  * version's snapshot cut date (`loadVersion`) with the stance disposition
  * the SAME version's changelog entry recorded (`loadChangelog`).

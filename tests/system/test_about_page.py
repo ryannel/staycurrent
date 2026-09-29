@@ -1,11 +1,10 @@
-"""About interface test (01-ui-design.md, `/about/` — About) — Slice 2.3
-(library-about-404, bet first-living-topic).
+"""About interface test (`/about/` — About).
 
 `/about/` has no interactive behaviour beyond standard in-body link hover
 (shared rules) and no data dependency (Static state, always) — a11y/render/
-layout/token coverage comes for free via `tests/system/routes.json` (this
-slice registers `/about/`); this pins the one page-specific behaviour those
-generic gates don't: the actual prose renders.
+layout/token coverage comes for free via `tests/system/routes.json`, which
+registers `/about/`; this pins the one page-specific behaviour those generic
+gates don't: the actual prose renders.
 """
 
 from playwright.sync_api import Page

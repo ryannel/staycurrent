@@ -10,8 +10,7 @@ import { replaceFrontmatterField } from '../write.js';
 /**
  * Root-relative (to `dir`) POSIX paths of every regular file under `dir`, sorted.
  * Symlinked directories are followed with a visited-realpath cycle guard; every
- * other fs error propagates — a silently skipped file would land a partial copy
- * (change-proposal-1 review patches).
+ * other fs error propagates — a silently skipped file would land a partial copy.
  */
 function listFilesRecursive(dir: string): string[] {
   const results: string[] = [];
@@ -95,8 +94,8 @@ function canonicalPath(p: string): string {
 }
 
 /**
- * Lands the staged tree into `topics/<slug>/` via fs writes only — no git
- * (03-api-design.md, `executeCut`; landing semantics per change-proposal-1):
+ * Lands the staged tree into `topics/<slug>/` via fs writes only, no git. The
+ * landing semantics:
  *
  * - Refuses a non-passing GateResult (`GateNotPassedError`), and a GateResult
  *   produced for any directory other than the staged tree being landed.
@@ -160,7 +159,7 @@ export function executeCut(root: string, slug: string, gateResult: GateResult): 
 
     if (rel === 'article.md') {
       // Normalize the landed live article to status: current — in-research never
-      // lands as published truth (change-proposal-1, rule a). Tolerant of a staged
+      // lands as published truth. Tolerant of a staged
       // article without a status field: full schema validation is the loaders' job.
       try {
         bytes = Buffer.from(replaceFrontmatterField(bytes.toString('utf8'), 'status', 'current'));

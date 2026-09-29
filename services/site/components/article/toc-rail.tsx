@@ -12,7 +12,7 @@ interface TocRailProps {
 const DESKTOP_QUERY = '(min-width: 1280px)';
 
 /**
- * `/[topic]/`'s TOC rail (01-ui-design.md): h2/h3 outline only, sticky at
+ * `/[topic]/`'s TOC rail: h2/h3 outline only, sticky at
  * >= 1280px, an in-page <details>/<summary> outline below that (Shell zone
  * rule). The <details>/<summary> markup is used at every width — CSS alone
  * decides whether it renders as the sticky rail or the collapsed outline —

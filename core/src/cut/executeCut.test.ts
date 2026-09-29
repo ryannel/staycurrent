@@ -25,10 +25,8 @@ const EXPECTED_FOUNDING_PATHS = (slug: string): string[] =>
     `topics/${slug}/article.md`,
     `topics/${slug}/changelog.md`,
     `topics/${slug}/research-log.md`,
-    `topics/${slug}/skill/SKILL.md`,
     `topics/${slug}/versions/v1/article.md`,
     `topics/${slug}/versions/v1/provenance.md`,
-    `topics/${slug}/versions/v1/skill/SKILL.md`,
   ].sort();
 
 describe('executeCut', () => {

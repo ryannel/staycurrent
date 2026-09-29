@@ -9,7 +9,7 @@ const MULTI_VERSION_ROWS: VersionHistoryEntry[] = [
 ];
 
 describe('VersionHistoryTable', () => {
-  it("renders the current row's chip as .badge, labelled current, linking skill straight to /[topic]/skill/", () => {
+  it("renders the current row's chip as .badge, labelled current, linking to /[topic]/v/[n]/", () => {
     render(<VersionHistoryTable slug="databases" currentVersion={2} rows={MULTI_VERSION_ROWS} />);
 
     const currentChip = screen.getByRole('link', { name: 'v2' });
@@ -19,24 +19,25 @@ describe('VersionHistoryTable', () => {
 
     const row = currentChip.closest('tr')!;
     expect(row.textContent).toContain('current');
-
-    const skillLink = screen.getByRole('link', { name: 'skill →' });
-    expect(skillLink.getAttribute('href')).toContain('/databases/skill');
   });
 
-  it('renders a superseded row as .badge-superseded, labelled archived, with the honesty-copy skill link and the archived-payload link', () => {
+  it('renders a superseded row as .badge-superseded, labelled archived, linking to its /[topic]/v/[n]/ snapshot', () => {
     render(<VersionHistoryTable slug="databases" currentVersion={2} rows={MULTI_VERSION_ROWS} />);
 
     const supersededChip = screen.getByRole('link', { name: 'v1' });
     expect(supersededChip).toHaveClass('badge-superseded');
+    expect(supersededChip.getAttribute('href')).toContain('/databases/v/1');
 
     const row = supersededChip.closest('tr')!;
     expect(row.textContent).toContain('archived');
-    expect(row.textContent).toContain('renders v1');
-    expect(row.textContent).toContain('install current');
+  });
 
-    const archivedLink = screen.getByRole('link', { name: /archived payload/ });
-    expect(archivedLink.getAttribute('href')).toBe('/skills/databases/v/1/');
+  it('renders exactly three columns — Version, Cut, Stance — and one link per row (the version chip)', () => {
+    render(<VersionHistoryTable slug="databases" currentVersion={2} rows={MULTI_VERSION_ROWS} />);
+
+    const headers = screen.getAllByRole('columnheader').map((th) => th.textContent);
+    expect(headers).toEqual(['Version', 'Cut', 'Stance']);
+    expect(screen.getAllByRole('link')).toHaveLength(2);
   });
 
   it('renders the stance value for a bent/held/reversed row and a dash for the founding v1 row (no predecessor)', () => {

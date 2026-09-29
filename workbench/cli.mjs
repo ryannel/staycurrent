@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-// workbench/cli.mjs — the operator's real front door onto the milestone's
-// capabilities (03-api-design.md, "workbench/cli.mjs — command contract";
-// 01-ui-design.md, "Surface: workbench"; crash-window amendments per
-// change-proposal-1's Addendum). Plain Node ESM, no framework: argument parsing,
+// workbench/cli.mjs — the operator's front door onto the system: the seven
+// commands of the command contract, the workbench surface's output shapes, and
+// the crash-window re-entry rules. Plain Node ESM, no framework: argument parsing,
 // the `.staycurrent/sessions/` lifecycle, output formatting, and the two git
 // commits this system ever makes (`cut(<slug>): v<N>`, `log(<slug>): no-cut`).
 // Only content-core functions mutate `topics/`; this file never writes there
@@ -47,18 +46,18 @@ function todayIso() {
 
 /** A malformed invocation — wrong flags, missing values, stray positionals.
  * Caught by the dispatcher: one stderr line, exit 2. No misparse ever reaches a
- * core call or a commit (change-proposal-1 Addendum review patch). */
+ * core call or a commit. */
 class UsageError extends Error {}
 
-/** Plain one-liner usage/state error (exit 2 by default) — 03-api-design.md:
- * "Missing or malformed arguments exit 2 for every command." */
+/** Plain one-liner usage/state error (exit 2 by default) — per the command
+ * contract, missing or malformed arguments exit 2 for every command. */
 function usageError(message, code = 2) {
   errLine(message);
   process.exitCode = code;
 }
 
-/** Serialized typed-error shape for --json failure output (amended 03:
- * `{ error: 'ContentValidationError', topic, file, issues }`). */
+/** Serialized typed-error shape for --json failure output:
+ * `{ error: 'ContentValidationError', topic, file, issues }`. */
 function serializeError(e) {
   if (e instanceof core.ContentValidationError) {
     return { error: 'ContentValidationError', topic: e.topic, file: e.file, issues: e.issues };
@@ -70,8 +69,8 @@ function serializeError(e) {
 }
 
 // ---------------------------------------------------------------------------
-// Argument parsing — seven fixed commands, hand-rolled (slice scope: "plain Node
-// ESM, no dependencies beyond node builtins + core"). A flag value that is
+// Argument parsing — seven fixed commands, hand-rolled: plain Node ESM, no
+// dependencies beyond node builtins + core. A flag value that is
 // missing or itself flag-shaped is a UsageError, never a silent misparse.
 // ---------------------------------------------------------------------------
 
@@ -121,7 +120,7 @@ function cmdStatus(args) {
   expectPositionals(args, 0, 'status [--json]');
 
   // The CLI probes `.staycurrent/sessions/` itself and supplies the facts —
-  // core never reads that path (03-api-design.md, `reconcile`). Reconciliation
+  // core never reads that path (`reconcile` takes the facts as input). Reconciliation
   // runs per-slug so one malformed topic aborts only its own reconcile, never
   // the sweep: its `malformed <slug>: …` line comes from listTopics' errors and
   // every valid row still prints (one broken directory never blinds the
@@ -153,7 +152,7 @@ function cmdStatus(args) {
     } else {
       for (const line of renderStateBlock(sweep.topics)) out(line);
     }
-    // An in-flight founding run is never invisible (amended 01): one line per
+    // An in-flight founding run is never invisible: one line per
     // quarantine-only slug, after the state block (or alone when no topics exist).
     for (const d of drafts) {
       const parts = [d.staged ? 'staged' : null, d.session ? 'session open' : null].filter(Boolean);
@@ -168,7 +167,7 @@ function cmdStatus(args) {
 /** Founding drafts: slugs living only in the quarantine — a staged tree and/or
  * session file with no `topics/<slug>/` entry. `listTopics` sweeps `topics/`
  * only, so without this probe a staged-only founding run would be invisible in
- * `status` (amended 01, "Founding draft in flight"). */
+ * `status`. */
 function listFoundingDrafts() {
   const topicsSet = new Set(listTopicDirSlugs(root));
   const slugs = new Set();
@@ -227,7 +226,7 @@ function cmdCreate(args) {
     throw e;
   }
 
-  // Session-file creation is CLI-layer (03-api-design.md, `create`): against_version
+  // Session-file creation is CLI-layer (core's `create` never writes it): against_version
   // is 0 for a founding run — no published version exists yet to research against.
   writeSessionFile(root, slug, { phase: 'researching', opened: todayIso(), againstVersion: 0 });
 
@@ -246,9 +245,9 @@ function cmdCreate(args) {
 // convene <slug>
 // ---------------------------------------------------------------------------
 
-/** The one pointer an existing run ever gets (03's convene Guard; 01's rule is
- * normative): name the session file and the two real options — never "resume"
- * as if it were a CLI verb. */
+/** The one pointer an existing run ever gets (the convene guard): name the
+ * session file and the two real options — never "resume" as if it were a CLI
+ * verb. */
 function sessionPointer(slug) {
   return (
     `a session already exists at .staycurrent/sessions/${slug}.md — ` +
@@ -262,7 +261,7 @@ function cmdConvene(args) {
   const slug = args[0];
   if (!isValidSlugShape(slug)) return usageError(`'${slug}' is not a valid slug`);
 
-  // Guard (amended 03): an existing session file refuses the convene regardless
+  // Guard: an existing session file refuses the convene regardless
   // of the frontmatter status — an existing session is discarded or continued,
   // never silently restarted. Core's already-in-research check is the second,
   // independent guard.
@@ -361,7 +360,7 @@ function cmdCut(args) {
   const commitMessage = (n) => `cut(${slug}): v${n}`;
 
   const finishSuccess = (report) => {
-    // Sibling crash window (change-proposal-1 Addendum): when the landing is
+    // Sibling crash window: when the landing is
     // already committed (commit landed, cleanup lost) there is nothing to
     // commit — skip the commit and fall through to cleanup, rather than dying
     // on git's nothing-to-commit error. Both re-entry halves now recover.
@@ -374,14 +373,14 @@ function cmdCut(args) {
     if (json) {
       outJson(report);
     } else {
-      out(`Cut v${report.version} — article, skill, changelog entry, provenance; RSS follows at site build.`);
+      out(`Cut v${report.version} — article, changelog entry, provenance; RSS follows at site build.`);
       for (const p of report.paths) out(p);
       out(commitMessage(report.version));
     }
     process.exitCode = 0;
   };
 
-  // Only `cut` renders the halt template (03-api-design.md, binding rules). `cause`
+  // Only `cut` renders the halt template (a binding rule of the contract). `cause`
   // and any `extraFailures` are built directly from GateFailure's `check` +
   // `message`, never a paraphrase — the same rule `gate`'s FAIL lines follow.
   // The Action line never points at nothing (experience audit): with more than
@@ -418,7 +417,7 @@ function cmdCut(args) {
     }
 
     if (topicsPresent && treesByteIdentical(staged, topics)) {
-      // Converged re-entry (03-api-design.md, `cut` Behaviour): a crash landed the
+      // Converged re-entry: a crash landed the
       // fs sync but the git commit was lost. Skip executeCut — its monotonicity
       // check would rightly refuse a same-version landing — and go straight to
       // the commit + cleanup (finishSuccess also covers the other crash half,
@@ -440,7 +439,7 @@ function cmdCut(args) {
       if (e instanceof core.ContentValidationError) {
         // Zero-authoring cut: gate passed but the staged version does not exceed
         // the live version. `topics/` was never touched — executeCut throws before
-        // its first write. --json prints the serialized typed error (amended 03).
+        // its first write. --json prints the serialized typed error.
         failHalt(
           {
             blocked: `cut ${slug} would not advance the version.`,
@@ -463,7 +462,7 @@ function cmdCut(args) {
   if (gateResult.ok) {
     const n = readArticleVersion(path.join(topics, 'article.md'));
     if (json) {
-      // The degenerate CutReport (amended 03): nothing written, nothing removed.
+      // The degenerate CutReport: nothing written, nothing removed.
       outJson({ topic: slug, version: n, paths: [], removed: [] });
     } else {
       out(`Nothing to cut — v${n} is complete.`);
@@ -500,8 +499,8 @@ function cmdLog(args) {
   const slug = args[0];
   if (!isValidSlugShape(slug)) return usageError(`'${slug}' is not a valid slug`);
 
-  // Checked by the CLI before any core call — it owns the session files
-  // (03-api-design.md, `log` Exit codes).
+  // Checked by the CLI before any core call — it owns the session files, and
+  // the contract's `log` exit codes make this a usage error (2).
   if (!sessionFileExists(root, slug)) {
     return usageError(`no open session for '${slug}'`);
   }
@@ -519,7 +518,7 @@ function cmdLog(args) {
     process.exitCode = 0;
   };
 
-  // Converged re-entry (amended 03): a crash between recordNoCut's filesystem
+  // Converged re-entry: a crash between recordNoCut's filesystem
   // writes and the git commit leaves the resolution applied but uncommitted —
   // status already `current`, the session file still present, uncommitted
   // changes under topics/<slug>/. Skip recordNoCut (it would rightly refuse a
@@ -593,11 +592,10 @@ function cmdDiscard(args) {
     }
   }
   // A staged-only founding draft (no topics/ entry) skips the core call entirely
-  // — there is no stamp to revert (03-api-design.md, `discard` Design rationale).
+  // — there is no stamp to revert.
 
   // Exit 2 only when none of the three exist: no session file, no in-research
-  // stamp, and no staged tree (amended 03 — an orphaned staged tree is
-  // discardable).
+  // stamp, and no staged tree (an orphaned staged tree is discardable).
   if (!sessionExisted && !stagedExisted && !reverted) {
     return usageError(`nothing to discard for '${slug}'`);
   }
@@ -616,7 +614,7 @@ function cmdDiscard(args) {
     out(`Discarded founding draft for ${slug} — staged tree and session removed. Nothing published existed.`);
   } else {
     // A published topic whose status was already current: never claim a revert
-    // that did not happen (change-proposal-1 Addendum review).
+    // that did not happen.
     out(`Discarded session for ${slug} — nothing published changed.`);
   }
   process.exitCode = 0;

@@ -8,7 +8,7 @@ import { renderMarkdown } from '../render/renderMarkdown.js';
 import { readMatterFile } from './shared.js';
 
 /**
- * Loads one topic's full live state (03-api-design.md, `loadTopic`).
+ * Loads one topic's full live state.
  *
  * Throw contract: `ContentNotFoundError` is reserved strictly for a missing
  * `topics/<slug>/` directory. A directory that exists but has no `article.md`,

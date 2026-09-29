@@ -1,4 +1,4 @@
-"""Page object for the designed 404 — Not Found (01-ui-design.md).
+"""Page object for the designed 404 — Not Found.
 
 "The dead end contains the map" (Error & honesty choreography) — every
 unmatched route under the static export lands here, the inline topic tree

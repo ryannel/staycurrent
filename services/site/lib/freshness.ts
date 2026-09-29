@@ -36,8 +36,8 @@ export function isFresh(cutDate: string, now: Date = new Date()): boolean {
 }
 
 /**
- * One topic's cut date, as `summarizeCatalogueFreshness` needs it
- * (03-api-design.md). `cutDate` is always the CURRENT version's cut — from
+ * One topic's cut date, as `summarizeCatalogueFreshness` needs it.
+ * `cutDate` is always the CURRENT version's cut — from
  * `lib/content.ts`'s `getTopicCutDate` — never `last_researched`, for the
  * same reason `isFresh` above keys on it.
  */
@@ -55,7 +55,7 @@ export interface CatalogueFreshness {
 
 /**
  * Turns a list of per-topic cut dates into the Catalogue Freshness Rollup's
- * three numbers (03-api-design.md, `summarizeCatalogueFreshness`) — total
+ * three numbers — total
  * count, how many are inside the freshness window, and which one cut most
  * recently. Pure date math, no `@staycurrent/core` call, consistent with
  * every other function in this module.

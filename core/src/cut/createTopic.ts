@@ -11,23 +11,8 @@ const FOUNDING_BODY_STUB = 'Content pending — authored during the founding res
 const FOUNDING_CHANGELOG_STUB =
   'The founding note: initial stance and what this topic covers — pending the founding research run.';
 
-function buildSkillMd(slug: string, articleVersion: number): string {
-  return (
-    '---\n' +
-    `name: ${slug}\n` +
-    'description: >\n' +
-    '  Routing triggers pending — authored during the founding research run.\n' +
-    `article_version: ${articleVersion}\n` +
-    '---\n\n' +
-    `# ${slug} Skill\n\n` +
-    'Stance callout pending — mirrors the article once authored.\n'
-  );
-}
-
 /** Writes the complete founding skeleton into `dir` (a temp dir, renamed into place after). */
 function writeFoundingSkeleton(dir: string, slug: string, title: string, today: string): void {
-  const skillMd = buildSkillMd(slug, 1);
-
   writeMatterFile(
     path.join(dir, 'article.md'),
     {
@@ -48,39 +33,32 @@ function writeFoundingSkeleton(dir: string, slug: string, title: string, today: 
   );
   fs.writeFileSync(path.join(dir, 'research-log.md'), `# ${title} — Research Log\n\n`);
 
-  fs.mkdirSync(path.join(dir, 'skill', 'references'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'skill', 'SKILL.md'), skillMd);
-
   writeMatterFile(
     path.join(dir, 'versions', 'v1', 'article.md'),
     { version: 1, cut: today },
     `# ${title}\n\n${FOUNDING_BODY_STUB}\n`
   );
-  fs.mkdirSync(path.join(dir, 'versions', 'v1', 'skill', 'references'), { recursive: true });
-  // Byte-identical to the live skill/SKILL.md — the freshly seeded skeleton must
-  // not itself trip gate check 5 (skill-byte-identical).
-  fs.writeFileSync(path.join(dir, 'versions', 'v1', 'skill', 'SKILL.md'), skillMd);
   fs.writeFileSync(path.join(dir, 'versions', 'v1', 'provenance.md'), '## Sources\n\n## Synthesis\n\n');
 }
 
 /**
  * Seeds `.staycurrent/staged/<slug>/` with the founding topic skeleton, so the
- * founding v1 goes through the same `cut` gate as any later version
- * (03-api-design.md, `createTopic`). The skeleton is the complete gate-shaped tree,
- * stub content throughout — it deliberately fails `runPublishGate` (empty
- * provenance, check 6, at minimum) so `gate <slug>` doubles as the founding run's
+ * founding v1 goes through the same `cut` gate as any later version. The
+ * skeleton is the complete gate-shaped tree, stub content throughout — it
+ * deliberately fails `runPublishGate` (empty provenance, check 4, at minimum) so
+ * `gate <slug>` doubles as the founding run's
  * TODO list from the first minute.
  *
  * Seeding is atomic: the skeleton is built in a temp sibling and renamed into
  * place, so a crash mid-seed never leaves a partial staged tree that blocks a
- * retry (change-proposal-1 review patch).
+ * retry.
  */
 export function createTopic(root: string, slug: string, opts: CreateTopicOptions): StagedCut {
   assertValidSlug(slug);
 
   // createTopic is the one producer of `title` values — it must not seed what
   // `validateTopicFrontmatter` (the loaders' shared validator) rejects. Mirrors
-  // that validator's own message verbatim (change-proposal-6 addendum) and
+  // that validator's own message verbatim and
   // throws before any fs write, exactly like the slug guard above.
   if (isBlankField(opts.title)) {
     throw new ContentValidationError(slug, 'title', ["field 'title' must not be empty or whitespace-only"]);

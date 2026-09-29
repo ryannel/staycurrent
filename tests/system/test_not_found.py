@@ -1,14 +1,10 @@
-"""404 — Not Found interface tests (01-ui-design.md) — Slice 2.3
-(library-about-404, bet first-living-topic).
+"""404 — Not Found interface tests.
 
-The bet-progress suite already proved navigation lands on the designed 404
-for an unmatched route and for a Milestone-3 face link
-(tests/bets/first-living-topic/test_slice_9_site_library-about-404.py,
-archived at bet close); these permanent tests pin the same contract via the
-page object plus the accessibility sweep the generic routes.json gates can't
-cover — a 404 path can't sit in routes.json because render-smoke asserts
-every swept route responds < 400 (a 404 response would fail that gate for
-every OTHER route too).
+These tests pin the designed-404 contract via the page object plus the
+accessibility sweep the generic routes.json gates can't cover — a 404 path
+can't sit in routes.json because render-smoke asserts every swept route
+responds < 400 (a 404 response would fail that gate for every OTHER route
+too).
 """
 
 import warnings
@@ -29,15 +25,12 @@ def test_unmatched_route_reaches_the_designed_404(cluster, site_page: Page, surf
 
 
 def test_face_shaped_miss_reaches_the_designed_404(cluster, site_page: Page, surfaces):
-    """Slice 3.3 (distribution) landed the last mid-ladder face — `skill` —
-    as a real route (see
-    tests/bets/first-living-topic/test_slice_12_site_distribution.py), so
-    every face the sidebar's topic-tree lists (article/changelog/history/
-    skill) is now real. `/databases/research-log/` is a plausible-looking
-    topic sub-path with real backing content (`research-log.md` exists) but
-    no route ever built for it in this bet's decomposition — a permanently
-    mid-ladder path, keeping the designed-404 class pinned to something this
-    static export genuinely never generates."""
+    """Every face the sidebar's topic-tree lists (article/changelog/history)
+    is a real route. `/databases/research-log/` is a plausible-looking topic
+    sub-path with real backing content (`research-log.md` exists) but no
+    route is ever built for it — a permanently mid-ladder path, keeping the
+    designed-404 class pinned to something this static export genuinely
+    never generates."""
     not_found = NotFoundPage(site_page, surfaces["site"]["reach"])
     not_found.goto("/databases/research-log/").expect_designed_dead_end()
 

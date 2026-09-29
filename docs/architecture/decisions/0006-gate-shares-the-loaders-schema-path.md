@@ -19,19 +19,18 @@ last_reviewed: 2026-07-14
 
 [ADR 0003](0003-single-fail-closed-publish-gate.md) established one fail-closed
 publish gate inside content-core. As first built, that gate checked **artifact
-integrity** — snapshot completeness, version agreement, byte-identical skill,
+integrity** — snapshot completeness, version agreement,
 provenance presence, slug/cadence/date shape — but not the **content schema** the
 site build's loaders enforce at render time. The two validated different things.
 
-The founding bet surfaced the cost twice, empirically. A staged `article.md` with
+The first topic's early cuts surfaced the cost twice, empirically. A staged `article.md` with
 a blank `stance`, and later a staged `changelog.md` whose `**Stance:**` line was
 bullet-prefixed, both **passed the gate**, `cut` committed them — and then the
 loaders (`loadTopic`, `loadChangelog`) rejected the committed files, breaking the
 site build *after* the run had closed and its staged tree was gone. Fail-closed,
 but in the wrong place: after landing, with no sanctioned repair (the operator
 never hand-edits `topics/`), and directly against the loop's zero-hand-edits
-premise. The same defect appeared in two different stores (change-proposals 6 and
-7) — a recurrence, not a one-off — which is what promoted the fix from a patch to
+premise. The same defect appeared in two different stores — a recurrence, not a one-off — which is what promoted the fix from a patch to
 a recorded stance.
 
 ## Decision
@@ -77,7 +76,7 @@ incomplete and returns for review.
 
 - **Leave the gate at artifact integrity; let the build fail on bad schema.**
   Rejected: it fails after the commit lands, against the zero-hand-edits premise,
-  with no clean repair path — the exact failure the founding bet reproduced twice.
+  with no clean repair path — the exact failure those early cuts reproduced twice.
 - **Re-implement the schema checks in the gate independently.** Rejected: two
   definitions of "valid" drift, which is the precise class of bug ADR 0003 exists
   to prevent; the gate would pass content the loader rejects, or vice versa.

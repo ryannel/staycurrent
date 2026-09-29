@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 };
 
 /**
- * `/about/` — About (01-ui-design.md). The one place a curious reader learns
+ * `/about/` — About. The one place a curious reader learns
  * how a living article works — static prose, no data dependency, identical
  * on every build (Onboarding spec: no tours or tooltips exist anywhere else).
  *

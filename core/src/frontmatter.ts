@@ -10,9 +10,8 @@ export interface FieldValidation<T> {
 const CADENCE_RE = /^[1-9]\d*d$/;
 const STATUS_VALUES = new Set(['current', 'in-research']);
 
-// databases-catalogue bet additive fields (04-data-design.md, "The additive
-// frontmatter schema"). `register`'s closed set and `axes`' eight recognized
-// keys are the only two extraction rules with a fixed vocabulary.
+// The additive frontmatter fields. `register`'s closed set and `axes`' eight
+// recognized keys are the only two extraction rules with a fixed vocabulary.
 const TOPIC_REGISTER_VALUES = new Set<TopicRegister>(['foundation', 'profile', 'hub']);
 const PROFILE_AXES_KEYS = [
   'consistency_model',
@@ -42,10 +41,8 @@ export function isBlankField(value: string): boolean {
   return value.replace(ZERO_WIDTH_RE, '').trim() === '';
 }
 
-// --- databases-catalogue bet: additive display fields (04-data-design.md,
-// "The additive frontmatter schema"; extraction rule per field in
-// 03-api-design.md's `validateTopicFrontmatter` entry). Every one of these is
-// extracted-if-valid-else-absent and never raises an issue — a malformed or
+// --- Additive display fields (the additive frontmatter schema). Every one of
+// these is extracted-if-valid-else-absent and never raises an issue — a malformed or
 // missing additive key degrades to `undefined`, never a validation failure. ---
 
 function extractArea(data: Record<string, unknown>): string | undefined {
@@ -95,9 +92,9 @@ function extractAxes(data: Record<string, unknown>): ProfileAxes | undefined {
 }
 
 /**
- * Validates a topic's live `article.md` frontmatter against the schema
- * `04-data-design.md` fixes for `topics/<slug>/article.md`, and the `topic ===
- * slug` reconciliation check `03-api-design.md`'s `loadTopic` names.
+ * Validates a topic's live `article.md` frontmatter against the schema fixed
+ * for `topics/<slug>/article.md`, including the `topic === slug` reconciliation
+ * check `loadTopic` relies on.
  */
 export function validateTopicFrontmatter(
   data: Record<string, unknown>,
@@ -156,7 +153,7 @@ export function validateTopicFrontmatter(
 
   if (issues.length > 0) return { issues };
 
-  // Additive display fields (databases-catalogue bet) — computed only once the
+  // Additive display fields — computed only once the
   // seven required fields are known-good; none of the seven below can ever add
   // to `issues`, so they are safe to extract unconditionally from here on.
   const area = extractArea(data);
@@ -192,8 +189,8 @@ const VERSION_SNAPSHOT_FIELDS = new Set(['version', 'cut']);
 
 /**
  * Validates a frozen `versions/vN/article.md` frontmatter: exactly `version` and
- * `cut` — any other key (`status` included) is rejected (`03-api-design.md`'s
- * `loadVersion` Errors; `04-data-design.md`'s Version Snapshot Frontmatter).
+ * `cut` — any other key (`status` included) is rejected, as `loadVersion`'s
+ * throw contract requires.
  */
 export function validateVersionFrontmatter(
   data: Record<string, unknown>

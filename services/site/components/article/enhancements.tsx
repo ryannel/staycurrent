@@ -54,9 +54,8 @@ function enhanceCodeBlocks(): () => void {
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const onClick = () => {
-      // Only confirm on an actual successful write — ported from
-      // `components/skill/install-block.tsx`'s identical gate: a browser/
-      // context lacking the Clipboard API (or a write the platform rejects)
+      // Only confirm on an actual successful write: a browser/context
+      // lacking the Clipboard API (or a write the platform rejects)
       // must not report a confirmation it didn't deliver. `?.` short-
       // circuits the ENTIRE chain (including the trailing `.then`) to
       // `undefined` when `navigator.clipboard` itself is absent, so this
@@ -183,7 +182,7 @@ function describeDiagramFigure(figure: HTMLElement): string {
  * every theme flip (below) means these reads naturally track the active
  * palette; no separate light/dark branch is needed here.
  *
- * The reserved `min-height: 320px` slice 2.1 already stamped onto the
+ * The reserved `min-height: 320px` `renderMarkdown` stamps onto the
  * container absorbs the initial layout; a successful render may still extend
  * beyond it (diagram growth beyond the reservation is accepted — see
  * `lib/content.ts`), so a real render can grow the page without ever

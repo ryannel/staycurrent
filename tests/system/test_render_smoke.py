@@ -20,9 +20,9 @@ import pathlib
 
 
 def _load_routes() -> tuple[str, ...]:
-    """Route inventory — the screens the route-driven gates sweep. A bet declares
-    the routes it touched in tests/system/routes.json (a JSON array of paths);
-    absent that file, the gate covers the app root."""
+    """Route inventory — the screens the route-driven gates sweep, declared in
+    tests/system/routes.json (a JSON array of paths); absent that file, the
+    gate covers the app root."""
     manifest = pathlib.Path(__file__).parent / "routes.json"
     if manifest.exists():
         try:
@@ -39,7 +39,9 @@ VIEWPORTS = {"mobile": (375, 812), "desktop": (1280, 800)}
 THEMES = ("light", "dark")
 ROUTES = _load_routes()
 _MIN_DOM_NODES = 8
-_VISUAL_DIR = pathlib.Path(".groundwork/cache/visual/_smoke")
+# tests/.cache/ is a gitignored local cache — screenshots land there whatever
+# the working directory pytest was launched from.
+_VISUAL_DIR = pathlib.Path(__file__).resolve().parents[1] / ".cache" / "visual" / "_smoke"
 
 
 def _render_smoke(page: Page, surface_slug: str) -> None:

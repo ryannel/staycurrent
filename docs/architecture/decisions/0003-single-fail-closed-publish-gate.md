@@ -18,9 +18,8 @@ last_reviewed: 2026-07-09
 
 ## Context
 
-A version cut has to validate against a fixed set of mechanical checks (five-artifact
-completeness, version and `article_version` agreement, byte-identical skill directories,
-non-empty provenance) both when the workbench proposes it and again before CI deploys it.
+A version cut has to validate against a fixed set of mechanical checks (snapshot
+completeness, version agreement, non-empty provenance) both when the workbench proposes it and again before CI deploys it.
 The product brief rules out a human approval queue after the mechanical check, naming
 auditability — every published artifact is a git commit with a mechanical gate check in
 its history — as the compensating control instead. The choice was where the gate logic

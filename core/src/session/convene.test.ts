@@ -29,8 +29,8 @@ describe('convene', () => {
 
     const result = convene(root, 'databases');
 
-    // change-proposal-1: the tree that may later land as published truth never
-    // carries the in-research stamp.
+    // The tree that may later land as published truth never carries the
+    // in-research stamp.
     const stagedRaw = fs.readFileSync(path.join(result.stagedDir, 'article.md'), 'utf8');
     expect(stagedRaw).toMatch(/^status: current$/m);
     expect(stagedRaw).not.toMatch(/in-research/);

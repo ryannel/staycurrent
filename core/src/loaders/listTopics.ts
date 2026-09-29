@@ -7,7 +7,7 @@ import { validateTopicFrontmatter } from '../frontmatter.js';
 import { readMatterFile } from './shared.js';
 
 /**
- * The frontmatter sweep (03-api-design.md, `listTopics`): every catalogue
+ * The frontmatter sweep: every catalogue
  * question answers from this one call. Never throws for a malformed topic or a
  * zero-topic root — both are reported, not exceptional.
  */

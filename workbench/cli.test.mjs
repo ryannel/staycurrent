@@ -1,16 +1,13 @@
-// Permanent best-practice coverage for workbench/cli.mjs (bet first-living-topic,
-// slice 1.4). Run with: `node --test workbench/cli.test.mjs`.
+// Permanent coverage for workbench/cli.mjs. Run with:
+// `node --test workbench/cli.test.mjs`.
 //
 // This is a black-box, perimeter-level suite: it drives the real CLI process
-// against a throwaway tmp git repo fixture, exactly as an operator (or the bet-
-// progress test, tests/bets/first-living-topic/test_slice_4_workbench_workbench-cli.py)
-// would — no stub of the CLI, no mock of core. Where the bet-progress test only
-// exercises the read-only/quarantine-only commands against the real repository
-// (create, gate, discard, status), this suite exercises the FULL seven-command
+// against a throwaway tmp git repo fixture, exactly as an operator would — no
+// stub of the CLI, no mock of core. It exercises the FULL seven-command
 // lifecycle, including the two git-committing commands (cut, log) and the
 // trickiest state-machine branches (converged re-entry, non-advancing version,
-// gate failure at cut time) — the coverage this slice's Proof of work names but
-// the bet-progress test deliberately avoids running against the real repo.
+// gate failure at cut time) — coverage that must never run against the real
+// repository, hence the throwaway fixture.
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -65,9 +62,9 @@ function authorMinimalV1(slug) {
 }
 
 /** Authors a full vN bump into an already-seeded staged tree (stageCut/convene
- * copies the prior version forward) — article version, a changelog entry, a new
- * versions/vN/ snapshot, and a live skill/ byte-identical to versions/vN/skill/,
- * so the resulting staged tree clears every publish-gate check at N. */
+ * copies the prior version forward) — article version, a changelog entry, and a
+ * new versions/vN/ snapshot (article + provenance), so the resulting staged tree
+ * clears every publish-gate check at N. */
 function authorNextVersion(slug, n) {
   const dir = stagedDir(slug);
   const today = '2026-01-01';
@@ -88,23 +85,12 @@ function authorNextVersion(slug, n) {
   fs.writeFileSync(changelogPath, `${h1}\n\n${entry}\n${rest}`);
 
   const vDir = path.join(dir, 'versions', `v${n}`);
-  fs.mkdirSync(path.join(vDir, 'skill', 'references'), { recursive: true });
+  fs.mkdirSync(vDir, { recursive: true });
   fs.writeFileSync(path.join(vDir, 'article.md'), `---\nversion: ${n}\ncut: ${today}\n---\n\n# Databases\n\nContent authored for v${n}.\n`);
   fs.writeFileSync(
     path.join(vDir, 'provenance.md'),
     `## Sources\n\n- [Example](https://example.com) — accessed ${today} — supports: v${n} claim\n\n## Synthesis\n\n`
   );
-
-  const skillMd =
-    '---\n' +
-    `name: ${slug}\n` +
-    'description: >\n' +
-    '  Use when evaluating this fixture topic for cli lifecycle testing.\n' +
-    `article_version: ${n}\n` +
-    '---\n\n' +
-    `# ${slug} Skill\n\nStance callout mirrored from the article.\n`;
-  fs.writeFileSync(path.join(vDir, 'skill', 'SKILL.md'), skillMd);
-  fs.writeFileSync(path.join(dir, 'skill', 'SKILL.md'), skillMd); // live skill must stay byte-identical
 }
 
 before(() => {
@@ -192,7 +178,7 @@ test('gate on the freshly seeded skeleton reports FAIL lines and exits 1', () =>
   assert.ok(lines.length > 0);
   for (const line of lines) assert.match(line, /^FAIL [a-z-]+: .+$/);
   // The founding skeleton's empty provenance is the one artifact create.ts
-  // deliberately leaves unauthored (03-api-design.md, createTopic rationale).
+  // deliberately leaves unauthored: sources are the one thing a skeleton cannot invent.
   assert.ok(lines.some((l) => l.startsWith('FAIL provenance-non-empty:')));
 });
 
@@ -206,7 +192,7 @@ test('gate passes once the minimal artifact is authored', () => {
 test('cut lands v1, commits exactly once, and cleans up the quarantine', () => {
   const r = run(['cut', SLUG]);
   assert.equal(r.status, 0);
-  assert.match(r.stdout, /^Cut v1 — article, skill, changelog entry, provenance; RSS follows at site build\.$/m);
+  assert.match(r.stdout, /^Cut v1 — article, changelog entry, provenance; RSS follows at site build\.$/m);
   assert.match(r.stdout, /^cut\(databases\): v1$/m);
 
   assert.deepEqual(gitLogMessages(), ['cut(databases): v1']);
@@ -254,7 +240,7 @@ test('convening an already-open run exits 2 without disturbing the open session'
   const r = run(['convene', SLUG]);
   assert.equal(r.status, 2);
   // The refusal names the session file and the real options — never "resume"
-  // as if it were a CLI verb (amended 03, convene Guard).
+  // as if it were a CLI verb (the convene guard).
   assert.ok(r.stderr.includes(`.staycurrent/sessions/${SLUG}.md`), 'the refusal must name the session file');
   assert.ok(r.stderr.includes(`discard it (discard ${SLUG})`), 'the refusal must point at discard');
   assert.ok(!/\bresume\b/i.test(r.stderr), 'the refusal must not offer "resume" as a verb');
@@ -377,7 +363,7 @@ test('cut lands v2 after authoring, then converged re-entry recovers a lost comm
 
   const r2 = run(['cut', SLUG]);
   assert.equal(r2.status, 0);
-  assert.match(r2.stdout, /^Cut v2 — article, skill, changelog entry, provenance; RSS follows at site build\.$/m);
+  assert.match(r2.stdout, /^Cut v2 — article, changelog entry, provenance; RSS follows at site build\.$/m);
   assert.match(r2.stdout, /^cut\(databases\): v2$/m);
   assert.deepEqual(gitLogMessages(), beforeReset, 'converged re-entry must recover exactly the lost commit');
   assert.ok(!fs.existsSync(stagedDir(SLUG)), 'converged re-entry must still clean up the staged tree');
@@ -432,7 +418,7 @@ test('flag parser rejects missing values, flag-shaped values, and stray position
 });
 
 // ---------------------------------------------------------------------------
-// The remaining `cut`/`log` state-machine arms (amended contract)
+// The remaining `cut`/`log` state-machine arms
 // ---------------------------------------------------------------------------
 
 test('cut halts when the committed topic fails its own gate and nothing is staged', () => {
@@ -474,7 +460,7 @@ test('log converged re-entry recovers a resolution whose commit was lost', () =>
   const committed = gitLogMessages();
   assert.equal(committed[0], 'log(databases): no-cut');
 
-  // Simulate the crash window the amended 03 names: recordNoCut's fs writes
+  // Simulate the crash window `log`'s converged re-entry exists for: recordNoCut's fs writes
   // applied (status current, research-log entry present) but the commit lost —
   // reconstruct by rewinding HEAD while keeping the tree/index, and restoring
   // the session file the interrupted cleanup never deleted.
@@ -512,7 +498,7 @@ test('cut sibling crash window: commit landed, cleanup lost — re-entry cleans 
 
   const r = run(['cut', SLUG]);
   assert.equal(r.status, 0);
-  assert.match(r.stdout, /^Cut v3 — article, skill, changelog entry, provenance; RSS follows at site build\.$/m);
+  assert.match(r.stdout, /^Cut v3 — article, changelog entry, provenance; RSS follows at site build\.$/m);
   assert.deepEqual(gitLogMessages(), committed, 'the re-entry must not create a duplicate commit');
   assert.ok(!fs.existsSync(stagedDir(SLUG)), 're-entry must complete the lost staged-tree cleanup');
   assert.ok(!fs.existsSync(sessionFile(SLUG)), 're-entry must complete the lost session cleanup');
@@ -541,7 +527,7 @@ test('status reconciles an orphaned in-research stamp, and discard clears the le
   assert.match(readArticle(SLUG), /^status: current$/m);
 
   // The staged tree convene seeded survives the reconcile — an orphaned staged
-  // tree alone is now discardable (amended 03), and the success message must
+  // tree alone is discardable, and the success message must
   // not claim a status revert that never happened.
   assert.ok(fs.existsSync(stagedDir(SLUG)));
   const d = run(['discard', SLUG]);
@@ -566,7 +552,7 @@ test('status reports a malformed topic on exit 1 without blinding the catalogue'
 });
 
 // ---------------------------------------------------------------------------
-// Milestone-1 experience-audit findings
+// Experience-audit findings
 // ---------------------------------------------------------------------------
 
 test('wrong cwd: a directory with neither topics/ nor .staycurrent/ refuses every command', () => {

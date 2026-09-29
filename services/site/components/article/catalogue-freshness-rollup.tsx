@@ -8,12 +8,12 @@ export interface CatalogueFreshnessRollupProps {
 
 /**
  * The Catalogue Freshness Rollup — the hub page's instance of the
- * Instrumentation Strip pattern (docs/design-system.md § App Shell /
- * 01-ui-design.md, "The `/databases` Hub — Chooser and Map"). One aggregate
+ * Instrumentation Strip pattern (docs/design-system.md § App Shell). One
+ * aggregate
  * line: total count, fresh count, and the most-recently-cut topic — true
  * live values from `summarizeCatalogueFreshness`, never a hardcoded number,
- * so the band reads correctly at every wave boundary of the bet's rollout
- * without a code change (the Empty/interim state named in that view).
+ * so the band reads correctly as topics are added to the area without a
+ * code change.
  *
  * `app/[topic]/page.tsx` renders this only when the current topic's
  * `register === 'hub'` and its `area` resolves to a real `Catalogue` — this

@@ -6,9 +6,9 @@ flakiness cost, and it does nothing for a screen's *first* render — that is wh
 render-smoke, a11y, and geometry gates plus the agent's own inspection cover. Turn it
 on only once a surface is visually stable and worth pinning.
 
-Enable: set GROUNDWORK_VISUAL_REGRESSION=1. Baselines live in
-tests/system/visual-baselines/<surface>/<route>.png and are committed to the repo.
-Update protocol: review the diff, then re-run with GROUNDWORK_VISUAL_REGRESSION=update
+Enable: set STAYCURRENT_VISUAL_REGRESSION=1. Baselines live in the gitignored
+local cache at tests/.cache/visual/baselines/<surface>/<route>.png. Update
+protocol: review the diff, then re-run with STAYCURRENT_VISUAL_REGRESSION=update
 to overwrite the baseline deliberately — never auto-update in CI.
 
 Determinism note: when enabled the gate pins the viewport, disables animations, and
@@ -23,8 +23,8 @@ import pathlib
 import pytest
 from playwright.sync_api import Page
 
-_MODE = os.environ.get("GROUNDWORK_VISUAL_REGRESSION", "")
-_BASELINE_DIR = pathlib.Path("tests/system/visual-baselines")
+_MODE = os.environ.get("STAYCURRENT_VISUAL_REGRESSION", "")
+_BASELINE_DIR = pathlib.Path(__file__).resolve().parents[1] / ".cache" / "visual" / "baselines"
 # Fraction of differing pixels tolerated before a route is considered changed.
 _DIFF_THRESHOLD = 0.01
 DESKTOP = (1280, 800)
@@ -64,7 +64,7 @@ def _diff_fraction(a_bytes: bytes, b_bytes: bytes) -> float:
 
 def _visual_regression(page: Page, surface_slug: str, base_url: str | None) -> None:
     if not _MODE:
-        pytest.skip("visual regression is opt-in; set GROUNDWORK_VISUAL_REGRESSION=1")
+        pytest.skip("visual regression is opt-in; set STAYCURRENT_VISUAL_REGRESSION=1")
     try:
         import PIL  # noqa: F401
     except ImportError:
@@ -84,14 +84,14 @@ def _visual_regression(page: Page, surface_slug: str, base_url: str | None) -> N
             out_dir.mkdir(parents=True, exist_ok=True)
             baseline.write_bytes(shot)
             if _MODE != "update":
-                pytest.skip(f"no baseline for {surface_slug} {route}; wrote one — review and commit it")
+                pytest.skip(f"no baseline for {surface_slug} {route}; wrote one — review it before trusting the diff")
             continue
 
         frac = _diff_fraction(baseline.read_bytes(), shot)
         assert frac <= _DIFF_THRESHOLD, (
             f"{surface_slug} {route} changed visually: {frac:.1%} of pixels differ "
             f"from the baseline (threshold {_DIFF_THRESHOLD:.0%}). Review the change; "
-            f"re-run with GROUNDWORK_VISUAL_REGRESSION=update to accept it."
+            f"re-run with STAYCURRENT_VISUAL_REGRESSION=update to accept it."
         )
 
 

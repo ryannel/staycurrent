@@ -1,6 +1,6 @@
 // Path helpers shared by every command handler in cli.mjs. `root` is always the
-// process's cwd (03-api-design.md, command contract: "All commands resolve `root`
-// as the current working directory").
+// process's cwd — per the command contract, all commands resolve `root` as the
+// current working directory.
 
 import path from 'node:path';
 

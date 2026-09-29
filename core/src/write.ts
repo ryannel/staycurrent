@@ -1,8 +1,8 @@
 // Write-side helpers shared by Cut mechanics (`core/src/cut/`) and Session mechanics
 // (`core/src/session/`). The Loading API (`loaders/shared.ts`) only ever reads; this
 // module is the write counterpart content-core needs once it starts mutating
-// `.staycurrent/staged/` and `topics/` (03-api-design.md, Cut mechanics — "only
-// content-core functions mutate topics/").
+// `.staycurrent/staged/` and `topics/` — only content-core functions mutate
+// `topics/`.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,8 +32,8 @@ export function writeMatterFile(filePath: string, data: Record<string, unknown>,
  * leaving every other byte of the file — the rest of the frontmatter, and the
  * entire body — untouched. Used for the single-field stamps Cut/Session mechanics
  * make (`status`, `last_researched`) so a stamp never risks reformatting content a
- * loader or a human authored (03-api-design.md: convene/recordNoCut/discardSession/
- * reconcile all stamp the working tree, never rewrite it wholesale).
+ * loader or a human authored (convene/recordNoCut/discardSession/reconcile all
+ * stamp the working tree, never rewrite it wholesale).
  *
  * Callers only ever invoke this after validating the file's frontmatter schema, so
  * `field` is guaranteed present; the two throws below guard a structural bug in that
@@ -73,7 +73,7 @@ export function replaceFrontmatterField(raw: string, field: string, value: strin
 /**
  * Inserts one `## <heading>` section at the top of the log — the newest-first,
  * append-only-at-top shape `research-log.md` and `changelog.md` share
- * (04-data-design.md). `bodyLines` become the section's body, one array entry per
+ * `bodyLines` become the section's body, one array entry per
  * line, matching the grammar `loadResearchLog`/`loadChangelog` parse back out.
  *
  * Normally the entry lands immediately after the H1 line; a log whose first line is
@@ -95,7 +95,7 @@ export function prependLogSection(raw: string, heading: string, bodyLines: strin
 
 /**
  * Builds a directory's contents in a hidden temp sibling, then renames it into
- * place — the atomic-seed rule from change-proposal-1's review: a crash mid-seed
+ * place — the atomic-seed rule: a crash mid-seed
  * leaves only a dot-prefixed temp directory that no slug-addressed path ever
  * resolves to, never a partial `<slug>/` tree that blocks retries or masquerades
  * as an authored draft.

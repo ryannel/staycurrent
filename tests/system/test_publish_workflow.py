@@ -1,25 +1,18 @@
-"""Publish-workflow permanent coverage — Slice 3.4 (publish-workflow, bet
-first-living-topic).
+"""Publish-workflow permanent coverage.
 
-The bet-progress suite (tests/bets/first-living-topic/test_slice_13_site_
-publish-workflow.py) proves the workflow's shape once and is archived at bet
-close. This file is what stays: it pins the same committed shape — one
-workflow, two triggers, fail-closed install -> gate -> build -> deploy
-ordering, the gate running through @staycurrent/core (never re-implemented
-in YAML), and the CNAME/site.config.json origin agreement
-(04-publish-workflow.md; 02-data-flows.md's Publish Flow (CI)) — as a
-permanent regression guard, plus fixture-based coverage of
-scripts/publish-gate.mjs itself: the one piece of real, newly-introduced
-logic this slice ships (a full-tree scan is more than YAML plumbing and
-deserves its own proof, the same way scripts/prebuild.mjs earned fixture
-tests in test_distribution_artifacts.py).
+Pins the publish workflow's committed shape — one workflow, two triggers,
+fail-closed install -> gate -> build -> deploy ordering, the gate running
+through @staycurrent/core (never re-implemented in YAML), and the
+CNAME/site.config.json origin agreement — as a regression guard, plus
+fixture-based coverage of scripts/publish-gate.mjs itself (a full-tree scan
+is more than YAML plumbing and deserves its own proof, the same way
+scripts/prebuild.mjs earned fixture tests in test_distribution_artifacts.py).
 
 The workflow's actual execution — a live push-to-main deploy, and a
 deliberately gate-breaking pull_request showing a red check with no deploy
-while the previous good build stays live — is the milestone's front-door
-proof, driven once at milestone close against the real GitHub Actions
-runner. It cannot be exercised from this local suite; what follows is the
-committed shape, permanently.
+while the previous good build stays live — can only be exercised against
+the real GitHub Actions runner, not from this local suite; what follows is
+the committed shape, permanently.
 """
 
 import json
@@ -119,7 +112,7 @@ def test_publish_workflow_ordering_stays_install_gate_build_deploy():
         f"(got {install_i}, {gate_i}, {build_i}, {deploy_i})"
     )
 
-    # The bet-independent verification suites — the system suite and both
+    # The verification suites — the system suite and both
     # unit-test steps (core's and site's) — must run before the Pages
     # artifact is ever uploaded or deployed. A deploy can never outrun a red
     # suite.
@@ -145,16 +138,14 @@ def test_publish_workflow_gate_step_invokes_core_not_a_yaml_reimplementation():
         "the gate step must invoke @staycurrent/core's runPublishGate path (ADR 0003), never re-implement checks in YAML"
     )
     # The gate step names the real script, not an inline shell re-implementation
-    # of any of the ten checks.
+    # of any of the nine checks.
     assert "publish-gate.mjs" in joined
 
 
-def test_publish_workflow_only_the_advisory_doc_check_may_continue_on_error():
-    """Every step fails closed by construction (this file's own preamble
-    comment) except the one sanctioned advisory: the GroundWork doc-currency
-    check. Exactly one step across the whole workflow may carry a truthy
-    continue-on-error, and it must be that advisory step — not the gate, not
-    either build step, not the system suite."""
+def test_publish_workflow_has_no_continue_on_error_step():
+    """Every step fails closed by construction: no step across the whole
+    workflow may carry a truthy continue-on-error — not the gate, not either
+    build step, not the system suite, and no advisory step either."""
     doc = _load_workflow()
     jobs = doc.get("jobs") or {}
 
@@ -164,12 +155,9 @@ def test_publish_workflow_only_the_advisory_doc_check_may_continue_on_error():
         for step in (job.get("steps") or [])
         if step.get("continue-on-error")
     ]
-    assert len(continue_on_error_steps) == 1, (
-        f"expected exactly one step carrying continue-on-error, got {len(continue_on_error_steps)}: "
+    assert not continue_on_error_steps, (
+        f"expected no step carrying continue-on-error, got {len(continue_on_error_steps)}: "
         f"{[s.get('name') for s in continue_on_error_steps]}"
-    )
-    assert "groundwork-method check" in _step_text(continue_on_error_steps[0]), (
-        "the sole continue-on-error step must be the advisory GroundWork doc-currency check"
     )
 
     # Belt and suspenders: name the fail-closed steps explicitly and assert
@@ -295,8 +283,8 @@ _BROKEN_ARTICLE_MD = (
     "last_researched: 2026-01-15\n"
     "---\n\n"
     "# Broken\n\nBody.\n"
-    # Deliberately no versions/, changelog.md, or skill/ — several of
-    # the ten checks fail at once.
+    # Deliberately no versions/ or changelog.md — several of the gate's
+    # checks fail at once.
 )
 
 
@@ -337,7 +325,7 @@ def test_publish_gate_script_is_full_tree_naming_every_broken_topic_and_sparing_
             f"expected the good topic (a verbatim copy of the real, gate-passing databases/) "
             f"to be inspected and cleared, never named among the failures.\n{combined}"
         )
-        # More than one distinct check fires per broken topic (five-artifact
+        # More than one distinct check fires per broken topic (artifact
         # completeness alone accounts for several) — proving this is a real
         # multi-check scan, not a single early-exit assertion.
         fail_lines = [line for line in combined.splitlines() if line.startswith("FAIL")]
@@ -397,8 +385,8 @@ def test_publish_gate_script_fails_closed_when_topics_dir_exists_but_is_empty():
     """topics/ present but containing zero gateable topic directories must
     also fail closed: this repository always carries at least one topic, so
     an empty topics/ can only mean a broken checkout or a scaffold-only
-    state the site cannot build from anyway (change-proposal-4) — never a
-    legitimate "nothing to gate" no-op."""
+    state the site cannot build from anyway — never a legitimate "nothing
+    to gate" no-op."""
     with tempfile.TemporaryDirectory(prefix="staycurrent-publish-gate-emptydir-") as tmp:
         fixture_root = Path(tmp) / "fixture-root"
         topics_dir = fixture_root / "topics"

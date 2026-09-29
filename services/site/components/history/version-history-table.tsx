@@ -9,7 +9,7 @@ export interface VersionHistoryTableProps {
 }
 
 /**
- * `/[topic]/history/` — Version History (01-ui-design.md). Presentational:
+ * `/[topic]/history/` — Version History. Presentational:
  * `app/[topic]/history/page.tsx` (a Server Component) supplies the
  * `VersionHistoryEntry[]` ledger via `lib/content.ts`'s `getVersionHistory` —
  * this component owns only the current-vs-superseded row rendering choice,
@@ -31,16 +31,13 @@ export interface VersionHistoryTableProps {
  * (the base `tbody tr` rule), so the whole row is a mouse hit target while
  * staying a single real `<a>` for keyboard/screen-reader semantics (no extra
  * ARIA role, no click/keydown handler reimplementing what an anchor already
- * does). The skill/archived-payload links elsewhere in the row need to stay
- * independently clickable on top of that overlay — doc-shell.css lifts them
- * with `position: relative; z-index: 2` against the overlay's `z-index: 1`.
+ * does).
  *
  * Wrapped in its own horizontal-scroll container (Tables spec: a table whose
  * content can force it wider than the reading column at narrow viewports
  * gets one, rather than shipping a sideways-scrolling page) — static/always-
- * on, matching `components/skill/install-block.tsx`'s identical convention
- * for its own single guaranteed structural surface, since `/[topic]/history/`
- * never mounts `ArticleEnhancements`' dynamic `enhanceScrollableRegions` pass.
+ * on, since `/[topic]/history/` never mounts `ArticleEnhancements`' dynamic
+ * `enhanceScrollableRegions` pass.
  */
 export function VersionHistoryTable({ slug, currentVersion, rows }: VersionHistoryTableProps) {
   return (
@@ -51,7 +48,6 @@ export function VersionHistoryTable({ slug, currentVersion, rows }: VersionHisto
             <th scope="col">Version</th>
             <th scope="col">Cut</th>
             <th scope="col">Stance</th>
-            <th scope="col">Skill</th>
           </tr>
         </thead>
         <tbody>
@@ -75,18 +71,6 @@ export function VersionHistoryTable({ slug, currentVersion, rows }: VersionHisto
                   <time dateTime={row.cutDate}>{formatDisplayDate(row.cutDate)}</time>
                 </td>
                 <td>{row.stance ?? '—'}</td>
-                <td>
-                  {isCurrent ? (
-                    <Link href={`/${slug}/skill/`}>skill →</Link>
-                  ) : (
-                    <span className="version-history-skill-note">
-                      {`skill (renders v${row.version} — `}
-                      <Link href={`/${slug}/skill/`}>install current →</Link>
-                      {') '}
-                      <a href={`/skills/${slug}/v/${row.version}/`}>archived payload</a>
-                    </span>
-                  )}
-                </td>
               </tr>
             );
           })}

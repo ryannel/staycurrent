@@ -2,7 +2,7 @@
 title: Setup
 description: The fresh-clone walkthrough for Stay Current — installing the site app and the test environment, then booting the stack.
 type: getting-started
-last_reviewed: 2026-07-09
+last_reviewed: 2026-09-29
 ---
 
 # Setup
@@ -16,13 +16,18 @@ git clone <repo-url> staycurrent
 cd staycurrent
 ```
 
-## 2. Install the site app
+## 2. Build the content core and install the site app
 
 ```bash
-cd services/site
+cd core
+pnpm install
+pnpm build
+cd ../services/site
 pnpm install
 cd ../..
 ```
+
+`services/site` depends on `@staycurrent/core` as a `file:../../core` package, so the core has to be built before the site installs.
 
 ## 3. Set up the system-test environment
 
@@ -38,15 +43,16 @@ cd ..
 
 `uv pip install -e .` reads `[project.dependencies]` from `tests/pyproject.toml` — pytest, `pytest-playwright`, `pytest-asyncio`, and the rest of the harness. `playwright install chromium` downloads the browser the `site` surface's tests drive.
 
-## 4. Start the stack
+## 4. Build and serve the site
 
 ```bash
-./dev start
+cd services/site
+pnpm start:static
 ```
 
-This boots the `site` native runner: `pnpm start:static`, which runs `next build` and serves the resulting `out/` export on port 4173 — the same artifact GitHub Pages deploys, and the one system tests prove. The first response waits on a full production build, so allow the boot a minute. There is no Docker infrastructure to wait on — `docker-compose.yml` provisions nothing in this project ([`docs/architecture/infrastructure.md`](../architecture/infrastructure.md)).
+This runs `next build` and serves the resulting `out/` export on port 4173 — the same artifact GitHub Pages deploys, and the one system tests prove. Allow the first build a minute. There is no database or container to wait on ([`docs/architecture/infrastructure.md`](../architecture/infrastructure.md)).
 
-For hot-reload iteration while editing the site, run `pnpm dev` in `services/site` instead — it binds the same port 4173, so stop the runner (`./dev stop`) first.
+For hot-reload iteration while editing the site, run `pnpm dev` in `services/site` instead — it binds the same port 4173, so run one at a time.
 
 ## 5. Confirm it's running
 
@@ -54,10 +60,14 @@ For hot-reload iteration while editing the site, run `pnpm dev` in `services/sit
 open http://localhost:4173
 ```
 
-Or check process state without a browser:
+## 6. Run the checks
 
 ```bash
-./dev status
+cd core && pnpm test && cd ..
+node scripts/publish-gate.mjs
+cd services/site && pnpm lint && pnpm test && cd ../..
+node --test workbench/cli.test.mjs workbench/lib/format.test.mjs scripts/prose-metrics.test.mjs
+cd tests && STAYCURRENT_REQUIRE_SERVICES=1 uv run pytest system/
 ```
 
-which reports the `site` runner as `running` once the build finishes and the static server is up.
+The system suite expects the static export to be serving on port 4173.

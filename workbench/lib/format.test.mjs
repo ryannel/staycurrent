@@ -2,10 +2,10 @@
 // module in the CLI (date formats, the due/next-run derivation, the state-block
 // padding rule). Run with: `node --test workbench/lib/format.test.mjs`.
 //
-// The golden fixture below is 01-ui-design.md's rendered state-block example,
+// The golden fixture below is the design system's rendered state-block example,
 // asserted byte-for-byte: three topics at cadence 90d viewed on 2026-07-04
-// reproduce exactly the block the design document renders — the spec's own
-// example is the test oracle.
+// reproduce exactly the block the design system renders — its own example is
+// the test oracle.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,7 +33,7 @@ const topic = (overrides) => ({
 
 test('formatDateLong renders DD MMM YYYY with a two-digit padded day', () => {
   assert.equal(formatDateLong('2026-06-12'), '12 Jun 2026');
-  assert.equal(formatDateLong('2026-03-01'), '01 Mar 2026'); // the padding case the 01 example fixes
+  assert.equal(formatDateLong('2026-03-01'), '01 Mar 2026'); // the padding case the rendered example fixes
 });
 
 test('formatDateShort renders DD MMM', () => {
@@ -54,7 +54,7 @@ test('stateFor: in-research wins regardless of dates', () => {
   assert.equal(stateFor(topic({ status: 'in-research', last_researched: '2020-01-01' }), TODAY), 'in-research');
 });
 
-test('renderStateBlock reproduces the 01-ui-design rendered example byte-for-byte', () => {
+test('renderStateBlock reproduces the design system rendered example byte-for-byte', () => {
   const topics = [
     topic({ topic: 'observability', version: 5, last_researched: '2026-06-12' }),
     topic({ topic: 'testing', version: 3, last_researched: '2026-06-28' }),

@@ -9,7 +9,7 @@ type PageParams = { topic: string };
 type PageProps = { params: Promise<PageParams> };
 
 /**
- * Site Build Data Flow (02-data-flows.md): one `/[topic]/changelog/` route per
+ * Site build data flow: one `/[topic]/changelog/` route per
  * topic, alongside the article route's own enumeration — same fail-closed
  * `getTopicSlugs` sweep, same `dynamicParams = false` convention.
  */
@@ -26,12 +26,12 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 /**
- * `/[topic]/changelog/` — Changelog (01-ui-design.md). The topic's
+ * `/[topic]/changelog/` — Changelog. The topic's
  * append-only timeline: `loadChangelog`'s entries (via
  * `lib/content.ts`'s `getTopicChangelog`), newest first, each a
  * self-contained mini-essay rendered through the same `article-body`
- * typography the live article uses — Slice 3.1's hardened `renderMarkdown`
- * pipeline included, since `bodyHtml` comes from the identical renderer.
+ * typography the live article uses — the hardened `renderMarkdown` pipeline
+ * included, since `bodyHtml` comes from the identical renderer.
  *
  * `**Stance:**`/`**What moved**`/`**What it means**` render as ordinary
  * `--text-body-em` prose inside `bodyMd` itself (Document Architecture's

@@ -8,10 +8,10 @@ export const metadata: Metadata = {
 };
 
 /**
- * `/changelog/` — Site-Wide Changelog (01-ui-design.md). Every topic's
+ * `/changelog/` — Site-Wide Changelog. Every topic's
  * changelog entries merged newest-first via `lib/content.ts`'s
  * `listSiteChangelog` — a cross-topic feed mirroring `rss.xml`'s item set
- * (the RSS feed itself is Milestone 3's distribution work, not this slice).
+ * (the feed itself is written by scripts/prebuild.mjs).
  *
  * No TOC rail (Shell zone rule) — `no-toc` frees the full reading-column
  * width, matching `/` and `/about/`.

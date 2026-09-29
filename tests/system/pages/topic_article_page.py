@@ -1,11 +1,10 @@
-"""Page object for `/<topic>/` — the Living Article (01-ui-design.md).
+"""Page object for `/<topic>/` — the Living Article.
 
 Helpers are content-based (element/attribute/text) wherever the assertion
-survives a later restyle; slice 2.2 (doc-shell-and-trust) is that restyle for
-the shared shell, trust header, TOC rail, and theme toggle, so a handful of
-helpers below assert semantic state (an `aria-current`/`data-theme` attribute)
-rather than raw computed style — chosen specifically so they keep working
-through any future visual pass.
+survives a later restyle of the shared shell, trust header, TOC rail, and
+theme toggle, so a handful of helpers below assert semantic state (an
+`aria-current`/`data-theme` attribute) rather than raw computed style —
+chosen specifically so they keep working through any future visual pass.
 """
 
 import re
@@ -47,7 +46,7 @@ class TopicArticlePage(BasePage):
     def expect_mermaid_markers_at_least(self, minimum: int) -> "TopicArticlePage":
         """Assert at least `minimum` `.mermaid-figure` elements, each carrying a
         non-empty `data-mermaid` attribute. Deliberately silent on visible diagram
-        rendering — that is a later slice's client-render concern."""
+        rendering — that is the client-side render's concern, proven separately."""
         sources = self._mermaid_marker_sources()
         with_source = [s for s in sources if s.strip()]
         assert len(with_source) >= minimum, (
@@ -72,9 +71,9 @@ class TopicArticlePage(BasePage):
         return self
 
     def expect_shell_landmarks(self) -> "TopicArticlePage":
-        """Assert the three-zone shell's landmark set (01-ui-design.md's shared
-        Accessibility rule): a <nav> sidebar, the article inside <main>, and an
-        <aside> TOC rail."""
+        """Assert the three-zone shell's landmark set (the shared Accessibility
+        rule): a <nav> sidebar, the article inside <main>, and an <aside> TOC
+        rail."""
         assert self.page.locator("nav").count() > 0, "expected a <nav> sidebar landmark"
         assert self.page.locator("main article, article").count() > 0, (
             "expected the reading column to render as an <article>"
@@ -83,9 +82,9 @@ class TopicArticlePage(BasePage):
         return self
 
     def expect_trust_header_face_links(self, slug: str) -> "TopicArticlePage":
-        """Assert the trust header's changelog/history/skill face links point at
-        this topic's other faces (01-ui-design.md's Key interactions)."""
-        for face in ("changelog", "history", "skill"):
+        """Assert the trust header's changelog/history face links point at
+        this topic's other two faces."""
+        for face in ("changelog", "history"):
             link = self.page.locator(f"a[href*='/{slug}/{face}']")
             assert link.count() > 0, f"expected a trust-header link to the {face} face"
         return self
@@ -162,8 +161,8 @@ class TopicArticlePage(BasePage):
         return self.page.evaluate("() => localStorage.getItem('theme')")
 
     def expect_provenance_sources_list(self, minimum: int = 1) -> "TopicArticlePage":
-        """Assert the essay-close Provenance section (01-ui-design.md's
-        micro-polish spec) renders a Sources list with at least `minimum`
+        """Assert the essay-close Provenance section renders a Sources list
+        with at least `minimum`
         `.badge-sourced` items, each carrying a real (non-empty) `href`."""
         items = self.page.locator(".provenance-sources li:has(.badge-sourced)")
         count = items.count()

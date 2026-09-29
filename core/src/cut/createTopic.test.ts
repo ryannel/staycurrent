@@ -26,9 +26,7 @@ describe('createTopic', () => {
       'article.md',
       'changelog.md',
       'research-log.md',
-      'skill/SKILL.md',
       'versions/v1/article.md',
-      'versions/v1/skill/SKILL.md',
       'versions/v1/provenance.md',
     ]) {
       expect(fs.existsSync(path.join(staged.dir, rel)), rel).toBe(true);

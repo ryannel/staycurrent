@@ -1,19 +1,18 @@
 ---
 title: Infrastructure
-description: Boot topology, health checks, and the deploy pipeline for Stay Current — one native runner, no containers, and a GitHub Pages pipeline (live as of the founding bet).
+description: How Stay Current builds, runs locally, and deploys — one static export, no containers, and a GitHub Pages pipeline.
 type: index
 generation_mode: authored
 source_of_truth:
-  - .dev/
-  - docker-compose.yml
   - .github/workflows/
   - services/site/
-last_reviewed: 2026-07-18
+  - core/
+last_reviewed: 2026-09-29
 ---
 
 # Infrastructure
 
-This document describes how Stay Current boots, runs, and deploys — the physical topology behind the logical boundaries in [`docs/architecture/index.md`](index.md). The topology is small by design: one native process for local development, no containers, and a static-file deploy with no server in the request path ([ADR 0001](decisions/0001-fully-static-site-no-servers.md)).
+This document describes how Stay Current builds, runs, and deploys — the physical topology behind the logical boundaries in [`docs/architecture/index.md`](index.md). The topology is small by design: one static export for local development, no containers, and a static-file deploy with no server in the request path ([ADR 0001](decisions/0001-fully-static-site-no-servers.md)).
 
 ## Local development
 
@@ -21,48 +20,32 @@ This document describes how Stay Current boots, runs, and deploys — the physic
 
 | Tool | Version | Used for |
 |---|---|---|
-| Node.js | 24+ | Running `site` and the `./dev` CLI bundle |
-| pnpm | 11+ | Installing and running `services/site` |
+| Node.js | 24+ | Building `core` and `site`, running the workbench CLI |
+| pnpm | 11+ | Installing and running `core` and `services/site` |
 | uv | any | Managing the `tests/` Python virtual environment |
 | Python | 3.11+ | The system-test suite (installed by `uv`) |
 
-### What `./dev start` does
+### Running the site
 
-| Unit | Kind | Boot command | Health |
-|---|---|---|---|
-| site | native runner | `pnpm start:static` (cwd `services/site`) — `next build && serve out -l 4173 --no-clipboard` | HTTP 200 on `http://localhost:4173/` |
+| Step | Command (cwd) | Result |
+|---|---|---|
+| Build the content core | `pnpm install && pnpm build` (`core`) | `core/dist`, which the site consumes as a `file:` dependency |
+| Build and serve the site | `pnpm install && pnpm start:static` (`services/site`) | `next build`, then `serve out -l 4173` — HTTP 200 on `http://localhost:4173/` |
 
-`docker-compose.yml` provisions no `services:` block — Stay Current runs no database, cache, or message broker, so there is no infrastructure for `./dev start --docker` to boot ([ADR 0001](decisions/0001-fully-static-site-no-servers.md)). `./dev start` therefore starts exactly one process: the site runner.
+The site is served as the **built static export**, not a dev server: `pnpm start:static` runs `next build` and serves the resulting `out/` directory — the same artifact GitHub Pages deploys — so system tests run against what production actually ships. (`next dev` injects a development-overlay portal into every page, which falsifies render assertions.) For hot-reload iteration, run `pnpm dev` in `services/site` instead; it binds the same port 4173, so run one at a time.
 
-The runner serves the **built static export**, not a dev server: it runs `next build` and serves the resulting `out/` directory — the same artifact GitHub Pages deploys — so system tests and milestone proofs run against what production actually ships. (`next dev` injects a development-overlay portal into every page, which falsifies render assertions.) For hot-reload iteration, run `pnpm dev` in `services/site` instead; it binds the same port 4173, so stop the runner first.
-
-```mermaid
-graph LR
-    dev["./dev start"] -->|pnpm start:static, cwd services/site| site["site :4173<br/>static export (serve out/)"]
-    browser[Developer's browser] -->|http://localhost:4173| site
-    dev -.->|no services: block| docker["docker-compose.yml<br/>(empty)"]
-```
-
-- `./dev status` / `./dev status --json` report the site runner's live state — always check this instead of assuming a port is free or occupied.
-- `./dev logs` prints the recent tail for site; `./dev logs site` filters to it explicitly; `./dev logs --follow` streams (interactive terminals only).
-- `./dev stop` gracefully kills the native `site` process. There are no containers to tear down.
-
-The full `./dev` command catalogue, including which commands do meaningful work in this project, is in [`docs/getting-started/dev-cli-reference.md`](../getting-started/dev-cli-reference.md).
+There is no database, cache, or message broker to start. Stay Current runs no infrastructure ([ADR 0001](decisions/0001-fully-static-site-no-servers.md)).
 
 ## Surfaces
 
-Every registered surface ([`docs/surfaces.md`](../surfaces.md)) has an operational entry here — a runner (or the statement that none exists), a health signal, and the medium its tests drive it through.
-
 | Surface | Type | Runner | Port | Health signal | Test medium |
 |---|---|---|---|---|---|
-| site | graphical-ui, web | native (`pnpm start:static`) | 4173 | HTTP 200 on `/` | playwright |
-| workbench | agentic-protocol | none — manual scaffold | — | `node workbench/cli.mjs status` exits 0 | subprocess-cli |
+| site | graphical-ui, web | `pnpm start:static` | 4173 | HTTP 200 on `/` | playwright |
+| workbench | agentic-protocol | none — a CLI | — | `node workbench/cli.mjs status` exits 0 | subprocess-cli |
 
-site's runner and health check are live today — `./dev status` and `./dev start` both act on it.
+The workbench is a deterministic CLI at `workbench/cli.mjs` plus the Claude Code skills in `.claude/skills/` that drive research runs. Its health signal is that CLI exiting `0` on `status`.
 
-workbench has no runner because its scaffold is `manual`: no generator produced it, so `./dev status` reports nothing for it — there is no process to track. Its operational expectation is a deterministic CLI at `workbench/cli.mjs` plus the Claude Code skills that drive research runs, and its health signal is that CLI exiting `0` on `status`. Neither the CLI nor the skills exist yet; both arrive with the first bet. Until then, the health signal fails by absence — there is no `workbench/cli.mjs` to run.
-
-content-core — the embedded capability core both surfaces call ([architecture §4](index.md)) — is built at `core/` (`@staycurrent/core`): the Loading API, cut/session mechanics, the fail-closed publish gate, and `buildRss`, called in-process by both surfaces at build/run time. Its captured contract lives at [`docs/architecture/api/content-core/`](api/content-core/).
+content-core — the embedded capability core both surfaces call ([architecture §4](index.md)) — is built at `core/` (`@staycurrent/core`): the loading API, cut and session mechanics, the fail-closed publish gate, and `buildRss`, called in-process by both surfaces at build and run time. Its captured contract lives at [`docs/architecture/api/content-core/`](api/content-core/).
 
 ## System tests
 
@@ -73,20 +56,15 @@ content-core — the embedded capability core both surfaces call ([architecture 
 | Environment | `tests/.venv`, managed by `uv` |
 | Dependencies | `tests/pyproject.toml` (`pytest`, `pytest-playwright`, `pytest-asyncio`, `httpx`, `tenacity`, `pexpect`, …) |
 | Browser | Playwright chromium, installed via `uv run playwright install chromium` |
-| Test paths | `tests/system/` (permanent suite), `tests/bets/<slug>/` (bet-progress suites, archived at delivery) |
+| Test path | `tests/system/` |
 
-`tests/conftest.py` derives a `surfaces` fixture from the surface registry: `site` maps to `playwright` at `http://localhost:4173`, `workbench` maps to `subprocess-cli` at `node workbench/cli.mjs`. Both surfaces are now exercised: the site through render/a11y/token/route system tests, the workbench through the operator-contract and loop-rehearsal modules that subprocess `node workbench/cli.mjs` against fixture trees.
+`tests/conftest.py` derives a `surfaces` fixture: `site` maps to `playwright` at `http://localhost:4173`, `workbench` maps to `subprocess-cli` at `node workbench/cli.mjs`. The site is exercised through render, accessibility, token, and route tests; the workbench through the operator-contract and loop-rehearsal modules that subprocess `node workbench/cli.mjs` against fixture trees.
 
-The shared `cluster` fixture health-gates every test on the running stack: it polls every URL-reach surface (the site at `http://localhost:4173`) and every service `docker-compose.yml` declares. It probes the Jaeger query API only when compose declares a `jaeger` service — this project provisions none by design, so no Jaeger probe runs. Against the booted stack the suite reports 4 passed, 6 skipped (`pytest system/ -rs`). The skips: the visual-regression test, opt-in behind `GROUNDWORK_VISUAL_REGRESSION=1`; four service-parametrized tests whose `svc` parameter set is empty because `docker-compose.yml` declares no services; and one CRUD placeholder marked "real CRUD lands in Phase 4".
+The shared `cluster` fixture health-gates every test on the served site. With `STAYCURRENT_REQUIRE_SERVICES=1` (CI sets it) an unreachable site is a failure rather than a skip. The visual-regression test is opt-in behind `STAYCURRENT_VISUAL_REGRESSION=1`; its baselines live under `tests/.cache/visual/`, which is gitignored.
 
-| Command | Behavior |
-|---|---|
-| `./dev test` | Runs `tests/system/` against the already-running stack — the fast inner loop |
-| `./dev test integration` | Boots the stack, runs `tests/system/` with `GROUNDWORK_REQUIRE_SERVICES=1` and `GROUNDWORK_REQUIRE_TRACES=1`, tears down after |
-| `./dev test bet <slug>` | Runs `tests/bets/<slug>/` against the already-running stack |
-| `./dev test bet <slug> --integration` | Boots the stack, installs chromium if the suite uses Playwright, runs `tests/bets/<slug>/`, tears down after |
-
-`tests/bets/` holds no suites yet — bet-progress tests are scaffolded by `./dev new milestone` / `./dev new slice` once the first bet starts.
+```bash
+cd tests && STAYCURRENT_REQUIRE_SERVICES=1 uv run pytest system/
+```
 
 ## Deployment
 
@@ -101,6 +79,7 @@ sequenceDiagram
     A->>A: gate: validate all topics + versions
     A->>A: build RSS from changelogs
     A->>A: next build (static export)
+    A->>A: unit suites + system suite
     alt all steps pass
         A->>P: deploy static files
     else any step fails
@@ -108,20 +87,18 @@ sequenceDiagram
     end
 ```
 
-The workflow lives at `.github/workflows/publish.yml` (founding bet): one workflow, two triggers — every push to `main` deploys, every pull request verifies without deploying — running install → full-tree gate → prebuild + build → suites → advisory `groundwork check` → Pages deploy, fail-closed at each step. The custom domain (`staycurrent.dev`) binds through the repository's Pages settings and DNS, not the exported `CNAME` file (Actions-based Pages deploys ignore it).
+The workflow lives at `.github/workflows/publish.yml`: one workflow, two triggers — every push to `main` deploys, every pull request verifies without deploying — running install → full-tree gate → prebuild + build → suites → Pages deploy, fail-closed at each step. The custom domain (`staycurrent.dev`) binds through the repository's Pages settings and DNS, not the exported `CNAME` file (Actions-based Pages deploys ignore it).
 
 ## Capability footprints
-
-Every capability the product depends on resolves to a provider and a footprint, projected from [`.groundwork/capability-ports.json`](../../.groundwork/capability-ports.json):
 
 | Capability | Provider | Footprint | Operationally |
 |---|---|---|---|
 | content-store | git + filesystem | `none` | `topics/` and git are the store; nothing to provision or start |
-| static-hosting | GitHub Pages | `env` | Enabled in the repo's GitHub settings, not started by `./dev` |
+| static-hosting | GitHub Pages | `env` | Enabled in the repo's GitHub settings |
 | ci-cd | GitHub Actions | `env` | Runs on GitHub's infrastructure at push time, not a local process |
 | llm-inference | Anthropic Claude, in the operator's Claude Code session | `none` | No API key, no SDK, no local process — the operator's own session provides it |
 | diagram-rendering | mermaid (client-side) | `none` | Renders in the reader's browser from the fenced source; no build-time dependency |
 | search | none (deferred) | `none` | No interface exists; nothing to provision |
 | telemetry | none (by design) | `none` | The product collects nothing about readers |
 
-A `none` footprint means the capability needs no provisioning, no credential, and no local process — `./dev status` has nothing to report for it because there is nothing running. An `env` footprint means the capability is satisfied by state that lives outside this repository's runtime — a GitHub repository or organization setting — not a process `./dev start` or `./dev stop` controls. Every capability in this project is `none` or `env`; none requires a container, which is why `docker-compose.yml` provisions nothing.
+A `none` footprint means the capability needs no provisioning, no credential, and no local process. An `env` footprint means the capability is satisfied by state that lives outside this repository's runtime — a GitHub repository setting. Every capability in this project is `none` or `env`; none requires a container.

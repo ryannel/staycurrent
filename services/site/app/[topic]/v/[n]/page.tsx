@@ -12,11 +12,11 @@ type PageParams = { topic: string; n: string };
 type PageProps = { params: Promise<PageParams> };
 
 /**
- * Site Build Data Flow (02-data-flows.md): topics x versions — one route per
- * version snapshot `1..current`, for every topic. The route for `n ===
- * current` is real (not skipped): it is the build-time redirect stub, per
- * the flow's "the redirect target is fully known at build time" rule —
- * omitting it would 404 instead of redirecting.
+ * Site build data flow: topics x versions — one route per version snapshot
+ * `1..current`, for every topic. The route for `n === current` is real (not
+ * skipped): it is the build-time redirect stub — the redirect target is
+ * fully known at build time — and omitting it would 404 instead of
+ * redirecting.
  */
 export function generateStaticParams(): PageParams[] {
   return getTopicSlugs().flatMap((topic) => {
@@ -42,11 +42,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 /**
- * `/[topic]/v/[n]/` — Archived Version (01-ui-design.md). Two materially
- * different states on the same route, both decided at build time:
+ * `/[topic]/v/[n]/` — Archived Version. Two materially different states on
+ * the same route, both decided at build time:
  *
- * - `n === current`: NOT a reading surface. **Design decision (01-ui-design.md,
- *   verbatim):** static export (ADR 0001) permits no server-side redirect,
+ * - `n === current`: NOT a reading surface. **Design decision:** a static
+ *   export permits no server-side redirect,
  *   so this is a real static HTML page containing a 0-delay
  *   `<meta http-equiv="refresh">` plus `<link rel="canonical">` (via
  *   `generateMetadata`'s `alternates.canonical` above) plus the visible
@@ -56,11 +56,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
  *   carries no WCAG 2.2.1 timing-adjustable obligation (nothing to read
  *   before it fires). `superseded` is therefore never true here.
  * - `n < current`: the frozen snapshot (`getArchivedVersion`), an archived
- *   banner replacing the trust header, the same essay typography as the
- *   live article, and the superseded-skill pointer below it.
+ *   banner replacing the trust header, and the same essay typography as the
+ *   live article.
  *
  * `superseded` is computed here — snapshot `n` vs the live
- * `frontmatter.version` — never stored (Site Build Data Flow, verbatim).
+ * `frontmatter.version` — never stored.
  */
 export default async function ArchivedVersionPage({ params }: PageProps) {
   const { topic: slug, n } = await params;
@@ -132,22 +132,6 @@ export default async function ArchivedVersionPage({ params }: PageProps) {
             ))}
           </ul>
         </section>
-        {/* Superseded-skill pointer — the honesty state's second committed
-            location alongside the History row's link text
-            (01-ui-design.md's Design decision on `/[topic]/history/`). */}
-        <div className="superseded-skill-pointer">
-          <p className="superseded-skill-text">
-            {'This skill renders '}
-            <strong>{`v${archived.version}`}</strong>
-            {' of the stance. '}
-            <Link href={`/${slug}/skill/`} className="superseded-skill-link">
-              Install the current version instead →
-            </Link>
-          </p>
-          <a href={`/skills/${slug}/v/${archived.version}/`} className="superseded-skill-archive-link">
-            {`Archived payload: /skills/${slug}/v/${archived.version}/`}
-          </a>
-        </div>
       </article>
       <TocRail entries={archived.article.toc} />
       <ArticleEnhancements />

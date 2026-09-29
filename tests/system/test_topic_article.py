@@ -1,5 +1,5 @@
-"""Topic Article interface test, one test per user-observable behaviour this bet's
-site content-pipeline slice (Slice 2.1, first-living-topic) delivered.
+"""Topic Article interface test, one test per user-observable behaviour of
+the site's content pipeline.
 
 Mirrors the render-smoke/a11y-smoke system tests' conventions: driven off the
 `cluster`-gated `site_page` fixture (tests/conftest.py) against the built static
@@ -8,8 +8,8 @@ chromium via `site_page`'s dependency on pytest-playwright's `browser` fixture.
 Skips cleanly when the site surface isn't reachable (`cluster`'s normal gating).
 
 All assertions are content-based (element/attribute/text), never style-based, so
-they survive Milestone 3's later restyle of the shell around this content-bearing
-core — see `pages/topic_article_page.py`.
+they survive a later restyle of the shell around this content-bearing core —
+see `pages/topic_article_page.py`.
 """
 
 from playwright.sync_api import Page
@@ -35,8 +35,8 @@ def test_databases_article_has_heading_anchor_ids(cluster, site_page: Page, surf
 
 def test_databases_article_has_mermaid_marker_containers(cluster, site_page: Page, surfaces):
     """The mermaid-fence transform's marker containers carry their fenced source as
-    data-mermaid. Deliberately silent on visible diagram rendering — that's a later
-    slice's client-render concern."""
+    data-mermaid. Deliberately silent on visible diagram rendering — the client-side
+    render is proven end-to-end in `test_topic_article_shell.py`."""
     article = TopicArticlePage(site_page, surfaces["site"]["reach"])
     article.goto(ARTICLE_PATH).expect_mermaid_markers_at_least(2)
 
@@ -52,8 +52,8 @@ def test_databases_article_trust_header_states_currency(cluster, site_page: Page
 
 
 def test_databases_article_renders_provenance_sources_and_synthesis(cluster, site_page: Page, surfaces):
-    """The essay-close Provenance section (01-ui-design.md's micro-polish spec)
-    renders the real, gate-cut provenance record: a Sources list of
+    """The essay-close Provenance section renders the real, gate-cut
+    provenance record: a Sources list of
     `.badge-sourced` items each linking to a real source, and a Synthesis
     list of `.badge-synthesis` items — the two-section anatomy
     (versions/v1/provenance.md's `## Sources` / `## Synthesis`) rendered

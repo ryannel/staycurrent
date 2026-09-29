@@ -10,8 +10,7 @@ import { buildDirAtomically } from '../write.js';
 /**
  * Seeds the staged baseline for an existing topic's research run: copies the
  * complete committed `topics/<slug>/` tree into `.staycurrent/staged/<slug>/`,
- * touching nothing under `topics/` (03-api-design.md, `stageCut`). Action-contract
- * step 1.
+ * touching nothing under `topics/`. Action-contract step 1.
  *
  * Idempotent re-seed: when the staged tree already exists, leaves it intact and
  * returns it — re-entering an interrupted run never destroys authored drafts.

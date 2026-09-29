@@ -7,14 +7,14 @@ source_of_truth:
   - core/
   - services/site/
   - workbench/
-  - .agents/skills/
+  - .claude/skills/
   - .github/workflows/
-last_reviewed: 2026-07-09
+last_reviewed: 2026-09-29
 ---
 
 # Architecture Foundation
 
-Stay Current is a publication system with no servers. One git repository holds both the engine and its first instance: the content tree (`topics/`), an embedded capability core that enforces the content contract, a statically rendered reader site, and the operator workbench that runs the research loop inside Claude Code. Publishing is a git push; the deployed product is a set of static files on a CDN. This document defines the boundaries that make that shape hold — including the engine/instance line that keeps the framework extractable.
+Stay Current is a publication system with no servers. One git repository holds both the engine and its first instance: the content tree (`topics/`), an embedded capability core that enforces the content contract, a statically rendered reader site, and the operator workbench that runs the research loop inside Claude Code. Publishing is a git push; the deployed product is a set of static files on a CDN. This document defines the boundaries that make that shape hold.
 ## 1. Constraints & Budgets
 
 - **Scale-to-zero.** The system incurs no runtime cost while idle. The site is fully static on a managed host; there are no servers, databases, or background processes to operate or pay for. Research runs on the operator's Claude Code subscription, not on hosted infrastructure.
@@ -22,7 +22,6 @@ Stay Current is a publication system with no servers. One git repository holds b
 - **Fail closed on publish.** A build that cannot validate its content does not deploy: the publish gate blocks on any incomplete version, and a failed CI run leaves the previous deploy live. RPO is zero because git is the store; RTO is one rebuild-and-redeploy cycle (minutes).
 - **Performance budgets** (from the design system, enforced at build): article text visible < 1.5 s on median mobile, CLS < 0.02, JavaScript as progressive enhancement — every page reads without it.
 - **Auditability over approval.** No human approval gate sits after a version cut; the compensating control is that every published artifact is a git commit with a mechanical gate check in its history (product-brief constraint).
-- **Supply-chain floor for skills.** Companion skills ship as plain markdown-and-files payloads — no executables, no network calls, no host-specific features — so an adopter's agent runtime can consume them with nothing to sandbox.
 ## 2. Top-Level Topology
 
 ```mermaid
@@ -33,10 +32,9 @@ graph TD
     topics -->|git push| ci[GitHub Actions<br/>gate → RSS → next build]
     ci -->|static files| pages[GitHub Pages CDN]
     core -.->|content loading API at build| site[site<br/>Next.js static export]
-    site -->|rendered pages + rss.xml + skill payloads| ci
+    site -->|rendered pages + rss.xml| ci
     pages --> reader[Readers]
     pages --> feed[Feed readers · RSS]
-    pages --> agents[Adopters' agents<br/>skill install]
 ```
 
 Three components share one repository. **content-core** owns the content contract and is the only code allowed to mutate `topics/`. **site** is a build-time reader of that tree. **workbench** is the operator's conversational surface; it acts only through content-core. Everything downstream of a git push is mechanical: CI re-runs the same gate the workbench ran, builds the feed and the pages, and deploys static files. There is no runtime component anywhere — the CDN serves bytes cut at build time.
@@ -50,7 +48,7 @@ The `topics/<slug>/` directory tree is the only data store. Content is markdown 
 
 **Static rendering — Next.js App Router, static export**
 
-The site pre-renders every route at build time (`output: 'export'`) and ships as static files. Next.js is chosen because the GroundWork `nextjs-app` generator scaffolds it with brand-token theming wired in, and App Router's `generateStaticParams` maps one-to-one onto the content tree (topics × faces × versions). The export constraint is embraced, not fought: no route handlers, no server components at runtime, no image optimizer service.
+The site pre-renders every route at build time (`output: 'export'`) and ships as static files. Next.js is chosen because App Router's `generateStaticParams` maps one-to-one onto the content tree (topics × faces × versions). The export constraint is embraced, not fought: no route handlers, no server components at runtime, no image optimizer service.
 
 *Downstream obligations:* anything dynamic is either computed at build or is progressive enhancement on the client. New routes must be statically enumerable from the content tree.
 
@@ -98,22 +96,20 @@ The site-wide feed is generated at build by content-core from the newest changel
 
 **site** — the reader-facing surface (graphical-ui, web).
 
-- **Owns:** routes, rendering, theming, and the static serving of companion-skill payloads — raw file trees and per-version zip archives (format resolved below); `/[topic]/skill` binds skill version to article version.
+- **Owns:** routes, rendering, and theming.
 - **Does not own:** content mutation — it is a build-time reader with no write path.
-- **Contract:** the published URL structure (`/`, `/[topic]`, `/[topic]/changelog|history|v/[n]|skill`, `/changelog`, `/about`, `/rss.xml`) and the skill-payload fetch paths. Slugs are permanent; URL changes are migrations.
+- **Contract:** the published URL structure (`/`, `/[topic]`, `/[topic]/changelog|history|v/[n]`, `/changelog`, `/about`, `/rss.xml`). Slugs are permanent; URL changes are migrations. Because topics own the root namespace, the root path segments `changelog`, `about`, and `rss.xml` are **reserved slugs** — content-core's gate rejects a topic slug that collides with them.
 
 **workbench** — the operator's surface (agentic-protocol).
 
 - **Owns:** research-run choreography (due detection, session quarantine in `.staycurrent/sessions/`, the argue/decide flow), and invoking content-core to execute cuts.
 - **Does not own:** gate logic (it calls content-core's), rendering, or any autonomous publish authority — the operator's explicit go precedes every cut (product-brief constraint).
 - **Contract:** the workbench skill set's documented operations (`convene`, `cut`, `log`, `create`) and the session-state schema from the design system.
-- **Root instruction file & agent wiring:** the workbench's L0 entry point is **`STAYCURRENT.md`** at the repo root — ≤150 lines carrying the topology, the shared vocabulary, and the routes to the workbench skills, nothing else. Agent runtimes reach it through the existing agent-wiring convention: `AGENTS.md` (the canonical instruction source every agent already loads, `CLAUDE.md` symlinks to it) carries one pointer line to `STAYCURRENT.md`. Cold start stays within the ≤3-read budget: (1) `STAYCURRENT.md`, (2) the frontmatter sweep of `topics/*/article.md`, (3) the task-specific file. Keeping the product's operator surface out of `AGENTS.md` itself preserves the framework/product separation — `AGENTS.md` belongs to the development process, `STAYCURRENT.md` to the publication.
+- **Root instruction file:** the workbench's L0 entry point is **`STAYCURRENT.md`** at the repo root — ≤150 lines carrying the topology, the shared vocabulary, and the routes to the workbench skills, nothing else. `CLAUDE.md` points to it. Cold start stays within the ≤3-read budget: (1) `STAYCURRENT.md`, (2) the frontmatter sweep of `topics/*/article.md`, (3) the task-specific file.
 
-**Skill distribution — the resolved format.** A companion skill is distributed as the plain file tree the design system specifies (`SKILL.md` + `references/`), published by the site in two forms per version: browsable raw files under `/skills/<slug>/` (current) and `/skills/<slug>/v/<n>/` (archived), and a single downloadable `.zip` of the same tree for one-command install. The install page (`/[topic]/skill`) shows the one-liner — fetch the archive, unpack into the agent runtime's skills directory — and states the `article_version` binding. The zip is generated at build from the same gate-checked files it mirrors; no registry, no installer, no package manager at MVP. Because payloads live at top-level `/skills/` while topics own the root namespace, the root path segments `skills`, `changelog`, `about`, and `rss.xml` are **reserved slugs** — content-core's gate rejects a topic slug that collides with them.
+**Engine / content boundary.** Engine code never names the content: no topic slugs, site titles, or staycurrent-specific values in `core/`, `services/site/`, or the workbench; everything site-specific resolves from `topics/`, the site's brand tokens in `services/site/app/brand.css`, and `site.config.json`.
 
-**Framework / instance boundary.** The brief commits to two products sharing one engine; the boundary is drawn now, extracted later. At MVP the engine (content-core, the site app, the workbench skills) and the first instance (staycurrent.dev's `topics/`, brand tokens, domain) live in **one repository** — the reference deployment. The line between them is enforced by a rule, not a package split: **engine code never names the instance** — no topic slugs, site titles, or staycurrent-specific values in `core/`, `services/site/`, or the workbench skills; everything instance-specific resolves from `topics/`, `brand-tokens.json`, and one site-config module. A builder adopts the framework today by templating the repo and replacing those three things. Extracting the engine into a distributable package is a post-MVP bet — a packaging exercise, not a rewrite, precisely because the naming rule holds from the first commit.
-
-**Trust boundaries.** Three exist: repo write access (operator's git credentials — the only mutation path), the CI publish path (the gate re-validates everything before deploy, so a hand-edited commit cannot silently publish a broken version), and skill-payload consumption by third-party agents (mitigated by the markdown-only floor and per-version provenance).
+**Trust boundaries.** Two exist: repo write access (operator's git credentials — the only mutation path) and the CI publish path (the gate re-validates everything before deploy, so a hand-edited commit cannot silently publish a broken version).
 ## 5. Communication & Integration Patterns
 
 Every interaction is synchronous — in-process calls at build and research time, git as the hand-off between them. There are no queues, no events, no network calls between components; the sequence diagrams below carry the two flows where ordering and failure behaviour matter.
@@ -177,10 +173,8 @@ CI re-runs the same gate the workbench ran, through the same content-core code p
 | Pages readable and navigable with JavaScript disabled | Design system NFR | site |
 | Article text < 1.5 s median mobile; CLS < 0.02; WCAG 2.1 AA | Design system NFR | site |
 | Mermaid fences render client-side, themed both ways; source visible without JS; containers reserve layout space (CLS budget) | §3 diagram-rendering | content-core, site |
-| Skill payloads: markdown and files only, no executables, `article_version` binding | §1 supply-chain floor | content-core (gate), site (serving) |
-| Skill distribution: browsable file tree + per-version zip, both built from gate-checked files | §4 skill distribution | site |
 | `STAYCURRENT.md` root instruction file ≤150 lines; cold start ≤3 file reads | §4 root instruction file | workbench |
-| Engine code never names the instance; instance specifics live in `topics/`, brand tokens, one site-config module | §4 framework/instance boundary | content-core, site, workbench |
+| Engine code never names the content; site specifics live in `topics/`, the brand tokens, `site.config.json` | §4 engine/content boundary | content-core, site, workbench |
 | Workbench capabilities are skills + deterministic scripts; no hosted LLM calls | §3 llm-inference | workbench |
 | Cut requires the operator's explicit go; nothing publishes autonomously | Product brief authority model | workbench |
 | Session state quarantined in `.staycurrent/sessions/` (gitignored); interrupted runs resume | Design system error posture | workbench |
@@ -194,6 +188,4 @@ The capability core (`content-core`) deploys **embedded** — a TypeScript libra
 | site | graphical-ui (web) | content-core in-process at build time | none — anonymous static serving |
 | workbench | agentic-protocol | content-core in-process via scripts; writes land as git commits | operator's git credentials; no runtime auth |
 
-Both surfaces deploy from one repository in one push — there is no independent-deploy versioning problem between them. The externally consumed contracts are the ones that outlive deploys: topic URLs and slugs (permanent; renames are migrations), the RSS feed shape, and the skill-payload anatomy. Each evolves additively within a framework major version; a breaking change to any of them is a framework major-version event, recorded by ADR.
-
-Surface detail — registry rows, scaffold mapping, and status — lives in `docs/surfaces.md`.
+Both surfaces deploy from one repository in one push — there is no independent-deploy versioning problem between them. The externally consumed contracts are the ones that outlive deploys: topic URLs and slugs (permanent; renames are migrations) and the RSS feed shape. Each evolves additively; a breaking change to either is recorded by ADR.

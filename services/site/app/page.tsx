@@ -4,8 +4,7 @@ import { TopicLibrary, type LibraryCatalogue, type LibraryCatalogueEntry } from 
 /**
  * Merges one `CatalogueEntry` (slug/title/stance/version/core — everything
  * `getCatalogues` sweep-cheaply carries) with `lastResearched` (the one field
- * it deliberately omits, 03-api-design.md's `getCatalogues` design
- * rationale) looked up from the `listTopicCards` sweep already taken below —
+ * it deliberately omits) looked up from the `listTopicCards` sweep already taken below —
  * both derive from the same `sweepOrThrow` pass over the same `topics/`
  * tree, so every catalogue entry's slug is guaranteed present in the map.
  */
@@ -21,13 +20,12 @@ function toLibraryEntry(entry: CatalogueEntry, lastResearchedBySlug: Map<string,
 }
 
 /**
- * `/` — Topic Library (01-ui-design.md). The site's index: a card grid, one
+ * `/` — Topic Library. The site's index: a card grid, one
  * tile per topic (title, stance one-liner, version badge, researched date —
  * `listTopics`' `TopicSummary` sweep via `lib/content.ts`'s `listTopicCards`),
  * or the designed first-run empty state when `topics/` is validly empty.
  *
- * databases-catalogue bet (01-ui-design.md, "Topic Library and Sidebar"):
- * grouped by area via `getCatalogues`, one hub card standalone plus
+ * Grouped by area via `getCatalogues`, one hub card standalone plus
  * register-labelled Foundations/Profiles grids, reading-order sorted. Every
  * topic `getCatalogues` groups is excluded from the leftover `cards` grid so
  * it renders exactly once; a topic with no `area` at all renders exactly as

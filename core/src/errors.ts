@@ -1,5 +1,5 @@
-// Errors — every throw in this module is one of these three, never a bare Error
-// (03-api-design.md, "Additional supporting types"). ContentValidationError and
+// Errors — every throw in this module is one of these three, never a bare Error.
+// ContentValidationError and
 // ContentNotFoundError cover the Loading API and the frontmatter-schema checks
 // Cut/Session mechanics reuse; GateNotPassedError belongs to Cut mechanics alone.
 

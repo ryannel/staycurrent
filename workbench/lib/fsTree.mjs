@@ -1,6 +1,6 @@
 // Filesystem probes cli.mjs needs that core does not expose: existence checks, a
 // flat recursive file listing, a byte-identical tree comparison (the `cut`
-// converged-re-entry probe, 03-api-design.md), symlink-aware topic-directory
+// converged-re-entry probe), symlink-aware topic-directory
 // enumeration (mirrors core's listTopics/reconcile enumerators), and frontmatter/
 // research-log field reads off already-validated trees so report lines can name
 // values without reaching into core internals.
@@ -76,7 +76,7 @@ export function listFilesRel(dir) {
 /**
  * True iff `a` and `b` hold exactly the same set of relative files, byte-for-byte
  * — the "topics/<slug>/ already byte-identical to staged" test `cut`'s converged
- * re-entry branch needs (03-api-design.md, Cut mechanics / `cut` Behaviour).
+ * re-entry branch needs.
  * Fails closed: any listing or read error (a tree missing, a file vanishing
  * mid-compare) returns false — "not identical" routes `cut` to executeCut's own
  * guarded landing, never to a skipped one.

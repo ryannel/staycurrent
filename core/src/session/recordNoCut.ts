@@ -41,9 +41,9 @@ function validateNoCutInput(slug: string, input: NoCutInput): void {
 
 /**
  * Resolves a research run that found nothing warranting a cut: updates
- * `last_researched`, reverts `status` to `current`, appends the research-log entry
- * (03-api-design.md, `recordNoCut`). The no-cut counterpart to `executeCut` — no
- * staging directory, no five-artifact gate, because a no-cut touches only
+ * `last_researched`, reverts `status` to `current`, appends the research-log
+ * entry. The no-cut counterpart to `executeCut` — no staging directory, no
+ * gate, because a no-cut touches only
  * `article.md`'s `last_researched`/`status` fields and one `research-log.md` entry.
  *
  * Every read and validation happens before the first write, so a failure —
@@ -62,7 +62,7 @@ export function recordNoCut(root: string, slug: string, input: NoCutInput): Rese
   }
 
   // Read the research log BEFORE writing anything: its absence must abort the
-  // resolution with the article untouched (change-proposal-1 review patch). Every
+  // resolution with the article untouched. Every
   // topic carries a research-log.md from creation (domain/topic.md, Notes) — a
   // missing one is drift outside the action contract, not a fresh file to seed.
   const logPath = path.join(root, 'topics', slug, 'research-log.md');

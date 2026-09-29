@@ -3,22 +3,20 @@ title: site
 description: The static reader surface for Stay Current — a Next.js App Router export with no server, no database, and no runtime configuration.
 service: site
 type: service
-generation_mode: generated
 source_of_truth:
   - services/site/
-last_reviewed: 2026-07-09
+last_reviewed: 2026-09-29
 ---
 
 # site
 
-**Generator:** nextjs-app
 **Language:** TypeScript
 **Port:** 4173
 **Base path:** `services/site/`
 
 ## Overview
 
-site is the reader-facing surface of Stay Current: a Next.js App Router application that renders every article, changelog, and companion-skill page as a static export. `next build` produces the complete `out/` directory once, and a CDN serves those files unchanged — site runs no server process outside local development.
+site is the reader-facing surface of Stay Current: a Next.js App Router application that renders every article, changelog, and history page as a static export. `next build` produces the complete `out/` directory once, and a CDN serves those files unchanged — site runs no server process outside local development.
 
 ## The export constraint
 
@@ -26,13 +24,13 @@ site is the reader-facing surface of Stay Current: a Next.js App Router applicat
 
 ## Content
 
-site consumes content through content-core's typed loading API at build time — it never parses `topics/` frontmatter or markdown directly ([architecture §4](../index.md)). content-core does not exist yet; it arrives with the first bet, and every route that reads article content is unbuilt until then.
+site consumes content through content-core's typed loading API at build time — it never parses `topics/` frontmatter or markdown directly ([architecture §4](../index.md)). content-core is `core/` (`@staycurrent/core`), built to `core/dist` and consumed as a `file:` dependency.
 
 ## Dependencies
 
 | Dependency | Type | Notes |
 |---|---|---|
-| content-core | In-process library | Typed content-loading API, called at build time — not yet built; arrives with the first bet |
+| content-core | In-process library | Typed content-loading API, called at build time |
 
 site is a stateless frontend: it owns no database and reads no runtime environment variables.
 
@@ -40,14 +38,14 @@ site is a stateless frontend: it owns no database and reads no runtime environme
 
 | Command | Runs | Purpose |
 |---|---|---|
-| `pnpm start:static` | `next build && serve out -l 4173 --no-clipboard` | Builds and serves the static export — what `./dev start` runs, and what system tests prove |
+| `pnpm start:static` | `next build && serve out -l 4173 --no-clipboard` | Builds and serves the static export — what system tests prove |
 | `pnpm dev` | `next dev --port 4173` | Hot-reload dev server for manual iteration |
 | `pnpm build` | `next build` | Static export to `out/` |
 | `pnpm serve:static` | `serve out -l 4173 --no-clipboard` | Serves an already-built `out/` export without rebuilding |
 | `pnpm test` | `vitest run` | Unit test suite (`pnpm test:watch` for watch mode) |
 | `pnpm lint` / `pnpm lint:fix` | `eslint .` | Static analysis |
 
-All commands run from `services/site/`. `./dev start` runs `pnpm start:static`: the runner serves the built export — the same artifact GitHub Pages deploys — so system tests and milestone proofs exercise production truth rather than a dev server (`next dev` injects a development-overlay portal into every page, which falsifies render assertions). `pnpm dev` remains the manual inner loop; both bind port 4173, so run one at a time (see `docs/architecture/infrastructure.md`).
+All commands run from `services/site/`. `pnpm start:static` serves the built export — the same artifact GitHub Pages deploys — so system tests exercise production truth rather than a dev server (`next dev` injects a development-overlay portal into every page, which falsifies render assertions). `pnpm dev` remains the manual inner loop; both bind port 4173, so run one at a time (see `docs/architecture/infrastructure.md`).
 
 ## Environment variables
 

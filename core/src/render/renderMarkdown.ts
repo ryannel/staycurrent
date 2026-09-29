@@ -10,8 +10,8 @@ import { transformMermaidFences } from './rehypeMermaid.js';
 import { sanitizeUrlProtocols } from './rehypeSanitizeProtocols.js';
 
 /**
- * The one rendering pipeline every markdown body in the system goes through
- * (03-api-design.md, `renderMarkdown`): GFM tables, generated heading-anchor ids,
+ * The one rendering pipeline every markdown body in the system goes through:
+ * GFM tables, generated heading-anchor ids,
  * mermaid-fence rewriting, and the href/src protocol allowlist (G7) behave
  * identically everywhere a body is rendered — every caller inherits the
  * sanitization with no per-caller opt-in.

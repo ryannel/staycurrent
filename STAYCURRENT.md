@@ -98,14 +98,14 @@ the filesystem is the shared ground truth both operator and agent read.
 
 ## Skills
 
-- `.agents/skills/staycurrent-research/` — the run choreography: convene, research
+- `.claude/skills/staycurrent-research/` — the run choreography: convene, research
   progress, the findings digest, the cut/no-cut verdict.
-- `.agents/skills/staycurrent-writer/` — what a cut's staged artifacts must be: the
-  article rewrite, the changelog entry, provenance, the skill snapshot.
-- `.agents/skills/staycurrent-editor/` — the independent editorial pass: after the
+- `.claude/skills/staycurrent-writer/` — what a cut's staged artifacts must be: the
+  article rewrite, the changelog entry, provenance.
+- `.claude/skills/staycurrent-editor/` — the independent editorial pass: after the
   writer stages a cut and before the operator's go, a fresh-context review of the
   staged artifacts returns `PRESENT` or `REVISE` with quote-level findings.
-- `.agents/skills/staycurrent-style/` — the house voice: sentence-level tone and
+- `.claude/skills/staycurrent-style/` — the house voice: sentence-level tone and
   craft for every prose surface, workbench conversation included. Not phase-bound —
   in force whenever words are written.
 

@@ -1,16 +1,15 @@
 #!/usr/bin/env node
-// scripts/publish-gate.mjs — CI's full-tree publish gate (04-publish-workflow.md;
-// 02-data-flows.md's Publish Flow (CI); 03-api-design.md § Versioning &
-// Compatibility: "CI calls runPublishGate directly against each committed
-// topics/<slug>/ in its own workflow step ... the same code path the `gate`
-// and `cut` commands use — ADR 0003").
+// scripts/publish-gate.mjs — CI's full-tree publish gate. CI calls
+// runPublishGate directly against each committed topics/<slug>/ in its own
+// workflow step — the same code path the `gate` and `cut` commands use
+// (ADR 0003, docs/architecture/decisions/0003-single-fail-closed-publish-gate.md).
 //
 // Plain Node ESM, no framework — a thin invocation, never a re-implementation
 // of gate logic in workflow YAML. Runs the identical `runPublishGate` content-
 // core exports (the same function workbench/cli.mjs's `gate`/`cut` commands
 // call) against EVERY topics/<slug>/ directory in the tree, not just what a
 // push touched — the repository, not the operator's machine, is the trust
-// boundary (04-publish-workflow.md's Scope). `runPublishGate` never throws
+// boundary. `runPublishGate` never throws
 // for a content violation (only for a nonexistent `dir`), so a malformed
 // topic surfaces as GateFailure entries here, never an uncaught exception.
 //
@@ -26,8 +25,8 @@
 // `topics/` directory that exists but yields zero gateable topic
 // directories also exits non-zero: this repository always carries at least
 // one topic, so an empty topics/ can only mean a broken checkout or a
-// scaffold-only state the site cannot build from anyway
-// (change-proposal-4) — never a legitimate "nothing to gate" no-op.
+// scaffold-only state the site cannot build from anyway — never a
+// legitimate "nothing to gate" no-op.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,9 +43,9 @@ const topicsDir = path.join(root, 'topics');
  * silently skipped), deliberately NOT listTopics itself: listTopics excludes
  * a topic whose frontmatter fails to parse, reporting it as a sweep error
  * instead — exactly the kind of hand-edited, un-gated commit this full-tree
- * gate exists to catch (04-publish-workflow.md: "a hand-edited commit that
- * never went through `workbench/cli.mjs cut` must still be caught here").
- * runPublishGate's own frontmatter-schema check (one of the ten) is what
+ * gate exists to catch: a hand-edited commit that never went through
+ * `workbench/cli.mjs cut` must still be caught here.
+ * runPublishGate's own frontmatter-schema check is what
  * catches it, so every directory under topics/ must reach runPublishGate,
  * not just the ones listTopics considered well-formed.
  */
@@ -121,7 +120,7 @@ function main() {
     return 1;
   }
 
-  console.log(`publish-gate: PASS — ${slugs.length} topic(s), all ten checks green.`);
+  console.log(`publish-gate: PASS — ${slugs.length} topic(s), all nine checks green.`);
   return 0;
 }
 

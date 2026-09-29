@@ -13,8 +13,8 @@ export interface ArchivedBannerProps {
 }
 
 /**
- * `/[topic]/v/[n]/`'s archived banner (01-ui-design.md, Archived Version;
- * design-system.md's Error & honesty choreography) — replaces the trust
+ * `/[topic]/v/[n]/`'s archived banner (design-system.md's Error & honesty
+ * choreography) — replaces the trust
  * header, sticky for the whole page, condensing after the first viewport to
  * a slim single line ("history must never masquerade as current, however
  * deep the reader scrolls").

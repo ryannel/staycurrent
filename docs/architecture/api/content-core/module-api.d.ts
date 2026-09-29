@@ -1,6 +1,6 @@
 // Canonical contract for @staycurrent/core — CAPTURED from built code, not authored.
 // Source of truth: core/dist/*.d.ts (tsc-emitted from core/src). Regenerate: pnpm --filter @staycurrent/core build, then re-copy.
-// Captured at bet close: first-living-topic. The embedded-core equivalent of a served openapi.yaml —
+// The embedded-core equivalent of a served openapi.yaml —
 // architecture/index.md: content-core's contract is 'a typed module API plus the topics/ filesystem contract, not OpenAPI'.
 
 // ======================================================================
@@ -27,6 +27,17 @@ export { reconcile } from './session/reconcile.js';
 // ======================================================================
 // core/dist/types.d.ts
 // ======================================================================
+export type TopicRegister = 'foundation' | 'profile' | 'hub';
+export interface ProfileAxes {
+    consistency_model?: string;
+    partition_strategy?: string;
+    query_language?: string;
+    scaling_axis?: string;
+    latency_profile?: string;
+    durability_guarantee?: string;
+    transaction_support?: string;
+    operational_maturity?: string;
+}
 export interface TopicFrontmatter {
     topic: string;
     title: string;
@@ -35,6 +46,13 @@ export interface TopicFrontmatter {
     status: 'current' | 'in-research';
     cadence: `${number}d`;
     last_researched: string;
+    area?: string;
+    register?: TopicRegister;
+    movement?: string;
+    reading_order?: number;
+    prereqs?: string[];
+    core?: boolean;
+    axes?: ProfileAxes;
 }
 export interface TopicSummary extends TopicFrontmatter {
     due: boolean;
@@ -75,7 +93,7 @@ export interface RenderedDoc {
     html: string;
     toc: TocEntry[];
 }
-export type GateCheckId = 'snapshot-complete' | 'changelog-top-entry' | 'article-version-match' | 'skill-version-match' | 'skill-byte-identical' | 'provenance-non-empty' | 'slug-matches-dirname' | 'reserved-slug' | 'cadence-date-valid' | 'frontmatter-schema' | 'changelog-schema';
+export type GateCheckId = 'snapshot-complete' | 'changelog-top-entry' | 'article-version-match' | 'provenance-non-empty' | 'slug-matches-dirname' | 'reserved-slug' | 'cadence-date-valid' | 'frontmatter-schema' | 'changelog-schema';
 export interface GateFailure {
     check: GateCheckId;
     path: string;
@@ -103,7 +121,6 @@ export interface Version {
     meta: VersionSnapshot;
     article: RenderedDoc;
     articleMd: string;
-    skillDir: string;
     provenance: ProvenanceRecord;
 }
 export interface TopicError {
@@ -186,15 +203,15 @@ export interface FieldValidation<T> {
  */
 export declare function isBlankField(value: string): boolean;
 /**
- * Validates a topic's live `article.md` frontmatter against the schema
- * `04-data-design.md` fixes for `topics/<slug>/article.md`, and the `topic ===
- * slug` reconciliation check `03-api-design.md`'s `loadTopic` names.
+ * Validates a topic's live `article.md` frontmatter against the schema fixed
+ * for `topics/<slug>/article.md`, including the `topic === slug` reconciliation
+ * check `loadTopic` relies on.
  */
 export declare function validateTopicFrontmatter(data: Record<string, unknown>, slug: string): FieldValidation<TopicFrontmatter>;
 /**
  * Validates a frozen `versions/vN/article.md` frontmatter: exactly `version` and
- * `cut` — any other key (`status` included) is rejected (`03-api-design.md`'s
- * `loadVersion` Errors; `04-data-design.md`'s Version Snapshot Frontmatter).
+ * `cut` — any other key (`status` included) is rejected, as `loadVersion`'s
+ * throw contract requires.
  */
 export declare function validateVersionFrontmatter(data: Record<string, unknown>): FieldValidation<VersionSnapshot>;
 //# sourceMappingURL=frontmatter.d.ts.map
@@ -208,7 +225,7 @@ export interface VersionScan {
 }
 /**
  * N is the highest version number present as a `versions/vN/` subdirectory inside
- * `dir` (03-api-design.md, Publish gate, "How N is derived") — a numeric max, not a
+ * `dir` — a numeric max, not a
  * lexicographic one ('v9' must not beat 'v10' by string comparison). Exported so
  * `executeCut` (Cut mechanics) derives the same N from the staged tree instead of
  * re-implementing the scan.
@@ -216,8 +233,8 @@ export interface VersionScan {
 export declare function scanVersions(dir: string): VersionScan;
 /**
  * The one place gate logic exists (ADR 0003): validates that `dir`, treated as a
- * topic-shaped directory, is internally consistent across all eleven `GateCheckId`
- * checks (03-api-design.md, Publish gate; change-proposal-7 added check 11). Never
+ * topic-shaped directory, is internally consistent across all nine `GateCheckId`
+ * checks. Never
  * throws for a content violation — every violation becomes a `GateFailure`; only a
  * nonexistent (or non-directory) `dir` propagates a raw fs error, a usage error
  * rather than a content problem.
@@ -229,7 +246,7 @@ export declare function runPublishGate(dir: string, opts?: PublishGateOptions): 
 // ======================================================================
 import type { SiteConfig } from './types.js';
 /**
- * Builds the site-wide `rss.xml` feed body (03-api-design.md, `buildRss`):
+ * Builds the site-wide `rss.xml` feed body:
  * every `ChangelogEntry` across every topic, newest first, capped at the 50
  * most recent — "the RSS item is the entry, verbatim" (design system). Sole
  * caller: `services/site`'s `prebuild` script, which reads `site.config.json`
@@ -293,8 +310,8 @@ export declare function writeMatterFile(filePath: string, data: Record<string, u
  * leaving every other byte of the file — the rest of the frontmatter, and the
  * entire body — untouched. Used for the single-field stamps Cut/Session mechanics
  * make (`status`, `last_researched`) so a stamp never risks reformatting content a
- * loader or a human authored (03-api-design.md: convene/recordNoCut/discardSession/
- * reconcile all stamp the working tree, never rewrite it wholesale).
+ * loader or a human authored (convene/recordNoCut/discardSession/reconcile all
+ * stamp the working tree, never rewrite it wholesale).
  *
  * Callers only ever invoke this after validating the file's frontmatter schema, so
  * `field` is guaranteed present; the two throws below guard a structural bug in that
@@ -304,7 +321,7 @@ export declare function replaceFrontmatterField(raw: string, field: string, valu
 /**
  * Inserts one `## <heading>` section at the top of the log — the newest-first,
  * append-only-at-top shape `research-log.md` and `changelog.md` share
- * (04-data-design.md). `bodyLines` become the section's body, one array entry per
+ * `bodyLines` become the section's body, one array entry per
  * line, matching the grammar `loadResearchLog`/`loadChangelog` parse back out.
  *
  * Normally the entry lands immediately after the H1 line; a log whose first line is
@@ -314,7 +331,7 @@ export declare function replaceFrontmatterField(raw: string, field: string, valu
 export declare function prependLogSection(raw: string, heading: string, bodyLines: string[]): string;
 /**
  * Builds a directory's contents in a hidden temp sibling, then renames it into
- * place — the atomic-seed rule from change-proposal-1's review: a crash mid-seed
+ * place — the atomic-seed rule: a crash mid-seed
  * leaves only a dot-prefixed temp directory that no slug-addressed path ever
  * resolves to, never a partial `<slug>/` tree that blocks retries or masquerades
  * as an authored draft.

@@ -1,15 +1,11 @@
-"""Operator-contract artifacts — permanent coverage (bet first-living-topic,
-slice 4.1, workbench loop-skills).
+"""Operator-contract artifacts — permanent coverage.
 
-The bet-progress suite (tests/bets/first-living-topic/test_slice_14_workbench_
-loop-skills.py) proves this slice's shape once and is archived at bet close.
-This file is what stays: a permanent regression guard pinning the same
-committed shape — STAYCURRENT.md's session contract (state-block source,
-closed vocabulary, seven-command CLI set, halt template, authority rule,
-within its line budget) and the two workbench skills' verbatim microcopy and
-authoring rules (docs/design-system.md § Agentic Protocol;
-docs/bets/first-living-topic/technical-design/01-ui-design.md § workbench) —
-so a later change cannot silently regress the operator's own instructions.
+A regression guard pinning the committed shape of the operator's own
+instructions — STAYCURRENT.md's session contract (state-block source, closed
+vocabulary, seven-command CLI set, halt template, authority rule, within its
+line budget) and the two workbench agent skills' verbatim microcopy and
+authoring rules (docs/design-system.md § Agentic Protocol) — so a later
+change cannot silently regress them.
 
 Also asserts the two-sided negative every skill must satisfy: no instruction
 ever tells the agent to write into `topics/` directly, and each skill states
@@ -22,7 +18,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILLS_DIR = REPO_ROOT / ".agents" / "skills"
+SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
 
 VOCAB = ["current", "due", "in-research", "superseded", "cut", "no-cut", "sourced", "synthesis"]
 CLI_COMMANDS = ["status", "create", "convene", "gate", "cut", "log", "discard"]
@@ -32,7 +28,7 @@ HALT_LINES = ["Blocked:", "Cause:", "State:", "Action:"]
 def _find_skill(fragment: str) -> Path:
     assert SKILLS_DIR.exists(), f"{SKILLS_DIR.relative_to(REPO_ROOT)} does not exist"
     candidates = [p for p in SKILLS_DIR.iterdir() if p.is_dir() and fragment in p.name]
-    assert candidates, f"expected a skill directory matching '{fragment}' under .agents/skills/"
+    assert candidates, f"expected a skill directory matching '{fragment}' under .claude/skills/"
     skill_md = candidates[0] / "SKILL.md"
     assert skill_md.exists(), f"expected {candidates[0].name}/SKILL.md"
     return skill_md
@@ -84,8 +80,8 @@ def test_staycurrent_doc_states_the_explicit_go_authority_rule():
 
 def test_staycurrent_doc_points_at_both_workbench_skills():
     text = (REPO_ROOT / "STAYCURRENT.md").read_text()
-    assert ".agents/skills/staycurrent-research/" in text
-    assert ".agents/skills/staycurrent-writer/" in text
+    assert ".claude/skills/staycurrent-research/" in text
+    assert ".claude/skills/staycurrent-writer/" in text
 
 
 # ---------------------------------------------------------------------------
@@ -145,11 +141,6 @@ def test_writer_skill_encodes_provenances_two_section_anatomy():
     assert "## Sources" in text and "## Synthesis" in text, (
         "expected provenance's two-section anatomy"
     )
-
-
-def test_writer_skill_binds_the_skill_snapshot_to_article_version():
-    text = _find_skill("writ").read_text()
-    assert "article_version" in text, "expected the skill snapshot's version binding named"
 
 
 # ---------------------------------------------------------------------------

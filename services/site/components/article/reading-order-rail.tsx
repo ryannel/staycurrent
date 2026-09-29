@@ -2,7 +2,7 @@ import { Fragment } from 'react';
 import Link from 'next/link';
 import type { ReadingPathLink, ReadingPosition } from '@/lib/content';
 
-/** "1st"/"2nd"/"3rd"/"4th"/... — the rail's position-within-movement figure (01-ui-design.md wireframe: "4th of 5 in this movement"). */
+/** "1st"/"2nd"/"3rd"/"4th"/... — the rail's position-within-movement figure ("4th of 5 in this movement"). */
 function ordinal(n: number): string {
   const mod100 = n % 100;
   if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
@@ -24,8 +24,7 @@ export interface ReadingOrderRailHeaderProps {
 
 /**
  * The Reading-Order Rail's header — the second instance of the
- * Instrumentation Strip pattern (01-ui-design.md, "Foundation Reading-Order
- * and Prereqs"): movement, position in the full path, position within the
+ * Instrumentation Strip pattern: movement, position in the full path, position within the
  * movement, and a "Read first" line naming every prereq — absent entirely
  * (not "no prerequisites") when the topic authored none, the same
  * absence-is-resting-state convention the freshness dot already uses.
@@ -65,8 +64,8 @@ export interface ReadingOrderRailFooterProps {
 }
 
 /**
- * The Reading-Order Rail's footer — "Continue" pointer (01-ui-design.md,
- * resolved "header-and-footer, unconditionally"). `next` is derived by
+ * The Reading-Order Rail's footer — "Continue" pointer (rendered
+ * unconditionally alongside the header). `next` is derived by
  * `getReadingPosition` from the live sweep, so it can only ever name a piece
  * that exists — it structurally cannot dangle. On the last piece (`next` is
  * `null`) the pointer redirects to the area's hub instead of disappearing.

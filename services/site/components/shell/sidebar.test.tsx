@@ -37,7 +37,7 @@ beforeEach(() => {
 });
 
 describe('Sidebar', () => {
-  it('renders a topic-tree entry per topic, each disclosing its four faces', () => {
+  it('renders a topic-tree entry per topic, each disclosing its three faces', () => {
     renderSidebar(TOPICS);
     expect(screen.getByText('Databases')).toBeInTheDocument();
     expect(screen.getByText('Testing')).toBeInTheDocument();
@@ -49,6 +49,9 @@ describe('Sidebar', () => {
     // trailing-slash form is verified against the real served app by the
     // Playwright interface test instead; this only pins the target topic.
     expect(articleLinks[0].getAttribute('href')).toContain('/databases');
+
+    const faces = within(getTopicDisclosure('Databases')).getAllByRole('link');
+    expect(faces.map((link) => link.textContent)).toEqual(['Article', 'Changelog', 'History']);
   });
 
   it('shows the freshness dot only for a topic within the freshness window', () => {
@@ -136,7 +139,6 @@ describe('Sidebar', () => {
     // The other faces on the SAME topic stay unmarked.
     expect(within(active).getByRole('link', { name: 'Article' })).not.toHaveAttribute('aria-current');
     expect(within(active).getByRole('link', { name: 'History' })).not.toHaveAttribute('aria-current');
-    expect(within(active).getByRole('link', { name: 'Skill' })).not.toHaveAttribute('aria-current');
 
     // The inactive topic's disclosure stays closed.
     expect(getTopicDisclosure('Testing')).not.toHaveAttribute('open');
@@ -149,15 +151,6 @@ describe('Sidebar', () => {
     const active = getTopicDisclosure('Databases');
     expect(active).toHaveAttribute('open');
     expect(within(active).getByRole('link', { name: 'History' })).toHaveAttribute('aria-current', 'page');
-  });
-
-  it("marks the current page's Skill face aria-current=page and auto-opens that topic's disclosure", () => {
-    usePathnameMock.mockReturnValue('/databases/skill/');
-    renderSidebar(TOPICS);
-
-    const active = getTopicDisclosure('Databases');
-    expect(active).toHaveAttribute('open');
-    expect(within(active).getByRole('link', { name: 'Skill' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('marks the site-wide Changelog page active and leaves About and every topic disclosure closed', () => {

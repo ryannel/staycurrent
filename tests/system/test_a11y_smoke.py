@@ -1,6 +1,6 @@
 """Accessibility + console-hygiene smoke, one test per graphical surface.
 
-Each test sweeps every route the bet declares in `tests/system/routes.json`
+Each test sweeps every route declared in `tests/system/routes.json`
 (same convention as the render-smoke/token-conformance/layout-geometry gates —
 see `_load_routes()` there) via the surface's generated per-surface page
 fixture (see conftest's surface fixtures) and asserts:

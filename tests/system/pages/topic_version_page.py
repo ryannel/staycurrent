@@ -1,4 +1,4 @@
-"""Page object for `/<topic>/v/<n>/` — Archived Version (01-ui-design.md)."""
+"""Page object for `/<topic>/v/<n>/` — Archived Version."""
 
 import re
 
@@ -33,10 +33,4 @@ class TopicVersionPage(BasePage):
 
     def expect_frozen_article_text(self, text: str) -> "TopicVersionPage":
         expect(self.page.locator(".article-body")).to_contain_text(text)
-        return self
-
-    def expect_superseded_skill_pointer(self, slug: str, version: int) -> "TopicVersionPage":
-        pointer = self.page.locator(".superseded-skill-pointer")
-        expect(pointer).to_contain_text(f"v{version}")
-        expect(pointer.locator(f"a[href='/skills/{slug}/v/{version}/']")).to_be_visible()
         return self

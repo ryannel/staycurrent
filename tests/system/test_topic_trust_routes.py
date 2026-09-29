@@ -1,7 +1,6 @@
-"""Trust-routes interface tests — one per user-observable behaviour Slice 3.2
-(trust-routes, bet first-living-topic) delivered on top of Slice 3.1's
-hardened render pipeline: the per-topic changelog and history faces, the
-current-version redirect, and the site-wide changelog.
+"""Trust-routes interface tests — one per user-observable behaviour of the
+trust routes: the per-topic changelog and history faces, the current-version
+redirect, and the site-wide changelog.
 
 Driven off the `cluster`-gated `site_page` fixture against the built static
 export the runner serves at http://localhost:4173, same convention as
@@ -42,12 +41,14 @@ def test_topic_changelog_renders_the_founding_entry_with_its_permalink(cluster, 
     expect(site_page).to_have_url(re.compile(r"#v1$"))
 
 
-def test_topic_history_marks_the_live_version_current_with_a_real_skill_link(cluster, site_page: Page, surfaces):
+def test_topic_history_marks_the_live_version_current_and_earlier_versions_archived(
+    cluster, site_page: Page, surfaces
+):
     history = TopicHistoryPage(site_page, surfaces["site"]["reach"])
     n = live_topic_version(SLUG)
-    history.goto(f"/{SLUG}/history/").expect_current_row(f"v{n}", SLUG)
+    history.goto(f"/{SLUG}/history/").expect_current_row(f"v{n}")
     if n > 1:
-        history.expect_superseded_row("v1", SLUG, 1)
+        history.expect_superseded_row("v1")
 
 
 def test_current_version_url_redirects_to_the_live_article(cluster, site_page: Page, surfaces):
@@ -66,9 +67,9 @@ def test_site_wide_changelog_lists_the_databases_entry_and_links_its_own_changel
 
 
 def test_sidebar_changelog_and_history_faces_navigate_to_the_real_routes(cluster, site_page: Page, surfaces):
-    """Unlike the bet-progress proof, this walks the real click path (not a
-    direct `goto()`) for both faces the sidebar's topic-tree carries —
-    mirroring test_not_found.py's identical navigation-path convention."""
+    """Walks the real click path (not a direct `goto()`) for both faces the
+    sidebar's topic-tree carries — mirroring test_not_found.py's identical
+    navigation-path convention."""
     site_page.set_viewport_size({"width": 1280, "height": 800})
     shell = BasePage(site_page, surfaces["site"]["reach"])
 

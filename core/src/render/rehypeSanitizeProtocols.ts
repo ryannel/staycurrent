@@ -3,7 +3,7 @@ import { visit } from 'unist-util-visit';
 
 /**
  * The protocol allowlist every `href`/`src` renderMarkdown emits must satisfy
- * (03-api-design.md, RenderedDoc; maturity ledger G7). Content is
+ * (maturity ledger G7). Content is
  * repo-authored and gate-reviewed today, but the research loop ingests
  * external sources (M4), so a hostile or sloppily-copied link protocol must
  * never reach a reader's browser through `dangerouslySetInnerHTML`.
@@ -56,7 +56,7 @@ function isSafeUrl(url: string): boolean {
  * protocol falls outside {http, https, mailto}. Only the offending attribute
  * is removed - the element and its text children are preserved, never the
  * whole node - so `[hostile](javascript:...)` renders as `<a>hostile</a>`
- * rather than disappearing (03-api-design.md's fail-closed stance, G7).
+ * rather than disappearing — the fail-closed stance (G7).
  */
 export function sanitizeUrlProtocols(tree: Root): void {
   visit(tree, 'element', (node: Element) => {

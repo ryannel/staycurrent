@@ -1,4 +1,4 @@
-"""Page object for `/about/` — About (01-ui-design.md)."""
+"""Page object for `/about/` — About."""
 
 from playwright.sync_api import expect
 

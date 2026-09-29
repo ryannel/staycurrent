@@ -1,8 +1,7 @@
 """Topic Article shell interface tests — one per user-observable behaviour
-Slice 2.2 (doc-shell-and-trust, bet first-living-topic) delivered on top of
-Slice 2.1's content-pipeline: the three-zone App Shell, the trust header's
-face links, the TOC rail's scroll-spy, the persisted theme toggle, and the
-code block's copy affordance.
+of the shell around the article: the three-zone App Shell, the trust
+header's face links, the TOC rail's scroll-spy, the persisted theme toggle,
+and the code block's copy affordance.
 
 Driven off the `cluster`-gated `site_page` fixture (tests/conftest.py) against
 the built static export the runner serves at http://localhost:4173, same
@@ -24,14 +23,14 @@ ARTICLE_PATH = f"/{SLUG}/"
 
 def test_three_zone_shell_renders_around_the_article(cluster, site_page: Page, surfaces):
     """The sidebar, reading column, and TOC rail all land as the shared shell's
-    landmark set (01-ui-design.md's shell zone rule)."""
+    landmark set (the shell zone rule)."""
     article = TopicArticlePage(site_page, surfaces["site"]["reach"])
     article.goto(ARTICLE_PATH).expect_shell_landmarks()
 
 
 def test_trust_header_face_links_point_at_the_topics_other_faces(cluster, site_page: Page, surfaces):
-    """The trust header's changelog/history/skill links carry this topic's
-    per-face routes, even though those routes don't land until Milestone 3."""
+    """The trust header's changelog/history links carry this topic's
+    per-face routes."""
     article = TopicArticlePage(site_page, surfaces["site"]["reach"])
     article.goto(ARTICLE_PATH).expect_trust_header_face_links(SLUG)
 
@@ -181,11 +180,9 @@ def test_keyboard_path_skip_link_theme_toggle_and_toc_activation(cluster, site_p
 def test_stance_callout_is_the_first_blockquote_and_precedes_the_first_h2(
     cluster, site_page: Page, surfaces
 ):
-    """Ported from the bet-progress suite (test_slice_8_site_doc-shell-and-trust.py's
-    `test_stance_callout_renders_before_the_first_h2`) so this structural
-    assertion survives that suite's archival: the article's first
-    <blockquote> carries the committed stance text and renders before the
-    article's first <h2> (01-ui-design.md's stance-callout placement rule)."""
+    """The article's first <blockquote> carries the committed stance text and
+    renders before the article's first <h2> (the stance-callout placement
+    rule)."""
     article = TopicArticlePage(site_page, surfaces["site"]["reach"])
     article.goto(ARTICLE_PATH)
 

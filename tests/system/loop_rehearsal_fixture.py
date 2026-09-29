@@ -1,5 +1,4 @@
-"""Shared loop-rehearsal harness (bet first-living-topic, slice 4.2,
-02-loop-rehearsal.md).
+"""Shared loop-rehearsal harness.
 
 Builds a git-initialized fixture copy of the real `topics/databases/` tree
 and drives the repository's own `workbench/cli.mjs` against it as a
@@ -9,18 +8,11 @@ fixture repo never needs its own copy of `workbench/` or `core/`). The
 repository's own `topics/` is never touched; every mutation lands only in a
 `tmp_path` fixture.
 
-Used by BOTH:
-- `tests/bets/first-living-topic/test_slice_15_workbench_loop-rehearsal.py`
-  (temporary bet-progress suite, archived at bet close) — drives all three
-  resolution paths (cut, no-cut, discard) plus the real site build.
-- `tests/system/test_loop_rehearsal.py` (permanent regression module) — the
-  cut and discard paths only, without the site build (the expensive half),
-  per this slice's stack-testing-strategy rollout.
-
-Keeping the fixture-building and CLI-driving primitives in one module means
-the two suites can never drift on how the fixture is built or the CLI is
-invoked — only what each suite chooses to assert (and, for the bet suite,
-the additional site-build proof) differs.
+Used by `tests/system/test_loop_rehearsal.py`, which drives the cut and
+discard paths without the site build (the expensive half). The
+fixture-building and CLI-driving primitives live here, apart from the
+assertions, so any future caller builds the fixture and invokes the CLI the
+same way.
 """
 
 from __future__ import annotations
@@ -57,8 +49,8 @@ def build_fixture_repo(tmp_path: Path) -> Path:
     (fixture_root / "topics").mkdir(parents=True)
     shutil.copytree(REPO_ROOT / "topics" / SLUG, fixture_root / "topics" / SLUG)
     shutil.copy2(REPO_ROOT / "site.config.json", fixture_root / "site.config.json")
-    # Mirrors the real repo's .gitignore for the two quarantine paths
-    # (04-data-design.md) — belt and suspenders; gitAddCommit's pathspec
+    # Mirrors the real repo's .gitignore for the two quarantine paths —
+    # belt and suspenders; gitAddCommit's pathspec
     # (`topics/<slug>/`) already never sweeps .staycurrent/ in regardless.
     (fixture_root / ".gitignore").write_text(
         ".staycurrent/sessions/\n.staycurrent/staged/\n"
@@ -162,7 +154,7 @@ def read_frontmatter(path: Path) -> dict:
 
 # ---------------------------------------------------------------------------
 # Next-version staged authoring — exactly per
-# .agents/skills/staycurrent-writer/SKILL.md
+# .claude/skills/staycurrent-writer/SKILL.md
 # ---------------------------------------------------------------------------
 
 
@@ -173,11 +165,9 @@ def author_next_version_staged_set(staged_dir: Path, today: str) -> int:
     authored as N+1, so the rehearsal keeps working after every real cut
     advances the topic. The set: the article rewrite (version bump + one new
     finding paragraph), the changelog's prepended '## v<N+1>' mini-essay with
-    a line-start (never bulleted) Stance line, versions/v<N+1>/{article.md,
-    skill/, provenance.md} with >=1 sourced and >=1 synthesis provenance
-    entry, and both skill copies riding the bumped article_version — content
-    unchanged per change-proposal-2, only the version binding moves. Returns
-    the authored version number N+1."""
+    a line-start (never bulleted) Stance line, and versions/v<N+1>/{article.md,
+    provenance.md} with >=1 sourced and >=1 synthesis provenance entry.
+    Returns the authored version number N+1."""
 
     article_path = staged_dir / "article.md"
     original = article_path.read_text()
@@ -253,25 +243,6 @@ def author_next_version_staged_set(staged_dir: Path, today: str) -> int:
         "reason a second, specialised engine's operational bill stays hard to "
         "justify on performance grounds alone.\n"
     )
-
-    # Skill snapshot — both staged copies bump article_version; content rides
-    # unchanged (change-proposal-2), only the version binding moves.
-    live_skill_path = staged_dir / "skill" / "SKILL.md"
-    original_skill = live_skill_path.read_text()
-    bumped_skill = re.sub(
-        rf"(?m)^article_version: {live_version}$",
-        f"article_version: {next_version}",
-        original_skill,
-        count=1,
-    )
-    assert bumped_skill != original_skill, (
-        f"skill version bump regex matched nothing — expected a literal "
-        f"'article_version: {live_version}' line (does SKILL.md's binding match the article's version?)"
-    )
-    live_skill_path.write_text(bumped_skill)
-    next_skill_dir = next_dir / "skill"
-    next_skill_dir.mkdir(parents=True, exist_ok=True)
-    (next_skill_dir / "SKILL.md").write_text(bumped_skill)
 
     return next_version
 

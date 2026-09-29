@@ -1,5 +1,4 @@
-"""Topic Library interface tests (01-ui-design.md, `/` — Topic Library) —
-Slice 2.3 (library-about-404, bet first-living-topic).
+"""Topic Library interface tests (`/` — Topic Library).
 
 Driven off the `cluster`-gated `site_page` fixture against the built static
 export the runner serves at http://localhost:4173, same convention as
@@ -26,7 +25,7 @@ SLUG = "databases"
 
 def test_library_renders_the_databases_card(cluster, site_page: Page, surfaces):
     """The card states title, stance one-liner, and version badge —
-    `listTopics`' `TopicSummary` sweep (03-api-design.md). The badge asserts
+    `listTopics`' `TopicSummary` sweep. The badge asserts
     the live version read from `topics/`, not a founding-era constant."""
     library = LibraryPage(site_page, surfaces["site"]["reach"])
     library.goto("/").expect_topic_card(

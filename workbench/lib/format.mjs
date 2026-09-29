@@ -1,7 +1,7 @@
 // Human-formatted output: the `status` state-block table and the `Blocked/Cause/
-// State/Action` halt template (01-ui-design.md, "Surface: workbench"; the halt
-// block quoted verbatim there and in 03-api-design.md's `cut` gate-failure
-// response). `todayMs` is injectable throughout (a UTC-midnight epoch value) so
+// State/Action` halt template — the workbench surface's two output shapes; the
+// halt block is `cut`'s gate-failure response, rendered verbatim.
+// `todayMs` is injectable throughout (a UTC-midnight epoch value) so
 // the due/next-run derivations are deterministic under test — cli.mjs passes
 // nothing and gets the real clock.
 
@@ -13,9 +13,9 @@ function parseIsoUtc(iso) {
 }
 
 /** 'DD MMM YYYY', e.g. '12 Jun 2026', '01 Mar 2026' — the `researched <date>`
- * column's format. The day is two-digit padded: 01-ui-design.md's rendered state
- * block ('01 Mar 2026') is normative ("matches the design system's state block
- * example byte-for-byte"). */
+ * column's format. The day is two-digit padded: the design system's rendered
+ * state block ('01 Mar 2026') is normative, and this output matches it
+ * byte-for-byte. */
 export function formatDateLong(iso) {
   const d = parseIsoUtc(iso);
   return `${String(d.getUTCDate()).padStart(2, '0')} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
@@ -44,7 +44,7 @@ export function todayUtcMs() {
 }
 
 /** One topic's trailing state column: `current — next run …`, `due — N days over`,
- * or `in-research` (03-api-design.md, `status` Response (human)). */
+ * or `in-research` — the `status` command's human response. */
 export function stateFor(topic, todayMs = todayUtcMs()) {
   if (topic.status === 'in-research') return 'in-research';
 
@@ -58,8 +58,8 @@ export function stateFor(topic, todayMs = todayUtcMs()) {
 }
 
 /**
- * The state-block table: one column-aligned row per topic. Mirrors
- * 01-ui-design.md's rendered example byte-for-byte — each column (slug, version,
+ * The state-block table: one column-aligned row per topic. Mirrors the design
+ * system's rendered example byte-for-byte — each column (slug, version,
  * `researched <date>`) is padded to (the widest value in that column) + 3 spaces,
  * the pattern the worked example's spacing reduces to.
  */
@@ -80,7 +80,7 @@ export function renderStateBlock(topics, todayMs = todayUtcMs()) {
 
 /**
  * The Blocked/Cause/State/Action halt template — `cut`'s exclusive failure format
- * (03-api-design.md: "only `cut` renders the full ... halt template"). Label
+ * (only `cut` renders the full halt template). Label
  * spacing (`Blocked: `, `Cause:   `, `State:   `, `Action:  `) matches the
  * design-system block verbatim. Any GateFailure beyond the one named in `cause`
  * lists below the block as `FAIL <check-id>: <message>` — the same line shape

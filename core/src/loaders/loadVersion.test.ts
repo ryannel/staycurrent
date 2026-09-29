@@ -17,7 +17,7 @@ function writeValidVersion(root: string, slug: string, n: number): void {
 }
 
 describe('loadVersion', () => {
-  it('returns meta, rendered article, articleMd, skillDir, and provenance for a valid snapshot', () => {
+  it('returns meta, rendered article, articleMd, and provenance for a valid snapshot', () => {
     const root = makeTmpRoot();
     writeValidVersion(root, 'databases', 5);
 
@@ -26,7 +26,6 @@ describe('loadVersion', () => {
     expect(version.meta).toEqual({ version: 5, cut: '2026-06-12' });
     expect(version.article.html).toContain('Frozen body.');
     expect(version.articleMd).toContain('Frozen body.');
-    expect(version.skillDir).toBe('topics/databases/versions/v5/skill');
     expect(version.provenance.sources).toHaveLength(1);
   });
 

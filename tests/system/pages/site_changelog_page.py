@@ -1,4 +1,4 @@
-"""Page object for `/changelog/` — Site-Wide Changelog (01-ui-design.md)."""
+"""Page object for `/changelog/` — Site-Wide Changelog."""
 
 from playwright.sync_api import expect
 

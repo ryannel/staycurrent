@@ -11,8 +11,8 @@ import { makeTmpRoot } from '../loaders/fixtures.testutil.js';
 // The coverage requirement carried from review: close the fixture loop end to end —
 // the real producer (createTopic) feeding the real gate (runPublishGate) and the
 // real loaders (loadTopic/loadVersion), with no fixture writer standing in for any
-// of them. Mirrors what the writer skill (a later slice) will do by hand: author
-// the founding TODO list's remaining content, then re-gate to PASS.
+// of them. Mirrors what the research run does by hand: author the founding
+// TODO list's remaining content, then re-gate to PASS.
 
 describe('founding-cut fixture loop', () => {
   it('takes createTopic\'s skeleton from a failing gate to a passing one, cuts it, and reads it back through the real loaders', () => {
@@ -26,8 +26,8 @@ describe('founding-cut fixture loop', () => {
     expect(firstGate.ok).toBe(false);
     expect(firstGate.failures.map((f) => f.check)).toEqual(['provenance-non-empty']);
 
-    // 2. Author the minimal remaining content (the writer skill's job in a later
-    // slice) — only the empty provenance the founding skeleton deliberately left.
+    // 2. Author the minimal remaining content — only the empty provenance the
+    // founding skeleton deliberately left.
     fs.writeFileSync(
       path.join(staged.dir, 'versions', 'v1', 'provenance.md'),
       '## Sources\n\n' +
@@ -57,6 +57,5 @@ describe('founding-cut fixture loop', () => {
     expect(version.meta.version).toBe(1);
     expect(version.provenance.sources).toHaveLength(1);
     expect(version.provenance.synthesis).toHaveLength(1);
-    expect(version.skillDir).toBe(`topics/${slug}/versions/v1/skill`);
   });
 });

@@ -23,8 +23,8 @@ type PageParams = { topic: string };
 type PageProps = { params: Promise<PageParams> };
 
 /**
- * Site Build Data Flow (02-data-flows.md): `listTopics` -> `generateStaticParams`
- * -> per-route `loadTopic`. A non-empty `errors` array from the sweep is
+ * Site build data flow: `listTopics` -> `generateStaticParams` -> per-route
+ * `loadTopic`. A non-empty `errors` array from the sweep is
  * build-fatal (`getTopicSlugs` throws it) — the whole export refuses to build
  * rather than silently omitting a broken topic from the catalogue.
  */
@@ -38,17 +38,16 @@ export function generateStaticParams(): PageParams[] {
 export const dynamicParams = false;
 
 /**
- * The Catalogue Freshness Rollup's live numbers for a hub topic
- * (02-data-flows.md, flow c). `null` whenever this topic's `area` doesn't
+ * The Catalogue Freshness Rollup's live numbers for a hub topic. `null`
+ * whenever this topic's `area` doesn't
  * resolve to a real `Catalogue` — a hub authored without an `area` yet has
  * nothing to group into, so it renders with no rollup band rather than a
  * partial one, the same fail-soft posture `getReadingPosition` takes for a
  * foundation missing its own additive fields.
  *
  * Flattens hub + every movement's entries + profiles + `ungrouped` — the
- * rollup counts every topic in the area, including `ungrouped` ones (flow c's
- * own key decision: "a claim about the area, not about the grouping's
- * cleanliness").
+ * rollup counts every topic in the area, including `ungrouped` ones — it is
+ * a claim about the area, not about the grouping's cleanliness.
  */
 function buildCatalogueFreshness(frontmatter: TopicFrontmatter): CatalogueFreshness | null {
   if (frontmatter.area === undefined || frontmatter.area.trim() === '') return null;
@@ -71,11 +70,11 @@ function buildCatalogueFreshness(frontmatter: TopicFrontmatter): CatalogueFreshn
 
 /**
  * The Reading-Order Rail footer's fallback target on the last piece in the
- * path — the area's hub page (01-ui-design.md: "there is no next foundation
- * to point to, so the footer redirects to the hub rather than disappearing").
+ * path — the area's hub page: there is no next foundation to point to, so
+ * the footer redirects to the hub rather than disappearing.
  * Falls back to `/` in the defensive case an area has no hub at all — an
  * authoring defect `getCatalogues` itself already tolerates rather than
- * fails on (03-api-design.md's duplicate-hub design rationale) — so the
+ * fails on (see its duplicate-hub handling) — so the
  * footer link never points at a slug the sweep hasn't proven exists.
  */
 function resolveHubHref(frontmatter: TopicFrontmatter): string {
@@ -95,18 +94,18 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 /**
- * `/[topic]/` — the Living Article (01-ui-design.md). Slice 2.1 rendered the
- * content-bearing core (currency data, `loadTopic`'s body — stance callout as
- * its first blockquote, the article's own `<h1>`, every heading-anchor id).
- * This slice (2.2) dresses it in the shell's reading-column + TOC-rail zone,
- * the styled trust header, and the client-side mermaid render / code-copy
- * affordance (`ArticleEnhancements`) — the shared sidebar and design tokens
- * live in the root layout.
+ * `/[topic]/` — the Living Article. Renders the content-bearing core
+ * (currency data, `loadTopic`'s body — stance callout as its first
+ * blockquote, the article's own `<h1>`, every heading-anchor id) inside the
+ * shell's reading-column + TOC-rail zone, with the styled trust header and
+ * the client-side mermaid render / code-copy affordance
+ * (`ArticleEnhancements`) — the shared sidebar and design tokens live in the
+ * root layout.
  *
  * `loadTopic` throws `ContentNotFoundError`/`ContentValidationError`
  * uncaught here — a topic missing `version`/`last_researched`, or otherwise
  * failing schema validation, fails `next build` rather than rendering a
- * partial page (02-data-flows.md, "currency is never guessed").
+ * partial page ("currency is never guessed").
  */
 export default async function TopicPage({ params }: PageProps) {
   const { topic: slug } = await params;
@@ -120,8 +119,8 @@ export default async function TopicPage({ params }: PageProps) {
   const { cutDate, provenance } = getTopicVersion(slug, frontmatter.version);
   const fresh = isFresh(cutDate);
 
-  // databases-catalogue bet (01-ui-design.md): the hub's Catalogue Freshness
-  // Rollup and the foundation's Reading-Order Rail are mutually exclusive —
+  // The hub's Catalogue Freshness Rollup and the foundation's Reading-Order
+  // Rail are mutually exclusive —
   // `register` is a closed union, so a topic is never both `'hub'` and
   // `'foundation'` — but each guards independently rather than assuming that.
   const catalogueFreshness = frontmatter.register === 'hub' ? buildCatalogueFreshness(frontmatter) : null;
@@ -158,10 +157,6 @@ export default async function TopicPage({ params }: PageProps) {
           <Link href={`/${slug}/history/`}>
             history
           </Link>
-          <span aria-hidden="true">·</span>
-          <Link href={`/${slug}/skill/`}>
-            skill
-          </Link>
           {/* Always rendered (never conditionally omitted) so the client-side
               freshness correction (components/shell/freshness-correction.tsx)
               can show/hide it against the reader's actual clock — a static
@@ -175,8 +170,7 @@ export default async function TopicPage({ params }: PageProps) {
         {readingPosition && <ReadingOrderRailHeader position={readingPosition} />}
         <div className="article-body" dangerouslySetInnerHTML={{ __html: body.html }} />
         {readingPosition && <ReadingOrderRailFooter next={readingPosition.next} hubHref={hubHref ?? '/'} />}
-        {/* Provenance, rendered inline at the essay's close (01-ui-design.md's
-            micro-polish spec, design decision): the design system pins
+        {/* Provenance, rendered inline at the essay's close: the design system pins
             provenance.md's two-section anatomy (## Sources / ## Synthesis)
             to the sourced/synthesis badge tokens, not to a dedicated route
             or component. Deliberately does NOT register in the TOC rail
