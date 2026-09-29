@@ -51,7 +51,7 @@ ClickHouse, DuckDB, Snowflake, and BigQuery use a **column store**. Each column 
 
 Concurrency control decides what a transaction sees while other transactions are running. Nearly every engine now uses **multi-version concurrency control**, or MVCC: a write creates a new version of the row rather than overwriting it, so readers keep seeing a consistent older version and don't block writers. What differs is the *isolation level* each engine gives you by default, and the defaults are weaker than most people assume.
 
-Postgres defaults to **read committed**. Each statement sees whatever was committed before that statement started, so two statements in the same transaction can see different states of the database. MySQL's InnoDB defaults to **repeatable read**, which fixes one snapshot for the whole transaction, but still lets two transactions each read a value and both write based on what they read, an anomaly called write skew. Only **serializable** promises that the result is the same as if the transactions had run one at a time, and it pays for that with retries: a serializable transaction that conflicts with another gets aborted, and your application has to run it again. CockroachDB and Spanner default to serializable. YugabyteDB dropped its default to read committed in 2025 because the retries kept surprising people. Whatever your engine defaults to is part of your system's behaviour whether you chose it or not, so it's worth finding out.
+Postgres defaults to **read committed**. Each statement sees whatever was committed before that statement started, so two statements in the same transaction can see different states of the database. MySQL's InnoDB defaults to **repeatable read**, which fixes one snapshot for the whole transaction, but still lets two transactions each read a value and both write based on what they read, an anomaly called write skew. Only **serializable** promises that the result is the same as if the transactions had run one at a time, and it pays for that with retries: a serializable transaction that conflicts with another gets aborted, and your application has to run it again. CockroachDB and Spanner default to serializable. YugabyteDB made read committed the default for new clusters from its 2025.2 release, because the retries kept surprising people. Whatever your engine defaults to is part of your system's behaviour whether you chose it or not, so it's worth finding out.
 
 ### How does it survive a machine dying, and how does it grow?
 
@@ -63,19 +63,42 @@ With *consensus-based* replication, a protocol such as Raft or Paxos gets a majo
 
 With *leaderless* replication, in the style of Amazon's Dynamo paper that Cassandra and ScyllaDB follow, any node can accept a write and forwards it to several replicas, and a read asks several replicas and takes the newest answer. You choose how many replicas have to acknowledge a write and how many have to answer a read. If the two sets overlap, reads see the latest write. If you set them lower you get more availability and lower latency and give up that guarantee.
 
+The three differ in what has to happen before the client hears "done". Here is one write under each.
+
+```mermaid
+graph TB
+    subgraph LB["Leader-based (Postgres, MySQL, Redis): answer first, copy later"]
+        direction LR
+        C1[Client] -->|write| L[Leader]
+        L -->|ack as soon as its own log has it| C1
+        L -.->|stream the log, asynchronously| F1[Follower]
+        L -.->|stream the log, asynchronously| F2[Follower]
+    end
+    subgraph CS["Consensus (CockroachDB, Spanner, YugabyteDB): a majority agrees first"]
+        direction LR
+        C2[Client] -->|write| RL[Range leader]
+        RL -->|propose| P1[Replica]
+        RL -->|propose| P2[Replica]
+        P1 -->|accept| RL
+        RL -->|ack once 2 of 3 have it| C2
+    end
+    subgraph LL["Leaderless (Cassandra, ScyllaDB): any node coordinates, W replicas must answer"]
+        direction LR
+        C3[Client] -->|write| K[Coordinator, any node]
+        K --> R1[Replica]
+        K --> R2[Replica]
+        K --> R3[Replica]
+        R1 -->|ack| K
+        R2 -->|ack| K
+        K -->|ack once W replicas answer| C3
+    end
+```
+
 **Partitioning**, or sharding, splits data across machines so no one machine has to hold it all. Hash partitioning spreads keys evenly and makes range queries expensive; range partitioning keeps neighbouring keys together and can put all the recent writes on one machine. Choosing the partition key is the most important decision in a partitioned system, for two reasons: a query that doesn't include the key has to ask every partition, and a key whose values aren't evenly popular makes one machine the bottleneck. Every store that scales writes across machines makes you decide this up front. Postgres doesn't, because Postgres doesn't partition across machines at all, and that's the limit that eventually sends people to the distributed tier.
 
 ### What questions does it answer cheaply?
 
 The last question is the one you see on the product page. SQL over a relational model lets you ask questions you didn't plan for when you designed the schema, with a query planner that sometimes guesses wrong. A key-value API answers one question, "give me the value for this key", very fast, and nothing else. A document model stores a whole aggregate together, so one read returns everything about one entity. A graph model makes multi-hop traversals cheap. An inverted index answers "which documents contain these words". A vector index answers "which stored vectors are closest to this one". Each of these is an index structure and a query language on top of one of the storage layouts above, and the rest of this article is organised by that layer.
-
-```mermaid
-graph TD
-    Q[The four questions] --> S[Storage layout<br/>heap · clustered B-tree · LSM · column]
-    Q --> C[Concurrency<br/>MVCC · default isolation level]
-    Q --> R[Replication & partitioning<br/>leader · consensus · leaderless · shard key]
-    Q --> A[Query surface<br/>SQL · key-value · document · graph · search · vector]
-```
 
 ## General-purpose relational engines
 
@@ -87,7 +110,7 @@ Postgres is the default in 2026 and the recommendation of this article, so it's 
 
 It stores rows in a heap with B-tree indexes, plus several other index types: GIN for arrays and JSON, GiST for geometry, BRIN for huge append-only tables, and HNSW through the pgvector extension. MVCC keeps old row versions in place, and a background process called VACUUM reclaims them. A table that's updated heavily and vacuumed badly bloats, and learning to watch for that is the one operational habit every Postgres team picks up. Replication streams the write-ahead log to standbys, asynchronously unless you name a synchronous one. Logical replication is a separate mechanism that ships row changes instead of bytes, and it's what feeds change-data-capture pipelines. The default isolation level is read committed. One operating-system process serves each connection, so connections are expensive and the default limit is 100; any Postgres of real size has a connection pooler in front of it. PgBouncer in transaction mode is the usual answer, and the managed vendors ship one built in.
 
-PostgreSQL 18 came out on 25 September 2025 with a new asynchronous I/O subsystem that can use io_uring on Linux, which the release notes credit with up to three times faster reads in some workloads. It also added a native `uuidv7()` function, B-tree skip scans, data checksums on by default, and temporal primary and foreign keys. Version 19 is in beta, with general availability planned for October 2026; it brings a `REPACK` command that replaces `VACUUM FULL` and can run without locking the table, parallel autovacuum, and logical replication of sequences. The bigger news is around Postgres rather than in it. Databricks paid about a billion dollars for Neon in May 2025, Snowflake paid $250 million for Crunchy Data a month later, and PlanetScale launched a Postgres product in September 2025. The 2025 Stack Overflow survey had Postgres at 55.6 per cent of respondents, 18.6 points ahead of MySQL. The vendors are consolidating on it because the developers already had.
+PostgreSQL 18 came out on 25 September 2025 with a new asynchronous I/O subsystem that can use io_uring on Linux, which the release notes credit with up to three times faster reads in some workloads. It also added a native `uuidv7()` function, B-tree skip scans, data checksums on by default, and temporal primary and foreign keys. Version 19 is in beta, with general availability planned for October 2026; it brings a `REPACK` command that replaces `VACUUM FULL` and can run without locking the table, parallel autovacuum, and logical replication of sequences. The bigger news is around Postgres rather than in it. Databricks paid about a billion dollars for Neon in May 2025, Snowflake paid $250 million for Crunchy Data a month later, and PlanetScale launched a Postgres product in September 2025. The 2025 Stack Overflow survey had Postgres at 55.6 per cent of all respondents, about 15 points ahead of MySQL. The vendors are consolidating on it because the developers already had.
 
 Use it for transactional workloads of any ordinary shape, and for anything that wants JSON, full-text search, geospatial, or vectors next to relational data without running a second system. It's the right choice whenever your team's time is worth more than the last ten per cent of throughput.
 
@@ -101,7 +124,7 @@ MySQL is still the second most deployed database by the DB-Engines count, and th
 
 InnoDB stores the table inside its primary-key B-tree, so rows are physically in key order, and a range scan by primary key is the cheapest read there is. Secondary indexes hold the primary key rather than a row location, so a secondary lookup walks two trees, and a random or wide primary key hurts everything. MVCC uses undo logs instead of keeping old versions in place, so there's no VACUUM; the equivalent housekeeping is purging old undo records. Replication ships the binary log of logical changes, asynchronously by default, with semi-synchronous and group replication as options. The default isolation level is repeatable read, which is stronger than Postgres's default and still not serializable.
 
-MySQL 9.7 shipped in April 2026 as the first long-term-support release since 8.4, with a new hypergraph optimiser and JavaScript stored programs, and Oracle moved the faster innovation track to a "26.x" numbering. There's been a `VECTOR` column type since 9.0, but the community edition has no index over it; approximate vector search lives in Oracle's HeatWave and Google's Cloud SQL. MariaDB, the community fork, reached 12.3 LTS in May 2026 and has had vector search since 11.8.
+MySQL 9.7 shipped in April 2026 as the first long-term-support release since 8.4, with the hypergraph optimiser now in the community edition, and Oracle moved the faster innovation track to a "26.x" numbering. There's been a `VECTOR` column type since 9.0, but the community edition has no index over it; approximate vector search lives in Oracle's HeatWave and Google's Cloud SQL. MariaDB, the community fork, reached 12.3 LTS in May 2026 and has had vector search since 11.8.
 
 It suits read-heavy workloads that scan by primary key, teams with deep MySQL experience, and anyone who needs Vitess (below) to shard it. It has the same single-primary limit as Postgres and a much smaller extension story; most of the things Postgres does through extensions, MySQL doesn't do. The [relational deep dive](/relational/) goes into InnoDB, replication, and Vitess.
 
@@ -180,7 +203,7 @@ Its limit is any query the key design didn't anticipate. Every access pattern ha
 
 ### Apache Cassandra and ScyllaDB
 
-Cassandra is the open-source Dynamo descendant: an LSM engine on every node, a consistent-hash ring, and no leader. A write goes to every replica of its partition, and you choose how many have to acknowledge it (`ONE`, `QUORUM`, `ALL`); reads work the same way, and if the write and read quorums overlap you read the latest write. Conflicts resolve by last-write-wins timestamp. Deletes write tombstones that reads step over until compaction clears them, and the advice to keep partitions under about 100 megabytes is a real limit rather than a style preference. Lightweight transactions give you single-partition compare-and-set through Paxos, at several round trips each.
+Cassandra is the open-source Dynamo descendant: an LSM engine on every node, a consistent-hash ring, and no leader. A write goes to every replica of its partition, and you choose how many have to acknowledge it (`ONE`, `QUORUM`, `ALL`); reads work the same way, and if the write and read quorums overlap you read the latest write. Conflicts resolve by last-write-wins timestamp. Deletes write tombstones that reads step over until compaction clears them. The hard limit on a partition is two billion cells, but the working guidance is to keep one under about 100 megabytes, because a big partition makes compaction and repair slow and concentrates the load for that key on its replicas. Lightweight transactions give you single-partition compare-and-set through Paxos, at several round trips each.
 
 ScyllaDB reimplements the same model in C++ with one shard per core and nothing shared between cores, which is why it runs the same workload on fewer, bigger machines. Its unit of distribution is now the "tablet", managed by Raft, instead of the virtual node.
 
@@ -202,7 +225,7 @@ Some reads have to come back in well under a millisecond, and some data structur
 
 One thread executes commands, with optional I/O threads for parsing and networking, so throughput per instance is bounded by one core and every command is atomic without any locking. Persistence is a periodic snapshot, an append-only log, or both. Replication is leader-based and asynchronous; the documentation says acknowledged writes can be lost on failover, and the `WAIT` command narrows that window without closing it. Cluster mode splits the keyspace into 16,384 hash slots, and multi-key operations have to stay within one slot. Transactions are `MULTI`/`EXEC` blocks that run in sequence and can't roll back.
 
-Redis changed its licence in March 2024 from BSD to a pair of source-available licences, and within a week the Linux Foundation launched Valkey, a BSD-licensed fork of Redis 7.2 backed by AWS, Google, and Oracle. Redis 8.0 in May 2025 added AGPLv3 as a third licence option and folded JSON, the query engine, time series, probabilistic types, and vector sets into the core; it's at 8.10 as of mid-2026. Valkey reached 9.0 in October 2025 and 9.1 in May 2026, with hash-field expiry, atomic slot migration, and a claimed billion requests a second per cluster. Memcached is still the simplest option: multithreaded, no persistence, no replication, distribution done by the client. Dragonfly is a multi-threaded reimplementation under the Business Source Licence. KeyDB is unmaintained; avoid it.
+Redis changed its licence in March 2024 from BSD to a pair of source-available licences, and eight days later the Linux Foundation launched Valkey, a BSD-licensed fork of Redis 7.2 backed by AWS, Google, and Oracle. Redis 8.0 in May 2025 added AGPLv3 as a third licence option and folded JSON, the query engine, time series, probabilistic types, and vector sets into the core; it's at 8.10 as of mid-2026. Valkey reached 9.0 in October 2025 and 9.1 in May 2026, with hash-field expiry, atomic slot migration, and a claimed billion requests a second per cluster. Memcached is still the simplest option: multithreaded, no persistence, no replication, distribution done by the client. Dragonfly is a multi-threaded reimplementation under the Business Source Licence. KeyDB is unmaintained; avoid it.
 
 Use these for caches, sessions, rate limiters, leaderboards, pub/sub, lightweight queues, and anywhere a sorted set or a stream is the natural structure.
 
@@ -214,7 +237,7 @@ Transactional engines are built for many small reads and writes by key. Analytic
 
 ### ClickHouse
 
-ClickHouse's MergeTree engine writes each insert as an immutable sorted "part" and merges parts in the background. That makes ingestion very fast and, historically, point updates very slow: an `ALTER UPDATE` was an asynchronous mutation that rewrote whole columns. Since 25.7 a normal SQL `UPDATE` writes small "patch parts" that are visible immediately and get folded in on merge. The open-source edition is shared-nothing; ClickHouse Cloud runs a variant on object storage with stateless compute. It's Apache 2.0 and at 26.9 as of September 2026.
+ClickHouse's MergeTree engine writes each insert as an immutable sorted "part" and merges parts in the background. That makes ingestion very fast and, historically, point updates very slow: an `ALTER UPDATE` was an asynchronous mutation that rewrote whole columns. Since 25.8 a normal SQL `UPDATE` writes small "patch parts" that are visible immediately and get folded in on merge; the feature is on by default and still marked beta. The open-source edition is shared-nothing; ClickHouse Cloud runs a variant on object storage with stateless compute. It's Apache 2.0 and at 26.9 as of September 2026.
 
 It's the engine to reach for when you have events, logs, or observability data arriving fast and you want sub-second aggregations over billions of rows. It's a poor fit for heavy point updates, big distributed joins, and anything transactional. The [ClickHouse deep dive](/clickhouse/) covers MergeTree, the sorting key, replication, and sharding.
 
@@ -242,9 +265,9 @@ Between the warehouse and the transactional store there's a tier for dashboards 
 
 "Which records contain these words, ranked by how well they match" isn't a question a B-tree can answer. An inverted index maps each term to the list of documents containing it, and a scoring function such as BM25 ranks the matches.
 
-Elasticsearch and OpenSearch are both Lucene underneath and both use BM25 by default. Elastic moved away from Apache 2.0 in 2021, which is what produced the AWS-backed OpenSearch fork, and then added AGPLv3 back as an option in September 2024; the two have been drifting apart since. Both now double as vector stores, and Elasticsearch 9.2 stores quantised vectors on disk. Meilisearch and Typesense are the lighter options for product search. Typesense keeps its whole index in memory (its docs quote 14 gigabytes of RAM for 28 million books), which is fast and predictable.
+Elasticsearch and OpenSearch are both Lucene underneath and both use BM25 by default. Elastic moved away from Apache 2.0 in 2021, which is what produced the AWS-backed OpenSearch fork, and then added AGPLv3 back as an option on 29 August 2024; the two have been drifting apart since. Both now double as vector stores, and Elasticsearch 9.2 stores quantised vectors on disk. Meilisearch and Typesense are the lighter options for product search. Typesense keeps its whole index in memory (its docs quote 14 gigabytes of RAM for 28 million books), which is fast and predictable.
 
-Use a search engine for text relevance, faceting, typo tolerance, log search, and hybrid text-plus-vector retrieval at scale. Don't use one as a source of truth, and don't reach for one at small scale. Postgres's built-in full-text search (a `tsvector` column with a GIN index) is transactional, needs no sync pipeline, and is enough for a lot of applications. Its ranking isn't BM25 and it has no fuzzy matching; the ParadeDB extension adds BM25 inside Postgres if you need it. Run a separate search cluster once you've measured that the built-in one isn't enough. The [Elasticsearch and OpenSearch deep dive](/elasticsearch/) covers Lucene, shards, refresh and durability, and sizing.
+Use a search engine for text relevance, faceting, typo tolerance, log search, and hybrid text-plus-vector retrieval at scale. Don't use one as a source of truth, and don't reach for one at small scale. Postgres's built-in full-text search (a `tsvector` column with a GIN index) is transactional, needs no sync pipeline, and is enough for a lot of applications. Its ranking isn't BM25, and the only fuzziness it offers is trigram similarity through the `pg_trgm` extension, which catches misspellings but isn't the typo tolerance a search engine gives you. The ParadeDB extension adds BM25 inside Postgres if you need it. Run a separate search cluster once you've measured that the built-in one isn't enough. The [Elasticsearch and OpenSearch deep dive](/elasticsearch/) covers Lucene, shards, refresh and durability, and sizing.
 
 ## Vector search
 
@@ -296,26 +319,26 @@ Then read the answers against this.
 
 | If the pattern is | Start with | Because |
 |---|---|---|
-| Ordinary transactional reads and writes, one region, any schema | Postgres | Correct by default, one system for JSON, search, geo, and vectors, and the biggest ecosystem |
-| The same, but you don't want to run it | A managed Postgres (Aurora, Neon/Lakebase, Supabase, PlanetScale) | Same engine, storage handled for you, branching and scale-to-zero |
-| Writes in several regions, or surviving a region failure | Distributed SQL (Spanner, CockroachDB, YugabyteDB, TiDB, Aurora DSQL) | Consensus replication; expect tens of milliseconds per commit |
-| Key-addressed reads and writes at very high volume, single-digit milliseconds | DynamoDB, or Cassandra/ScyllaDB if you run your own | Partitioned, replicated key-value; every query designed into the key |
-| Sub-millisecond reads, counters, queues, sessions | Redis or Valkey, in front of a durable store | In-memory data structures; never the source of truth |
-| Aggregations over billions of rows | ClickHouse for events at high ingest; DuckDB on one box; a warehouse over Iceberg for governed multi-team analytics | Column storage and vectorised execution |
-| Text relevance over a large corpus | Postgres full-text first; Elasticsearch or OpenSearch once you've measured it isn't enough | Inverted index and BM25 |
-| Nearest-neighbour retrieval | pgvector, or the vector feature of whatever holds the records; a dedicated engine past roughly 100M vectors | An index type, not a category |
-| Deep traversals | Postgres recursive queries first; Neo4j or Neptune for real traversal workloads | Adjacency storage only pays off at depth |
-| Data that lives inside one process or on one device | SQLite | A library, one file, serializable |
+| Ordinary transactional reads and writes, one region, any schema | [Postgres](/relational/) | Correct by default, one system for JSON, search, geo, and vectors, and the biggest ecosystem |
+| The same, but you don't want to run it | [A managed Postgres](/relational/) (Aurora, Neon/Lakebase, Supabase, PlanetScale) | Same engine, storage handled for you, branching and scale-to-zero |
+| Writes in several regions, or surviving a region failure | [Distributed SQL](/distributed-sql/) (Spanner, CockroachDB, YugabyteDB, TiDB, Aurora DSQL) | Consensus replication; expect tens of milliseconds per commit |
+| Key-addressed reads and writes at very high volume, single-digit milliseconds | [DynamoDB](/dynamodb/), or [Cassandra/ScyllaDB](/cassandra/) if you run your own | Partitioned, replicated key-value; every query designed into the key |
+| Sub-millisecond reads, counters, queues, sessions | [Redis or Valkey](/redis/), in front of a durable store | In-memory data structures; never the source of truth |
+| Aggregations over billions of rows | [ClickHouse](/clickhouse/) for events at high ingest; DuckDB on one box; a warehouse over Iceberg for governed multi-team analytics | Column storage and vectorised execution |
+| Text relevance over a large corpus | [Postgres full-text](/relational/) first; [Elasticsearch or OpenSearch](/elasticsearch/) once you've measured it isn't enough | Inverted index and BM25 |
+| Nearest-neighbour retrieval | [pgvector](/relational/), or the vector feature of whatever holds the records; a dedicated engine past roughly 100M vectors | An index type, not a category |
+| Deep traversals | [Postgres recursive queries](/relational/) first; Neo4j or Neptune for real traversal workloads | Adjacency storage only pays off at depth |
+| Data that lives inside one process or on one device | [SQLite](/relational/) | A library, one file, serializable |
 
 Four worked examples show the procedure running.
 
-**A social feed.** Writes: a post is one insert, but fanning it out to a million followers' timelines is a million appends. Reads: each timeline read is one range scan by user, at high frequency. Consistency: a user has to see their own post immediately; followers can lag by seconds. Working set: recent timelines, which is large. This is the classic case for a key-value store with a sort key (DynamoDB or Cassandra keyed by follower, sorted by time) holding the timelines, with Postgres holding the posts, users, and relationships, and Redis in front of the hottest timelines. Postgres alone works until the fan-out write volume exceeds what one primary can take, and you can measure when that happens.
+**A social feed.** Writes: a post is one insert, but fanning it out to a million followers' timelines is a million appends. Reads: each timeline read is one range scan by user, at high frequency. Consistency: a user has to see their own post immediately; followers can lag by seconds. Working set: recent timelines, which is large. This is the classic case for a key-value store with a sort key ([DynamoDB](/dynamodb/) or [Cassandra](/cassandra/) keyed by follower, sorted by time) holding the timelines, with [Postgres](/relational/) holding the posts, users, and relationships, and [Redis](/redis/) in front of the hottest timelines. Postgres alone works until the fan-out write volume exceeds what one primary can take, and you can measure when that happens.
 
-**A ledger.** Writes: transfers between accounts, each touching two rows, at a moderate rate. Reads: balances and statements. Consistency: absolute, because a lost or doubled transfer is a business event. Working set: small. This is Postgres, with serializable isolation on the transfer transaction and synchronous replication to a standby, and nothing else. Distributed SQL only comes in if the ledger has to accept writes in several regions at once, and most don't.
+**A ledger.** Writes: transfers between accounts, each touching two rows, at a moderate rate. Reads: balances and statements. Consistency: absolute, because a lost or doubled transfer is a business event. Working set: small. This is [Postgres](/relational/), with serializable isolation on the transfer transaction and synchronous replication to a standby, and nothing else. [Distributed SQL](/distributed-sql/) only comes in if the ledger has to accept writes in several regions at once, and most don't.
 
-**A metrics store.** Writes: millions of timestamped points a minute, append-only. Reads: range queries with aggregation for dashboards and alerts. Consistency: eventual is fine. Working set: the last few hours, then cold. Prometheus if these are operational metrics; otherwise ClickHouse, or TimescaleDB if the metrics need to live next to relational data and the volume fits one large machine.
+**A metrics store.** Writes: millions of timestamped points a minute, append-only. Reads: range queries with aggregation for dashboards and alerts. Consistency: eventual is fine. Working set: the last few hours, then cold. Prometheus if these are operational metrics; otherwise [ClickHouse](/clickhouse/), or TimescaleDB if the metrics need to live next to relational data and the volume fits one large machine.
 
-**Retrieval for an assistant.** Writes: documents are chunked and embedded on ingest, as a batch job. Reads: a query vector is matched against a few million chunks, filtered by tenant and permissions, and the text comes back. Consistency: eventual. Working set: the whole index. pgvector in the same Postgres that holds the documents and permissions, so the filter and the search are one query. Move to a dedicated vector engine when the collection passes tens of millions of vectors or the latency target is strict.
+**Retrieval for an assistant.** Writes: documents are chunked and embedded on ingest, as a batch job. Reads: a query vector is matched against a few million chunks, filtered by tenant and permissions, and the text comes back. Consistency: eventual. Working set: the whole index. [pgvector](/relational/) in the same Postgres that holds the documents and permissions, so the filter and the search are one query. Move to a dedicated vector engine when the collection passes tens of millions of vectors or the latency target is strict.
 
 ## What changed this year, and what to watch
 
