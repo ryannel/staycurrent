@@ -1,0 +1,227 @@
+---
+import Base from '../../../../layouts/Base.astro';
+import Sql from '../../../../components/explainers/querying/Sql.astro';
+import ResultTable from '../../../../components/explainers/querying/ResultTable.astro';
+import QueryShape from '../../../../components/explainers/querying/QueryShape.astro';
+import JoinFanout from '../../../../components/explainers/querying/JoinFanout.astro';
+import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url';
+import queryExamples from '../../../../../docs/article-work/querying-transactions/query-results.sql?url';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+import '../../../../components/explainers/design/schema-sketch.css';
+const firstQuery = `SELECT order_id, line_no, quantity,
+       quantity * unit_price AS line_total
+FROM order_lines
+WHERE order_id = 'O13'
+ORDER BY line_no;`;
+const joinQuery = `SELECT l.order_id, l.line_no, p.name,
+       l.quantity, l.quantity * l.unit_price AS line_total
+FROM order_lines AS l
+JOIN products AS p ON p.product_id = l.product_id
+ORDER BY l.order_id, l.line_no;`;
+const customerJoin = `SELECT c.customer_id, c.name, o.order_id
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id
+ORDER BY c.customer_id, o.order_id;`;
+const onFilter = `SELECT c.customer_id, c.name, o.order_id
+FROM filter_customers AS c
+LEFT JOIN filter_orders AS o
+  ON o.customer_id = c.customer_id
+ AND o.placed_at >= '2026-10-04 10:00:00+00'
+ORDER BY c.customer_id, o.order_id;`;
+const whereFilter = `SELECT c.customer_id, c.name, o.order_id
+FROM filter_customers AS c
+LEFT JOIN filter_orders AS o ON o.customer_id = c.customer_id
+WHERE o.placed_at >= '2026-10-04 10:00:00+00'
+ORDER BY c.customer_id, o.order_id;`;
+const filterSetup = `CREATE TEMP TABLE filter_customers AS
+SELECT * FROM customers;
+CREATE TEMP TABLE filter_orders AS
+SELECT * FROM orders;
+
+INSERT INTO filter_customers (customer_id, name)
+VALUES ('C6', 'Cara');
+INSERT INTO filter_orders (order_id, customer_id, placed_at)
+VALUES ('O15', 'C6', '2026-10-04 08:00:00+00');`;
+const totalsQuery = `SELECT o.order_id,
+       COUNT(*) AS joined_rows,
+       COUNT(l.line_no) AS line_count,
+       SUM(l.quantity * l.unit_price) AS line_total
+FROM orders AS o
+LEFT JOIN order_lines AS l ON l.order_id = o.order_id
+GROUP BY o.order_id
+ORDER BY o.order_id;`;
+const havingQuery = `SELECT order_id, SUM(quantity * unit_price) AS line_total
+FROM order_lines
+GROUP BY order_id
+HAVING SUM(quantity * unit_price) >= 40
+ORDER BY order_id;`;
+const fanoutQuery = `SELECT l.line_no, s.shipment_id,
+       l.quantity * l.unit_price AS line_total
+FROM order_lines AS l
+JOIN shipments AS s ON s.order_id = l.order_id
+WHERE l.order_id = 'O13'
+ORDER BY l.line_no, s.shipment_id;`;
+const safeTotals = `WITH line_totals AS (
+  SELECT order_id, SUM(quantity * unit_price) AS amount
+  FROM order_lines
+  GROUP BY order_id
+), shipment_counts AS (
+  SELECT order_id, COUNT(*) AS shipment_count
+  FROM shipments
+  GROUP BY order_id
+)
+SELECT o.order_id, t.amount, s.shipment_count
+FROM orders AS o
+JOIN line_totals AS t ON t.order_id = o.order_id
+JOIN shipment_counts AS s ON s.order_id = o.order_id
+WHERE o.order_id = 'O13';`;
+const existsQuery = `SELECT o.order_id
+FROM orders AS o
+WHERE EXISTS (
+  SELECT 1
+  FROM order_lines AS l
+  WHERE l.order_id = o.order_id
+    AND l.product_id = 'P7'
+)
+ORDER BY o.order_id;`;
+const noLinesQuery = `SELECT o.order_id
+FROM orders AS o
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM order_lines AS l
+  WHERE l.order_id = o.order_id
+)
+ORDER BY o.order_id;`;
+const setup = `INSERT INTO customers (customer_id, name)
+VALUES ('C5', 'Ben');
+
+-- An order header exists before its lines have been added.
+INSERT INTO orders (order_id, customer_id, placed_at)
+VALUES ('O14', 'C4', '2026-10-04 11:00:00+00');
+
+CREATE TABLE shipments (
+  shipment_id text PRIMARY KEY,
+  order_id text NOT NULL REFERENCES orders (order_id)
+);
+INSERT INTO shipments (shipment_id, order_id)
+VALUES ('S1', 'O13'), ('S2', 'O13');`;
+---
+<Base title="Queries and joins" description="Understand what a SQL result row represents, follow joins and missing matches, and diagnose totals inflated by repeated combinations.">
+  <meta slot="head" name="robots" content="noindex" />
+  <article class="visual-essay relational-design schema-sketches">
+    <header class="essay-header">
+      <p class="eyebrow">Databases and storage · Working draft</p>
+      <h1>Queries and joins</h1>
+      <div class="essay-meta"><span>Querying your data · 1 of 2</span><a href="/learn/databases/relational/">Relational introduction ↗</a><a href="/learn/databases/relational/large-results/">Next: Pagination and large results →</a></div>
+    </header>
+    <p>The tables in a relational database are arranged to store information without having to repeat it everywhere. A customer’s details can live in one table, their orders in another, and the contents of each order in a third. That is useful when we change the information, but it rarely matches the way we want to read it. An order history needs details from several tables. A sales report may need totals that are not stored in any table at all.</p>
+    <p>A <strong>query</strong> describes the result we want the database to produce from that stored information. We can ask for particular records, combine related records, or calculate summaries. The same tables can support many different questions without needing a new stored copy for each answer.</p>
+    <p>SQL is the language we use to express those questions. A <code>SELECT</code> query produces a result with columns and rows, much like a table. The important difference is that we decide what those rows represent. They might be individual purchases, customers who made a purchase, or monthly sales totals. Understanding that choice makes it much easier to write a query and recognise when its answer is wrong.</p>
+    <p>We’ll start with a query that reads one table, then bring in related information using a <strong>join</strong>, and finally calculate totals. The examples use PostgreSQL 18 and the small shop from the <a href="/learn/databases/relational/">relational introduction</a>. We assume you know what tables, columns and keys are; we’ll introduce the SQL as we use it.</p>
+
+    <section id="first-query">
+      <h2>A query and its result</h2>
+      <p>Our shop has customers, products, orders and order lines. A line is one entry within an order, identified by its order ID and line number. Customer C4, Ada, placed O12 for two Blue mugs at €18 each. Her later order O13 has a mug at €20 and a bowl at €24. The line’s price records the amount agreed for that purchase; the product has a separate current catalogue price.</p>
+      <QueryShape />
+      <p>To show the amounts on O13, we can read its lines directly:</p>
+      <Sql code={firstQuery} label="Select the purchase lines and calculated amounts for order O13" />
+      <p><code>FROM</code> names the table. <code>WHERE</code> keeps rows whose condition is true: here, rows whose <code>order_id</code> equals the text value <code>'O13'</code>. Single quotes delimit text values; the column names are unquoted. <code>SELECT</code> chooses the columns and expressions returned. Multiplying quantity by unit price calculates an amount, and <code>AS line_total</code> gives that result column a name.</p>
+      <ResultTable caption="O13’s lines; amounts are EUR" columns={['order_id','line_no','quantity','line_total']} rows={ [['O13',1,1,'20.00'],['O13',2,1,'24.00']] } />
+      <p><code>ORDER BY line_no</code> puts line 1 before line 2. Without an explicit ordering, SQL does not promise which row arrives first. The final semicolon ends the statement. These clauses describe the answer; they do not prescribe an algorithm that must visit every row in the order the clauses are written.</p>
+      <p>The fixed value <code>'O13'</code> makes the example easy to run. In application code, a PostgreSQL parameterised query can instead use <code>WHERE order_id = $1</code>, with the order ID supplied separately through the database driver. Do not concatenate a caller’s value into the SQL text. The driver’s API varies, but the separation keeps a value from becoming part of the command.</p>
+      <p>This query leaves the stored records alone. It does not create a <code>line_total</code> column on the table. Calculating the expression again on a later read uses the values visible to that read.</p>
+      <details class="sql-setup"><summary>Run the examples</summary><p>Use a fresh PostgreSQL practice database for this article, separate from other article extensions. Run the <a href={practiceSchema} download="designing-data.sql">shop schema and records</a> once, then the <a href={queryExamples} download="query-results.sql">extension and queries for this article</a>. In a PostgreSQL query editor, open each file and execute it in that order. The extension adds Ben, an empty order O14 for Ada, and two shipments for O13. The SQL below is that extension; do not insert it again if you ran the downloaded file.</p><Sql code={setup} label="Additional records and shipments table for the query examples" /></details>
+    </section>
+
+    <section id="joins">
+      <h2>Joins and matching rows</h2>
+      <p>The lines contain product IDs, but a customer needs names. A <strong>join</strong> combines rows whose values satisfy a condition. We match each line’s product ID to the product with that ID:</p>
+      <Sql code={joinQuery} label="Join all purchase lines to their product names" />
+      <p><code>AS l</code> gives <code>order_lines</code> a short name within this query; <code>AS p</code> does the same for products. The expression <code>p.name</code> means the name from the product side. <code>ON</code> states which pairs match. Plain <code>JOIN</code> means <strong>inner join</strong>: only matching pairs become result rows.</p>
+      <ResultTable caption="Each purchase line finds its product" columns={['order_id','line_no','name','quantity','line_total']} rows={ [['O12',1,'Blue mug',2,'36.00'],['O13',1,'Blue mug',1,'20.00'],['O13',2,'Bowl',1,'24.00']] } />
+      <p>Line 1 of O12 contains P7. P7 identifies one product, so the line pairs with one Blue mug record. O13’s first line also pairs with P7. The product appears twice in the answer because it was bought on two different lines. Neither the shared product nor either purchase needs to be copied in storage.</p>
+      <p>The primary key on <code>products.product_id</code> makes the match unique. The required foreign key on the line makes a match exist. Together they explain why this particular join returns exactly one row per line. A join is not inherently one-to-one: its condition and the data’s rules determine how many matches there can be.</p>
+      <p>It helps to name what identifies a result row. Here it is <code>(order_id, line_no)</code>, just as for the source lines. Some people call this the result’s <strong>grain</strong>. If we join from an order to its lines, the order ID repeats as the result becomes one row per line. Removing the line number from <code>SELECT</code> hides that distinction; it does not remove the result rows.</p>
+    </section>
+
+    <section id="missing-matches">
+      <h2>Missing matches</h2>
+      <p>Now we want a customer list with their order IDs, including customers who have never ordered. Our added customer C5, Ben, has no orders. An inner join would omit him because there is no matching pair. A <strong>left join</strong> retains every row on its left, supplying SQL <code>NULL</code> for the right-hand fields when nothing matches.</p>
+      <Sql code={customerJoin} label="Keep customers even when no order matches" />
+      <ResultTable caption="Ben remains in the customer list" columns={['customer_id','name','order_id']} rows={ [['C4','Ada','O12'],['C4','Ada','O13'],['C4','Ada','O14'],['C5','Ben','NULL']] } />
+      <p>Ben’s result does not describe an order whose ID is missing. It describes a customer with no matching order. O14 is different: it is a real order header belonging to Ada, though it has no lines yet. The join cannot infer that an order is complete merely because its row exists.</p>
+      <p><code>NULL</code> matters when we filter. Ordinary comparisons with a missing value have an unknown result. <code>WHERE</code> keeps only true, so both false and unknown are excluded. To ask whether a value is missing, use <code>IS NULL</code>, rather than <code>= NULL</code>. For example, <code>WHERE o.order_id IS NULL</code> after this join finds Ben. It works as a missing-match test because real order IDs cannot be null.</p>
+      <p>Ada’s orders were placed at 09:00 (O12), 10:00 (O13) and 11:00 (O14), all on 4 October 2026 in UTC. Suppose the customer list should show only orders placed at or after 10:00 that day, but still retain customers with no such orders. There are two ways a customer can have no qualifying order: Ben has never ordered, while another customer might have ordered only earlier.</p>
+      <p>For this comparison, we’ll make separate copies called <code>filter_customers</code> and <code>filter_orders</code>, and add C6, Cara, whose only order is O15 at 08:00. These copies let us explore that case without changing the shop records used elsewhere in the article.</p>
+      <details class="sql-setup"><summary>Set up the filter comparison</summary><p>After loading the shop and article extension above, run this once in the same database session as the two queries below. <code>CREATE TEMP TABLE … AS SELECT</code> copies the query’s rows into a temporary table, which disappears when the session ends. The download includes this setup; skip it here if you already ran that file in this session.</p><Sql code={filterSetup} label="Make temporary copies and add a customer whose only order is before 10:00 UTC" /></details>
+      <p>First put the cutoff in the matching rule:</p>
+      <Sql code={onFilter} label="Keep every customer while matching only orders since 10:00 UTC" />
+      <ResultTable caption="Cutoff in ON: all three customers remain" columns={['customer_id','name','order_id']} rows={ [['C4','Ada','O13'],['C4','Ada','O14'],['C5','Ben','NULL'],['C6','Cara','NULL']] } />
+      <p>Ada now has O13 and O14. The <code>AND</code> requires both the customer match and the time condition. Ben has no orders to match, and Cara’s O15 fails the time condition. The left join supplies each of them with one row containing null order fields.</p>
+      <p>Moving the same condition to <code>WHERE</code> asks a different question:</p>
+      <Sql code={whereFilter} label="Filter joined results to orders since 10:00 UTC" />
+      <ResultTable caption="Cutoff in WHERE: only Ada’s qualifying orders remain" columns={['customer_id','name','order_id']} rows={ [['C4','Ada','O13'],['C4','Ada','O14']] } />
+      <p>This drops both Ben and Cara. Ben’s missing placement time makes the comparison unknown. Cara first matches O15, but its 08:00 placement time makes the comparison false; filtering out that row does not create a replacement null row. The distinction is between deciding which orders match and deciding which resulting rows survive. Choose it from what the customer list is meant to include.</p>
+    </section>
+
+    <section id="aggregation">
+      <h2>Grouping and totals</h2>
+      <p>A receipt needs individual lines; an order summary needs one total per order. An <strong>aggregate</strong> combines several input values into one answer. <code>SUM</code> adds them, and <code>COUNT</code> counts rows or present values. <code>GROUP BY</code> specifies which input rows contribute to each group.</p>
+      <Sql code={totalsQuery} label="Group joined order lines to show counts and totals per order" />
+      <ResultTable caption="Counts expose the unmatched row for empty order O14" columns={['order_id','joined_rows','line_count','line_total']} rows={ [['O12',1,1,'36.00'],['O13',2,2,'44.00'],['O14',1,0,'NULL']] } />
+      <p>O13’s two matched rows enter one group. Its line amounts, €20 and €24, sum to €44. O12 has one line worth €36. The output now has one row per order, so an unaggregated line number would not have one unambiguous value to display for O13.</p>
+      <p>O14 explains why counting needs care. Its left join produces one row with null line fields. <code>COUNT(*)</code> counts that row; <code>COUNT(l.line_no)</code> counts only present line numbers and returns zero. Real line numbers are non-missing, so that second count measures actual lines. Counting a nullable descriptive field would instead measure how many lines supplied that field.</p>
+      <p><code>SUM</code> ignores null inputs, and returns null when there are no non-null inputs to add. If our report defines an empty order’s displayed subtotal as zero, <code>COALESCE(SUM(l.quantity * l.unit_price), 0)</code> uses zero when the sum is null. <code>COALESCE</code> picks the first non-null argument. That display decision still does not make O14 a completed purchase.</p>
+      <p>A condition on a group belongs in <code>HAVING</code>. To find orders whose lines total at least €40:</p>
+      <Sql code={havingQuery} label="Retain only groups whose purchase amounts total at least 40 EUR" />
+      <p>This returns O13 with €44. A <code>WHERE</code> condition filters individual input rows before grouping; <code>HAVING</code> filters the groups. If we first kept only lines worth at least €24, O13’s €20 mug would disappear before the sum, and we would be calculating a different total.</p>
+    </section>
+
+    <section id="multiplied-rows">
+      <h2>When a join inflates a total</h2>
+      <p>The shop also records shipments. O13 has two, S1 and S2; each shipment row refers to the order. A report needs the order’s amount and its shipment count. We might start by joining both collections on their order ID:</p>
+      <Sql code={fanoutQuery} label="Inspect every line and shipment pair for order O13" />
+      <JoinFanout />
+      <p>The query has answered “which line and shipment pairs belong to O13?” There are four. Summing its line amounts gives €88, even though Ada bought €44 of goods. No constraint has failed. The result contains all the combinations requested by the join.</p>
+      <p><code>DISTINCT</code> removes equal output rows, but it cannot decide what the report intended to count. The four pairs are distinct because their line numbers or shipment IDs differ. <code>SUM(DISTINCT amount)</code> would happen to give €44 here, but would count two different €20 lines only once. Equal prices do not identify the same purchase.</p>
+      <p>For one row per order, calculate each collection’s summary at that level before combining them:</p>
+      <Sql code={safeTotals} label="Aggregate lines and shipments separately before joining their per-order summaries" />
+      <JoinFanout grouped />
+      <p><code>WITH</code> gives a name to a query result used by the rest of the statement. Here, <code>line_totals</code> has at most one row per order because it groups by the order ID. So does <code>shipment_counts</code>. Their join can now pair O13’s one amount with its one shipment count without multiplying either. These names do not create permanent tables.</p>
+      <p>This example deliberately selects an order that has both lines and shipments. To list all order headers, use left joins to the summaries, then decide what absent totals and counts should mean. The choice to preserve empty orders is separate from the choice to prevent multiplication.</p>
+    </section>
+
+    <section id="existence">
+      <h2>Checking whether a match exists</h2>
+      <p>Sometimes we do not need anything from the matching records. We only want orders that contain P7, the Blue mug. An <code>EXISTS</code> condition asks whether a query finds at least one row:</p>
+      <Sql code={existsQuery} label="Find orders with at least one Blue mug line" />
+      <p>The inner query refers to the outer order through <code>o.order_id</code>. For each candidate order, it asks whether a line for P7 belongs to it. <code>SELECT 1</code> supplies a constant; its value does not matter to <code>EXISTS</code>, only the presence of a result does. The answer contains O12 and O13, once each.</p>
+      <p>If O13 later gets another mug line, it still appears once. The outer query selects orders, and the condition makes a yes-or-no decision about each one. We never create one output row for every matching mug line. A join is appropriate when we need those lines in the answer; an existence test fits when we only need to qualify the order.</p>
+      <p>The opposite question finds order headers that still have no lines:</p>
+      <Sql code={noLinesQuery} label="Find order headers with no purchase lines" />
+      <p>This returns O14. The query is useful as a diagnostic, but it cannot tell us whether O14 is legitimately being assembled or was abandoned after a failure. Interpreting that state requires the application’s rules and <a href="/learn/databases/relational/transaction-boundaries/">transaction boundary</a>.</p>
+    </section>
+
+    <section id="checking-results">
+      <h2>Checking an answer</h2>
+      <p>When a result looks wrong, expose the identities before hiding them in a total. In the shipment query, selecting the line number and shipment ID made the four combinations visible. Looking only at €88 would have left the multiplication unexplained.</p>
+      <p>Then follow one familiar record. Does it have no match, one match, or several? Does a filter intentionally remove it? After grouping, which original rows contribute to its total? Small examples with an empty order, two lines, and two related shipments reveal mistakes that a large set of ordinary orders can conceal.</p>
+      <p>This establishes what the query means. How the engine finds those rows belongs to execution plans and indexing; how we read a large answer in pieces adds another concern. Even a correct result can lose or repeat records when we paginate it while the underlying data changes.</p>
+    </section>
+    <nav class="series-reading" aria-label="Querying your data sequence"><p><a href="/learn/databases/relational/">← Relational databases</a></p><p><a href="/learn/databases/relational/large-results/">2. Pagination and large results →</a><span>Choose an order and a continuation rule, then decide what changes between reads should mean.</span></p></nav>
+    <section class="essay-sources" id="further-reading">
+      <h2>Sources and further reading</h2>
+      <p>Working draft, researched 4 October 2026. The shop is an invented teaching example. SQL results were checked with PostgreSQL 18.3 in PGlite 0.5.8; diagrams explain those results rather than execution plans.</p>
+      <ul>
+        <li><a href="https://www.postgresql.org/docs/18/tutorial-select.html">PostgreSQL 18: querying a table</a> and <a href="https://www.postgresql.org/docs/18/tutorial-join.html">joins</a> — starting with a statement and following the records into its answer.</li>
+        <li><a href="https://www.postgresql.org/docs/18/queries-table-expressions.html">Table expressions</a> — matching rows, retaining unmatched rows, and the distinction between join conditions and later filters.</li>
+        <li><a href="https://www.postgresql.org/docs/18/tutorial-agg.html">Aggregate tutorial</a> and <a href="https://www.postgresql.org/docs/18/functions-aggregate.html">aggregate functions</a> — grouping, counting, and missing inputs.</li>
+        <li><a href="https://www.postgresql.org/docs/18/queries-select-lists.html">Select lists and DISTINCT</a> — what output expressions and duplicate removal actually do.</li>
+        <li><a href="https://www.postgresql.org/docs/18/functions-subquery.html">Subquery expressions</a> — existence tests and their relationship to an outer query.</li>
+        <li><a href="https://www.postgresql.org/docs/18/libpq-exec.html#LIBPQ-PQEXECPARAMS">Passing query parameters</a> — PostgreSQL’s client-library example of sending values separately from statement text.</li>
+        <li><a href="https://www.postgresql.org/docs/18/functions-comparison.html">Comparison functions</a> — why missing values need explicit tests.</li>
+      </ul>
+    </section>
+  </article>
+</Base>

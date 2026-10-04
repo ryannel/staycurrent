@@ -1,0 +1,119 @@
+---
+import { Code } from 'astro:components';
+import Base from '../../../../layouts/Base.astro';
+import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url';
+import BoundaryOutcomes from '../../../../components/explainers/transactions/BoundaryOutcomes.astro';
+import BoundaryPayment from '../../../../components/explainers/transactions/BoundaryPayment.astro';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+import '../../../../components/explainers/design/schema-sketch.css';
+const stockSetup = `CREATE TABLE stock (
+  product_id text PRIMARY KEY REFERENCES products (product_id),
+  available integer NOT NULL CHECK (available >= 0)
+);
+INSERT INTO stock (product_id, available) VALUES ('P7', 3);`;
+const reserve = `BEGIN;
+UPDATE stock
+SET available = available - 2
+WHERE product_id = 'P7' AND available >= 2
+RETURNING product_id, available;`;
+const finish = `INSERT INTO orders (order_id, customer_id, placed_at)
+VALUES ('O14', 'C4', '2026-10-04 11:00:00+00');
+
+INSERT INTO order_lines
+  (order_id, line_no, product_id, quantity, unit_price)
+VALUES ('O14', 1, 'P7', 2, 20.00);
+
+COMMIT;`;
+const failure = `BEGIN;
+UPDATE stock SET available = available - 2
+WHERE product_id = 'P7' AND available >= 2;
+
+INSERT INTO orders (order_id, customer_id, placed_at)
+VALUES ('O14', 'C4', '2026-10-04 11:00:00+00');
+
+-- Deliberate mistake: a line cannot have quantity zero.
+INSERT INTO order_lines
+  (order_id, line_no, product_id, quantity, unit_price)
+VALUES ('O14', 1, 'P7', 0, 20.00);
+-- ERROR: the new row violates the quantity CHECK.
+
+-- Issue this after the error, on the same connection:
+ROLLBACK;`;
+const verify = `SELECT available FROM stock WHERE product_id = 'P7';
+SELECT count(*) AS orders FROM orders WHERE order_id = 'O14';
+SELECT count(*) AS lines FROM order_lines WHERE order_id = 'O14';`;
+---
+<Base title="What belongs in one transaction?" description="Choose a transaction boundary from the records that must agree, follow commit and rollback, and understand where an outside payment changes the design.">
+  <meta slot="head" name="robots" content="noindex" />
+  <article class="visual-essay relational-design schema-sketches">
+    <header class="essay-header">
+      <p class="eyebrow">Databases and storage · Working draft</p>
+      <h1>What belongs in one transaction?</h1>
+      <div class="essay-meta"><span>Transactions and concurrent work · 1 of 4</span><a href="/learn/databases/relational/">Relational introduction</a><a href="/learn/databases/relational/concurrent-updates/">Next: Concurrent updates →</a></div>
+    </header>
+    <p>Many actions that look like one thing in an application require several changes in its database. Moving money between accounts changes two balances. Recording a purchase creates an order and its lines, and may reduce the stock available for sale. The application needs all of those records to describe the completed action.</p>
+    <p>But the changes do not all happen in one instruction. Some can succeed before a later one fails. A database might accept the stock reduction and then reject an invalid order line. If it kept the earlier change, there would be less stock without a purchase to explain where it went. Asking the application to undo each successful step would leave it with another sequence of operations that could itself fail.</p>
+    <p>A <strong>transaction</strong> gives the application a way to group database work. It can <strong>commit</strong> the changes together when the work succeeds, or <strong>roll back</strong> the group so none of its changes are kept. This all-or-nothing behaviour is called <strong>atomicity</strong>. It lets us treat several changes as one completed operation even though the database performs them in steps.</p>
+    <p>The database cannot decide which changes belong together; that depends on what the application is doing. We’ll use a purchase to work out that boundary, then examine what changes when paying for it involves a separate service. The SQL uses PostgreSQL 18 and the tables and keys introduced in <a href="/learn/databases/relational/constraints/">Constraints</a>.</p>
+
+    <section id="commit-and-rollback">
+      <h2>Commit and rollback</h2>
+      <p><code>BEGIN</code> starts an explicit transaction. The statements that follow belong to it until the application ends it with <code>COMMIT</code> or <code>ROLLBACK</code>. These commands let the application control the boundary explicitly: it starts the work, checks whether each part succeeded, then decides whether to keep or discard the changes.</p>
+      <p>PostgreSQL also runs an individual statement in a transaction. With <strong>autocommit</strong>, a successful statement commits on its own. That is convenient for an independent edit, but three separately committed statements give us three separate outcomes. Explicitly grouping them changes what can be abandoned together. A client library may manage transaction boundaries for us, so the application’s actual behaviour needs checking rather than inferring it from the absence of a written <code>BEGIN</code>. <a href="https://www.postgresql.org/docs/18/sql-begin.html">PostgreSQL’s BEGIN reference</a> describes these boundaries.</p>
+      <p>A connection is an application’s active link to the database; the database conversation on that connection is called a session. The transaction can read its own unfinished changes. Other sessions do not read those uncommitted table changes. After commit, a reader using a sufficiently recent view can see the completed purchase. An older view may still show the earlier state; commit does not force every existing reader to refresh. We’ll examine those views in <a href="/learn/databases/relational/isolation/">Isolation and snapshots</a>.</p>
+    </section>
+
+    <section id="choosing-the-boundary">
+      <h2>Start with the rule</h2>
+      <p>Our shop wants a recorded purchase to reserve exactly the quantities on its order lines. Suppose Ada, customer C4, buys two Blue mugs, product P7. Three mugs are available before checkout. Completing this purchase means creating order O14, recording its line for two mugs at €20 each, and reducing available stock to one.</p>
+      <p>Each partial result tells a different, wrong story. Reduced stock without an order leaves two mugs unavailable with no purchase explaining why. An order and line without reduced stock let the shop promise those same mugs again. An order without its line loses the detail the warehouse needs. The three changes belong in one transaction because the completed state depends on all three.</p>
+      <BoundaryOutcomes />
+      <p>Constraints still have work to do. A foreign key requires the line to refer to an existing order and product. A check requires a positive quantity. Those declarations do not require this application to insert the line before committing an otherwise valid order. The transaction gives us a way to keep a chosen group together; it does not choose the right group or discover an omitted statement.</p>
+      <p>The stock count below is what remains available for this new purchase; earlier purchases have already been accounted for.</p>
+    </section>
+
+    <section id="working-through-checkout">
+      <h2>Working through checkout</h2>
+      <p>The <a href={practiceSchema} download="designing-data.sql">practice schema from Designing your data</a> supplies customers, products, orders and order lines. Load it into an empty practice database, then add the stock table below. We keep availability separate from the product’s descriptive fields. This example has one stock record per product and one currency, EUR.</p>
+      <details class="sql-setup"><summary>Add stock to a fresh copy of the practice schema</summary><p>Run this setup once in that practice database. Each attempt below starts with three mugs and no order O14; use separate fresh setups when comparing them.</p><div class="sql-scroll" role="region" tabindex="0" aria-label="Add a stock table and three available mugs"><Code code={stockSetup} lang="sql" theme="css-variables" /></div></details>
+      <p>The application first begins the transaction and asks to reserve two mugs. The condition <code>available &gt;= 2</code> requires enough stock; the subtraction uses the row’s value inside the database. <code>RETURNING</code> reports the row that was changed, including its new availability.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Begin checkout and reserve two mugs"><Code code={reserve} lang="sql" theme="css-variables" /></div>
+      <div class="table-scroll"><table><caption>Result with the initial three mugs available</caption><thead><tr><th>product_id</th><th>available</th></tr></thead><tbody><tr><td>P7</td><td>1</td></tr></tbody></table></div>
+      <p>This result is a decision point. Exactly one returned row means this attempt reserved the mugs. Zero rows means it reserved nothing: the stock row was absent or the condition did not hold. Zero rows is a successful SQL execution, so it does not automatically abort the transaction. The application must issue <code>ROLLBACK</code> and stop this checkout branch. <a href="https://www.postgresql.org/docs/18/sql-update.html">UPDATE’s result</a> and <a href="https://www.postgresql.org/docs/18/dml-returning.html">RETURNING</a> give the application the evidence for that decision.</p>
+      <p>Only after receiving the one-row result does the application run the following statements, on the same database connection and inside the transaction it just opened. Creating the order before the line satisfies the line’s foreign key.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Create the reserved purchase and commit"><Code code={finish} lang="sql" theme="css-variables" /></div>
+      <p><code>INSERT INTO</code> adds a record to the named table. The column list and <code>VALUES</code> list correspond in order: for the order, <code>'O14'</code> fills <code>order_id</code>, <code>'C4'</code> fills <code>customer_id</code>, and the timestamp fills <code>placed_at</code>. The line insert follows the same pattern. Naming the columns makes that mapping visible instead of relying on their order in the table definition.</p>
+      <p>After successful commit, one mug remains available and both O14 records exist. There is no separate commit between them. If the application uses a connection pool, it needs a transaction API that keeps this sequence on the same connection. Sending each statement through an arbitrary available connection would not express the transaction shown here.</p>
+    </section>
+
+    <section id="failure">
+      <h2>A failure after the first change</h2>
+      <p>Now consider a separate attempt from the same initial state: three mugs available and no O14. The stock update succeeds, then the order insert succeeds. A bug sends quantity zero for the line, which the schema refuses.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Deliberate line error followed by rollback"><Code code={failure} lang="sql" theme="css-variables" /></div>
+      <p>Run this case against a fresh copy of the setup, and issue the rollback after the error. PostgreSQL puts the explicit transaction into a failed state. The application cannot continue ordinary work as though only that insert had been skipped. Here it rolls back the whole purchase, discarding the order and the stock reduction.</p>
+      <p><strong>Savepoints</strong> can mark a place inside a transaction to return to after an error. They are useful when a portion of the work may legitimately be abandoned. They do not make a required order line optional. Recovering to a savepoint and committing the stock reservation without its purchase would preserve the wrong state. The <a href="https://www.postgresql.org/docs/18/tutorial-transactions.html">transaction tutorial</a> explains error recovery, and the <a href="https://www.postgresql.org/docs/18/sql-savepoint.html">SAVEPOINT reference</a> gives the commands.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Inspect stock and the two purchase records after an attempt"><Code code={verify} lang="sql" theme="css-variables" /></div>
+      <div class="table-scroll"><table><caption>These queries after each independent attempt</caption><thead><tr><th>Attempt</th><th>available</th><th>orders</th><th>lines</th></tr></thead><tbody><tr><td>Successful purchase, committed</td><td>1</td><td>1</td><td>1</td></tr><tr><td>Invalid line, rolled back</td><td>3</td><td>0</td><td>0</td></tr></tbody></table></div>
+      <p>Rollback discards this transaction’s work. It does not mean setting the entire database back to an earlier moment or undoing another customer’s completed order. Nor can a later rollback erase O14 after it has committed. Cancelling a completed purchase is a new change with its own rules: restore the appropriate availability and record that the order was cancelled together. <a href="https://www.postgresql.org/docs/18/sql-rollback.html">ROLLBACK</a> applies to the current transaction.</p>
+    </section>
+
+    <section id="outside-services">
+      <h2>When payment happens elsewhere</h2>
+      <p>A payment provider has its own records and decisions. Calling it between <code>BEGIN</code> and <code>COMMIT</code> does not bring those records into this database transaction. If payment succeeds and the line insert then fails, a database rollback does not refund the charge. Reversing the order merely changes the unfinished case: a committed order may be followed by a declined payment.</p>
+      <p>For this shop, one possible design gives the order an explicit <em>awaiting payment</em> state. A short database transaction reserves stock and records that pending purchase. A separate operation asks the provider for payment. Once its outcome is confirmed, another transaction records payment or cancels the pending purchase and releases stock. The application and warehouse must understand that a pending order is not yet ready to fulfil.</p>
+      <BoundaryPayment />
+      <p>This design makes the intermediate state something the application can revisit. It still needs a way to find pending purchases after a restart, identify repeated requests, and deal with payment that remains uncertain. A cancellation handler must change an eligible pending order and release its stock together, and recognise a cancellation already handled. Otherwise a repeated result could add the same mugs back twice. These are requirements of this proposed workflow, not capabilities supplied by adding a status column.</p>
+      <p>There is also a cost to keeping the transaction open while waiting for payment. Updating the stock record acquires a <strong>row lock</strong>: another transaction trying to change that same record must wait until this one commits or rolls back. A slow payment call can therefore hold up other purchases of the same product. Holding the lock longer does nothing to settle an uncertain payment. <a href="/learn/databases/relational/conflicts-and-retries/">Handling waits, deadlocks, and retries</a> develops that recovery problem; the provider’s own recovery contract must supply the other half.</p>
+    </section>
+
+    <section id="boundary-review">
+      <h2>Reviewing a transaction boundary</h2>
+      <p>A useful way to review this code is to pause after each statement and ask what happens if the next operation fails. Every required change to the purchase should still be inside the transaction at that point. The application should test meaningful results, including a successful update that changed no rows, and commit only once the intended local state is complete.</p>
+      <p>Prepare work that does not depend on the current database state before opening the transaction, such as parsing the request and checking that its quantity is a positive integer. Availability is different: another purchase can change it. In our example, the conditional UPDATE checks availability as it reserves stock. An earlier read of the count would not give the same permission to buy, whether that read happened before or after <code>BEGIN</code>.</p>
+      <p>Atomicity answers what happens when this purchase fails partway through. Two purchases can each be complete while jointly promising too much stock. Our conditional update was chosen to address that second problem too. To see why it matters, we need to let another request run between this one’s steps.</p>
+    </section>
+    <nav class="series-reading" aria-label="Continue reading"><p><a href="/learn/databases/relational/concurrent-updates/">When two requests change the same data →</a><span>Follow two buyers from an overlapping stock check to a coordinated decision.</span></p></nav>
+    <section class="essay-sources"><h2>Sources and further reading</h2><p>Working draft, researched 4 October 2026. SQL targets PostgreSQL 18; records and the payment workflow are teaching examples. The runnable purchase examples use ordinary table changes, without triggers or outside calls.</p><ul><li><a href="https://www.postgresql.org/docs/18/tutorial-transactions.html">PostgreSQL’s transaction tutorial</a> — a second introduction to atomicity and recovery using savepoints.</li><li><a href="https://www.postgresql.org/docs/18/sql-commit.html">COMMIT</a> and <a href="https://www.postgresql.org/docs/18/sql-rollback.html">ROLLBACK</a> — the commands that end a transaction.</li><li><a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit locking</a> — how locks acquired during database work last until a transaction ends.</li></ul></section>
+  </article>
+</Base>

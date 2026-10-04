@@ -1,0 +1,151 @@
+---
+import { Code } from 'astro:components';
+import Base from '../../../../layouts/Base.astro';
+import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url';
+import IsolationSnapshotLab from '../../../../components/explainers/transactions/IsolationSnapshotLab.astro';
+import IsolationWriteSkew from '../../../../components/explainers/transactions/IsolationWriteSkew.astro';
+import IsolationControlRow from '../../../../components/explainers/transactions/IsolationControlRow.astro';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+import '../../../../components/explainers/design/schema-sketch.css';
+const report = `-- Report connection: run the first SELECT, then pause.
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SELECT current_price
+FROM products
+WHERE product_id = 'P7';
+
+-- After the writer has committed, run the same query again.
+SELECT current_price
+FROM products
+WHERE product_id = 'P7';
+COMMIT;`;
+const writer = `-- A separate connection, between the report's two reads.
+BEGIN;
+UPDATE products
+SET current_price = 22.00
+WHERE product_id = 'P7';
+COMMIT;`;
+const ownWrite = `-- A separate example, starting with P7 at EUR 20.
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+UPDATE products
+SET current_price = current_price + 1.00
+WHERE product_id = 'P7'
+RETURNING current_price;  -- 21.00
+
+SELECT current_price FROM products WHERE product_id = 'P7';
+-- Also 21.00: this transaction can see its own update.
+ROLLBACK;                -- Leave the catalogue at 20.00.`;
+const featured = `-- Add to the shop practice schema, once in a fresh database.
+CREATE TABLE featured_products (
+  product_id text PRIMARY KEY REFERENCES products (product_id),
+  enabled boolean NOT NULL
+);
+INSERT INTO featured_products (product_id, enabled)
+VALUES ('P7', true), ('P8', true);`;
+const hide = `-- Staff A: staff B uses the same transaction with P7/P8 swapped.
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+
+UPDATE featured_products
+SET enabled = false
+WHERE product_id = 'P7'
+  AND EXISTS (
+    SELECT 1 FROM featured_products
+    WHERE product_id = 'P8' AND enabled
+  )
+RETURNING product_id;
+
+COMMIT;`;
+const serial = hide.replace('REPEATABLE READ', 'SERIALIZABLE');
+---
+<Base title="Isolation and snapshots" description="Understand which committed data a transaction reads, compare PostgreSQL statement and transaction snapshots, and see why a stable view can still permit conflicting decisions.">
+  <meta slot="head" name="robots" content="noindex" />
+  <article class="visual-essay relational-design schema-sketches">
+    <header class="essay-header">
+      <p class="eyebrow">Databases and storage · Working draft</p>
+      <h1>Isolation and snapshots</h1>
+      <div class="essay-meta"><span>Transactions and concurrent work · 3 of 4</span><a href="/learn/databases/relational/concurrent-updates/">Previous: Concurrent updates</a><a href="/learn/databases/relational/conflicts-and-retries/">Next: Waits and retries →</a></div>
+    </header>
+    <p>Reading from a database does not stop other people using it. While one request prepares a report, others may be adding orders, correcting addresses or changing prices. A query has to produce an answer even though the information it reads is being updated.</p>
+    <p>A transaction lets a writer commit several changes together, so ordinary readers do not have to work with its half-finished changes. But that leaves another question: what happens when the writer commits while a reader is still working? A report might use one query for its summary and another for its details. If the second query sees newer information, the two parts may no longer agree.</p>
+    <p><strong>Isolation</strong> is the part of transaction behaviour that governs how this overlapping work affects what each transaction can see and do. Different isolation levels provide different protections. Some allow each query to read a newer view of committed data; others let a transaction keep a stable view across several queries. Stronger protections can also require the database to reject an attempt that conflicts with other work.</p>
+    <p>We’ll begin with what a reader sees, using a price change to make the difference visible. Then we’ll look at why a stable view is not always enough when a transaction makes decisions and writes changes of its own. The examples use PostgreSQL 18: other databases can give the same isolation-level names different behaviour.</p>
+
+    <section id="snapshots">
+      <h2>A view of committed data</h2>
+      <p>Imagine a report reading the catalogue while a staff member is changing several prices. We want the report to use completed changes, without having to stop everyone editing the catalogue until it finishes. PostgreSQL can do this by retaining older versions of records. A reader can use a previously committed price while a writer prepares its replacement.</p>
+      <p>The database needs a way to decide which versions belong in the reader’s view. That visibility information is called a <strong>snapshot</strong>. It is not an exported copy of every table. If the writer commits after a query begins, the query can finish using its earlier view, even though newer reads may now see the changed price.</p>
+      <p>Our example uses ordinary <code>SELECT</code> statements: reads without <code>FOR UPDATE</code> or <code>FOR SHARE</code>. That distinction matters. A read that also requests a conflicting lock may have to wait and has different rules, which we’ll return to below.</p>
+    </section>
+
+    <section id="statement-and-transaction">
+      <h2>Statement and transaction views</h2>
+      <p>Consider a report that reads the Blue mug’s catalogue price twice, in two separate queries within one transaction. The price starts at EUR 20. Between those reads, a staff member changes it to EUR 22 and commits in another transaction. The question is whether the report keeps its first view or gets a fresh one for its second query.</p>
+      <p>PostgreSQL’s default level is <strong>Read Committed</strong>. Each ordinary SELECT takes a view when that statement starts. The report’s first query begins before the staff change and returns EUR 20. Its second query begins after the change commits and returns EUR 22.</p>
+      <p>Both answers describe committed data. What changed was the moment being described. Putting the two queries between <code>BEGIN</code> and <code>COMMIT</code> keeps them in one transaction, but at this level it does not give them one lasting snapshot.</p>
+      <p>With PostgreSQL <strong>Repeatable Read</strong>, the transaction establishes a snapshot at its first query or data-changing statement. Later ordinary reads keep that view. In our schedule, the first query returns EUR 20 and the second also returns EUR 20, even though the writer has committed EUR 22 in the meantime. These behaviours are specified in <a href="https://www.postgresql.org/docs/18/transaction-iso.html#XACT-READ-COMMITTED">PostgreSQL’s isolation documentation</a>.</p>
+      <IsolationSnapshotLab />
+      <p>The repeatable view is useful for a report that reads product counts in one query and product details in another. If another transaction adds a product between those queries, two fresh views can describe different catalogues. A transaction snapshot keeps the report’s parts aligned with one view, provided it uses ordinary reads and does not itself change the facts it is reporting.</p>
+      <p>A single ordinary SELECT already uses one statement view in Read Committed, including the tables it joins. The distinction becomes useful when we need several statements to agree. It does not require every catalogue request to open a long Repeatable Read transaction.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Repeatable Read report transaction"><Code code={report} lang="sql" theme="css-variables" /></div>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Separate writer changes the catalogue price"><Code code={writer} lang="sql" theme="css-variables" /></div>
+      <p>Use a fresh practice database for this article. Load the <a href={practiceSchema} download="designing-data.sql">shop schema and records</a> once; it includes P7 at EUR 20 and the historical orders O12 and O13. Open two PostgreSQL query-editor connections to that same database. Run the first report query, pause that connection, run and commit the writer on the other connection, then finish the report. Repeatable Read returns 20 twice. Reset P7 to 20 before repeating the schedule with <code>READ COMMITTED</code>; it then returns 20 and 22. Merely running these blocks one after another on one connection would not test the overlapping schedule.</p>
+      <p><code>READ ONLY</code> prevents this report from changing ordinary application tables. We choose the isolation level at the start, before a query establishes the view. <a href="https://www.postgresql.org/docs/18/sql-set-transaction.html">SET TRANSACTION</a> documents these settings and their timing.</p>
+    </section>
+
+    <section id="writes-and-locks">
+      <h2>The view does not freeze the database</h2>
+      <p>The writer in our experiment succeeds in both runs. A report’s stable view does not prevent other transactions from changing the catalogue. It lets the report keep reading an earlier committed version while those changes happen.</p>
+      <p>The transaction also sees its <em>own</em> changes. A Repeatable Read transaction that increases the mug price from 20 to 21 will read 21 afterward. “Stable snapshot” means stability against later changes committed by other transactions; it does not hide work already performed inside this transaction.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="A transaction sees its own price update"><Code code={ownWrite} lang="sql" theme="css-variables" /></div>
+      <p>Writes introduce another concern. Suppose a Repeatable Read transaction has seen P7 at 20, then another transaction changes P7 and commits. If the first transaction later tries to update that row, selected by its unchanged product ID, PostgreSQL rejects the attempt with a serialization failure: another transaction changed the target row after its snapshot was established. Keeping the old view does not give it permission to overwrite the newer version. To try again, the application must start a new transaction and repeat the work from the beginning. This is the changed-row rule described in <a href="https://www.postgresql.org/docs/18/transaction-iso.html#XACT-REPEATABLE-READ">PostgreSQL’s Repeatable Read documentation</a>.</p>
+      <p>This is also why the locking example in <a href="/learn/databases/relational/concurrent-updates/">Concurrent changes</a> named its isolation level. At Read Committed, a <code>SELECT … FOR UPDATE</code> can wait for a row’s writer and then return the updated row. At Repeatable Read, a conflicting committed update since the transaction’s snapshot can instead cause failure. An ordinary-read snapshot is not a promise that every command returns only the old version.</p>
+      <p>For a checkout that decrements one stock row only if enough remains, a guarded update at Read Committed gives that row a place to resolve the conflict. For a report, a stable transaction view solves a different problem. We choose according to the reads, writes, and rule, rather than treating a higher level as a universal fix.</p>
+    </section>
+
+    <section id="multirow-rule">
+      <h2>A stable view can support conflicting decisions</h2>
+      <p>The shop has a small featured display containing the Blue mug and the Bowl. Staff can hide either product, but at least one must remain offered. This is a display rule, separate from stock: hiding a featured product does not change its inventory or erase its catalogue record.</p>
+      <p>We store the two flags in separate records:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Set up two featured product flags"><Code code={featured} lang="sql" theme="css-variables" /></div>
+      <p>Staff A wants to hide P7. A checks that P8 is enabled, then disables P7. Staff B wants to hide P8. B checks that P7 is enabled, then disables P8. Either transaction, run alone from the initial state, leaves one product enabled.</p>
+      <p>If their Repeatable Read transactions overlap, each can see both flags still enabled. A writes P7 and B writes P8. These are different rows, so there is no attempt to overwrite the same flag. Both transactions can commit, leaving neither product enabled.</p>
+      <IsolationWriteSkew />
+      <p>This is called <strong>write skew</strong>: the transactions base their decisions on related facts, then change different records in a way that breaks the combined rule. No read needs to be inconsistent within its own snapshot for this to happen. The snapshots faithfully preserve a state that each transaction used to justify its own change.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Hide P7 only while P8 is enabled"><Code code={hide} lang="sql" theme="css-variables" /></div>
+      <p><code>EXISTS</code> is true when its subquery finds a row. Here <code>AND enabled</code> means that the boolean flag must be true. The UPDATE therefore changes P7 only if the visible P8 row is enabled; <code>RETURNING</code> reports whether it changed P7. Putting that check inside one statement removes a gap between the application’s read and write. It still does not make these two independent writes meet at one record.</p>
+      <p>A valid overlapping schedule establishes both snapshots while both flags are true. A hides P7, B hides P8 before A commits, then both commit. The conditional statements make the same decisions as the drawing. Guarding a single stock decrement against a value in that same row solved the previous article’s problem; this predicate depends on the other row.</p>
+    </section>
+
+    <section id="serializable">
+      <h2>Serializable and the rejected transaction</h2>
+      <p><strong>Serializable</strong> requires successfully committed transactions to have an effect compatible with some one-at-a-time order. It need not literally run every transaction in sequence. PostgreSQL tracks conflicting reads and writes and can reject a transaction when letting it commit would break that promise.</p>
+      <p>For the display, imagine A runs completely before B starts. B then sees P7 disabled, so B cannot hide P8. If B runs completely before A starts, A cannot hide P7. Both disabled cannot result from either serial order of these correctly written transactions. With both transactions using Serializable, PostgreSQL prevents that combined outcome; at least one has to fail.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Select Serializable before running the conditional display update"><Code code={serial} lang="sql" theme="css-variables" /></div>
+      <p>This is the same complete decision, with a different isolation level. A serialization failure can arrive during a statement or at commit. The application must treat its earlier results as provisional until commit succeeds.</p>
+      <p>Retry the failed transaction with a fresh view and repeat its decision. If A’s successful change hid P7, B’s new attempt now finds P7 disabled and changes no row. That is a successful evaluation of the rule, even though B did not get its original wish. Retrying only “set P8 disabled” would discard the very check that made the transaction correct.</p>
+      <p>Serializable preserves an outcome consistent with the transaction logic; it cannot repair logic that never checked the rule. Every path that changes these display flags must participate in the chosen protection. A writer that unconditionally hides the last product can still create an invalid display.</p>
+      <p>Explicit coordination is another option. We could add one display-control record, separate from the two product flags, for all display writers to lock. Its purpose is to give their decisions one shared place to wait. At Read Committed, each transaction first takes a <code>FOR UPDATE</code> lock on that record, then reads the flags in a subsequent statement while still holding the lock.</p>
+      <IsolationControlRow />
+      <p>After A commits, B obtains the common lock and starts its flag-reading statement. That new Read Committed statement sees A’s completed change, so B leaves the remaining product enabled. Every display writer must take the common lock before reading and deciding. Simply locking an unchanged control record inside Repeatable Read would not refresh an already established snapshot of the flags.</p>
+    </section>
+
+    <section id="choosing">
+      <h2>Choose the view and the rule together</h2>
+      <p>Start by asking whether several reads must describe one committed view. A report assembled from several ordinary queries can benefit from Repeatable Read. A live request using one query may already have the view it needs at Read Committed.</p>
+      <p>Then ask what concurrent decisions could invalidate the write. A guarded update can coordinate a rule confined to its stock row. A rule over several changing rows may need a coordinated locking protocol or Serializable transactions with whole-transaction retry. A stable snapshot supplies a dependable reading; it does not, on its own, supply every coordination guarantee.</p>
+      <p>That leaves a practical question. A transaction may wait, fail, or commit without its reply reaching us. <a href="/learn/databases/relational/conflicts-and-retries/">Handling waits, deadlocks, and retries</a> follows those different endings and explains how an application can continue without turning one checkout into two.</p>
+    </section>
+
+    <nav class="series-reading" aria-label="Transactions and concurrency sequence"><p><a href="/learn/databases/relational/concurrent-updates/">← Concurrent changes</a></p><p><a href="/learn/databases/relational/conflicts-and-retries/">Handling waits, deadlocks, and retries →</a><span>Distinguish an unfinished attempt, a known rollback, and an outcome that still needs recovery.</span></p></nav>
+    <section class="essay-sources" id="further-reading">
+      <h2>Sources and further reading</h2>
+      <p>Working draft, researched 4 October 2026. The shop and schedules are invented teaching examples for PostgreSQL 18. Single-session SQL syntax, own-write visibility and sequential display decisions were checked with PostgreSQL 18.3 through PGlite 0.5.8. The overlapping two-session outcomes are derived from the documented rules; that execution did not demonstrate them.</p>
+      <ul>
+        <li><a href="https://www.postgresql.org/docs/18/transaction-iso.html">PostgreSQL 18: Transaction isolation</a> — ordinary views, conflicting writes, and the distinction between Repeatable Read and Serializable.</li>
+        <li><a href="https://www.postgresql.org/docs/18/sql-set-transaction.html">SET TRANSACTION</a> — selecting the level, read-only mode, and when a transaction’s characteristics can change.</li>
+        <li><a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit locking</a> — a next reading when the rule calls for deliberate coordination of records.</li>
+        <li><a href="https://www.postgresql.org/docs/18/mvcc-serialization-failure-handling.html">Serialization failure handling</a> — why the failed transaction’s reads and decisions must be retried as well as its writes.</li>
+      </ul>
+    </section>
+  </article>
+</Base>

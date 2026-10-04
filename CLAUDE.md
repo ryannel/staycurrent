@@ -1,6 +1,6 @@
 # Stay Current
 
-One place developers look to stay current on the major topics and fields of their work. A static Astro site built from the markdown in `topics/`. Read `README.md` for the layout and `docs/product-brief.md` for what the site is for.
+Understand engineering choices and follow the changes that matter. A static Astro publication. Read `README.md` for the layout and `docs/site-direction.md` for the agreed content plan. The website covers engineering fields, with a site-wide overview. Databases and storage is the first field, with its guide and linked articles; other fields remain planned coverage. The column-store essay now lives under `/learn/databases/column-stores/` and remains a teaching reference alongside the relational collection.
 
 ## House voice
 
@@ -8,12 +8,23 @@ Every word written here, from articles and changelog entries to commit messages 
 
 ## Research runs
 
-`.claude/skills/staycurrent-research/` is how a topic gets researched, argued, and cut or logged. It owns the shape of every file under `topics/`. Nothing under `topics/` is committed without the operator's explicit go.
+`.claude/skills/staycurrent-research/` guides research and assessments. The site currently has no updates feed. Researching and drafting do not imply permission to publish. Keep planned coverage distinct from available reading.
+
+## Article production
+
+Read `docs/content-structure.md` when planning coverage. Use
+`.claude/skills/staycurrent-planning/` for collections and reader journeys,
+`.claude/skills/staycurrent-authoring/` for substantive article creation and
+`.claude/skills/staycurrent-review/` for independent review and repair. These skills
+explicitly call for reviewer subagents. Keep family coverage distinct from the
+scope of one article, and keep the shared distributed-systems idea parked.
+Agent review can complete a draft without routine human editing; it does not
+authorise publication.
 
 ## Checks
 
 ```bash
 pnpm install
-pnpm build          # the only check: every page and the feed must build
+pnpm build          # the only check: every page must build
 pnpm dev            # http://localhost:4321
 ```

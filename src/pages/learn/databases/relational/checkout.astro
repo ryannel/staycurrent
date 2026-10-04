@@ -1,0 +1,96 @@
+---
+import Base from '../../../../layouts/Base.astro';
+import RDCheckoutLab from '../../../../components/explainers/RDCheckoutLab.astro';
+import '../../../../styles/explorables.css';
+import '../../../../styles/rd-essay.css';
+---
+<Base title="How a relational database keeps an order together" description="Follow a blue-mug checkout through tables, indexes, concurrent transactions, row versions, and crash recovery.">
+  <meta slot="head" name="robots" content="noindex" />
+  <article class="visual-essay">
+    <header class="essay-header">
+      <p class="eyebrow">Databases / Working draft</p>
+      <h1>The last blue mug</h1>
+      <p class="dek">How a relational database finds a record, changes several records together, and handles two people asking for the same thing.</p>
+      <div class="essay-meta"><span>Using PostgreSQL, with MySQL and SQLite comparisons</span><a href="/learn/databases/relational/">Relational introduction ↗</a></div>
+    </header>
+
+    <p>A pottery shop has one blue mug left. Alice presses Buy. The shop needs to take one mug out of stock and record an order so the warehouse knows who gets it. If recording the order fails, the mug should still be available. If the order succeeds, another buyer should not get the same mug.</p>
+    <p>Those are two different demands. Keeping the stock change and order together deals with a failure halfway through checkout. Deciding who gets the last mug deals with concurrent checkouts. A relational database gives us tools for both, but we still have to express the rule we want.</p>
+
+    <section id="tables">
+      <h2>One fact, one place to change it</h2>
+      <p>Put products in one table and orders in another. Each product has a stable identifier, such as <code>mug_42</code>. An order carries that identifier instead of copying the product's stock count. To find the product for an order, the database matches the identifiers: that's a join.</p>
+      <figure class="paper-surface rd-figure">
+        <span class="plate-number">Illustration · An order refers to a product</span>
+        <div class="rd-records">
+          <div class="rd-record"><h3>Orders · order_91</h3><dl><div><dt>Buyer</dt><dd>Alice</dd></div><div><dt>Product ID</dt><dd>mug_42</dd></div><div><dt>Quantity</dt><dd>1</dd></div><div><dt>Price paid</dt><dd>€18</dd></div></dl><span class="rd-link">Product ID → products.mug_42</span></div>
+          <div class="rd-record"><h3>Products · mug_42</h3><dl><div><dt>Name</dt><dd>Blue mug</dd></div><div><dt>Current stock</dt><dd>0</dd></div><div><dt>Current price</dt><dd>€20</dd></div></dl></div>
+        </div>
+        <figcaption>This is the state after Alice's purchase and a later price change. The order refers to the product, but keeps the price Alice actually paid. Looking up the current price would rewrite the meaning of her old receipt.</figcaption>
+      </figure>
+      <p>The tables describe relationships; they don't dictate a single disk layout. PostgreSQL usually stores row versions in table pages with separate indexes. MySQL's InnoDB stores the row data in a clustered index, normally ordered by primary key. Both can represent these same products and orders. <a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-index-types.html">InnoDB's storage description</a> makes that distinction concrete.</p>
+      <p>We can give the database some rules to enforce. A primary key identifies each product. A foreign key requires an order's product to exist. <code>NOT NULL</code> and <code>CHECK (stock &gt;= 0)</code> rule out missing or negative stock. These checks apply to writes from the checkout service, an import script, or a human fixing a record. They don't depend on every caller remembering the same validation. <a href="https://www.postgresql.org/docs/current/ddl-constraints.html">PostgreSQL's constraint rules</a> also explain their boundaries: an ordinary check constraint cannot enforce an arbitrary condition over other rows.</p>
+    </section>
+
+    <section id="indexes">
+      <h2>Finding the mug without visiting every product</h2>
+      <p>The checkout knows <code>mug_42</code>. Without an index, finding it could require examining every product row. The database stores data in <strong>pages</strong>: fixed-size chunks it can load into memory or write to storage. An index has pages too. A <strong>B-tree</strong> keeps keys ordered, with separator keys on upper pages directing the search toward leaf pages. A leaf entry leads to the row we need. <a href="https://www.postgresql.org/docs/current/indexes-types.html">B-tree indexes</a> can support ordered ranges as well as exact matches.</p>
+      <figure class="paper-surface rd-figure">
+        <span class="plate-number">Illustration · A lookup by product ID</span>
+        <div class="rd-tree-root"><strong>Upper index page</strong><br />Separator: <code>mug_42</code></div>
+        <div class="rd-records rd-tree-leaves"><div><p>Keys below mug_42 ↓</p><div class="rd-record"><strong>Leaf page · skipped</strong><br /><code>mug_01 · mug_12</code></div></div><div><p>Keys from mug_42 onward ↓</p><div class="rd-record rd-tree-selected"><strong>Leaf page · searched</strong><br /><code>mug_42 → table location</code><br /><code>mug_77 → table location</code></div></div></div>
+        <div class="rd-path"><div><b>mug_42's table page → Blue mug, stock 1</b>Find the row version visible to this reader.</div></div>
+        <figcaption>The separator sends mug_42 to the right leaf page. This tiny PostgreSQL-style lookup leaves the left leaf unread. Real trees have more entries and often more levels; cached pages may require no disk access.</figcaption>
+      </figure>
+      <p>Another query asks for Alice's recent orders. An index on <code>(buyer_id, created_at)</code> groups her orders together and orders them by time. The product-ID index cannot do that job. Index order follows the questions we ask, and the database chooses a plan using its estimate of the work involved. When a report needs most rows, a sequential scan may be cheaper than many separate lookups. <a href="https://www.postgresql.org/docs/current/indexes-multicolumn.html">Multicolumn indexes</a> and <a href="https://www.postgresql.org/docs/current/using-explain.html">query plans</a> describe those choices.</p>
+      <p>Every added index takes space and gives writes more work. A new order needs entries in its relevant indexes. Updating an indexed value may require replacing an entry. An index is another stored arrangement of the data, with a maintenance bill; it isn't a faster-query switch that costs nothing. <a href="https://www.postgresql.org/docs/current/indexes-intro.html">PostgreSQL's index introduction</a> sets out that tradeoff.</p>
+    </section>
+
+    <section id="checkout">
+      <h2>Two changes, one commit</h2>
+      <p>Now take the mug out of stock and insert Alice's order inside one <strong>transaction</strong>. Until commit, other sessions don't see these pending changes. If inserting the order fails, rollback discards the stock change too. A successful commit makes the transaction's changes available together. This all-or-nothing property is called <strong>atomicity</strong>. <a href="https://www.postgresql.org/docs/current/tutorial-transactions.html">PostgreSQL's transaction tutorial</a> follows the same idea across several updates.</p>
+      <p>But Bob presses Buy at nearly the same moment. Alice reads stock 1. Bob reads stock 1. Each application computes 1 minus 1 and tells the database to set stock to 0. Alice writes and commits first. Bob waits for her write lock, then writes his already-computed zero and commits his order.</p>
+      <p>Each transaction kept its own changes together. The final stock is zero, so the nonnegative-stock constraint is satisfied. There are still two orders for one mug. The old read was treated as permission to purchase, though it reserved nothing.</p>
+      <p>For this rule, move the test into the update itself: decrement the current stock only if it is positive. In PostgreSQL's Read Committed isolation, a concurrent update waits for the first writer; after that writer commits, it rechecks the condition against the updated row. Bob finds zero and changes no row. The application must check that result and create an order only when it actually reserved stock. <a href="https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED">The Read Committed rules</a> describe that recheck.</p>
+      <pre class="rd-code"><code>{`BEGIN;
+UPDATE products
+SET stock = stock - 1
+WHERE product_id = 'mug_42' AND stock > 0
+RETURNING product_id;
+-- If no row returned: ROLLBACK and report sold out.
+-- Otherwise insert the order, then COMMIT.`}</code></pre>
+      <p>Another option is to lock the stock row before reading it, with <code>SELECT … FOR UPDATE</code>. The second checkout waits before making its decision. Both approaches make the conflicting checkouts meet at the same row. Locks also mean waiting; taking several locks in different orders can cause a deadlock, which applications must handle. <a href="https://www.postgresql.org/docs/current/explicit-locking.html">PostgreSQL's lock documentation</a> covers these cases.</p>
+      <RDCheckoutLab />
+    </section>
+
+    <section id="versions">
+      <h2>A reader can keep seeing yesterday's version</h2>
+      <p>A warehouse report might already be reading the products when Alice commits. PostgreSQL keeps multiple row versions so an ordinary reader can use its snapshot while writers proceed. That mechanism is <strong>multiversion concurrency control</strong>, or MVCC. The new stock value can exist beside the older value; visibility rules decide which belongs to the report. <a href="https://www.postgresql.org/docs/current/mvcc-intro.html">MVCC</a> separates reading a committed view from reserving a row for a write.</p>
+      <p>Keep one report transaction open. It reads mug stock 1; Alice then commits her purchase; the report reads stock again. Under <strong>Read Committed</strong>, the second statement gets a new snapshot and sees 0. Under PostgreSQL <strong>Repeatable Read</strong>, both ordinary reads use the transaction's snapshot and see 1. Keeping a view stable is useful for a report, but it doesn't reserve the mug.</p>
+      <p><strong>Serializable</strong> protects a broader promise: successful transactions must have an outcome consistent with running them one at a time. PostgreSQL can reject a transaction when it detects a conflict that breaks that promise. The application must retry the whole transaction, including its reads and decisions. Repeating only the final write would preserve the old decision.</p>
+      <p>Consider two warehouse bins with one mug each, and a rule to leave one mug available for the display. Two transactions each count two mugs, then sell from different bins. They don't write the same row, so our single-row guard doesn't protect the total. We need a shared reservation record, a suitable locking scheme, or serializable execution with retries. A rule involving several records needs a design covering those records.</p>
+      <p>Old versions eventually become useless. PostgreSQL's vacuuming makes their space reusable once readers no longer need them. Long-running transactions can hold old versions in use and delay cleanup. Frequent updates produce this extra storage work, even when every checkout changes only a small integer. <a href="https://www.postgresql.org/docs/current/routine-vacuuming.html">Vacuuming</a> explains reclamation; <a href="https://www.postgresql.org/docs/current/storage-hot.html">HOT updates</a> describe an optimization that can avoid new index entries for some updates.</p>
+    </section>
+
+    <section id="recovery">
+      <h2>What survives a crash?</h2>
+      <p>Changing a row in memory isn't enough to promise Alice an order. PostgreSQL records changes in a <strong>write-ahead log</strong> before the affected data pages reach durable storage. With ordinary durable commit settings, the required log records, including commit, are flushed before success returns. Data pages can be written later. After a crash, recovery uses the log to replay changes that those pages were missing. <a href="https://www.postgresql.org/docs/current/wal-intro.html">WAL</a> explains why this ordering works; <a href="https://www.postgresql.org/docs/current/runtime-config-wal.html#GUC-SYNCHRONOUS-COMMIT">commit settings</a> can change the acknowledgement promise.</p>
+      <p>That protects against a crash with recoverable storage. Losing the entire storage device calls for another copy or a backup. And a connection can fail after commit but before Alice receives the reply. A retry should carry the same checkout identifier, with uniqueness enforced, so it can find the existing order. The database cannot make a payment provider's separate charge atomic with this local transaction; that needs its own retry and reconciliation design.</p>
+    </section>
+
+    <section id="choice">
+      <h2>Where I'd start</h2>
+      <p>For this shop's stock, orders, and payments recorded locally, I'd start with a transactional relational database. The records have useful shared relationships, and constraints protect them through several write paths. Indexes serve individual checkouts; joins support questions that cross orders and products. That conclusion follows from this workload, rather than a rule that every application needs SQL.</p>
+      <p>The family still contains different operational choices. SQLite runs inside the application and allows one writer at a time; in WAL mode, readers can keep their snapshots while that writer works. PostgreSQL and MySQL are server systems with different storage and concurrency details. <a href="https://sqlite.org/isolation.html">SQLite's isolation description</a> is a useful reminder to inspect the engine behind the relational model.</p>
+      <p>If the shop starts counting billions of page views, repeatedly touching full rows to aggregate a few fields is a different job; see <a href="/learn/databases/column-stores/">column stores</a>. If its catalogue is mostly read as whole nested products, <a href="/learn/databases/documents/">document boundaries</a> may fit those reads. Splitting checkout data across machines introduces <a href="/learn/databases/distributed-sql/">distributed coordination</a>; the word relational doesn't settle that deployment question.</p>
+      <p>One last change: an order now contains several products. A guarded decrement still protects each stock row, and one transaction can keep all reservations and the order together. Acquire rows in a consistent order, keep the transaction short, and handle rejection or retry for the whole cart. The same mechanisms apply; the set of records we must coordinate has grown.</p>
+      <p><a href="/learn/databases/relational/">← Back to the relational introduction</a></p>
+    </section>
+
+    <section class="essay-sources">
+      <h2>Sources and model notes</h2>
+      <p>Working draft; researched on 2026-10-02. Linked primary documentation was accessed on that date. PostgreSQL-specific behavior is identified in the text; MySQL and SQLite show alternatives within the family. The shop, identifiers, and schedules are invented teaching examples. No performance measurements are claimed.</p>
+      <p>The experiment models one row at Read Committed, pending writes, a lock, and commit or rollback. It deliberately contrasts application arithmetic with a guarded update. It does not simulate a database's recovery or general serializable isolation. The scenario about two bins explains why the guard's guarantee stops at that row.</p>
+    </section>
+  </article>
+</Base>

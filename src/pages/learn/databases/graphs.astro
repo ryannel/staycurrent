@@ -1,0 +1,89 @@
+---
+import Base from '../../../layouts/Base.astro';
+import GraphTraversalLab from '../../../components/explainers/GraphTraversalLab.astro';
+import '../../../styles/explorables.css';
+import '../../../styles/graph-essay.css';
+---
+<Base title="How a graph database follows relationships" description="Trace a failed inventory service through callers, indexes, adjacency, bounded traversals, cycles, and graph updates.">
+  <meta slot="head" name="robots" content="noindex" />
+  <article class="visual-essay">
+    <header class="essay-header">
+      <p class="eyebrow">Databases / Working draft</p>
+      <h1>Who depends on<br />Inventory?</h1>
+      <p class="dek">A graph makes connections convenient to follow. The number of connections we follow still matters.</p>
+      <div class="essay-meta"><span>Using Neo4j, with relational and JanusGraph comparisons</span><a href="/learn/databases/choosing/">Database field guide ↗</a></div>
+    </header>
+
+    <p>The Inventory service has stopped responding. Checkout calls it to reserve stock. Storefront calls Checkout to place an order. Even though Storefront never calls Inventory directly, its checkout page may now fail. We want to find the services whose work depends on Inventory, including those several calls away.</p>
+    <p>A list of service names won't answer that. We need the connections: who calls whom. A graph represents each service as a <strong>node</strong>, and each call dependency as a <strong>relationship</strong> between two nodes. Following those relationships gives us a way to discover indirect dependencies without having written down every indirect pair.</p>
+
+    <section id="relationships">
+      <h2>The call is a record too</h2>
+      <p>In a <strong>property graph</strong>, the relationship carries a type and may have properties of its own. Our relationship type is <code>CALLS</code>. An arrow from Checkout to Inventory says that Checkout is the caller. A property such as <code>required: true</code> says that this operation cannot finish without the dependency.</p>
+      <figure class="paper-surface graph-figure">
+        <span class="plate-number">Illustration · An indirect dependency</span>
+        <div class="graph-scene"><div class="graph-object"><strong>Storefront</strong><br />Order page</div><div class="graph-relationship">CALLS<br />required: true<b aria-hidden="true">→</b></div><div class="graph-object"><strong>Checkout</strong><br />Place order</div><div class="graph-relationship">CALLS<br />required: true<b aria-hidden="true">→</b></div><div class="graph-object"><strong>Inventory</strong><br />Reserve stock</div></div>
+        <figcaption>Storefront is two calls away from Inventory. The outage query starts at Inventory and follows incoming calls, against the arrows, to reach Checkout and then Storefront. The arrows record dependency direction, not the query's travel direction.</figcaption>
+      </figure>
+      <p>Required belongs on the connection because a service may have both required and optional dependencies. Email might try to fetch order details, but still send a generic message if that lookup fails. Labelling the entire Email service “optional” would lose which call has the fallback.</p>
+      <p>Neo4j stores this kind of property graph: nodes have labels and properties; relationships have a direction, a type, and properties. A query can choose outgoing or incoming relationships, or ignore their direction when that suits the question. <a href="https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/">Its graph concepts guide</a> defines these pieces. Other graph models, including RDF triples, describe connections differently; this essay follows the property-graph family.</p>
+      <p>The records describe a potential effect of the outage. They don't prove every service is failing right now. An idle service, a cached answer, or a circuit breaker may change what users observe. Our graph answers “who is connected by these dependencies?” Actual incident impact also needs evidence about the running system.</p>
+    </section>
+
+    <section id="start">
+      <h2>First, find Inventory</h2>
+      <p>We begin with a known service identifier. A property index can find the Inventory node without scanning all service nodes. Once there, the query needs Inventory's incoming <code>CALLS</code> relationships. Following them reaches Checkout and Warehouse, its direct callers.</p>
+      <p>That local list of connections is called <strong>adjacency</strong>. Think of each node having a way to locate its neighboring relationships, with each relationship leading to another node. The exact storage varies by engine. The useful distinction is between finding a starting node by a property and expanding from a node through its connections. An index on service ID helps the first operation; it doesn't make the second operation cost nothing.</p>
+      <p>Neo4j query plans expose this distinction with operators such as <code>NodeIndexSeek</code> and <code>Expand(All)</code>. A plan may locate an indexed service, then expand its incoming calls. <a href="https://neo4j.com/docs/cypher-manual/current/planning-and-tuning/operators/operators-detail/#query-plan-expand-all">The operator descriptions</a> show expansion from a known node. They also help us avoid a misleading promise: using a graph database doesn't guarantee that a query visits only a tiny part of the graph.</p>
+      <p>A service with a few incoming calls is a cheap place to expand. A shared authentication service might have thousands. Finding its node quickly still leaves all those connections to consider. JanusGraph distinguishes graph-wide indexes from <strong>vertex-centric indexes</strong>, which help narrow the relationships examined around a busy node. <a href="https://docs.janusgraph.org/v0.5/index-management/index-performance/">Its indexing explanation</a> shows why global lookup and local traversal need separate attention.</p>
+    </section>
+
+    <section id="traversal">
+      <h2>The frontier moves out one hop</h2>
+      <p>After finding Checkout and Warehouse, we can look for their callers. Storefront calls Checkout. Returns calls Warehouse. Those services are two <strong>hops</strong> from Inventory: two relationships along a dependency path.</p>
+      <p>The nodes still to expand form a <strong>frontier</strong>. A breadth-first traversal starts with Inventory, expands its direct callers, then expands that new frontier. It reaches services in order of their shortest distance from the starting point. To find dependencies within three hops, it stops expanding after the third layer.</p>
+      <p>The query must specify what counts as a usable connection. If we only follow required calls, an optional Email dependency doesn't extend the frontier. Rejecting an unsuitable relationship during expansion can avoid exploring the nodes beyond it. <a href="https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-paths/">Cypher's variable-length paths</a> support bounded patterns. This query binds a list of relationships to <code>calls</code> and tests each one:</p>
+      <pre class="graph-code"><code>{`MATCH (failed:Service {id: 'inventory'})
+      <-[calls:CALLS*1..3]-(caller:Service)
+WHERE caller <> failed
+  AND all(call IN calls WHERE call.required = true)
+RETURN DISTINCT caller.id;`}</code></pre>
+      <p><code>all()</code> requires every call on a path to be required. <code>caller &lt;&gt; failed</code> excludes the starting service even if a cycle leads back to it. <a href="https://neo4j.com/docs/cypher-manual/current/patterns/reference/variable-length-paths/#variable-length-relationships">Relationship-list binding</a> and the <a href="https://neo4j.com/docs/cypher-manual/current/functions/predicate/#functions-all">all() predicate</a> are defined in the Cypher reference. This query asks for the same distinct endpoints as our model; its execution plan need not use the model's breadth-first algorithm.</p>
+      <p>A limit is part of the question. “Within three calls” deliberately leaves out a service four calls away. It also bounds how far the engine searches. If we need every indirect dependent, a small fixed bound gives an incomplete answer, however quickly it runs.</p>
+      <p>Our example also has a cycle: Warehouse calls Returns, and Returns calls Warehouse. Starting from Inventory can discover Warehouse, then Returns, then Warehouse again. A reachability traversal uses a <strong>visited set</strong> to remember services already found. It can inspect that returning relationship without putting Warehouse back in the frontier. The cycle is present in the data; the query simply stops revisiting its nodes.</p>
+      <GraphTraversalLab />
+    </section>
+
+    <section id="paths">
+      <h2>Finding services is cheaper than listing every route</h2>
+      <p>Suppose Storefront calls both Checkout and Warehouse. Both call Inventory. There are now two routes from Storefront to Inventory, but Storefront is still one affected service. A query for unique endpoints can discard duplicate discoveries. A query for every dependency path must keep both routes.</p>
+      <p>This changes the role of the visited set. Globally skipping a node already reached is useful for finding reachable services and one shortest witness path. It would discard valid alternatives if we were listing all paths. Then we need rules about which nodes or relationships a particular path may reuse, plus a stopping condition.</p>
+      <p>Cypher's default pattern matching disallows reusing a relationship in the same graph-pattern match, while nodes may recur. That differs from our experiment's global node visited set. <a href="https://neo4j.com/docs/cypher-manual/current/patterns/repeatable-node-and-relationship-paths/">The relationship-reuse documentation</a> makes those semantics explicit. Choose the rule from the answer you need, rather than treating every graph traversal as the same algorithm.</p>
+      <p>Branching is the other source of work. In a simple tree with four callers at each step, three hops can generate 4, then 16, then 64 candidate services. Shared nodes and filters may cut that down. Asking for all distinct paths can expand the work again even when the final set of services is small. Those are illustrative counts, not a benchmark; they show why adding one hop can have a large consequence.</p>
+      <p>“Show me one shortest explanation for each service” asks less than “show me every route.” A shortest path also depends on what shortest means. Fewest calls isn't necessarily lowest latency or greatest reliability. A weighted query needs meaningful relationship weights and an algorithm matching that definition. <a href="https://neo4j.com/docs/cypher-manual/current/patterns/shortest-paths/">Neo4j's shortest-path guide</a> describes choices within path queries.</p>
+    </section>
+
+    <section id="writes">
+      <h2>Connections have to stay correct as services change</h2>
+      <p>A release removes Checkout's call to Inventory and adds a call to a new Reservation service. Writing only half that change would leave the graph describing a system that never existed. In Neo4j, the relevant node, relationship, and property changes can be grouped into a transaction, committed or rolled back together. <a href="https://neo4j.com/docs/operations-manual/current/database-internals/transaction-management/">Transaction management</a> explains that boundary.</p>
+      <p>The write updates more than a line in a drawing. It must maintain relationship access structures, any affected property indexes, and recovery records. Neo4j records changes in a transaction log and uses checkpoints to limit recovery work. <a href="https://neo4j.com/docs/operations-manual/current/database-internals/transaction-logs/">Transaction logging</a> and <a href="https://neo4j.com/docs/operations-manual/current/database-internals/checkpointing/">checkpointing</a> describe the durable write path.</p>
+      <p>Give service identifiers a uniqueness constraint, or the importer may create two Inventory nodes and attach callers to different copies. Constraints protect stored rules; they don't discover an omitted dependency. <a href="https://neo4j.com/docs/cypher-manual/current/schema/constraints/create-constraints/">Neo4j's constraint documentation</a> describes uniqueness and other supported checks.</p>
+      <p>A long query also needs an isolation promise. Neo4j's ordinary reads use Read Committed isolation; a transaction does not automatically receive a frozen graph for its entire lifetime. Concurrent edits can matter. For an incident report, we might query a versioned snapshot of deployment records, or accept a live view with its timestamp. <a href="https://neo4j.com/docs/operations-manual/current/database-internals/concurrent-data-access/">Concurrent-access rules</a> describe the engine's guarantees. The graph model doesn't make this decision for us.</p>
+    </section>
+
+    <section id="choice">
+      <h2>How much of the application is traversal?</h2>
+      <p>A relational database can store this graph with <code>services</code> and <code>calls</code> tables. An index on a call's target ID finds direct callers. Repeated joins follow a fixed number of hops; a recursive query follows a changing frontier. PostgreSQL has recursive <code>WITH</code> queries and cycle detection for exactly this kind of data. <a href="https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-RECURSIVE">Its recursive-query documentation</a> shows the machinery.</p>
+      <p>For a small service catalogue and an occasional two-hop report, I'd begin with the database already holding the service records. A graph database becomes more attractive when relationship traversal is central: varied path questions, frequent multi-hop queries, and a team that benefits from expressing those questions directly as graph patterns. We should compare actual plans and workloads before adding another system.</p>
+      <p>A graph engine still has awkward workloads. A broad query expanding every caller of a high-degree service may touch much of the graph. A calculation summing a few fields over every service is a scan, where <a href="/learn/databases/column-stores/">analytical layouts</a> may be more useful. Splitting a connected graph across machines can also put network work on traversal steps. Storage and deployment choices remain separate from the convenience of the graph model.</p>
+      <p>Now imagine asking which services depend on Inventory <em>through required calls only</em>, but have an optional direct call as well. The optional edge doesn't invalidate a required indirect path. We test each candidate path's relationships and return the endpoint if any eligible path reaches Inventory. That is a question about paths, rather than a single label on the service. The distinction is what the graph helps us express.</p>
+      <p><a href="/learn/databases/choosing/">← Back to the database field guide</a> · <a href="/learn/databases/relational/">Relational transactions</a> · <a href="/learn/databases/documents/">Document boundaries</a></p>
+    </section>
+
+    <section class="essay-sources">
+      <h2>Sources and model notes</h2>
+      <p>Working draft; researched on 2026-10-02. Linked primary documentation was accessed on that date. Neo4j illustrates property graphs, query expansion, and transactional updates. JanusGraph's versioned indexing explanation supplies a second implementation's distinction between global and local indexes. PostgreSQL supplies the relational comparison.</p>
+      <p>The service graph is invented. Its experiment implements breadth-first reachability with a global node visited set and one shortest witness per endpoint. It counts logical relationship examinations, not Cypher operations, disk reads, latency, or live incident impact. Endpoint discovery, path enumeration, and engine isolation are deliberately explained as separate choices.</p>
+    </section>
+  </article>
+</Base>

@@ -1,0 +1,115 @@
+---
+import { Code } from 'astro:components';
+import Base from '../../../../layouts/Base.astro';
+import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url';
+import ConcurrentDecision from '../../../../components/explainers/transactions/ConcurrentDecision.astro';
+import ConcurrentSchedule from '../../../../components/explainers/transactions/ConcurrentSchedule.astro';
+import ConcurrentBins from '../../../../components/explainers/transactions/ConcurrentBins.astro';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+import '../../../../components/explainers/design/schema-sketch.css';
+const setup = `CREATE TABLE stock (
+  product_id text PRIMARY KEY REFERENCES products (product_id),
+  available integer NOT NULL CHECK (available >= 0)
+);
+INSERT INTO stock (product_id, available) VALUES ('P7', 1);`;
+const unsafeRead = `-- Each request starts its own transaction.
+BEGIN ISOLATION LEVEL READ COMMITTED;
+SELECT available FROM stock WHERE product_id = 'P7';
+-- Each reads 1. Application code computes 1 - 1 = 0.`;
+const unsafeWrite = `-- Unsafe: 0 was computed from an earlier ordinary read.
+UPDATE stock SET available = 0 WHERE product_id = 'P7';
+-- The application creates its order and line, then commits.`;
+const guarded = `BEGIN ISOLATION LEVEL READ COMMITTED;
+UPDATE stock
+SET available = available - 1
+WHERE product_id = 'P7' AND available >= 1
+RETURNING product_id, available;`;
+const orderA = `-- Run only if the reservation returned exactly one row.
+INSERT INTO orders (order_id, customer_id, placed_at)
+VALUES ('O14', 'C4', '2026-10-04 11:00:00+00');
+INSERT INTO order_lines
+  (order_id, line_no, product_id, quantity, unit_price)
+VALUES ('O14', 1, 'P7', 1, 20.00);
+COMMIT;`;
+const locking = `BEGIN ISOLATION LEVEL READ COMMITTED;
+SELECT available
+FROM stock
+WHERE product_id = 'P7'
+FOR UPDATE;
+
+-- The application now inspects the returned value.
+-- Missing row or available < 1: ROLLBACK and stop.
+-- Otherwise, while still holding the lock:
+UPDATE stock SET available = available - 1
+WHERE product_id = 'P7';
+-- Create the order and line, then COMMIT.`;
+---
+<Base title="When two requests change the same data" description="Understand a stock race, follow PostgreSQL row locking, and compare a conditional update with a locking read before making a decision.">
+  <meta slot="head" name="robots" content="noindex" />
+  <article class="visual-essay relational-design schema-sketches">
+    <header class="essay-header"><p class="eyebrow">Databases and storage · Working draft</p><h1>When two requests change the same data</h1><div class="essay-meta"><span>Transactions and concurrent work · 2 of 4</span><a href="/learn/databases/relational/transaction-boundaries/">Previous: Transaction boundaries</a><a href="/learn/databases/relational/isolation/">Next: Isolation →</a></div></header>
+    <p>A database usually serves many requests at once. People place orders while staff update products and background jobs process earlier purchases. These requests often work on unrelated records and can make progress independently. Sometimes, though, they need the same information at almost the same time.</p>
+    <p>That becomes difficult when an application reads something before deciding what to change. The read tells it what was available then. It does not promise that the information will remain unchanged while the application thinks, performs other work, or sends its next command. Another request can act in that gap.</p>
+    <p>We call requests <strong>concurrent</strong> when their work overlaps in this way. They need not execute instructions at exactly the same instant. One can pause after a read, let another complete a change, and then carry on with a decision based on the old value.</p>
+    <p>A transaction keeps each request’s changes together, as the <a href="/learn/databases/relational/transaction-boundaries/">previous article</a> explained. That alone does not settle which request is entitled to make a change. If two buyers both read that one item is available, each can try to record a complete purchase of it. We need a way to coordinate the decision as well as save its results.</p>
+    <p>We’ll examine that stock problem and compare two ways to handle it: asking the database to check availability as it changes the count, and locking the record before reading it. The examples use PostgreSQL 18 at <strong>Read Committed</strong>, its default isolation setting. Isolation controls how overlapping transactions interact; the <a href="/learn/databases/relational/isolation/">next article</a> looks at the wider choices.</p>
+
+    <section id="stock-rule"><h2>The rule we need to preserve</h2>
+      <p>Product P7 is the shop’s Blue mug. Its stock record has one available item. Requests A and B each want to reserve one mug and record a purchase. Each uses its own database session: a separate conversation with the database on its own connection. A will use order O14; B will use O15. Both can belong to customer C4, Ada: two browser tabs or two separate attempts can overlap even when they come from the same customer. We are treating these as distinct purchase requests, not retries of one operation.</p>
+      <p>The rule is that each committed purchase must consume one available item. If only one is available and nothing is restocked, at most one of these purchases may commit. The stock count must also stay non-negative, but that is only part of the rule. A wrong program can record two purchases while leaving a perfectly non-negative zero in the stock row.</p>
+      <details class="sql-setup"><summary>Set up a fresh practice database for these examples</summary><p>Load the <a href={practiceSchema} download="designing-data.sql">shop schema and records</a> into an empty database, then run the SQL below once. This adds the stock table used in the previous article, here with one available mug. Each comparison begins from this fresh state, without O14 or O15. Do not rerun this setup over another article’s completed attempt.</p><div class="sql-scroll" role="region" tabindex="0" aria-label="Create stock with one available mug"><Code code={setup} lang="sql" theme="css-variables" /></div></details>
+      <p>These new purchases use an agreed €20 unit price. Each attempt must keep its stock change, order and line in the same transaction, as established in <a href="/learn/databases/relational/transaction-boundaries/">What belongs in one transaction?</a>.</p>
+    </section>
+
+    <section id="unsafe"><h2>Two correct subtractions, one wrong result</h2>
+      <p>Consider application code that reads availability, subtracts one in memory, then sends the new count back. An ordinary <code>SELECT</code> tells the application what it can see. It does not reserve that stock or prevent another transaction from changing it.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Each transaction reads available stock"><Code code={unsafeRead} lang="sql" theme="css-variables" /></div>
+      <p>A reads one and computes zero. Before A writes, B also reads one and computes zero. Both now have a plan based on the same mug. The arithmetic is correct in each application; the plans cannot both describe separate successful purchases.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="An unsafe write using the application-computed stock count"><Code code={unsafeWrite} lang="sql" theme="css-variables" /></div>
+      <p>PostgreSQL does coordinate writes to this row. A’s update obtains a <strong>row lock</strong>: a claim that makes a conflicting writer wait until A’s transaction ends. B’s update cannot simply change the row under A’s unfinished write. But when A commits, B can proceed with the command it already sent: set availability to zero. That command contains no trace of why zero was chosen.</p>
+      <div class="table-scroll" role="region" tabindex="0" aria-label="Unsafe schedule with two committed orders"><table><caption>A possible order of events at Read Committed</caption><thead><tr><th>Step</th><th>Request A</th><th>Request B</th></tr></thead><tbody><tr><th scope="row">1</th><td>Reads 1; computes 0</td><td>—</td></tr><tr><th scope="row">2</th><td>—</td><td>Reads 1; computes 0</td></tr><tr><th scope="row">3</th><td>Writes 0; holds the row lock</td><td>—</td></tr><tr><th scope="row">4</th><td>—</td><td>Tries to write 0; waits</td></tr><tr><th scope="row">5</th><td>Creates O14 and its line; commits</td><td>Waiting ends</td></tr><tr><th scope="row">6</th><td>—</td><td>Writes 0; creates O15 and its line; commits</td></tr></tbody></table></div>
+      <p>Both orders exist. Stock is zero. The non-negative check passes, and every order line has valid references and quantity one. The database kept the changes of each transaction together and made the writes wait for one another. It was never instructed to reconsider B’s permission to buy.</p>
+      <p>This is a <strong>race</strong>: the outcome depends on how the requests’ steps interleave. A test that runs A completely before starting B will miss it, because B then reads zero and declines. A useful concurrency test deliberately places both reads before either write. The schedule above is based on PostgreSQL’s documented behaviour; it is not a claim that these two sessions were run in a benchmark.</p>
+    </section>
+
+    <section id="conditional-update"><h2>Make the test part of the change</h2>
+      <p>For this one-row rule, the application can express the whole stock decision in an update: subtract one only from a row with at least one available. The database receives both the requirement and the change, rather than an answer calculated from a previous read.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Reserve one mug with a conditional update"><Code code={guarded} lang="sql" theme="css-variables" /></div>
+      <p>A changes the row from one to zero and holds its lock. If B issues the same update while A is still active, B waits. At Read Committed, after A commits PostgreSQL considers the updated row and checks B’s <code>WHERE</code> condition again. Zero fails <code>available &gt;= 1</code>, so B changes no row. If A rolls back instead, the available mug remains and B can reserve it. This recheck is the crucial <a href="https://www.postgresql.org/docs/18/transaction-iso.html#XACT-READ-COMMITTED">Read Committed rule</a> for this example.</p>
+      <div class="table-scroll"><table><caption>Returned rows after the first transaction ends</caption><thead><tr><th>Outcome of A</th><th>A’s purchase</th><th>B’s UPDATE result</th><th>B’s action</th></tr></thead><tbody><tr><td>Commit</td><td>Recorded</td><td>No rows</td><td>Roll back; no stock reserved</td></tr><tr><td>Rollback</td><td>Absent</td><td>P7, available 0</td><td>Create its purchase; commit</td></tr></tbody></table></div>
+      <p><code>RETURNING</code> contains only rows actually updated. Here the primary key makes at most one row eligible, so one returned row means the reservation succeeded. An empty result is an ordinary outcome, not an SQL error. The application must inspect it. Otherwise it can still create a purchase without obtaining stock. <a href="https://www.postgresql.org/docs/18/sql-update.html">UPDATE</a> documents both its affected-row result and the fact that changing zero rows is not an error.</p>
+      <p>For request A, a successful reservation is followed by these statements. B uses O15 in both inserts instead. If the reservation returned no row, issue <code>ROLLBACK</code> and skip the inserts. If a later insert fails, roll back the reservation too.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Complete request A after a successful reservation"><Code code={orderA} lang="sql" theme="css-variables" /></div>
+      <p>Simply moving the subtraction into SQL is not the whole solution. Without the availability condition, a second subtraction would attempt minus one; our check constraint would refuse it, and the application would need to abandon that transaction. The guarded form makes “no stock reserved” a result the caller can handle directly. The constraint remains a useful defence against other incorrect writes.</p>
+    </section>
+
+    <section id="locking-read"><h2>Lock before making a longer decision</h2>
+      <p>For our single yes-or-no stock check, the conditional update is enough. A different checkout might allow partial fulfilment: someone requests three mugs, permits a smaller purchase, and only two remain. Application code could inspect the available quantity, choose two, then use that quantity both to reduce stock and to create the order line. It needs the count to remain valid while it makes those related changes.</p>
+      <p>PostgreSQL offers a <strong>locking read</strong> for work like this: <code>SELECT … FOR UPDATE</code> retrieves the row while acquiring a lock that excludes competing updates and conflicting locking reads. The application can inspect the returned value while retaining that protection inside its transaction. The partial-purchase decision could also be written in SQL; the locking read gives us a way to make it in application code. It is not a reason to wait for a person or a remote service while holding the lock.</p>
+      <p>To compare the timing with the conditional update, we’ll keep the original one-mug purchase below. Only the way we read and reserve it changes:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Lock the stock row before the application decides"><Code code={locking} lang="sql" theme="css-variables" /></div>
+      <p>These comments mark application branches, not SQL that performs the branching for you. The program waits for the read to return, checks that the row exists and availability is at least one, then either abandons the transaction or continues. Its update and purchase inserts must use the same transaction and connection. Committing between the read and the update would release the protection.</p>
+      <p>If A holds the row lock, B’s locking read waits before returning an answer. After A commits its purchase, B receives zero in this Read Committed example. B therefore declines before making its stock change. Acquiring a lock after an ordinary read, then using the old read to decide, would leave the original mistake intact.</p>
+      <ConcurrentDecision />
+      <p>A row lock does not make the row unreadable. Ordinary PostgreSQL reads can still use committed versions while the writer is active. Nor does this stock lock protect every fact the program might consult: a rule involving another stock row or another customer’s balance needs protection that covers those facts too. <a href="https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-ROWS">PostgreSQL’s row-lock documentation</a> describes which operations conflict and how long the locks last.</p>
+      <p>Both approaches bring competing attempts to the same record before allowing an incompatible change. Their correctness depends on all relevant write paths following a compatible protocol; an administrative script can still defeat the business rule by writing an arbitrary stock value.</p>
+    </section>
+
+    <section id="experiment"><h2>Change the first transaction’s ending</h2>
+      <p>Waiting is not itself a rejection. While A is unfinished, B cannot know whether A will keep or abandon its reservation. If A commits, the protected decision sees stock zero. If A rolls back, that same decision can see stock one and proceed. The experiment keeps the request order fixed so that changing the method or A’s ending exposes this difference.</p>
+      <ConcurrentSchedule />
+      <p>Notice that the committed stock counter stays at one while A’s reduction is pending. That does not grant B permission to buy. The coordinated methods wait for the row they need to change, then obtain a result that accounts for A’s ending. The unsafe method mistakes an earlier observation for that result.</p>
+    </section>
+
+    <section id="wider-rules"><h2>When the rule grows</h2>
+      <p>A cart containing a mug and a bowl can reserve each stock row with a conditional update inside one transaction. If either reservation fails, the application rolls back both. The records being changed have multiplied, but the requirement still decomposes into a per-product availability check plus a transaction that keeps the cart together.</p>
+      <p>Acquiring several locks introduces a new problem. One transaction might hold the mug row and wait for the bowl; another might hold the bowl and wait for the mug. Choosing a consistent product order for acquiring locks reduces these cycles. Applications still need to handle rejected transactions, which is the subject of <a href="/learn/databases/relational/conflicts-and-retries/">Handling waits, deadlocks, and retries</a>.</p>
+      <p>A different kind of rule cannot be reduced to independent checks. Suppose two bins each contain one display mug, and the shop must leave at least one mug across both bins. Two transactions can each observe a total of two and sell from a different bin. Each local quantity remains non-negative, but together they leave none. Locking only the row each transaction subtracts from does not make them meet at a shared decision.</p>
+      <ConcurrentBins />
+      <p>That wider rule needs a design covering the shared condition: for example, a common reservation record, a locking protocol covering the relevant records, or serializable transactions with whole-transaction retries. Choosing among them requires understanding what a transaction can observe while others run. A stable view and a protected decision are related ideas, but they are not interchangeable.</p>
+    </section>
+    <nav class="series-reading" aria-label="Continue reading"><p><a href="/learn/databases/relational/isolation/">Isolation and snapshots →</a><span>Follow changing records through statement snapshots, transaction snapshots and serializable execution.</span></p></nav>
+    <section class="essay-sources"><h2>Sources and further reading</h2><p>Working draft, researched 4 October 2026. PostgreSQL 18, explicitly at Read Committed. The shop records and schedules are invented teaching examples. The interaction models the documented single-row cases; it does not execute concurrent SQL or model other isolation settings.</p><ul><li><a href="https://www.postgresql.org/docs/18/transaction-iso.html#XACT-READ-COMMITTED">Read Committed</a> — the rules behind the update recheck and the updated row returned by a waiting locking read.</li><li><a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit locking</a> — conflicting row locks, release at transaction end and deadlocks.</li><li><a href="https://www.postgresql.org/docs/18/dml-returning.html">Returning data from modified rows</a> — how an application obtains evidence of the change it made.</li></ul></section>
+  </article>
+</Base>

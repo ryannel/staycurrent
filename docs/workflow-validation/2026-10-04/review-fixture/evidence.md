@@ -1,0 +1,1 @@
+The page is an illustrative model, not an engine benchmark. Its arithmetic follows the declared model in brief.md. Index behaviour can be checked against the PostgreSQL index introduction: https://www.postgresql.org/docs/current/indexes-intro.html . No engine was executed. No speed measurements or general product comparisons are claimed by this evidence record.

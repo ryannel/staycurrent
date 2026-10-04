@@ -1,0 +1,168 @@
+---
+import Base from '../../../../layouts/Base.astro';
+import Sql from '../../../../components/explainers/querying/Sql.astro';
+import ResultTable from '../../../../components/explainers/querying/ResultTable.astro';
+import PaginationLab from '../../../../components/explainers/querying/PaginationLab.astro';
+import ExportViews from '../../../../components/explainers/querying/ExportViews.astro';
+import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url';
+import queryExamples from '../../../../../docs/article-work/querying-transactions/query-pagination.sql?url';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+import '../../../../components/explainers/design/schema-sketch.css';
+const setup = `INSERT INTO orders (order_id, customer_id, placed_at)
+VALUES ('O14', 'C4', '2026-10-04 12:00:00+00'),
+       ('O15', 'C4', '2026-10-04 12:00:00+00'),
+       ('O16', 'C4', '2026-10-04 12:00:00+00');`;
+const firstPage = `SELECT order_id, placed_at
+FROM orders
+WHERE customer_id = 'C4'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 2;`;
+const offsetPage = `SELECT order_id, placed_at
+FROM orders
+WHERE customer_id = 'C4'
+ORDER BY placed_at DESC, order_id DESC
+OFFSET 2 LIMIT 2;`;
+const nextPage = `SELECT order_id, placed_at
+FROM orders
+WHERE customer_id = 'C4'
+  AND (placed_at, order_id)
+      < ('2026-10-04 12:00:00+00', 'O15')
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 2;`;
+const insertOrder = `INSERT INTO orders (order_id, customer_id, placed_at)
+VALUES ('O17', 'C4', '2026-10-04 13:00:00+00');`;
+const pageIndex = `CREATE INDEX orders_customer_page_idx
+ON orders (customer_id, placed_at DESC, order_id DESC);`;
+const snapshotCursor = `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+
+DECLARE order_export NO SCROLL CURSOR FOR
+  SELECT order_id, customer_id, placed_at
+  FROM orders
+  ORDER BY placed_at, order_id;
+
+FETCH FORWARD 2 FROM order_export;
+FETCH FORWARD 2 FROM order_export;
+FETCH FORWARD 2 FROM order_export;
+
+CLOSE order_export;
+COMMIT;`;
+---
+<Base title="Pagination and large results" description="Choose an order and a continuation rule for large query results, and distinguish live pagination from a fixed export while records change.">
+  <meta slot="head" name="robots" content="noindex" />
+  <article class="visual-essay relational-design schema-sketches">
+    <header class="essay-header"><p class="eyebrow">Databases and storage · Working draft</p><h1>Pagination and large results</h1><div class="essay-meta"><span>Querying your data · 2 of 2</span><a href="/learn/databases/relational/query-results/">Previous: Queries and joins</a><a href="/learn/databases/relational/transaction-boundaries/">Continue: Transaction boundaries →</a></div></header>
+    <p>A database might hold years of orders, messages or measurements. An application needs ways to read that history, but bringing it all back at once is often impractical. Someone opening their order history wants to see the most recent purchases promptly. They should not have to wait for every purchase they have ever made to arrive before the page becomes useful.</p>
+    <p>The same issue comes up away from the screen. A program exporting millions of records may not have enough memory to hold them all at once. It can instead read a smaller group, write that group to a file, and continue. In both cases, the application needs a way to read part of a query’s result and return for more.</p>
+    <p>For a browsable list, we call those pieces pages and the technique <strong>pagination</strong>. A background job often calls them batches. Choosing a manageable size is the easy part. The more interesting question is how to find the next piece: should the database count past the rows we have already read, or should we remember the last record and continue from there?</p>
+    <p>That choice matters because the database is still in use. New records can arrive between requests, and existing ones can change or disappear. A person browsing recent orders may be happy with a list that changes as they read. An export of yesterday’s accounts may need every part to describe the same point in time. We’ll first work through pagination for a live list, then look at what a fixed export needs beyond it.</p>
+
+    <section id="ordering">
+      <h2>Ordering the result</h2>
+      <p>To divide a result into pages, we first need a sequence. “The first twenty orders” and “the next twenty” only make sense if we know which orders come before others. For an order-history screen, newest first is a useful choice: it puts the purchases someone is most likely to be looking for at the top.</p>
+      <p>A SQL query does not promise that sequence unless we ask for it. Records might happen to come back in the order they were added, but we cannot rely on that. The database can use different ways to find them, and those can produce a different order even when the records themselves have not changed. <code>ORDER BY</code> tells it which sequence the result should follow.</p>
+      <p>The ordering also needs to settle ties. If two orders were placed at the same time, which belongs at the end of one page and which belongs at the beginning of the next? We can use a unique order ID to decide between them. Neither tied order is more recent, but giving them a definite relative position lets us divide the list consistently.</p>
+      <p>We’ll use the shop’s orders, with a primary key called <code>order_id</code>, a customer reference, and a required placement time called <code>placed_at</code>. <a href="/learn/databases/relational/query-results/">Queries and joins</a> explains the basic query clauses. Here, one result row means one order header, whether or not its lines have been added yet.</p>
+      <p>Customer C4 has five orders, O12 through O16. O14, O15 and O16 share a placement time. We want newest orders first, with pages of two so the boundaries remain visible.</p>
+      <ResultTable caption="The starting orders, all on 4 October 2026; times are UTC" columns={['order_id','placed_at']} rows={ [['O16','12:00'],['O15','12:00'],['O14','12:00'],['O13','10:00'],['O12','09:00']] } />
+      <Sql code={firstPage} label="Read the first two orders in a fully specified order" />
+      <p><code>DESC</code> means descending, so later timestamps come first. When times tie, the second ordering expression compares order IDs, also descending. O16 precedes O15, which precedes O14. Because order IDs are unique, no two records tie on the whole pair. This gives a <strong>total order</strong>: each row has a definite position relative to every other row in the same result.</p>
+      <p><code>LIMIT 2</code> returns at most two rows after that ordering, so this page contains O16 and O15. O14 has the same timestamp but falls on the next page. Ordering only by time would leave the relative positions of all three unspecified, including which two appear on the first page. Increasing the precision of the timestamp is not a uniqueness rule; different orders can still share a time.</p>
+      <p>A total order settles ties in one set of records. It does not freeze the set or stop the values from changing. We will first keep placement times unchanged, then look at what happens when that assumption fails. The text IDs are convenient labels, not a claim that IDs record commit order.</p>
+      <details class="sql-setup"><summary>Run these examples</summary><p>Use a fresh practice database, separate from the previous article’s extension. Run the <a href={practiceSchema} download="designing-data.sql">shop schema and records</a>, then the <a href={queryExamples} download="query-pagination.sql">pagination setup and examples</a>. Open the files in a PostgreSQL query editor and execute them in that order. The added orders below have headers but no lines; only headers are relevant to these queries. Each change experiment in the download rolls back before the next begins.</p><Sql code={setup} label="Add the three order headers for pagination" /></details>
+    </section>
+
+    <section id="offset">
+      <h2>Counting past earlier rows</h2>
+      <p><code>OFFSET</code> tells the database how many result rows to skip. To read the next page, skip the two we just received:</p>
+      <Sql code={offsetPage} label="Skip two rows and read the following two" />
+      <p>With unchanged data, this returns O14 and O13. A third page uses offset four and returns O12. This makes numbered pages straightforward: for a page size of two, page three skips four rows.</p>
+      <p>Now suppose another request commits O17, placed at 13:00, after our first page was read:</p>
+      <Sql code={insertOrder} label="A new order arrives before the next page request" />
+      <p><code>INSERT INTO</code> adds a record. The named columns correspond to the values in the same order: O17 is the order ID, C4 is its customer, and the timestamp is its placement time. This creates a new header; it does not change the earlier orders.</p>
+      <p>The next query sees O17, O16, O15, O14, O13, O12. Offset two skips O17 and O16, then returns O15 and O14. O15 repeats. The query correctly skipped two rows from the result it sees now; those are no longer the two rows our customer saw earlier.</p>
+      <p>Deletion creates the opposite problem. Start again without O17 and delete the already-read O16. The visible sequence becomes O15, O14, O13, O12. Offset two now skips O15 and the unread O14. The next page returns O13 and O12, and the customer misses O14.</p>
+      <ResultTable caption="The first page was O16, O15. Each row below starts again from that read; changes are alternatives." columns={['Before the second read', 'Skip two positions', 'Return the next two', 'Remaining']} rows={[
+        ['No change', 'O16, O15', 'O14, O13', 'O12'],
+        ['Insert O17 at the front', 'O17, O16', 'O15 (repeated), O14', 'O13, O12'],
+        ['Delete O16', 'O15, O14 (unread)', 'O13, O12', 'None'],
+      ]} />
+      <p>We are assuming ordinary PostgreSQL reads in separate requests under its default Read Committed isolation. Each statement gets a view of data committed before that statement began. A later statement can therefore see the inserted or deleted order. A transaction is a group of database operations; merely putting several page queries in one default transaction would still allow their views to differ. <a href="/learn/databases/relational/isolation/">Isolation</a> examines those views more closely.</p>
+    </section>
+
+    <section id="keyset">
+      <h2>Continuing from a value</h2>
+      <p>Instead of remembering that we read two rows, we can remember where we stopped: the pair <code>(12:00, O15)</code>. <strong>Keyset pagination</strong> asks for rows after that saved key in the chosen order.</p>
+      <Sql code={nextPage} label="Continue after the last time and order ID from the first page" />
+      <p>PostgreSQL compares the pairs from left to right. A row qualifies if its placement time is earlier than 12:00, or if the time is exactly 12:00 and its order ID is smaller than O15. The comparison is less-than because the list runs in descending order. O14 qualifies because its time is also 12:00 and its ID is smaller than O15.</p>
+      <p>Keeping only <code>placed_at &lt; '2026-10-04 12:00:00+00'</code> would lose O14: its timestamp is not earlier, even though its position follows O15. With the original five orders, the two conditions produce different pages:</p>
+      <ResultTable caption="Continue after O15 at 12:00; the unread O14 has that same time" columns={['Continuation condition', 'Next two orders', 'What happens to O14?']} rows={[
+        ['Time only: earlier than 12:00', 'O13, O12', 'Missed'],
+        ['Pair: earlier than (12:00, O15)', 'O14, O13', 'Returned'],
+      ]} />
+      <p>The pair comparison returns O14 and O13 whether or not O17 has arrived. Deleting O16 does not change that answer either. The saved values locate a boundary; counting the rows before it is unnecessary. Even deleting O15 itself would not invalidate the boundary, provided the application saved its values rather than trying to look them up again.</p>
+      <p>For the following page, use O13’s timestamp and ID, the last pair actually returned. That yields O12. Using a strict comparison excludes the previous boundary row. An ascending list would instead continue with greater-than. Mixed directions or nullable ordering fields require a continuation condition that follows those exact ordering rules; our two fields are non-missing and both run in the same direction.</p>
+      <PaginationLab />
+    </section>
+
+    <section id="cursor">
+      <h2>Passing the continuation to a caller</h2>
+      <p>An API can return the last pair inside a <strong>continuation token</strong>, often called a cursor. The client keeps the token and sends it back unchanged to request the next page; it does not need to interpret the contents. This is what it means for the token to be <em>opaque</em> to the client. The server uses it to recover a position in a particular query: customer C4’s orders, in this order, after these values.</p>
+      <p>Keep the filter and ordering fixed while following a token. If the caller changes the customer or chooses oldest-first, start again. Preserve the complete timestamp precision as well as the ID; rounding a saved time can move the boundary. Validate the token, bind its values as query parameters, and enforce the customer’s access on every request. Possessing a position does not grant permission to read another customer’s orders.</p>
+      <p>A page with exactly two rows does not prove that a third exists. One common approach asks for three, displays two, and uses the extra row only to set a “more available” flag. The next token still comes from the second, last displayed row; advancing past the extra row would skip it. The flag describes this read’s result, so later changes can still make the next request empty.</p>
+      <p>Keyset pagination naturally supports “next.” A direct jump to page 500 needs a previously known boundary or a different way of locating that part of the list. Offset remains reasonable for small, relatively stable results when numbered-page navigation is useful. Choose that behaviour deliberately rather than promising both cheap arbitrary jumps and a remembered value boundary.</p>
+    </section>
+
+    <section id="work">
+      <h2>The work behind a page</h2>
+      <p>Limiting the number of returned rows limits transfer, not necessarily the database’s work. PostgreSQL still has to compute rows skipped by a large offset. Skipping 100,000 qualifying orders to return twenty can require much more work than the response size suggests.</p>
+      <p>A suitable index can make the saved boundary useful as an access path. For our customer-filtered query, a candidate is:</p>
+      <Sql code={pageIndex} label="An index aligned with the customer filter and order" />
+      <p>The index groups entries by customer and orders their time-and-ID pairs. The engine can potentially find C4’s region, begin around the saved pair, and take the following entries. It need not discover the boundary by counting all earlier orders. The actual plan still depends on the data and query, and the index adds storage and maintenance to writes.</p>
+      <p>This is an available route, not a performance measurement. Joins, additional filters, or a sort the index cannot provide may require more work before twenty qualifying rows are ready. Inspect the execution plan and test a representative later page as well as the first one.</p>
+      <p>Keep the unit being paged clear too. If a join produces one row per order line, <code>LIMIT 20</code> limits lines, not orders. An order with several lines can straddle pages. To display twenty orders with all their lines, first select the twenty order identities, then retrieve their lines. When both reads must share one view, their transaction and isolation choice matter.</p>
+    </section>
+
+    <section id="changing-list">
+      <h2>A live list is still changing</h2>
+      <p>Keyset pagination avoids shifting positions when rows before the boundary are inserted or deleted. It does not retain a snapshot of the original answer. New orders ahead of the boundary will not appear while we continue towards older orders; a refresh can start again at the top. A newly committed, backdated order behind the boundary may appear on a later page.</p>
+      <p>Changes to ordering values are more disruptive. After reading O16 and O15, suppose someone corrects unread O14’s placement time from 12:00 to 13:00. O14 moves before our saved boundary, and the next keyset query misses it. If an already-read order instead moves behind the boundary, it can appear again. Changing whether a record satisfies a filter can similarly change membership during the traversal.</p>
+      <p>A useful browsing contract can allow this: show recent committed records, continue from the last displayed key, and refresh to see changes near the top. Prefer ordering values that remain fixed where the application can provide them. But if the contract is “export every order exactly as it appeared at one instant,” a continuation token alone cannot meet it.</p>
+      <p>A cutoff does not automatically supply that stronger contract. Saving the latest timestamp or largest ID can bound some later additions, but an older transaction may commit afterwards with a value inside that bound. Corrections and deletions remain possible too. A range of keys defines which values qualify; a snapshot defines which versions of records are visible.</p>
+    </section>
+
+    <section id="export">
+      <h2>A fixed export</h2>
+      <p>For a bounded export, PostgreSQL can hold a consistent view while the application consumes records in chunks. A <strong>database cursor</strong> is state kept by the database for traversing one query’s result. It is different from an API continuation token containing values for a new query.</p>
+      <p>For the export, we’ll read all customers’ orders, so the query no longer has the C4 filter. We’ll also read oldest first. <code>ORDER BY</code> uses ascending order unless we specify <code>DESC</code>; that puts earlier timestamps before later ones.</p>
+      <p>The following transaction is read-only and uses Repeatable Read. Ordinary reads in it share a snapshot established when its first query runs. The cursor names the export query; <code>FETCH</code> obtains another group from that query on the same connection.</p>
+      <Sql code={snapshotCursor} label="Consume one ordered export through a PostgreSQL cursor in a read-only transaction" />
+      <p><code>BEGIN</code> starts the transaction with the settings shown; <code>COMMIT</code> ends it. <code>DECLARE</code> creates the named cursor, and <code>CLOSE</code> closes it. Keep these commands on one connection to the database. The <a href="/learn/databases/relational/transaction-boundaries/#commit-and-rollback">next article explains transaction boundaries</a> in more detail; here they keep the export’s view alive while we fetch its rows.</p>
+      <p>Our practice table contains only the original five orders, all for C4, so the three fetches return O12/O13, O14/O15, and O16. <code>NO SCROLL</code> says we only need forward movement. A real exporter continues fetching until no rows remain; two is simply our demonstration batch size.</p>
+      <p>The open transaction and its cursor stay on one database connection until the export finishes. Committed changes by other sessions do not make this read-only transaction’s ordinary reads jump to a newer snapshot. Closing the cursor releases its query state, and committing ends the transaction. If the connection is lost, this ordinary cursor is lost too.</p>
+      <ExportViews />
+      <p>Keeping that view alive has a cost. A long transaction occupies a connection and can keep old record versions needed by its snapshot from being cleaned up. Chunked delivery also does not guarantee that the engine can produce the first chunk without sorting or otherwise processing a large input. Use this approach for work whose duration and resource use you can control, rather than holding a transaction open while a person pauses between web pages.</p>
+      <p>For a long-lived downloadable report, another option is to generate and retain the complete result as an artifact or stored export. Users then page through that fixed result. Retaining only source IDs freezes a list of identities, not the values behind them; fetching current names and amounts later would produce a changing report. Establish what must be fixed, and preserve that information together.</p>
+    </section>
+
+    <section id="batches">
+      <h2>Reading batches that do work</h2>
+      <p>A maintenance job might read a page, update those records, and save a checkpoint before continuing. The last key is a useful way to resume looking for records, but it does not prove the job’s effects occurred. A crash between doing the work and saving the checkpoint can repeat work; saving progress first can cause work to be skipped.</p>
+      <p>When the effects and checkpoint are in the same database, they can sometimes be committed in the same transaction. Outside effects, such as sending a message, need a design that survives an uncertain outcome or repetition. <a href="/learn/databases/relational/conflicts-and-retries/">Handling waits, deadlocks, and retries</a> follows those decisions. Several workers also need an explicit way to claim work; pagination by itself does not divide ownership.</p>
+      <p>Choose the promise before the mechanism. A live order list needs a clear continuation rule. A fixed report needs a consistent set of values. A resumable job needs progress that agrees with its effects. Once that promise is explicit, page size becomes the smaller question of how much work to move through at once.</p>
+    </section>
+    <nav class="series-reading" aria-label="Continue from querying to transactions"><p><a href="/learn/databases/relational/query-results/">← 1. Queries and joins</a></p><p><a href="/learn/databases/relational/transaction-boundaries/">Transaction boundaries →</a><span>Decide which changes and observations belong in one database operation.</span></p></nav>
+    <section class="essay-sources" id="further-reading">
+      <h2>Sources and further reading</h2>
+      <p>Working draft, researched 4 October 2026. The example uses PostgreSQL 18.3 in PGlite 0.5.8 for single-connection queries and cursor results. The interaction is an illustrative model of separate reads with committed changes between them, not a database or benchmark.</p>
+      <ul>
+        <li><a href="https://www.postgresql.org/docs/18/queries-order.html">Sorting rows</a> and <a href="https://www.postgresql.org/docs/18/queries-limit.html">LIMIT and OFFSET</a> — ordering ties, skipped rows and the work an offset requires.</li>
+        <li><a href="https://www.postgresql.org/docs/18/functions-comparisons.html#ROW-WISE-COMPARISON">Row comparisons</a> — how PostgreSQL compares the time-and-ID pair used for continuation.</li>
+        <li><a href="https://www.postgresql.org/docs/18/indexes-ordering.html">Indexes and ordering</a> — when an index can supply the requested order, especially with a limit.</li>
+        <li><a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a> — the difference between a new committed view per statement and Repeatable Read’s transaction view.</li>
+        <li><a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">Routine vacuuming</a> — why old record versions remain while an active view can still need them.</li>
+        <li><a href="https://www.postgresql.org/docs/18/sql-declare.html">DECLARE</a> and <a href="https://www.postgresql.org/docs/18/sql-fetch.html">FETCH</a> — database cursor lifetime and movement through a result.</li>
+      </ul>
+    </section>
+  </article>
+</Base>

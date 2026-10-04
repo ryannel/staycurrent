@@ -1,64 +1,76 @@
 ---
 title: Stay Current
-description: One place developers look to stay current on the major topics and fields of their work — living articles that state the modern best practice, kept current by a research loop, with version history, changelogs, and honest provenance.
+description: Understand the important choices in engineering—and know when those choices change.
 type: product-brief
-last_reviewed: 2026-09-29
+last_reviewed: 2026-10-02
 ---
 
-# Stay Current — Product Brief
+# Stay Current
 
-Stay Current gives developers one place to look to stay current on the major topics and fields of their work. Databases, event handling, observability, testing, and on: for each field it holds what technology is out there, how to pick between the options in a system-design context, and what the modern best practice is. Every piece states a stance, and a research loop rewrites it when the field moves, so what the reader finds is the state of the art rather than its history.
+Stay Current helps working engineers understand how systems work, choose between
+approaches, and keep their judgement current as technology changes. The
+[site direction](site-direction.md) records the agreed layout, initial fields,
+and boundaries for the next build.
 
 ## The problem
 
-Staying current is relentless work. A working engineer's practice spans many fields at once, and every one of them moves whether or not anyone is watching. Holding a current, nuanced, and opinionated view of each is an unbounded job, and nobody sustains it across every field they build in.
+An engineer's work crosses more fields than they can continuously follow. A
+release announcement rarely explains whether it should change their approach.
+An old guide may explain the fundamentals well while giving outdated advice.
+And product comparisons are hard to judge without understanding the mechanisms.
 
-Technical writing decays from the day it is published. The stances in a good practice guide last for years, but the facts under them rot: a recommended tool goes dormant, an experimental standard stabilises, a platform limit disappears. A guide that still says any of those things a year later is worse than no guide, because it teaches with authority and is wrong.
+The site connects those needs. Field guides orient the reader, focused explanations
+teach the designs, and current assessments examine developments that could change
+the advice. Readers enter through a field or question, at whatever depth they need.
 
-The usual defences both fail. A "last reviewed" date depends on an author finding time that maintenance never wins. News feeds trade depth for volume: they tell a reader that something changed, never what the change means for how they should build.
+## Readers
 
-## Who it serves
+A reader meeting a field needs a useful map and a way into the underlying ideas.
+A returning reader needs to know what changed without repeating the lesson.
+These can be the same person in different fields. The operator is also a reader:
+the site should become a reference they use in their own engineering work.
 
-**Fresh readers** are meeting a topic for the first time. They want one deep, opinionated treatment they can trust to be current, not a dozen contradictory posts. Success is reading the article as the definitive current take and acting on it without cross-checking whether it has gone stale. Visible version history and provenance are what earn that trust.
+## Content and scope
 
-**Returning readers** already know a topic at the level of the last version. Their scarce resource is attention. They want to learn what changed and what it means without rereading what they already know. The changelog entry is their document, and it has to stand alone.
+The first five fields are databases and storage, APIs and service communication,
+messaging and event-driven systems, observability, and AI application engineering.
+Databases is the first field under construction; the remaining four are plans.
+Only promise ongoing coverage where the research can be maintained.
 
-**The operator** publishes the site and is its first user. They want a library of deep articles that stays current without hand-maintaining it. Success is treating their own site as their reference: consulting it instead of re-researching, and trusting the loop enough to publish straight out of the research conversation.
+Explanations earn space when they support a meaningful engineering question.
+Teach reusable mechanisms through representative systems. Avoid filling out
+vendor taxonomies or building a complete computer science curriculum by default.
+A new development earns coverage through its consequences, not simply its novelty.
 
-## What the site holds
+The Explore prototypes are the reference for the teaching format: standalone
+prose supported by explanatory artwork and experiments. Keep them available and
+clearly marked as drafts while the site structure evolves.
 
-**Living articles.** Each topic is one article with a stance: what to do, what to reject, and why. The article is always the current truth. When the field moves it is rewritten, not appended to.
+## Currentness and evidence
 
-**Catalogues.** A field such as databases is too big for one essay. It is served by a catalogue: a hub that maps the field and routes the reader, and a set of finer-grained pieces beneath it. Foundation pieces teach the mechanisms a choice rests on. Profiles describe the technologies on offer, each on the same decision axes so they can be compared side by side. The hub carries the chooser: which option for which workload, and why.
+Published guidance should carry research dates, sources, and identifiable
+revisions. The detailed publishing model will be settled with the first assessment. A review date is evidence of work done, not a guarantee of present
+accuracy. Measured claims need methods and logs; illustrative models must not be
+presented as real performance measurements.
 
-**Version history and changelog.** Every topic keeps its full history. Cutting a new version writes a changelog entry that describes what changed in the field and what it means for practice, at a depth that spares a returning reader the full article.
+A research run investigates changes, argues their consequences with the operator,
+and ends with a revision or a recorded decision to hold. Publication requires the
+operator's go. Stable explanations and changing recommendations can have different
+review cadences. The current static implementation shares an initially empty publication list
+between the homepage, Updates page, and RSS. Dedicated assessment articles are
+the next content-model decision.
 
-**Provenance.** Each version records what it rests on. Claims that trace to citable material carry their sources. Synthesis drawn from the research agent's own knowledge is labelled as synthesis, never dressed as a citation. Where a claim was measured for the article, the harness and raw logs are published beside it.
+## Product constraints
 
-**Distribution.** An RSS feed announces each new version and carries the changelog entry, so a subscriber learns what changed from the feed itself. It is the site's only push channel.
+The publication is a static Astro site. No reader accounts, hosted research service,
+comments, or social features. Research is an editorial conversation using local
+agent tools. The old library and its history have been removed at the operator’s request;
+the two Explore pages remain as the working content reference. RSS carries new
+publications and revisions. No news aggregation or release-volume target.
 
-## How it stays current
+## Success
 
-A schedule says when each topic is due. The operator convenes a research run inside Claude Code. The system investigates what has changed since the current version and presents it, the stance is argued, and the run ends in a significance decision. Findings that materially affect the claims or the stance cut a new version. Noise does not, and the run is logged either way.
-
-The system researches, drafts, and recommends. The operator argues the stance and decides. Nothing publishes without the operator's explicit go, and once a version is cut there is no separate review pass. Version history, changelog, and provenance make every change visible and reversible, which is what makes that safe.
-
-## Constraints
-
-- **Research runs as a conversation, not a service.** The loop runs in the operator's own Claude Code session on their subscription. There is no hosted research service and no LLM integration in the product.
-- **Every version discloses its provenance.** A version cannot publish without its sources-and-synthesis record.
-- **One operator per site.** No roles, permissions, or editorial workflow.
-- **Fully static.** The site is a set of files on a CDN. No servers, no accounts, no reader data.
-
-## Out of scope
-
-- **News aggregation.** The changelog digests what a change means for practice. The site never republishes headlines or streams links.
-- **Community features.** No comments, no accounts, no social layer.
-- **Multi-author workflow.** No draft queues or contributor management.
-
-## Success indicators
-
-- **The operator relies on their own site.** They answer questions in a covered field by consulting the article, and keep no parallel notes on covered topics.
-- **The loop runs on schedule and is trusted.** Research runs happen when due, and the versions they cut publish with no separate review pass.
-- **Changelog entries stand alone.** A returning reader can say what changed and what it means from the entry alone.
-- **Returning readers exist.** Subscribers come back after a version is cut. Readership beyond the operator is the upside, not the survival condition.
+Readers can find the right entry point, understand the reasoning behind a choice,
+and identify when that advice changes. The operator relies on the site, and its
+maintenance commitments remain small enough to honour. Returning readers can learn
+what matters from an update without rereading an entire field.
