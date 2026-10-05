@@ -1,7 +1,8 @@
 ---
 import { Code } from 'astro:components';
 import Base from '../../../../layouts/Base.astro';
-import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url';
+import Prediction from '../../../../components/editorial/Prediction.astro';
+import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url&no-inline';
 import RetryDeadlock from '../../../../components/explainers/transactions/RetryDeadlock.astro';
 import RetryCommitReply from '../../../../components/explainers/transactions/RetryCommitReply.astro';
 import RetryCheckoutTrace from '../../../../components/explainers/transactions/RetryCheckoutTrace.astro';
@@ -25,7 +26,9 @@ INSERT INTO stock (product_id, available)
 VALUES ('P7', 3), ('P8', 2);
 
 ALTER TABLE orders ADD COLUMN operation_id text UNIQUE;`;
-const claim = `INSERT INTO orders (order_id, customer_id, placed_at, operation_id)
+const claim = `BEGIN ISOLATION LEVEL READ COMMITTED;
+
+INSERT INTO orders (order_id, customer_id, placed_at, operation_id)
 VALUES ('O14', 'C4', '2026-10-04 11:00:00+00', 'K14')
 ON CONFLICT (operation_id) DO NOTHING
 RETURNING order_id;`;
@@ -44,6 +47,7 @@ FROM orders AS o
 JOIN order_lines AS l ON l.order_id = o.order_id
 WHERE o.operation_id = 'K14'
 ORDER BY l.line_no;`;
+const commit = `COMMIT;`;
 const protocol = `record_or_find_checkout(request):
   BEGIN ISOLATION LEVEL READ COMMITTED
   inserted = insert_order_if_new(request.operation_id, new_order_id(),
@@ -148,16 +152,20 @@ for attempt in 1..3:
       <p>Only the attempt that creates the order should reserve stock. If K14 already has a completed order, a repeated request should find that order and return it. Even if the new attempt proposes O15, the answer may still be O14.</p>
       <RetryCheckoutTrace />
       <p>We can enforce this choice by storing K14 in a unique column on the order. The following SQL shows the two branches: create the order and finish its purchase, or find the purchase already recorded for that key.</p>
+    <p class="example-note">To run the SQL yourself, <a href="/learn/databases/relational/practice/">start the shared practice setup</a>. It explains opening PostgreSQL, loading the files and choosing a fresh database for this article.</p>
       <details id="retry-practice" class="sql-setup"><summary>Practice setup for this one-product checkout</summary><p>Use a fresh PostgreSQL practice database for this article, separate from the stock examples in earlier articles. Load the <a href={practiceSchema} download="designing-data.sql">shop schema and records</a> once; it contains C4, P7, P8, O12, O13 and their lines. Then run the definitions below once. Each retryable new checkout supplies an operation ID; the nullable column allows the historical sample orders to remain unchanged.</p><div class="sql-scroll" role="region" tabindex="0" aria-label="Add stock and a unique operation identity"><Code code={setup} lang="sql" theme="css-variables" /></div></details>
-      <p>At Read Committed, the transaction first tries to insert its proposed order with the unique operation key:</p>
+      <p>Start a new Read Committed transaction on one database connection, then try to insert the proposed order with the unique operation key. Keep that transaction open while choosing and completing the appropriate branch below:</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Claim K14 with a proposed order"><Code code={claim} lang="sql" theme="css-variables" /></div>
       <p><code>ON CONFLICT (operation_id) DO NOTHING</code> handles only a conflict on that operation key. A returned order ID means this attempt inserted the order and can continue. No returned row means that key already has an order, so this attempt must skip reservation and find the existing result. An unrelated primary-key collision on an order ID is a different error.</p>
       <p>The new order is provisional. In the inserted branch, the same transaction reserves stock, verifies the reservation succeeded, and inserts its line:</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Reserve two mugs and add the successful order line"><Code code={reserve} lang="sql" theme="css-variables" /></div>
       <p>The guarded UPDATE returns the remaining quantity when it reserves the two mugs. If it returns no row, the application rolls back the provisional order and reports insufficient stock. It must not run the line INSERT or commit. With three mugs initially available, the successful fresh branch leaves one and records O14 with two mugs at EUR 20 each.</p>
       <p>Commit makes the order, its unique operation key, the stock reduction, and its line durable together. A rollback removes all four consequences. The application must never commit just the provisional order and call that a completed checkout.</p>
+      <p>After the reservation returned one row and the line INSERT succeeded, finish the new-order branch:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Commit the successfully completed checkout"><Code code={commit} lang="sql" theme="css-variables" /></div>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Recover K14's order and requested purchase details"><Code code={lookup} lang="sql" theme="css-variables" /></div>
       <p>The lookup returns O14, C4, P7, quantity 2, and unit price 20 after the fresh branch commits. A repeated attempt at K14 returns this order rather than taking another two mugs. The stored customer and complete line details must match the repeated request before it can be treated as the same operation.</p>
+      <p>In the existing-order branch, skip the reservation and line INSERT, run this lookup in the claim’s still-open transaction, and verify the complete request matches. If it does, enter <code>COMMIT;</code> to end that branch before returning O14. If it does not, enter <code>ROLLBACK;</code> and reject the conflicting request.</p>
       <p>The key is bound to the meaningful intent: authenticated customer, products, quantities, agreed prices and currency. This shop uses EUR throughout. A caller who reuses K14 for three mugs, a different customer, or a different agreed price has sent a conflicting request and must receive a rejection. Larger carts need a comparison or stored canonical representation covering all their lines. A random key alone does not establish this match.</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Complete branching protocol for recording or recovering a checkout"><Code code={protocol} lang="python" theme="css-variables" /></div>
       <p>The pseudocode connects the SQL fragments, including their result checks and rollback branch. Queries in real application code use bound parameters rather than concatenating request values into SQL. Fresh reads should reevaluate current constraints and stock; the retry retains the customer’s agreed intent. If that offer can no longer be honoured, reject or renegotiate it explicitly instead of silently changing K14 into a different purchase.</p>
@@ -173,6 +181,23 @@ for attempt in 1..3:
       <p>The unique operation key coordinates these local database effects. It does not make a payment provider’s charge part of the transaction. Calling that provider again after a timeout can repeat an external effect unless its own operation contract prevents it. Use the provider’s stable payment identity and outcome lookup where available, and reconcile payment state with the order.</p>
       <p>For an effect triggered after checkout, a durable work record written in the order transaction can preserve the intention to send it. A worker may then deliver that work more than once, so the recipient still needs suitable duplicate handling. <a href="/learn/databases/relational/transaction-boundaries/">Transaction boundaries</a> explains why a local commit cannot settle another service’s outcome.</p>
       <p>A dependable retry policy therefore follows the evidence. Continue or cancel an attempt that is waiting. Start the whole transaction again after a known retryable rejection. Recover the same identified operation after an uncertain commit. Those paths can share an operation key while answering different questions.</p>
+      <Prediction id="recovery-variation" title="An empty lookup after a lost reply">
+        <p>Ada submits K14 for two mugs. The connection breaks after COMMIT is sent, and a new authoritative lookup returns no order. The first transaction may still be active. Should the application declare failure, create a new key K15, or continue recovery with K14? How would a known deadlock rejection change the next step?</p>
+        <Fragment slot="answer"><p>Continue recovery with K14. The empty read does not establish that the first attempt rolled back. Reentering the same claim protocol lets the unique key coordinate with that attempt: if it commits, recover and verify its complete purchase; if it rolls back, the new claim can proceed. A new key could record a second purchase. If authoritative state is unavailable, the outcome remains pending.</p><p>A known deadlock rejection, SQLSTATE <code>40P01</code>, establishes that this transaction attempt cannot commit. Clean up with rollback, then retry the complete transaction with fresh decisions, the same customer intent and operation key, within the retry budget. That is a known-rejection retry rather than a guess about a lost commit reply.</p></Fragment>
+      </Prediction>
+    </section>
+
+    <section id="response-reference">
+      <h2>Choose the response from the evidence</h2>
+      <p>Once the mechanisms are clear, these are the distinctions to keep beside the application’s retry policy. An ordinary result, a rejected attempt and an uncertain commit establish different facts.</p>
+      <div class="table-scroll" role="region" tabindex="0" aria-label="Evidence and responses for checkout recovery"><table><caption>Responses for the checkout protocol in this article</caption><thead><tr><th scope="col">Evidence</th><th scope="col">What we know</th><th scope="col">Next action</th></tr></thead><tbody>
+        <tr><td>The guarded stock UPDATE returns zero rows</td><td>This statement reserved nothing; SQL execution succeeded</td><td>Roll back this checkout branch and report unavailable stock</td></tr>
+        <tr><td>A statement is waiting</td><td>The attempt is still unresolved</td><td>Wait within the request’s budget, or cancel and establish the attempt’s outcome before repeating work</td></tr>
+        <tr><td>Known SQLSTATE <code>40001</code> or <code>40P01</code></td><td>The attempt cannot commit: serialization failure or deadlock rejection</td><td>Roll back, then retry the whole transaction with fresh decisions and the same operation identity, within a bounded budget</td></tr>
+        <tr><td>The COMMIT reply is lost</td><td>The operation may have committed</td><td>Recover the same operation key against authoritative state; verify its stored intent</td></tr>
+        <tr><td>A recovery lookup is empty while the first attempt may still be active</td><td>Absence is not yet established</td><td>Reenter the same claim protocol; let uniqueness settle the competing attempt, then read its result</td></tr>
+        <tr><td>The authoritative database is unavailable</td><td>There is no evidence to settle an uncertain outcome</td><td>Keep it pending and reconcile later with the same key</td></tr>
+      </tbody></table></div>
     </section>
 
     <nav class="series-reading" aria-label="Transactions and concurrency sequence"><p><a href="/learn/databases/relational/isolation/">← Isolation and snapshots</a></p><p><a href="/learn/databases/relational/">Return to the relational collection →</a><span>Continue into performance and application integration when the next question is how much work and waiting one request creates.</span></p></nav>

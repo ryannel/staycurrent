@@ -161,6 +161,25 @@ timeline was checked against PostgreSQL documentation, not demonstrated by a
 concurrent-engine test. Preserve that distinction in the record. Use `pnpm build`
 for implemented site changes, alongside the relevant behaviour checks.
 
+For downloadable practice, check the delivered file and the way a reader is told
+to run it. Individually valid statements can behave differently when sent as one
+server request: our pagination script's setup and rollback boundaries changed in
+that mode. Record whether execution used individual statements, a client's script
+mode, or one multi-statement request. Make necessary transaction starts visible
+before the first write; a later complete example does not protect an earlier
+fragment copied into an autocommit session. Keep the repair local to the practice
+instructions unless a broader setup guide is actually part of the commission.
+
+
+Dogfooding the practice route exposed assumptions outside the SQL itself. Follow
+actual download links and the stated client route from a fresh database; a source
+file executing successfully does not establish that the delivered file can be
+saved or opened. Distinguish host files, container files, databases and sessions.
+Temporary tables can disappear on reconnect, and a complete mutating script may
+finish an example before the reader starts following its snippets. Explain which
+setup to skip or reload, and make successful transaction ends visible as well as
+starts. Record installation prerequisites separately from steps actually tested.
+
 ## Make the findings useful
 
 Keep the artifact or revision identifiable and record the evidence behind important

@@ -14,6 +14,30 @@ better than receiving the whole article and retrospectively describing a first
 impression. Keep enough nearby text to read a thought rather than judging isolated
 sentences.
 
+Follow each sentence, code statement, result and label in sequence, stopping at the
+first unsupported inference even within a section. Reading source files may expose
+code constants or implementation comments before their place in the article;
+use assembled content for the first reading. Identify the artifact and revision,
+and distinguish a rendered browser reading from HTML extraction or source inspection.
+State the delivery granularity and save observations before opening the next chunk;
+long sections may need to be split at meaningful subheadings.
+Closed setup notes are optional opened material, and no-JavaScript alternatives are
+fallback inspection. Mark those boundaries before delivering extracted text. If
+extraction flattened them, disclose that limit instead of calling the result a
+default-visible first reading. Do not count them as ordinary visible reading. Scripts can
+change initial result markup: an extracted default is not an observed live state.
+
+For a collection, establish the reading order from its actual navigation. Include
+substantive supplemental pages with their stated role; do not invent a sequence
+for outlines or count redirects as separate lessons. Carry forward what earlier
+pages actually explained. Distinguish a complete-route reading from entering a
+page directly; neither establishes the other reader's prerequisites. Also keep
+the example's identities, meanings, units and
+starting state: a reused identifier invites continuity unless a new setup is made
+clear. Inspect both the main reading path and optional practice details when a
+reset or prerequisite lives only in the latter. A complete explanation on one
+path need not make the other path complete.
+
 A useful observation identifies the passage and the reader's question: “I know
 what this operation does, but why do we need it here?” or “How did we get that result
 from these inputs?” Other questions may concern an unfamiliar term, a change of
@@ -52,6 +76,29 @@ Definitions, named prerequisites and links are not themselves evidence that the
 necessary understanding is available. A reader entering through this article's
 own link may also need a brief reminder of a concept taught elsewhere.
 
+For code and worked results, trace one concrete input through the instructions to
+the answer. Could this audience map values to fields, distinguish application
+branches from executable commands, and interpret the result before its explanation
+arrives? Separate understanding the stated outcome from being able to adapt the
+example. A correct warning can leave a practical choice unfinished: check whether
+the final design can process the values its rules admit, or clearly ends as a
+deliberate failure exercise. Distinguish original input from the value retained
+after conversion or rounding. Completeness follows the article's own promise;
+these questions do not require implementing every surrounding application.
+Record uncertainty about running a practice setup separately from uncertainty
+about its meaning. Understanding a result does not establish that a reader knows
+how to open the supplied database or file; an unattempted setup is not an observed
+execution failure.
+
+
+For a prediction exercise that applies earlier teaching, trace the needed facts
+back to the preceding passages before judging its completeness. An isolated read
+can expose an unstated dependency, but a contextual exercise need not restate its
+whole lesson. Record the prediction before opening its answer. In a commissioned
+human session, keep learning targets and expected answers out of the participant's
+advance instructions, preserve assistance, and mark an unrun session as pending;
+agent reasoning cannot supply the missing human observations.
+
 Keep the original question when a later passage answers it. Add where and how it
 was resolved, then judge the consequence. A question answered in the next sentence
 may be good pacing. An unanswered curiosity may be outside the article's purpose.
@@ -64,6 +111,15 @@ questions back to their cause: an omitted explanation, a misplaced passage, assu
 knowledge, a jump in abstraction, or an example that changed the subject. The repair
 may be a sentence, a moved explanation, a drawing, a worked result, or removing a
 detour. Preserve discoveries that matter without collecting a quota of objections.
+
+Build a repair plan in reading order, then prioritise it by the understanding or
+decision at stake. For each consequential repair, retain the trigger, consequence,
+smallest useful change and a reader prediction or example to recheck. Distinguish
+necessary explanation, practical completion, reduced effort and optional onward
+curiosity. Later source checks or another review may disagree with the first
+reading; preserve those perspectives rather than replacing the original record.
+Keep article-specific lessons outside this context-free reference so future readers
+do not receive expected answers.
 
 A concise question log can quote the trigger, record what was understood at that
 point, and append the later resolution or remaining gap. The handoff should make

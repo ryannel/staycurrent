@@ -1,6 +1,7 @@
 -- Designing your data: PostgreSQL practice schema and sample rows.
 -- Run in an empty practice database. These commands create four new tables;
 -- they do not drop or replace existing tables. Run the file once per database.
+-- Use a PostgreSQL query editor or SQL script mode (for example psql -f).
 -- Executed with PostgreSQL 18.3 (PGlite 0.5.8), 4 October 2026.
 -- One shop, all prices in EUR; illustrative text identifiers.
 CREATE TABLE customers (
@@ -32,14 +33,16 @@ CREATE TABLE order_lines (
   PRIMARY KEY (order_id, line_no)
 );
 
-INSERT INTO customers VALUES ('C4', 'Ada');
-INSERT INTO products VALUES
+INSERT INTO customers (customer_id, name) VALUES ('C4', 'Ada');
+INSERT INTO products (product_id, name, current_price, sku) VALUES
   ('P7', 'Blue mug', 20.00, 'MUG-BLUE'),
   ('P8', 'Bowl', 24.00, NULL);
-INSERT INTO orders VALUES
+INSERT INTO orders (order_id, customer_id, placed_at) VALUES
   ('O12', 'C4', '2026-10-04 09:00:00+00'),
   ('O13', 'C4', '2026-10-04 10:00:00+00');
-INSERT INTO order_lines VALUES
+INSERT INTO order_lines
+  (order_id, line_no, product_id, quantity, unit_price)
+VALUES
   ('O12', 1, 'P7', 2, 18.00),
   ('O13', 1, 'P7', 1, 20.00),
   ('O13', 2, 'P8', 1, 24.00);

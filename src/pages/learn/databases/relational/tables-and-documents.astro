@@ -1,11 +1,13 @@
 ---
 import { Code } from 'astro:components';
 import Base from '../../../../layouts/Base.astro';
-import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url';
+import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url&no-inline';
+import jsonExamples from '../../../../../docs/article-work/designing-data/tables-and-json.sql?url&no-inline';
 import ProductAttributesMap from '../../../../components/explainers/design/ProductAttributesMap.astro';
 import JsonValueLab from '../../../../components/explainers/design/JsonValueLab.astro';
 import JsonStructure from '../../../../components/explainers/design/JsonStructure.astro';
 import JsonWriteBoundary from '../../../../components/explainers/design/JsonWriteBoundary.astro';
+import JsonStaleWrite from '../../../../components/explainers/design/JsonStaleWrite.astro';
 import '../../../../components/explainers/design/schema-sketch.css';
 import '../../../../styles/explorables.css';
 import '../../../../styles/relational-design.css';
@@ -26,7 +28,8 @@ const relatedRows = `CREATE TABLE mug_details (
   capacity_ml integer NOT NULL CHECK (capacity_ml > 0)
 );
 
-INSERT INTO mug_details VALUES ('P7', 350);`;
+INSERT INTO mug_details (product_id, capacity_ml)
+VALUES ('P7', 350);`;
 const valuesQuery = `WITH samples (label, attributes) AS (
   VALUES
     ('missing key', '{}'::jsonb),
@@ -51,18 +54,50 @@ CHECK (
   NOT (attributes ? 'capacity_ml')
   OR jsonb_typeof(attributes -> 'capacity_ml') = 'number'
 );`;
+const moveCapacity = `BEGIN;
+CREATE TABLE mug_details (
+  product_id text PRIMARY KEY
+    REFERENCES products (product_id) ON DELETE CASCADE,
+  capacity_ml integer NOT NULL CHECK (capacity_ml > 0)
+);
+
+INSERT INTO mug_details (product_id, capacity_ml)
+SELECT product_id,
+       CASE WHEN jsonb_typeof(attributes -> 'capacity_ml') = 'number'
+         THEN CASE
+           WHEN (attributes ->> 'capacity_ml')::numeric
+                  BETWEEN 1 AND 2147483647
+            AND (attributes ->> 'capacity_ml')::numeric
+                  = trunc((attributes ->> 'capacity_ml')::numeric)
+           THEN (attributes ->> 'capacity_ml')::numeric::integer
+           ELSE NULL
+         END
+         ELSE NULL
+       END
+FROM products
+WHERE product_id = 'P7';
+
+UPDATE products
+SET attributes = attributes - 'capacity_ml'
+WHERE product_id = 'P7';
+COMMIT;`;
+const hybridQuery = `SELECT p.product_id, p.name, m.capacity_ml
+FROM products AS p
+JOIN mug_details AS m ON m.product_id = p.product_id
+WHERE p.attributes @> '{"material":"ceramic"}'::jsonb
+  AND m.capacity_ml >= 300;`;
 const updateJson = `UPDATE products
 SET attributes = jsonb_set(
-  attributes, '{capacity_ml}', '375'::jsonb
+  attributes, '{material}', '"stoneware"'::jsonb
 )
 WHERE product_id = 'P7';`;
-const indexes = `-- Supports matching attributes against containment queries.
+const indexes = `-- One option for containment queries over descriptions.
 CREATE INDEX products_attributes_gin
 ON products USING gin (attributes);
 
--- A separate option for frequent numeric capacity filters.
-CREATE INDEX products_capacity_idx
-ON products (((attributes ->> 'capacity_ml')::integer));`;
+-- One option for ranges over the typed capacity column.
+CREATE INDEX mug_details_capacity_idx
+ON mug_details (capacity_ml);`;
 ---
 <Base title="Tables and JSON" description="Follow a product catalogue from typed columns to related records and JSON attributes, and choose a hybrid design that preserves identity and useful rules.">
   <meta slot="head" name="robots" content="noindex" />
@@ -91,7 +126,7 @@ ON products (((attributes ->> 'capacity_ml')::integer));`;
 
     <section id="columns">
       <h2>Typed columns</h2>
-      <p>A column gives an attribute a name and a type across the table. With <code>capacity_ml integer</code>, the type requires whole numbers and the chosen name records our convention that they represent millilitres. Queries can compare the values directly, and we can put a positive-value check beside them. We do not need each application to interpret a string such as “350 ml.”</p>
+      <p>A column gives an attribute a name and a type across the table. With <code>capacity_ml integer</code>, the stored values are whole numbers and the chosen name records our convention that they represent millilitres. Queries can compare the values directly, and we can put a positive-value check beside them. We do not need each application to interpret a string such as “350 ml.”</p>
       <p>Columns are often the straightforward choice when an attribute has a common meaning and an important role in the application. Product IDs and prices already have that role. If buyers regularly filter every product by weight, a consistently defined <code>weight_g</code> column may be useful too.</p>
       <p>Our shop also sells a bowl, P8, whose descriptive measurement is a diameter of 18 centimetres. For this catalogue, we record mug capacity and bowl diameter as different attributes. Nullable columns let us represent that. A few optional attributes do not make a table defective. We still have to decide whether absence means “does not apply” or “not recorded,” and whether the distinction matters.</p>
       <p>The pressure grows if every new product family introduces many different details. A tent has pole materials, a lamp has bulb fittings, and a book has an ISBN. One large table can accumulate fields that apply to only a small fraction of its records. The harder part is then expressing which combinations belong to which products. A positive capacity check does not say that every mug needs a capacity or that a book cannot have one.</p>
@@ -102,7 +137,7 @@ ON products (((attributes ->> 'capacity_ml')::integer));`;
       <h2>Related records</h2>
       <p>We can keep the common product record and give mugs a related details record. A <code>mug_details</code> table has one row per mug, identified by the same product ID. The capacity field can be required there without forcing a bowl to have one.</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Optional relational representation of mug details"><Code code={relatedRows} lang="sql" theme="css-variables" /></div>
-      <p>The primary key permits at most one mug-details row per product. The foreign key requires that the product exists. The type and check require a positive integer capacity. The deletion cascade removes the details if we intentionally delete the product.</p>
+      <p>The primary key permits at most one mug-details row per product. The foreign key requires that the product exists. The type and check require a stored capacity from 1 to 2,147,483,647 millilitres, the positive range of PostgreSQL’s <code>integer</code>. They do not decide how to treat incoming fractions: a numeric-to-integer conversion can round before the check sees the value. We’ll give the input its own rule below. The deletion cascade removes the details if we intentionally delete the product.</p>
       <p>Those declarations do not prove that every mug has a details row, or that a product cannot have both mug and bowl details. If we need exclusive categories or required details for each category, we must represent and enforce those rules too. Moving an attribute to a related table does not supply them automatically.</p>
       <p>The extra table gives this kind of information its own shape. A catalogue page can join the product and its details by product ID. A report comparing mug capacities can read a consistently typed column in <code>mug_details</code>, without interpreting all the other product kinds.</p>
       <p>Related rows are also useful when an attribute is really a collection. A product may have several supplier offers, each with a supplier reference, a price, and a lead time. Those offers can have their own identities and be changed independently. An array embedded in the product can display the same information, but its shape alone does not establish that a supplier ID names a real supplier.</p>
@@ -111,7 +146,8 @@ ON products (((attributes ->> 'capacity_ml')::integer));`;
 
     <section id="embedded-json">
       <h2>A JSON attributes column</h2>
-      <p>The runnable examples start with the four shop tables from <a href="/learn/databases/relational/constraints/#schema">Constraints</a>. You can <a href={practiceSchema} download="designing-data.sql">download that practice setup</a> for an empty database, then run the JSON statements here.
+    <p class="example-note">To run the SQL yourself, <a href="/learn/databases/relational/practice/">start the shared practice setup</a>. It explains opening PostgreSQL, loading the files and choosing a fresh database for this article.</p>
+      <p>The runnable examples start with the four shop tables from <a href="/learn/databases/relational/constraints/#schema">Constraints</a>. You can <a href={practiceSchema} download="designing-data.sql">download that practice setup</a> for an empty database, then run the JSON statements here, or <a href={jsonExamples} download="tables-and-json.sql">download this article’s SQL path</a>. The related-record snippet above is an alternative representation; if you tried it, start again from the four-table setup before following this JSON example.
       </p><p>For this shop, many product details are descriptive. A catalogue page needs them together, and new product kinds introduce new fields. We’ll use an <code>attributes</code> object for these varying details. The runnable example starts with just capacity and material for the mug, and diameter and material for the bowl:</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Add and populate the PostgreSQL JSON attributes column"><Code code={addJson} lang="sql" theme="css-variables" /></div>
       <p>PostgreSQL offers <code>json</code> and <code>jsonb</code> types. We use <code>jsonb</code>, which stores a parsed representation and supports containment queries and indexes. It does not preserve insignificant whitespace, object key order, or duplicate object keys. If exact original JSON text is the fact we need to retain, that is a different requirement.</p>
@@ -124,7 +160,8 @@ ON products (((attributes ->> 'capacity_ml')::integer));`;
     <section id="missing-values">
       <h2>Missing keys, nulls, and types</h2>
       <p>An object can omit <code>capacity_ml</code> entirely, or include it with the JSON value <code>null</code>. Those are different documents. An omitted key may mean “not supplied”; an explicit null may mean “supplied without a known value.” JSON does not choose those business meanings for us, but it gives us two distinguishable representations.</p>
-      <p>SQL <code>NULL</code> is another possibility: the whole column can be missing. Our products definition forbids that, but we can compare it with the other cases in a separate query. PostgreSQL’s <code>?</code> operator asks whether a top-level key exists. <code>-&gt;</code> extracts a JSON value; <code>-&gt;&gt;</code> extracts its text representation.</p>
+      <p>SQL <code>NULL</code> is another possibility: the row’s entire <code>attributes</code> value can be missing. Our products definition forbids that, but we can compare it with the other cases in a separate query. PostgreSQL’s <code>?</code> operator asks whether a top-level key exists. <code>-&gt;</code> extracts a JSON value; <code>-&gt;&gt;</code> extracts its text representation.</p>
+      <p>The query builds five temporary sample rows rather than changing our products. <code>WITH samples (label, attributes)</code> names that set and its two columns; each parenthesized <code>VALUES</code> pair supplies a label and an attributes value. The <code>::jsonb</code> notation asks PostgreSQL to interpret the preceding value as JSON. The final <code>SELECT</code> reads these sample rows and names its calculated outputs with <code>AS</code>.</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Compare JSON missing keys, nulls, numbers and strings"><Code code={valuesQuery} lang="sql" theme="css-variables" /></div>
       <div class="table-scroll" role="region" tabindex="0" aria-label="JSON value query results"><table><caption>SQL <code>NULL</code> is shown explicitly rather than as an empty cell</caption><thead><tr><th scope="col">label</th><th scope="col">has_key</th><th scope="col">json_type</th><th scope="col">text_value</th></tr></thead><tbody>
         <tr><td>missing key</td><td>false</td><td>SQL <code>NULL</code></td><td>SQL <code>NULL</code></td></tr>
@@ -148,19 +185,38 @@ ON products (((attributes ->> 'capacity_ml')::integer));`;
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Optional check for the JSON capacity field type"><Code code={typeCheck} lang="sql" theme="css-variables" /></div>
       <p>A missing key passes because the first part is true. JSON null, a string, or an object under that key fails because its JSON type is not <code>'number'</code>. A number passes. This rule still permits zero, negative values, and fractions; a number-type check is not a positive-whole-millilitres rule. A permitted fraction such as <code>350.5</code> extracts as text that the query’s integer cast rejects, so this check alone does not guarantee that every stored capacity can be queried that way.</p>
       <p>We could continue adding validation for those properties and for which product kinds need capacity. PostgreSQL can enforce many rules on JSON expressions. The cost is that the internal schema now lives in those expressions as well as in the writers and readers. If capacity becomes a central, consistently required application fact, a typed column or a dedicated details table may express it more clearly.</p>
+      <h3>Finish the capacity rule</h3>
+      <p>For this shop, capacity now matters to a common filter, and every mug-details row must supply it. We’ll keep capacity in <code>mug_details</code> and leave varying descriptions in JSON. The earlier number check was a useful intermediate step, but it did not finish that decision.</p>
+      <p>Our input policy accepts a JSON number only when its value is a whole number from 1 to 2,147,483,647. We reject a numeric string rather than guessing whether to interpret it, and reject a fraction rather than rounding it. The following conversion applies that policy to P7’s existing object. It creates the details row, then removes the old JSON entry in the same transaction, so capacity has one authoritative home. <code>BEGIN</code> starts that group of changes; <code>COMMIT</code> keeps them together. The <code>INSERT … SELECT</code> takes the product ID and converted capacity from its query into the two named destination columns. The JSON <code>-</code> operator then removes the named key from the object.</p>
+      <p><code>CASE WHEN … THEN … ELSE … END</code> chooses which expression to evaluate. The outer case checks the JSON type before entering the numeric conversion. The inner case checks the range and compares the number with <code>trunc</code>, which removes any fractional part. Only a whole number in range reaches the integer cast. Rejected inputs produce SQL <code>NULL</code>, so the target’s <code>NOT NULL</code> rule refuses the insert. Putting a type test next to a cast with <code>AND</code> would not give us this evaluation boundary.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Validate and move the mug capacity into a required integer column"><Code code={moveCapacity} lang="sql" theme="css-variables" /></div>
+      <div class="table-scroll" role="region" tabindex="0" aria-label="Capacity input acceptance"><table><caption>Input at capacity_ml when creating P7’s required details row</caption><thead><tr><th scope="col">JSON input</th><th scope="col">Result</th><th scope="col">Reason</th></tr></thead><tbody>
+        <tr><td><code>350</code> or <code>350.0</code></td><td>Store integer 350</td><td>Whole numeric value in range</td></tr>
+        <tr><td>Missing key or JSON <code>null</code></td><td>Reject</td><td>Required capacity has no numeric value</td></tr>
+        <tr><td><code>"350"</code></td><td>Reject</td><td>A string, even though its text looks numeric</td></tr>
+        <tr><td><code>350.5</code></td><td>Reject</td><td>A fraction; do not round it</td></tr>
+        <tr><td><code>0</code> or <code>-1</code></td><td>Reject</td><td>Capacity must be positive</td></tr>
+        <tr><td><code>2147483648</code></td><td>Reject</td><td>Outside the chosen integer range</td></tr>
+      </tbody></table></div>
+      <p>If conversion is rejected, the transaction fails; issue <code>ROLLBACK</code> before correcting the input and trying again. Its JSON capacity has not been removed. For our valid 350, commit leaves that value in the details row and only material in P7’s object. The bowl needs no mug-details row. Required capacity for an existing mug-details row is still different from proving that every mug has such a row; we have not added a product-kind rule.</p>
+      <p>Future requests should use the same input policy before binding an integer value. The stored column and its positive check protect the resulting record; they cannot detect a fraction that a caller already rounded. This example migrates our known mug P7. A larger migration must first identify which products are mugs and handle rejected records explicitly.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Find ceramic mugs using validated typed capacities"><Code code={hybridQuery} lang="sql" theme="css-variables" /></div>
+      <p>This returns P7, Blue mug, 350. The join finds the mug-details row by product ID; the material match still reads JSON, while the capacity comparison uses an integer directly. Every stored capacity is now usable by this query and its ordinary capacity index. <a href="/learn/databases/relational/query-results/">Queries and joins</a> gives more practice with the join and filter.</p>
       <p>References deserve particular care. Putting <code>supplier_id</code> inside an attribute object does not create a foreign key to a supplier table. If supplier identity must be shared and enforced, an ordinary reference column or related offer row is a natural place for it. JSON can carry descriptive supplier notes alongside that reference.</p>
     </section>
 
     <section id="access-and-change">
       <h2>Reading and changing a product</h2>
       <p>An embedded object is convenient when a catalogue page reads one product and needs most of its descriptive details together. The page receives one bundle without reconstructing those details from many attribute records. That convenience is about the access pattern; it does not mean every query over the catalogue becomes cheaper.</p>
-      <p>Filtering many products by a field inside the object needs a way to find those values. PostgreSQL can index JSON. A <strong>GIN index</strong> keeps entries for searchable keys and values, with links to rows that contain them. The ceramic-material match can use those entries to find candidate products, then check their objects, instead of examining every product’s attributes. It does not arrange capacity values in numeric order. An <strong>expression index</strong> on the extracted integer capacity provides that ordering, letting a range filter narrow its search to capacities of at least 300.</p>
-      <div class="sql-scroll" role="region" tabindex="0" aria-label="Two possible indexes for product attributes"><Code code={indexes} lang="sql" theme="css-variables" /></div>
-      <p>These are different routes for different questions, not a requirement to create both. The expression index also evaluates the cast while the index is built and maintained, so values that cannot be converted can prevent those operations. As with an ordinary index, we must check actual queries and plans and account for the extra storage and write work. Native JSON support is a capability, not evidence of a performance result.</p>
-      <p>The way we group reads also affects writes. In PostgreSQL, changing one field in a <code>jsonb</code> object updates the containing row and takes a row lock. If one request changes the mug’s capacity and another changes its descriptive material, they still write the same product row. Giving them different JSON keys does not give them independent row locks.</p>
-      <p>We can set a field in the current stored object with an expression:</p>
+      <p>Filtering many products by a field inside the object needs a way to find those values. PostgreSQL can index JSON. A <strong>GIN index</strong> keeps entries for searchable keys and values, with links to rows that contain them. The ceramic-material match can use those entries to find candidate products, then check their objects, instead of examining every product’s attributes. It does not arrange capacities in numeric order. Our final design can use an ordinary <strong>B-tree index</strong> on <code>mug_details.capacity_ml</code> for that ordering, letting a range filter narrow its search to capacities of at least 300.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Possible indexes for descriptive JSON and typed capacity"><Code code={indexes} lang="sql" theme="css-variables" /></div>
+      <p>These are different routes for different questions, not a requirement to create both. Neither declaration needs to reinterpret capacity text while building or maintaining the index. An <strong>expression index</strong> could instead index a value derived from JSON, but its conversion and validation would need to agree for every permitted input. As with an ordinary index, we must check actual queries and plans and account for the extra storage and write work. Native JSON support is a capability, not evidence of a performance result.</p>
+      <p>The way we group reads also affects writes. In PostgreSQL, changing one field in a <code>jsonb</code> object updates the containing row and takes a row lock. If one request changes a finish entry and another changes the descriptive material, they still write the same product row. Giving them different JSON keys does not give them independent row locks.</p>
+      <p>A row lock coordinates the writes, but cannot repair an object the application assembled from an old read. This separate illustration starts with two descriptive entries and follows what each editor sends:</p>
+      <JsonStaleWrite />
+      <p>Instead of sending B’s old complete object, we can set material in the current stored object with an expression:</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Update one key in the product’s current JSON object"><Code code={updateJson} lang="sql" theme="css-variables" /></div>
-      <p>This changes capacity to 375 while retaining the other entries. It avoids sending back a complete object assembled from an earlier read, which might overwrite another writer’s intervening change. It still updates the product row; it does not make the key a separately stored record.</p>
+      <p>The first argument is the row’s current <code>attributes</code> value. The second, <code>'&#123;material&#125;'</code>, names a path containing one key. The third, <code>'"stoneware"'::jsonb</code>, supplies the new JSON string, including its JSON quotation marks. This changes material to stoneware while retaining the other entries, including A’s matte finish in the illustration. It avoids sending back a complete object assembled from an earlier read, which might overwrite another writer’s intervening change. It still updates the product row; it does not make the key a separately stored record.</p>
       <p>Separate rows are useful when pieces need separate ownership or frequent independent changes. Supplier offers, stock at each warehouse, and customer reviews need not compete with every change to the product description. An array of offers inside one product object may be pleasant to retrieve, while making every offer editor update the same row.</p>
       <JsonWriteBoundary />
       <p>The right boundary is therefore partly a write decision. Information commonly read together can still deserve separate records if different operations change it independently, if other records refer to it, or if it needs rules over a collection of values.</p>
@@ -169,26 +225,27 @@ ON products (((attributes ->> 'capacity_ml')::integer));`;
     <section id="evolution">
       <h2>Changing the schema</h2>
       <p>JSON lets us add a new key without first adding a column. It does not make readers understand that key. A catalogue can contain older objects without it and newer objects with it, while several application versions are running. We need to choose what each reader does with absence and which writers start supplying the field.</p>
-      <p>Renaming <code>capacity_ml</code> to <code>volume_ml</code> is still a migration. Readers that only know the old name will miss values written under the new name. We might temporarily read both, migrate stored objects, and stop writing the old key after the relevant application versions have changed. Keeping both indefinitely would leave another duplicated fact to reconcile.</p>
-      <p>If capacity later becomes important enough to promote into a typed column, we must inspect the existing objects first. Missing keys, JSON nulls, strings, and fractions need explicit decisions. Extracting them into a column may reveal inconsistencies that permissive writers had allowed to accumulate.</p>
+      <p>Renaming <code>finish</code> to <code>surface_finish</code> is still a migration. Readers that only know the old name will miss values written under the new name. We might temporarily read both, migrate stored objects, and stop writing the old key after the relevant application versions have changed. Keeping both indefinitely would leave another duplicated fact to reconcile.</p>
+      <p>Our capacity conversion was one such migration: before promoting a JSON attribute into a typed column, we must inspect the existing objects. Missing keys, JSON nulls, strings, and fractions need explicit decisions. Extracting them into a column may reveal inconsistencies that permissive writers had allowed to accumulate.</p>
       <p>During a transition, two copies of capacity create the same update problem we met in schema design. We need one authoritative value and a controlled way to populate the other, then a clear point at which readers and writers use the new representation. The flexibility saved a structural change when we introduced the attribute; it did not remove the responsibility for changing its meaning later.</p>
     </section>
 
     <section id="hybrid">
       <h2>A design for this shop</h2>
       <p>For our current catalogue, we keep product identity, name, current price, and optional SKU as columns. They have stable meanings, common queries, and useful direct constraints. Orders and order lines remain separate records with their own keys and references. Agreed purchase prices remain on the lines, so changing a product’s attributes or current price cannot redefine what Ada agreed to pay.</p>
-      <p>We use an <code>attributes jsonb</code> object for the varying descriptive bundle on each product. The database requires an object; writers share conventions for names, units, and types inside it. A frequently queried or correctness-critical attribute can earn a stronger check or move to a typed field. A collection with independently changing members can earn its own rows.</p>
+      <p>We use an <code>attributes jsonb</code> object for the varying descriptive bundle on each product. The database requires an object; writers share conventions for names, units, and types inside it. Capacity has its own required integer field in <code>mug_details</code>, with an input policy that rejects fractions and numeric strings before conversion. It is no longer an independently editable JSON entry. Other frequently queried or correctness-critical attributes can earn stronger checks or move to typed fields. A collection with independently changing members can earn its own rows.</p>
       <p>This mixture is often called a <strong>hybrid design</strong>. It remains understandable because each group of facts has a reason for being where it is. Purchase lines need separate identities and product references. The descriptive object belongs to one product. If we later add supplier offers that change independently, those can have their own rows without moving every descriptive detail out of JSON.</p>
       <p>Other applications can arrive at different boundaries through the same questions. Start with what each piece describes and what identifies it. Follow an ordinary read and an ordinary change, then try an invalid value or a reference to a missing record. A design that is easy to display may be awkward to update or validate; those concrete operations show where to revise it.</p>
     </section>
 
-    <nav class="series-reading" aria-label="Designing your data sequence"><p><a href="/learn/databases/relational/constraints/">← 2. Constraints</a></p><p><a href="/learn/databases/relational/">Return to the relational collection →</a><span>Follow the next question into queries, indexes, or transactions.</span></p></nav>
+    <nav class="series-reading" aria-label="Designing your data sequence"><p><a href="/learn/databases/relational/constraints/">← 2. Constraints</a></p><p><a href="/learn/databases/relational/query-results/">Next: Queries and joins →</a><span>Ask questions across these tables, or <a href="/learn/databases/relational/">return to the collection</a> to choose another journey.</span></p></nav>
     <section class="essay-sources" id="further-reading">
       <h2>Sources and further reading</h2>
       <p>Working draft, researched 4 October 2026. The catalogue is an invented example. The SQL uses PostgreSQL 18; single-connection outcomes were checked with PostgreSQL 18.3 in PGlite 0.5.8. Index declarations illustrate available access paths, not measured speedups.</p>
       <ul>
         <li><a href="https://www.postgresql.org/docs/18/datatype-json.html">PostgreSQL 18: JSON types</a> — the representation differences, containment and indexing, plus the consequences of updating JSON in a row.</li>
         <li><a href="https://www.postgresql.org/docs/18/functions-json.html">JSON functions and operators</a> — precise behaviour of extraction, key existence, type inspection and <code>jsonb_set</code>.</li>
+        <li><a href="https://www.postgresql.org/docs/18/functions-conditional.html">Conditional expressions</a> and <a href="https://www.postgresql.org/docs/18/datatype-numeric.html">numeric types</a> — the CASE boundary, whole-number test and integer range used by the capacity input policy.</li>
         <li><a href="https://www.postgresql.org/docs/18/indexes-expressional.html">Indexes on expressions</a> — arranging a derived value for lookup and the maintenance work it adds.</li>
         <li><a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a> — how ordinary fields and related records retain enforceable identities and references alongside JSON.</li>
       </ul>

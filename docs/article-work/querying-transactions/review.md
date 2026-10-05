@@ -157,3 +157,23 @@ The article repairs, refreshed SQL downloads and 27 verified query outcomes are
 complete; the final build passed with 54 pages. Light/dark and phone/desktop
 inspection covered the new aids, and all four pagination interaction cases were
 checked. These remain working drafts.
+
+
+## Collection read-through, 5 October 2026
+
+The [collection audit](../relational-read-through-2026-10-05/improvement-plan.md)
+follows queries, pagination and the transaction sequence with the concepts inherited
+from design. The core explanations and sampled browser interactions held together.
+Its suggestions include an explicit pagination dataset reset, an optional orders/lines
+paging example and a compact retry reference. The next recovery section answers the
+reader's pending-claim question; preserve that pacing. The record distinguishes these
+reading opportunities from required practical repairs in the design branch. Article
+revisions remain proposed.
+
+## Implementation after the collection audit, 5 October 2026
+
+The user authorised the improvement plan. This pass completes visible dataset resets, an orders/lines paging example, script-mode instructions, a retry reference and an explicit first-claim transaction start.
+The [implementation record](../relational-read-through-2026-10-05/implementation.md)
+links independent sequential/editorial readings, technical execution and browser
+checks. Their material findings are resolved; the final build passes with 50 pages.
+These are ready working drafts, with no publication or commit performed.

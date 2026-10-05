@@ -179,3 +179,21 @@ Final source hashes for this pass:
 - `src/components/explainers/RelationalJoinExample.astro`: `a8f87e698cfd391c044756bdbbfa78e326fb138b87272d8e8f28cadec821cb36`
 - `src/components/explainers/RelationalIndexLookup.astro`: `0e70b8e299117b085ef379bb608a174de7cc4b3149f7ca84551549079e81cb36`
 - `src/components/explainers/RelationalLockTimeline.astro`: `830253453c7dedcb82d295fff3e17cc94ef934bc3a068e4082187adaa2ab3314`
+
+
+## Collection read-through, 5 October 2026
+
+The [collection audit](../relational-read-through-2026-10-05/improvement-plan.md)
+follows the introduction through all nine focused drafts and the supplemental
+checkout. Its independent sequential reader found no core comprehension blocker.
+The browser reading recommends aligning or identifying the index figure's separate
+order sample and making the checkout essay's role explicit. These are proposed
+continuity repairs; this pass did not revise the article or its aids.
+
+## Implementation after the collection audit, 5 October 2026
+
+The user authorised the improvement plan. This pass completes C4’s consistent O12/O13 index sample, optional checkout navigation, and a clearly identified independent checkout schema.
+The [implementation record](../relational-read-through-2026-10-05/implementation.md)
+links independent sequential/editorial readings, technical execution and browser
+checks. Their material findings are resolved; the final build passes with 50 pages.
+These are ready working drafts, with no publication or commit performed.

@@ -1,6 +1,6 @@
 ---
 name: staycurrent-review
-description: Independently review and repair Stay Current articles for factual support, explanatory and writing quality, and the meaning and behaviour of their media. Use for substantive editorial review or before marking an agent-produced article ready as a draft.
+description: Independently review and repair Stay Current articles for factual support, explanatory and writing quality, and the meaning and behaviour of their media. Use for substantive editorial review, sequential read-throughs of articles or collections, or before marking an agent-produced article ready as a draft.
 ---
 
 # Discover what the page actually teaches
@@ -8,6 +8,13 @@ description: Independently review and repair Stay Current articles for factual s
 The aim is a trustworthy, coherent explanation an unfamiliar reader can follow.
 Review should reveal where the page fails that reader and help the author repair
 it. A count of checks, reviewers or revisions cannot establish quality.
+
+For a read-through commission, use [first-reading guidance](references/first-reading.md)
+to establish the actual reading order and preserve questions before diagnosing them.
+Keep the requested scope: a reading log and improvement plan do not require article
+rewrites. Assess available reading separately from redirects and planned outlines.
+The handoff should say what was read, which practical outcomes are supported, and
+which repairs would enable a missing step.
 
 **For an assigned blind or isolated-media reading:** use only the supplied reader
 artifact, audience and the style skill's
@@ -49,8 +56,11 @@ than an additional reviewer. Later explanations should resolve recorded question
 not erase the evidence that readers needed an answer earlier.
 
 For a series, follow the learning across the actual pages as well as reviewing each
-piece. A blind agent still has expert knowledge and may silently complete an omitted
-explanation. Ask how a reader could reach a consequential conclusion from specific
+piece. Keep one sequential reader across the journey; independent reviews of separate
+pages do not reveal what that reader has learned when they arrive. Track introduced
+concepts and deliberate changes of example, including what is only available in an
+optional disclosure. A blind agent still has expert knowledge and may silently
+complete an omitted explanation. Ask how a reader could reach a consequential conclusion from specific
 passages, and what knowledge the reviewer supplied themselves. The
 [learning-sequence examples](references/protocol.md#follow-the-learning-across-pages)
 show gaps in prerequisites, code interpretation, apparent exceptions and unfinished
@@ -60,7 +70,9 @@ topic or a claim that agent review reproduces a novice's experience.
 ## Turn findings into a better explanation
 
 Keep enough of each independent reading to understand what the reviewer actually
-saw. For media, first ask what the aid communicates on its own. If that differs
+saw. Preserve disagreement between understanding a passage, adapting its example,
+and judging its technical completeness. Agreement is not a condition for a useful
+finding. For media, first ask what the aid communicates on its own. If that differs
 from its purpose, reveal the intention and invite ideas for improving, replacing
 or removing it. A fresh reading of a meaningful revision tells us more than an
 informed reviewer now recognising the intended answer.

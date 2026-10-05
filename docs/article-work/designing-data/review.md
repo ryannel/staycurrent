@@ -121,3 +121,23 @@ were inspected in light and dark at 320px without page-wide overflow, and the
 desktop figures were inspected at 1280px. The final proofs are
 `screenshots/constraints-sketch-light.png` and `screenshots/json-writes-sketch-dark.png`.
 These remain working drafts for user review, not accepted benchmark articles.
+
+
+## Collection read-through, 5 October 2026
+
+The [collection audit](../relational-read-through-2026-10-05/improvement-plan.md)
+preserves a sequential reader, browser observations and technical review at
+`985e5f71da2e346faf322bf48765a3124c740cbf`. Recommended repairs are local SQL
+reading bridges, a compatible JSON capacity validation/query path, and an explicit
+stale-object replacement sequence. A composite-reference counterexample would
+also help. The reader understood the JSON warning; the practical completion finding
+comes from technical review. These perspectives remain separate in the record.
+Article revisions remain proposed.
+
+## Implementation after the collection audit, 5 October 2026
+
+The user authorised the improvement plan. This pass completes SQL bridges, explicit write mappings, visible historical prices, a composite-reference example, and the complete typed-capacity/JSON path.
+The [implementation record](../relational-read-through-2026-10-05/implementation.md)
+links independent sequential/editorial readings, technical execution and browser
+checks. Their material findings are resolved; the final build passes with 50 pages.
+These are ready working drafts, with no publication or commit performed.
