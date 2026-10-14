@@ -4,6 +4,10 @@ import Base from '../../../../layouts/Base.astro';
 import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url&no-inline';
 import BoundaryOutcomes from '../../../../components/explainers/transactions/BoundaryOutcomes.astro';
 import BoundaryPayment from '../../../../components/explainers/transactions/BoundaryPayment.astro';
+import ConcurrentSchedule from '../../../../components/explainers/transactions/ConcurrentSchedule.astro';
+import ConcurrentDecision from '../../../../components/explainers/transactions/ConcurrentDecision.astro';
+import IsolationWriteSkew from '../../../../components/explainers/transactions/IsolationWriteSkew.astro';
+import TransactionRecoveryLab from '../../../../components/explainers/transactions/TransactionRecoveryLab.astro';
 import '../../../../styles/explorables.css';
 import '../../../../styles/relational-design.css';
 import '../../../../components/explainers/design/schema-sketch.css';
@@ -43,25 +47,108 @@ ROLLBACK;`;
 const verify = `SELECT available FROM stock WHERE product_id = 'P7';
 SELECT count(*) AS orders FROM orders WHERE order_id = 'O14';
 SELECT count(*) AS lines FROM order_lines WHERE order_id = 'O14';`;
+const unsafe = `-- A and B each run this in a separate connection.
+BEGIN ISOLATION LEVEL READ COMMITTED;
+SELECT available FROM stock WHERE product_id = 'P7';
+-- Both read 1. Both applications calculate 1 - 1 = 0.
+
+-- A sends this first; B sends it before A commits.
+UPDATE stock SET available = 0 WHERE product_id = 'P7';
+-- Each creates its own order and line, then commits.
+-- This is deliberately unsafe.`;
+const guarded = `BEGIN ISOLATION LEVEL READ COMMITTED;
+UPDATE stock
+SET available = available - 1
+WHERE product_id = 'P7' AND available >= 1
+RETURNING product_id, available;
+-- One returned row: create this purchase and COMMIT.
+-- No returned row: ROLLBACK; do not create the purchase.`;
+const locking = `BEGIN ISOLATION LEVEL READ COMMITTED;
+SELECT available FROM stock
+WHERE product_id = 'P7'
+FOR UPDATE;
+-- Application checks the returned row and quantity.
+-- If absent or below 1: ROLLBACK and stop.
+-- Otherwise, on this same connection:
+UPDATE stock SET available = available - 1
+WHERE product_id = 'P7';
+-- Create the order and line, then COMMIT.`;
+const snapshotRead = `-- Report connection
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SELECT current_price FROM products WHERE product_id = 'P7';
+-- 20.00. Pause here while another connection changes the price.
+
+SELECT current_price FROM products WHERE product_id = 'P7';
+-- Still 20.00 after the writer below commits.
+COMMIT;`;
+const snapshotWrite = `-- Writer connection, between the report's SELECT statements
+BEGIN;
+UPDATE products SET current_price = 22.00
+WHERE product_id = 'P7';
+COMMIT;`;
+const featuredSetup = `CREATE TABLE featured_products (
+  product_id text PRIMARY KEY REFERENCES products (product_id),
+  enabled boolean NOT NULL
+);
+INSERT INTO featured_products (product_id, enabled)
+VALUES ('P7', true), ('P8', true);`;
+const hideProduct = `-- A uses P7 here. B uses P8 and checks P7 instead.
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+SELECT count(*) AS enabled_count
+FROM featured_products WHERE enabled;
+-- Application continues only if enabled_count > 1.
+UPDATE featured_products SET enabled = false
+WHERE product_id = 'P7';
+COMMIT;
+-- A serialization failure means retry the whole decision.`;
+const retry = `for attempt in bounded_retry_budget:
+    try:
+        begin_transaction()
+        # Read, decide, and write again in every new attempt.
+        result = perform_database_operation(original_intent)
+        commit()
+        return result
+    except KnownDatabaseRejection as error:
+        rollback_and_release_connection()
+        if error.sqlstate not in ("40001", "40P01"):
+            raise
+        wait_before_next_attempt()
+    except ConnectionLost:
+        discard_connection()
+        return recover_original_operation(operation_key)
+
+return report_retry_budget_exhausted()`;
+const operation = `-- Once, in the practice schema:
+ALTER TABLE orders ADD COLUMN operation_id text UNIQUE;
+
+-- At the start of each attempt at the SAME purchase:
+BEGIN ISOLATION LEVEL READ COMMITTED;
+INSERT INTO orders (order_id, customer_id, placed_at, operation_id)
+VALUES ('O14', 'C4', '2026-10-14 11:00:00+00', 'K14')
+ON CONFLICT (operation_id) DO NOTHING
+RETURNING order_id;`;
 ---
-<Base title="What belongs in one transaction?" description="Choose a transaction boundary from the records that must agree, follow commit and rollback, and understand where an outside payment changes the design.">
+<Base title="Transactions and concurrency" description="Understand transaction boundaries, competing changes, locks and snapshots, then follow a purchase through retries, lost commit replies and outside effects.">
   <meta slot="head" name="robots" content="noindex" />
   <article class="visual-essay relational-design schema-sketches">
     <header class="essay-header">
       <p class="eyebrow">Databases and storage · Working draft</p>
-      <h1>What belongs in one transaction?</h1>
-      <div class="essay-meta"><span>Transactions and concurrent work · 1 of 4</span><a href="/learn/databases/relational/">Relational introduction</a><a href="/learn/databases/relational/concurrent-updates/">Next: Concurrent updates →</a></div>
+      <h1>Transactions and concurrency</h1>
+      <div class="essay-meta"><span>Main deep dive</span><a href="/learn/databases/relational/">Relational introduction</a><a href="/learn/databases/relational/query-results/">Previous: Querying your data</a></div>
     </header>
     <p>Many actions that look like one thing in an application require several changes in its database. Moving money between accounts changes two balances. Recording a purchase creates an order and its lines, and may reduce the stock available for sale. The application needs all of those records to describe the completed action.</p>
     <p>But the changes do not all happen in one instruction. Some can succeed before a later one fails. A database might accept the stock reduction and then reject an invalid order line. If it kept the earlier change, there would be less stock without a purchase to explain where it went. Asking the application to undo each successful step would leave it with another sequence of operations that could itself fail.</p>
     <p>A <strong>transaction</strong> gives the application a way to group database work. It can <strong>commit</strong> the changes together when the work succeeds, or <strong>roll back</strong> the group so none of its changes are kept. This all-or-nothing behaviour is called <strong>atomicity</strong>. It lets us treat several changes as one completed operation even though the database performs them in steps.</p>
-    <p>The database cannot decide which changes belong together; that depends on what the application is doing. We’ll use a purchase to work out that boundary, then examine what changes when paying for it involves a separate service. The SQL uses PostgreSQL 18 and the tables and keys introduced in <a href="/learn/databases/relational/constraints/">Constraints</a>.</p>
+    <p>Keeping one purchase together is only the first problem. While that purchase is being recorded, another buyer may be trying to claim the same stock. Each transaction could be internally complete and still make a decision that conflicts with the other. We need to understand both which changes belong together and what those transactions can rely on while they overlap.</p>
+    <p>We’ll build that understanding from the database boundary outwards: first a complete purchase, then two competing purchases, then decisions involving several records. Finally we’ll follow what the application should do when an attempt is rejected or its answer goes missing. The SQL uses <strong>PostgreSQL 18</strong>; its specific isolation behaviour is named where it matters. The shop tables follow <a href="/learn/databases/relational/modelling/">Designing your data</a>, but the relevant records are introduced here.</p>
+    <nav class="transaction-contents" aria-label="In this article"><p>In this article</p><ol><li><a href="#choosing-the-boundary">Choose what must succeed together</a></li><li><a href="#working-through-checkout">Record and roll back a purchase</a></li><li><a href="#concurrent-work">Coordinate competing decisions</a></li><li><a href="#snapshots">Understand snapshots and isolation</a></li><li><a href="#wider-rules">Protect rules involving several rows</a></li><li><a href="#rejected-attempts">Handle a rejected attempt</a></li><li><a href="#unknown-commit">Recover a missing answer</a></li><li><a href="#outside-services">Work across the payment boundary</a></li></ol></nav><p class="example-note">The interactive experiments are teaching models. The explanations and recorded outcomes also stand on their own.</p>
 
     <section id="commit-and-rollback">
       <h2>Commit and rollback</h2>
       <p><code>BEGIN</code> starts an explicit transaction. The statements that follow belong to it until the application ends it with <code>COMMIT</code> or <code>ROLLBACK</code>. These commands let the application control the boundary explicitly: it starts the work, checks whether each part succeeded, then decides whether to keep or discard the changes.</p>
+      <p>You may encounter the acronym <strong>ACID</strong> here: atomicity, consistency, isolation and durability. Atomicity keeps the chosen changes together. Consistency means preserving the rules of valid data, which still requires correct constraints and application logic. Isolation governs overlapping work. Durability concerns which committed changes survive failures, under the database’s storage and acknowledgement settings. We’ll concentrate on choosing and coordinating changes; <a href="/learn/databases/relational/storage/">Storage and durability</a> is the planned deep dive into their persistence.</p>
       <p>PostgreSQL also runs an individual statement in a transaction. With <strong>autocommit</strong>, a successful statement commits on its own. That is convenient for an independent edit, but three separately committed statements give us three separate outcomes. Explicitly grouping them changes what can be abandoned together. A client library may manage transaction boundaries for us, so the application’s actual behaviour needs checking rather than inferring it from the absence of a written <code>BEGIN</code>. <a href="https://www.postgresql.org/docs/18/sql-begin.html">PostgreSQL’s BEGIN reference</a> describes these boundaries.</p>
-      <p>A connection is an application’s active link to the database; the database conversation on that connection is called a session. The transaction can read its own unfinished changes. Other sessions do not read those uncommitted table changes. After commit, a reader using a sufficiently recent view can see the completed purchase. An older view may still show the earlier state; commit does not force every existing reader to refresh. We’ll examine those views in <a href="/learn/databases/relational/isolation/">Isolation and snapshots</a>.</p>
+      <p>A connection is an application’s active link to the database; the database conversation on that connection is called a session. The transaction can read its own unfinished changes. Other sessions do not read those uncommitted table changes. After commit, a reader using a sufficiently recent view can see the completed purchase. An older view may still show the earlier state; commit does not force every existing reader to refresh. We’ll examine those views when another request joins the example below.</p>
     </section>
 
     <section id="choosing-the-boundary">
@@ -99,22 +186,132 @@ SELECT count(*) AS lines FROM order_lines WHERE order_id = 'O14';`;
       <p>Rollback discards this transaction’s work. It does not mean setting the entire database back to an earlier moment or undoing another customer’s completed order. Nor can a later rollback erase O14 after it has committed. Cancelling a completed purchase is a new change with its own rules: restore the appropriate availability and record that the order was cancelled together. <a href="https://www.postgresql.org/docs/18/sql-rollback.html">ROLLBACK</a> applies to the current transaction.</p>
     </section>
 
+    <section id="concurrent-work">
+      <h2>Two requests reach the same record</h2>
+      <p>So far, checkout has had the stock row to itself. A real shop receives overlapping requests. They do not need to execute instructions at exactly the same instant to interfere: one can pause after a read, another can make a purchase, and the first can continue with an answer that has become old. We call this overlapping work <strong>concurrent</strong>.</p>
+      <p>For the next comparison, start over with <strong>one available mug</strong> and no new orders. Requests A and B each want one mug. A uses order O14 and B uses O15. They are distinct purchases, each using its own database connection. The question is whether both can mistake the same available mug for permission to buy.</p>
+      <p class="example-note">For this comparison, load a fresh practice schema, add the stock table above, then run <code>UPDATE stock SET available = 1 WHERE product_id = 'P7';</code> before opening either transaction. Each successful request uses the earlier order and line inserts with quantity <code>1</code>; B substitutes O15 for O14 in both inserts. Start from a fresh setup when changing the method.</p>
+      <p>Imagine a version of our application that reads availability, subtracts one in application memory, and sends the answer back. Both reads happen before either write:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Deliberately unsafe overlapping stock updates"><Code code={unsafe} lang="sql" theme="css-variables" /></div>
+      <p>Both calculations are correct: one minus one is zero. But both refer to the same initial mug. A writes zero, creates its purchase and commits. B then writes the zero it calculated earlier, creates its own purchase and commits. The table contains two complete purchases and zero available stock. Even the non-negative stock constraint is satisfied.</p>
+      <p>PostgreSQL does prevent B from modifying A’s unfinished row change. A’s update acquires a <strong>row lock</strong>, which makes a competing update wait until A commits or rolls back. The problem is what B does after the wait. Its command still says “set availability to zero.” It carries no condition telling the database that this zero was calculated only because one mug used to be available.</p>
+      <p>This is why putting a read and a write inside <code>BEGIN</code> and <code>COMMIT</code> is not, by itself, a solution. Each transaction can be atomic without its decisions behaving as though the transactions ran one at a time. PostgreSQL’s default isolation level, <strong>Read Committed</strong>, allows this schedule.</p>
+    </section>
+
+    <section id="conditional-update">
+      <h2>Put the condition beside the change</h2>
+      <p>The guarded update in our earlier checkout already expressed a better decision. For the one-mug comparison, it becomes:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Check availability while reserving one mug"><Code code={guarded} lang="sql" theme="css-variables" /></div>
+      <p>A reduces availability to zero and keeps the row lock while it records its order. B’s update waits. If A commits, PostgreSQL checks B’s condition again against the updated row. Zero no longer satisfies <code>available &gt;= 1</code>, so B changes nothing and gets no returned row. The application rolls back B’s attempt without inserting an order.</p>
+      <p>If A rolls back, the story changes. Its stock reduction disappears, one mug remains available, and B’s waiting update can reserve it. Waiting was neither a successful reservation nor an out-of-stock answer. It was an unresolved attempt whose outcome depended on what A did.</p>
+      <p>The subtraction also matters. <code>available - 1</code> operates on the row the database changes; it does not reuse an old number held by the application. Without the condition, a second subtraction would attempt minus one and encounter our check constraint. That protects the count, but gives the application an error to handle. The guarded form makes insufficient stock an ordinary result. In both cases the caller still has to choose the correct branch.</p>
+      <p>A different use of a condition is to reject an edit based on an outdated version: for example, update a record only where its version still equals the version the editor read, and increment that version in the same statement. Zero changed rows then means “your starting point changed.” The user or application can revisit the decision. This is often called <strong>optimistic concurrency control</strong>: allow independent preparation, then check the assumption when applying the change. Every relevant write must update the version for that check to be useful.</p>
+    </section>
+
+    <section id="locking-read">
+      <h2>Lock before making a longer decision</h2>
+      <p>Our availability test fits in one update. Suppose instead the shop allows partial fulfilment: a customer requests three mugs and agrees to accept fewer if necessary. Application code may inspect the current quantity, choose two, calculate their total and use that quantity in both the stock change and order line. It needs to keep that count valid while making the related changes.</p>
+      <p>A <strong>locking read</strong> retrieves the stock row while acquiring protection against competing changes. In PostgreSQL, <code>SELECT … FOR UPDATE</code> supplies this behaviour. Here is the one-mug version, so we can compare it directly with the guarded update:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Lock the row before deciding whether to buy"><Code code={locking} lang="sql" theme="css-variables" /></div>
+      <p>A locks the row and reads one. B’s locking read waits before supplying its answer. After A commits a purchase, B locks and receives the updated zero at Read Committed. B can now decline on the basis of that answer. If A rolls back, B reads one and may continue. The comments in the SQL describe branches the application must actually implement.</p>
+      <ConcurrentDecision />
+      <p>The useful protection begins before the decision and lasts through its changes. Taking a lock after reading, then using the earlier answer anyway, preserves the original mistake. Committing between the locking read and update releases the protection too. All statements in the protected operation must use the same transaction and connection.</p>
+      <p>An ordinary PostgreSQL reader can still read a committed version while this row is locked for a change. A row lock also protects only the records it covers: locking P7 does not hold P8 still, and a locking query that returns no rows has not locked a missing record. A rule involving the absence of another matching row needs something more, such as a suitable unique constraint, a common record to coordinate on, or serializable transactions. We’ll return to rules spanning several records shortly.</p>
+      <ConcurrentSchedule />
+      <p>In the experiment, all three methods use transactions and encounter a lock when they write. The safe methods differ in where the decision is made. Try A’s rollback as well as its commit: coordinating correctly must allow a purchase after an abandoned reservation, as well as refuse one after a completed purchase.</p>
+    </section>
+
+    <section id="snapshots">
+      <h2>Which version does a reader see?</h2>
+      <p>That ordinary reader deserves a closer look. A query cannot work with every change being made at every instant. While it is scanning products, staff might change prices and buyers might create orders. The database needs rules for which changes belong to its answer.</p>
+      <p>PostgreSQL retains versions of records so readers can work from committed data while writers prepare new versions. A <strong>snapshot</strong> describes which transactions’ changes are visible to a read. It is visibility information, rather than a separate copy of every table. The general technique is called <strong>multiversion concurrency control</strong>, or MVCC.</p>
+      <p>At Read Committed, each ordinary SELECT takes a view from the start of that statement. Suppose a report reads the Blue mug’s price as €20. A staff transaction then changes it to €22 and commits. A second SELECT in the report transaction can now read €22. Both answers were committed data; they came from different moments.</p>
+      <div class="table-scroll" role="region" tabindex="0" aria-label="Price visibility across two reads"><table><caption>A writer commits between two ordinary reads</caption><thead><tr><th>Event</th><th>Read Committed report</th><th>Repeatable Read report</th></tr></thead><tbody><tr><td>Report’s first SELECT, before the change</td><td>€20</td><td>€20</td></tr><tr><td>Writer changes €20 to €22 and commits</td><td>Existing statement view stays as it was</td><td>Existing transaction view stays as it was</td></tr><tr><td>Report’s second SELECT, after commit</td><td>€22: new statement view</td><td>€20: same transaction view</td></tr><tr><td>New report started after the commit</td><td>€22</td><td>€22</td></tr></tbody></table></div>
+      <p>This difference matters when a report obtains its summary and details in separate queries. Each query can be correct for its own view while the assembled report mixes different states. If those parts need one consistent view, PostgreSQL’s <strong>Repeatable Read</strong> keeps a snapshot established by the transaction’s first substantive statement. Changes committed by other transactions afterwards remain outside that view.</p>
+      <p>To see it, use a fresh practice schema where P7 costs €20 and open two connections. In the report connection, run through the first SELECT and pause:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Read the same price twice in a repeatable read report"><Code code={snapshotRead} lang="sql" theme="css-variables" /></div>
+      <p>Then run the writer on the other connection, before returning to the report’s second SELECT:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Change the price between the report's reads"><Code code={snapshotWrite} lang="sql" theme="css-variables" /></div>
+      <p>The existing report keeps seeing €20. Ending it and starting a new report makes €22 visible. Repeating the comparison from a fresh schema with <code>READ COMMITTED</code> instead produces €20 followed by €22. A transaction can also see its own earlier changes: keeping a snapshot does not hide its own work from it.</p>
+      <p>These ordinary-read rules do not override the locking-read behaviour we just used. At Read Committed, a locking read may wait and return the newer row that it locked. At Repeatable Read, an attempt to update or lock a row changed since its snapshot may instead be rejected with a serialization failure. The application must be able to start that transaction again. Choosing a stable view changes more than the age of a report’s numbers.</p>
+      <p>A long-running snapshot also has a cost. PostgreSQL may need to retain old row versions while that view can still use them. Ending a report transaction when its work is complete lets the database eventually reclaim versions it no longer needs. A transaction boundary is both a correctness choice and a limit on how long shared resources remain occupied.</p>
+    </section>
+
+    <section id="wider-rules">
+      <h2>When two different rows share one rule</h2>
+      <p>A cart containing a mug and a bowl can reserve each stock row with a guarded update inside one transaction. If the bowl reservation fails after the mug reservation succeeded, rollback abandons both. The availability condition is still local to each product, and the transaction joins their outcomes.</p>
+      <p>Other rules cannot be split that way. Consider a featured-products display containing the mug P7 and bowl P8. Staff may hide either product, but the shop requires at least one to remain featured. One member of staff wants to hide P7 while another wants to hide P8.</p>
+      <p>Both transactions read a display with two enabled products. A decides that hiding P7 is safe because P8 remains. B decides that hiding P8 is safe because P7 remains. They change different rows, so neither overwrites the other’s change. Under PostgreSQL Repeatable Read, both can commit this schedule and leave the display empty.</p>
+      <IsolationWriteSkew />
+      <p>A stable view made each transaction’s reasoning internally consistent. It did not make their combined decisions consistent. If A had run completely before B, B would have found only one enabled product and refused to hide it. Reversing that order would have kept P7. An empty display matches neither order.</p>
+      <p><strong>Serializable</strong> isolation addresses this wider problem. Committed transactions must have an effect compatible with some order in which they ran one at a time. PostgreSQL does not achieve that by making every transaction actually wait its turn. It allows overlapping work, watches dependencies between reads and writes, and rejects an attempt when necessary to prevent an incompatible result.</p>
+      <details class="sql-setup"><summary>Try the featured-products decision</summary><p>Add this table once to a fresh practice schema. In two connections, begin the transaction below and let both SELECT statements return two before either update. A hides P7; B hides P8. Both use Serializable. One may receive a serialization failure during its work or at commit, so do not depend on a particular victim or error location.</p><div class="sql-scroll" role="region" tabindex="0" aria-label="Set up two featured products"><Code code={featuredSetup} lang="sql" theme="css-variables" /></div><div class="sql-scroll" role="region" tabindex="0" aria-label="A serializable decision to hide one product"><Code code={hideProduct} lang="sql" theme="css-variables" /></div></details>
+      <p>After a rejection, the application abandons the attempt and begins the whole decision again. The new attempt can see that only one product remains enabled and leave it alone. Retrying is part of using this protection, rather than a way to bypass it. All transactions participating in this rule need compatible protection; changing only one arbitrary connection’s isolation level is not a proof that the application preserves the rule.</p>
+      <p>Explicit coordination is another option. With these two fixed rows at Read Committed, both staff operations could lock both rows in the same order, then inspect their returned states before changing either. For a changing set of products, a common display record can provide a shared place to lock before checking membership. Every operation that changes the display must follow that protocol. Locking just the existing matching rows does not automatically stop a new member appearing.</p>
+      <p>The choice comes from the rule. A guarded update fits one quantity. A locking read fits a short decision over protected records. A stable snapshot fits a multi-query report. Serializable can protect decisions whose dependencies reach across rows, at the cost of monitoring and possible retries. These tools overlap, but they do not offer the same promise.</p>
+    </section>
+
+    <section id="rejected-attempts">
+      <h2>When an attempt cannot finish</h2>
+      <p>Locks introduce a different way to get stuck. A reserves mugs and then asks for bowls. B has already reserved bowls and now asks for mugs. A is waiting for a lock held by B; B is waiting for a lock held by A. Neither can reach commit and release what the other needs. This cycle is a <strong>deadlock</strong>.</p>
+      <div class="table-scroll" role="region" tabindex="0" aria-label="A deadlock and the consistent acquisition order that avoids this cycle"><table><caption>Two carts need the same two stock records</caption><thead><tr><th>Step</th><th>Opposite acquisition order</th><th>Both acquire P7 before P8</th></tr></thead><tbody><tr><td>First reservations</td><td>A holds P7; B holds P8</td><td>A holds P7; B waits for P7</td></tr><tr><td>A asks for P8</td><td>A waits for B</td><td>A can obtain P8</td></tr><tr><td>Next outcome</td><td>B asks for P7: the waits form a cycle</td><td>A finishes; B can then obtain P7 and continue</td></tr></tbody></table></div>
+      <p>PostgreSQL detects deadlocks and aborts one transaction so another can proceed. Acquiring records in a consistent order helps prevent the cycle in this example. It does not prove a larger application free of deadlocks, because other records and code paths can introduce more dependencies. Keep transactions short, use consistent lock ordering where practical, and still handle a rejected attempt.</p>
+      <p>A server-reported deadlock has SQLSTATE <code>40P01</code>; a serialization failure has <code>40001</code>. These codes tell the application more reliably than matching message text that this attempt cannot commit. After cleaning up the failed transaction, a suitable response is to run the whole operation again with fresh reads and decisions.</p>
+      <p>Repeating only the last UPDATE is not enough. If an attempt reserved mugs before its bowl update failed, those earlier changes belong to the failed attempt too. If its final value came from an earlier read, the read and calculation need repeating. Preserve the customer’s intent—buy these items under these agreed terms—while reevaluating whether that intent can still be fulfilled.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Application pseudocode distinguishing retryable rejection and connection loss"><Code code={retry} lang="python" theme="css-variables" /></div>
+      <p>This is control-flow pseudocode, not a particular driver API. A retry budget bounds both attempts and total time. Delays between attempts can reduce repeated collisions; wait after releasing the failed transaction and connection. A broken connection must be discarded rather than returned to the pool as usable. If the budget expires after known rejections, report that this operation could not complete in time.</p>
+      <p>Not every error calls for another attempt. A quantity of zero will keep violating the quantity check. A permission error will not improve because it arrived in a transaction. An unavailable item is an ordinary business outcome. Classify the evidence, and record repeated conflicts so they can be investigated instead of hiding them inside an endless retry loop.</p>
+    </section>
+
+    <section id="unknown-commit">
+      <h2>When the commit answer goes missing</h2>
+      <p>A known rejection tells us the transaction did not commit. Losing the connection after sending COMMIT tells us much less. The database may have committed the purchase and lost the success reply. Or the connection may have failed before commit took effect, leaving the unfinished transaction to be rolled back. To the application, both histories look like a missing answer.</p>
+      <p>Starting a new purchase after every such failure can buy the mugs twice. Declaring the original purchase unsuccessful can also be wrong. The task has changed: we need to recover the result of the original operation.</p>
+      <p>Give that operation a stable identity, such as <code>K14</code> for Ada’s intent to buy two mugs at €20 each. The caller retains it across retries, repeated HTTP requests and recovery. A new attempt may use a new proposed order ID, but it must still carry K14. Otherwise the database has no way to distinguish another attempt at the same purchase from another purchase.</p>
+      <p>One implementation adds a unique operation key to the order, then claims it at the start of the transaction. This is a separate extension to the practice example; use a fresh schema and stock setup, with three mugs and no O14:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Claim a stable operation identity before recording a purchase"><Code code={operation} lang="sql" theme="css-variables" /></div>
+      <p>A returned order ID means this attempt inserted the provisional order. It can reserve the two mugs, check that the guarded update returned a row, add the line and commit. In this version the order insert comes first so it can claim the identity, but all the changes still belong to one transaction. Insufficient stock or a failed line must roll back that provisional order too.</p>
+      <p>No returned row means the key already belongs to an order. Skip the stock update and line insert. Read the existing order and all its lines in a subsequent statement, check that they describe the same request, and return that result. The unique key makes two attempts meet at the same decision before either is allowed to make another reservation.</p>
+      <p>That request check is essential. K14 must remain bound to the authenticated customer, products, quantities, agreed prices and currency. Reusing K14 for three mugs is a conflicting request, not a successful replay. Keep the operation identity and its original result for as long as retries are accepted; deleting them makes an old request appear new.</p>
+      <TransactionRecoveryLab />
+      <p>After a lost reply, query authoritative database state for K14. A matching completed order settles the successful case. An empty lookup alone does not settle the unsuccessful one: the first attempt may still be finishing. Reentering the same claim protocol with K14 lets the unique check wait for that attempt. If it commits, the claim inserts nothing and a subsequent Read Committed statement can read its result. If it rolls back, the new claim can proceed.</p>
+      <p>The read is deliberately a subsequent statement: it gets a fresh Read Committed view after the unique-key wait. A lagging replica is not a dependable place to establish that the original order is absent. If authoritative state is unavailable, the application must keep the outcome unresolved and reconcile it later. Expiring a retry deadline does not turn a missing commit answer into evidence of failure.</p>
+      <p>This protocol is often described as making the operation <strong>idempotent</strong>: repeating the same identified intent has the same local effect as completing it once. The property comes from the identity, uniqueness, complete transaction and replay behaviour together. Attaching a random token to an otherwise unchanged checkout does not provide it. <a href="/learn/databases/relational/conflicts-and-retries/">Handling conflicts and uncertain outcomes</a> develops the complete SQL branches and recovery cases.</p>
+    </section>
+
     <section id="outside-services">
       <h2>When payment happens elsewhere</h2>
       <p>A payment provider has its own records and decisions. Calling it between <code>BEGIN</code> and <code>COMMIT</code> does not bring those records into this database transaction. If payment succeeds and the line insert then fails, a database rollback does not refund the charge. Reversing the order merely changes the unfinished case: a committed order may be followed by a declined payment.</p>
       <p>For this shop, one possible design gives the order an explicit <em>awaiting payment</em> state. A short database transaction reserves stock and records that pending purchase. A separate operation asks the provider for payment. Once its outcome is confirmed, another transaction records payment or cancels the pending purchase and releases stock. The application and warehouse must understand that a pending order is not yet ready to fulfil.</p>
       <BoundaryPayment />
       <p>This design makes the intermediate state something the application can revisit. It still needs a way to find pending purchases after a restart, identify repeated requests, and deal with payment that remains uncertain. A cancellation handler must change an eligible pending order and release its stock together, and recognise a cancellation already handled. Otherwise a repeated result could add the same mugs back twice. These are requirements of this proposed workflow, not capabilities supplied by adding a status column.</p>
-      <p>There is also a cost to keeping the transaction open while waiting for payment. Updating the stock record acquires a <strong>row lock</strong>: another transaction trying to change that same record must wait until this one commits or rolls back. A slow payment call can therefore hold up other purchases of the same product. Holding the lock longer does nothing to settle an uncertain payment. <a href="/learn/databases/relational/conflicts-and-retries/">Handling waits, deadlocks, and retries</a> develops that recovery problem; the provider’s own recovery contract must supply the other half.</p>
+      <p>There is also a cost to keeping the transaction open while waiting for payment. The stock record stays locked until the transaction ends, so another purchase changing that record must wait. A slow payment call can therefore hold up other purchases of the same product. Holding the lock longer does nothing to settle an uncertain payment. The provider needs its own stable payment identity and outcome lookup or equivalent recovery contract. The order key in our database cannot, on its own, stop the provider charging twice.</p>
     </section>
+
+    <p>There is one more gap to close: the application might commit the pending order, then crash before asking for payment. A durable work record written in that same transaction preserves the intention to make the request. A worker can find and deliver it later. This pattern is often called a <strong>transactional outbox</strong>. Delivery may repeat if a worker loses the acknowledgement, so the payment side still needs duplicate handling. The extra record makes unfinished work discoverable; it does not merge two independent systems into one transaction.</p>
 
     <section id="boundary-review">
       <h2>Reviewing a transaction boundary</h2>
       <p>A useful way to review this code is to pause after each statement and ask what happens if the next operation fails. Every required change to the purchase should still be inside the transaction at that point. The application should test meaningful results, including a successful update that changed no rows, and commit only once the intended local state is complete.</p>
       <p>Prepare work that does not depend on the current database state before opening the transaction, such as parsing the request and checking that its quantity is a positive integer. Availability is different: another purchase can change it. In our example, the conditional UPDATE checks availability as it reserves stock. An earlier read of the count would not give the same permission to buy, whether that read happened before or after <code>BEGIN</code>.</p>
-      <p>Atomicity answers what happens when this purchase fails partway through. Two purchases can each be complete while jointly promising too much stock. Our conditional update was chosen to address that second problem too. To see why it matters, we need to let another request run between this one’s steps.</p>
+      <p>For each decision, identify the facts that justify it and what could change them. Put a one-row condition into the change when that expresses the rule. Take a lock before making a decision that depends on protected records. Choose a stable view when several reads need to agree, and use compatible coordination or Serializable when separate writes depend on a shared condition.</p>
+      <p>Then follow the unfinished cases as carefully as the successful one. A zero-row reservation, a deadlock rejection and a missing commit reply establish different facts. The application should decline, retry or recover according to that evidence. Outside effects need their own durable workflow and identity. These decisions give the transaction boundary its meaning: which local changes form one result, how that result survives overlapping work, and how the application finds out what happened.</p>
     </section>
-    <nav class="series-reading" aria-label="Continue reading"><p><a href="/learn/databases/relational/concurrent-updates/">When two requests change the same data →</a><span>Follow two buyers from an overlapping stock check to a coordinated decision.</span></p></nav>
-    <section class="essay-sources"><h2>Sources and further reading</h2><p>Working draft, researched 4 October 2026. SQL targets PostgreSQL 18; records and the payment workflow are teaching examples. The runnable purchase examples use ordinary table changes, without triggers or outside calls.</p><ul><li><a href="https://www.postgresql.org/docs/18/tutorial-transactions.html">PostgreSQL’s transaction tutorial</a> — a second introduction to atomicity and recovery using savepoints.</li><li><a href="https://www.postgresql.org/docs/18/sql-commit.html">COMMIT</a> and <a href="https://www.postgresql.org/docs/18/sql-rollback.html">ROLLBACK</a> — the commands that end a transaction.</li><li><a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit locking</a> — how locks acquired during database work last until a transaction ends.</li></ul></section>
+    <nav class="series-reading" aria-label="Further depth"><p><a href="/learn/databases/relational/isolation/">Isolation and snapshots →</a><span>Work through more visibility schedules, serializable decisions and the costs of keeping old views.</span></p><p><a href="/learn/databases/relational/conflicts-and-retries/">Handling conflicts and uncertain outcomes →</a><span>Follow complete SQL branches for repeated checkout attempts and recovery.</span></p><p><a href="/learn/databases/relational/indexes/">Indexes →</a><span>Continue the main reading path with how an access path changes query work and write costs. Planned deep dive.</span></p></nav>
+    <section class="essay-sources"><h2>Sources and further reading</h2><p>Working draft, researched 14 October 2026. PostgreSQL 18 is the stated implementation. Shop records, failure histories and browser experiments are teaching examples. The experiments do not run concurrent database sessions or measure performance.</p><ul>
+      <li><a href="https://www.postgresql.org/docs/18/tutorial-transactions.html">PostgreSQL’s transaction tutorial</a> and <a href="https://www.postgresql.org/docs/18/sql-savepoint.html">SAVEPOINT reference</a> — transaction grouping and controlled recovery within a transaction.</li>
+      <li><a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a> — the specific snapshot, update-recheck and Serializable behaviours behind the examples.</li>
+      <li><a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit locking</a> — conflicting row operations, lock duration and deadlock handling.</li>
+      <li><a href="https://www.postgresql.org/docs/18/mvcc-serialization-failure-handling.html">Serialization failure handling</a> — why a retry includes the reads and decisions that selected the writes.</li>
+      <li><a href="https://www.postgresql.org/docs/18/sql-insert.html">INSERT and ON CONFLICT</a> and <a href="https://www.postgresql.org/docs/18/index-unique-checks.html">unique-index checks</a> — how the operation claim coordinates repeated attempts.</li>
+      <li><a href="https://www.postgresql.org/docs/18/libpq-status.html">libpq connection status</a> — an example of a driver distinguishing failed and unknown transaction states.</li>
+    </ul></section>
   </article>
 </Base>
+<style>
+  .transaction-contents { border-block:1px solid var(--color-rule); padding:1rem 0; margin:2rem 0; }
+  .transaction-contents > p { font:500 .85rem/1.5 var(--font-sans); margin:0 0 .5rem; }
+  .transaction-contents ol { columns:2; column-gap:2rem; margin:0; padding-left:1.4rem; font:.9rem/1.7 var(--font-sans); }
+  .transaction-contents li { break-inside:avoid; margin:.4rem 0; }
+  @media(max-width:600px) { .transaction-contents ol { columns:1; } }
+</style>

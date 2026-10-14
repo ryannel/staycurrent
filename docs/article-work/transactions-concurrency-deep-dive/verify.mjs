@@ -1,0 +1,54 @@
+import { readFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
+import { PGlite } from '/private/tmp/staycurrent-design-sql/node_modules/@electric-sql/pglite/dist/index.js';
+import { recoveryState } from '../../../src/components/explainers/transactions/transaction-recovery-model.mjs';
+const source = readFileSync('src/pages/learn/databases/relational/transaction-boundaries.astro', 'utf8');
+const schema = readFileSync('docs/article-work/designing-data/schema.sql', 'utf8');
+const sql = name => { const m = source.match(new RegExp('const ' + name + ' = `([\\s\\S]*?)`;')); assert.ok(m, name); return m[1]; };
+const fresh = async () => { const db = new PGlite(); await db.exec(schema); await db.exec(sql('stockSetup')); return db; };
+const state = async db => (await db.exec(sql('verify'))).map(r => Object.values(r.rows[0])[0]);
+let db = await fresh();
+console.log((await db.query('SELECT version()')).rows[0].version);
+assert.deepEqual((await db.exec(sql('reserve'))).at(-1).rows, [{ product_id: 'P7', available: 1 }]);
+await db.exec(sql('finish'));
+assert.deepEqual(await state(db), [1,1,1]);
+await db.close();
+db = await fresh();
+await assert.rejects(db.exec(sql('failure').split('-- Issue this after the error')[0]), e => e.code === '23514');
+await assert.rejects(db.query('SELECT 1'), e => e.code === '25P02');
+await db.exec('ROLLBACK'); assert.deepEqual(await state(db), [3,0,0]); await db.close();
+db = await fresh();
+await db.exec("UPDATE stock SET available = 1 WHERE product_id = 'P7'");
+assert.deepEqual((await db.exec(sql('reserve'))).at(-1).rows, []);
+await db.exec('ROLLBACK'); assert.deepEqual(await state(db), [1,0,0]);
+assert.deepEqual((await db.exec(sql('guarded'))).at(-1).rows, [{product_id:'P7',available:0}]);
+await db.exec('COMMIT');
+assert.deepEqual((await db.exec(sql('guarded'))).at(-1).rows, []); await db.exec('ROLLBACK');
+await db.exec(sql('featuredSetup'));
+assert.equal((await db.exec(sql('hideProduct')))[1].rows[0].enabled_count, 2);
+assert.equal((await db.query('SELECT count(*) AS n FROM featured_products WHERE enabled')).rows[0].n, 1);
+await db.close();
+db = await fresh();
+assert.deepEqual((await db.exec(sql('operation'))).at(-1).rows, [{order_id:'O14'}]);
+await db.exec("UPDATE stock SET available = available - 2 WHERE product_id = 'P7' AND available >= 2");
+await db.exec("INSERT INTO order_lines (order_id,line_no,product_id,quantity,unit_price) VALUES ('O14',1,'P7',2,20.00)");
+await db.exec('COMMIT');
+const claim = sql('operation').slice(sql('operation').indexOf('BEGIN ISOLATION'));
+assert.deepEqual((await db.exec(claim)).at(-1).rows, []);
+assert.deepEqual(await state(db), [1,1,1]);
+await db.exec('COMMIT'); await db.close();
+console.log('Extracted SQL: successful purchase, CHECK rollback, zero-row branch, guarded reservation, single serializable decision and duplicate operation recovery pass.');
+for (const commits of [false,true]) for (const same of [false,true]) {
+  for (let step=0; step<=5; step++) {
+    const s=recoveryState(step,commits,same);
+    assert.equal(s.stock + s.orders*2,5,'stock and purchase effects must commit together');
+    assert.ok(s.stock>=0);
+    if (step<2) assert.equal(s.orders,0);
+    if (step<5 && !commits) assert.equal(s.orders,0);
+  }
+  assert.equal(recoveryState(5,commits,same).orders, commits && !same ? 2 : 1);
+}
+assert.equal(recoveryState(2,true,true).application,recoveryState(2,false,true).application,'lost reply must convey identical evidence for both histories');
+assert.equal(recoveryState(4,true,true).stock,recoveryState(5,true,true).stock,'recovering committed operation must not reserve again');
+console.log('Recovery model: all 24 states preserve accounting; lost replies are indistinguishable; same-key recovery never duplicates a reservation.');
+console.log('Single-session execution only: concurrent waits, snapshots across sessions, deadlock and SSI rejection remain documentation-based, not observed here.');
