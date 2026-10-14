@@ -17,13 +17,14 @@ reading, not missing chapters required to understand the main article.
 The tree below contains **10 main deep dives, 13 subarticles and 4 operational
 guides**. These are proposed article boundaries, not a production quota. Eight
 destinations have existing draft material; nineteen are planned. All nine existing
-draft leaves and twenty-five planned leaves have an explicit home. Existing draft
-material does not mean the revised main article has already been written.
+draft leaves and twenty-five planned leaves have an explicit home. The first three main articles are now complete working drafts.
 
-The site still has the original 34-leaf map. Site implementation and the first
-writing batch were interrupted to settle these boundaries; this plan supplies
-their revised basis. Article drafting and site changes remain distinct from
-publication.
+The site now implements this tree, including planned pages, parent–child navigation,
+revised introduction links and redirects from combined topics. The first three
+main deep dives have been expanded and independently reviewed. The labels below
+preserve the commissioning decisions; completed work and its verification are
+recorded in `docs/article-work/deep-dives-batch/` and the three article work folders.
+The user authorised committing and pushing these stages to main on 14 October 2026.
 
 ### How to read this tree
 
