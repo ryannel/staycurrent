@@ -1,10 +1,331 @@
 # Planning the relational collection
 
-Working plan, 4 October 2026. This develops the
+Working plan, revised 14 October 2026. This develops the
 [coverage structure](content-structure.md) into reader journeys and bounded article
 candidates. The design, querying and transaction sequences were subsequently
 commissioned; the other branches remain planned coverage. Titles, groupings, and destinations can change
 as the explanations develop.
+
+## Revised article tree, 14 October 2026
+
+This revision supersedes the flat 16-article proposal and the earlier 28-article
+proposal. The reader clarified that a substantial deep dive can have subarticles.
+The main article must deliver a coherent, useful understanding of its subject;
+subarticles deepen a mechanism or develop a distinct task. They are optional next
+reading, not missing chapters required to understand the main article.
+
+The tree below contains **10 main deep dives, 13 subarticles and 4 operational
+guides**. These are proposed article boundaries, not a production quota. Eight
+destinations have existing draft material; nineteen are planned. All nine existing
+draft leaves and twenty-five planned leaves have an explicit home. Existing draft
+material does not mean the revised main article has already been written.
+
+The site still has the original 34-leaf map. Site implementation and the first
+writing batch were interrupted to settle these boundaries; this plan supplies
+their revised basis. Article drafting and site changes remain distinct from
+publication.
+
+### How to read this tree
+
+- **Main — expand draft:** an existing article supplies the starting point, but the
+  broader main explanation still needs to be written and reviewed.
+- **Main — combine drafts:** existing articles supply material for a new connected
+  explanation. Joining their text end to end would not complete the revision.
+- **Subarticle — existing draft:** retain the article's useful purpose, then revise
+  its introduction, overlap and onward links to fit beneath the main deep dive.
+- **Planned:** no completed article exists for the proposed scope.
+
+The first three main deep dives are the intended first writing batch. Subarticles
+can be read directly by someone arriving with their particular question. Each has
+one primary home, with cross-links wherever another journey needs it. Not every
+main article needs children, and navigation groups need not become articles.
+
+### 1. Designing your data
+
+**Main — expand draft.** Build from `modelling` (Designing a relational schema).
+Develop tables, identity, relationships, types, missing values, normalisation and
+historical facts, then show how constraints protect that design and how columns,
+related rows and JSON change it. The reader should be able to derive and defend a
+healthy relational schema without first reading the children.
+
+| Subarticle | Additional purpose | Existing material |
+| --- | --- | --- |
+| **Constraints in depth** | Work through enforcement behaviour, incomplete rules, cross-record limits and dependable alternatives in sustained examples | Existing `constraints` draft |
+| **Tables and JSON** | Develop the representation choice through actual queries, validation and changes; finish the decision rather than merely enumerate advantages | Existing `tables-and-documents` draft |
+
+Normalisation stays inside the main article. Do not recreate its former standalone
+outline. The main article must actually teach constraints and representation
+choices; the children earn their space through further depth and practice.
+
+### 2. Querying your data
+
+**Main — expand draft.** Build from `query-results` (Queries and joins). Develop
+filters, joins, missing matches, aggregation and cardinality, then follow a concrete
+answer through an execution plan. Explain enough scanning and join work to connect
+what SQL asks for with how the engine could produce it.
+
+| Subarticle | Additional purpose | Existing material |
+| --- | --- | --- |
+| **How a query runs** | Develop alternative scans and join strategies, sorting, aggregation, statistics and estimates through a traceable plan | Combine planned `query-execution` and `join-algorithms` |
+| **Pagination and large results** | Choose ordering and continuation guarantees across requests while records change; compare offset, keyset and batching | Existing `large-results` draft |
+
+The main explains both result meaning and a concrete execution. The execution
+child teaches how strategies and estimates change the work. Pagination addresses
+an application contract beyond producing a correct answer once.
+
+### 3. Transactions and concurrency
+
+**Main — combine drafts.** Rework `transaction-boundaries` and `concurrent-updates`
+into one account of keeping related changes correct while requests overlap and
+fail. Develop atomicity, transaction boundaries, conditional updates and locks;
+explain snapshots and isolation well enough to distinguish visibility from protecting
+a decision. Carry the example through rejection/retry and a possible lost commit
+response, including the limits around external effects.
+
+| Subarticle | Additional purpose | Existing material |
+| --- | --- | --- |
+| **Isolation and snapshots** | Work through visibility schedules, decisions spanning records and the guarantees different isolation choices provide | Existing `isolation` draft |
+| **Handling conflicts and uncertain outcomes** | Develop recovery from waits, deadlocks, aborted attempts and unknown commit outcomes; operation identity, retry boundaries and outside effects | Existing `conflicts-and-retries` draft |
+
+Failure handling is not postponed to the children. They provide more demanding
+schedules and recovery scenarios after the main establishes the reasoning. The old
+concurrent-updates article is absorbed into the main rather than retained as another
+near-duplicate child.
+
+### 4. Indexes
+
+**Main — planned.** Combine `indexes` and `choosing-indexes`. Follow ordered search
+structures through equality, ranges, composite keys, filtering, sorting and covering
+access. Explain selectivity, table fetches, storage and write costs, index upkeep,
+and checking a choice with a plan and representative workload.
+
+No separate general index child is proposed. Mechanism, selection and verification
+complete one subject. Specialised PostgreSQL methods have a deeper implementation
+home under Inside PostgreSQL, linked from here.
+
+### 5. Storage and durability
+
+**Main — planned.** Combine `storage` and `commit-and-recovery`. Follow records
+through physical arrangement, pages, buffers, changes, logging, persistence,
+checkpoints and restart in an identified engine. Explain what the stated commit
+promise survives and which failures require another copy. Include space growth
+and upkeep where their physical causes become clear.
+
+No additional general storage child is proposed. Link to the operational Backups
+and recovery guide for establishing and testing a restore process, and to the
+PostgreSQL implementation reading where product detail helps.
+
+### 6. Understanding database performance
+
+**Main — planned.** Combine `slow-queries` and `diagnosing-waits`, drawing on the
+application-level questions in `request-cost` and the validation in
+`performance-testing`. Follow one request through connection acquisition, generated
+queries, round trips, engine work and waits before deciding where to intervene.
+Carry a change through a meaningful comparison under representative conditions.
+
+| Subarticle | Additional purpose | Existing material |
+| --- | --- | --- |
+| **The database work behind an application request** | Inspect and change ORM-generated work, repeated queries, batching, pooling, round trips and transaction scope; explore the tradeoffs in sustained application examples | Planned `request-cost` |
+| **Reporting on operational data** | Serve reports while everyday work continues; develop precomputation, freshness and resource competition, and establish evidence for separating analytical work | Planned `reporting` |
+
+The main investigation must let the reader discover excessive application work;
+it cannot assume they already know their problem is one slow query. The application
+child goes further into designing that work. The testing placeholder becomes a
+substantial validation stage here and locally in indexes, reporting and scaling;
+no standalone testing article is required by this tree.
+
+### 7. Scaling a relational database
+
+**Main — planned, new.** Begin with a measured capacity or availability need.
+Develop reducing work, larger instances, caching, replicas and divided ownership as
+concrete alternatives. Show where reads and writes go, what work remains shared,
+what limits each arrangement and how failures change it. Explain clusters through
+those node arrangements. Give table partitioning, sharding, freshness and regional
+placement enough substance to reason about a choice.
+
+| Subarticle | Additional purpose | Existing material |
+| --- | --- | --- |
+| **Replication and failover** | Follow copying, acknowledgements, read routing/freshness, writer promotion and authority, failure domains and regional failures through concrete scenarios | Expand planned `replicas-and-failover` |
+| **Partitioning and sharding** | Develop partition/shard keys, pruning, co-location, routing, skew, hot tenants, cross-shard work and rules; work through safe data movement, verification and cutover | New planned subarticle |
+
+The main develops the arrangements and their consequences rather than listing
+names and delegating all explanation. The children address designing and operating
+a chosen arrangement in more depth. Local table partitioning is not automatically
+distributed ownership; application-managed shards differ from a distributed SQL
+engine in where guarantees are enforced. Multi-writer and multi-region choices
+must identify their communication and conflict behaviour. Use the existing
+distributed-SQL essay for the fuller cross-machine transaction mechanism.
+
+A product-specific failover or resharding runbook is beyond this general commission.
+A concrete example must still reach a usable result; that boundary does not justify
+leaving routing, concurrent changes or verification unexplained.
+
+### 8. Choosing a relational database
+
+**Main — planned.** Combine `product-comparison` and `embedded-databases`. Develop
+embedded versus server deployment alongside consequential differences among
+PostgreSQL, MySQL, SQL Server and SQLite for stated application needs. Explain
+operating work and relevant edition/service limits through those needs.
+
+No separate embedded-database child is necessary initially. The main must give
+that decision sufficient space; direct section links can serve readers arriving
+specifically for SQLite or embedded deployment. Product capabilities require fresh,
+versioned research when this article is commissioned.
+
+### 9. When should you add another system?
+
+**Main — planned.** Develop `adding-another-system`, including the capability-choice
+material in `postgresql/extensions`. Compare a capability within the current
+database against another service through one sustained workload and brief contrasts.
+Account for native features, extensions, specialised indexes, resource competition,
+operating effort and keeping copies current. Link to reporting, search, documents,
+caches, column stores and dated assessments for their fuller teaching.
+
+No catalogue of capability children is proposed. Evaluating an extension belongs
+with the capability and operating consequences being considered, rather than an
+unmotivated tour of available extensions.
+
+### 10. Inside PostgreSQL
+
+**Main — planned.** Combine `postgresql/architecture` and
+`postgresql/query-execution`, drawing ordinary index implementation from
+`postgresql/indexes`. Follow a read and a committed change through processes,
+buffers, heap/index access, planning, visibility, locks, logging, checkpoints,
+restart and eventual cleanup. The main connects the implementation; it must not
+stop at the point where the children begin.
+
+| Subarticle | Additional purpose | Existing material |
+| --- | --- | --- |
+| **Indexes in PostgreSQL** | Develop a bounded comparison of access methods and specialised index choices for concrete workloads, extending the general Indexes article | Planned `postgresql/indexes` |
+| **Row versions, transactions and vacuum** | Trace visibility, retained versions, long-running transactions and cleanup; explain the operational consequences | Planned `postgresql/row-versions` |
+| **WAL, checkpoints and recovery** | Follow PostgreSQL's persistence and recovery behaviour in greater implementation/configuration detail | Planned `postgresql/recovery` |
+
+The main teaches the causal connection among these components through its read/write
+journey. The children develop implementation detail and consequences that deserve
+more room. An access-method comparison is not an exhaustive catalogue; its workload
+and useful outcome should be fixed in the commission. Extensions remain part of a
+capability decision above unless a distinct implementation task earns further work.
+
+### Operational guides
+
+**Operating and evolving the database** is a navigation group, not an extra main
+article. These guides remain directly accessible for their distinct tasks. They
+can also be linked as further reading from the relevant deep dives, without
+creating duplicate article homes.
+
+| Article | Purpose and connections | Existing material |
+| --- | --- | --- |
+| **Changing a schema while the application runs** | Carry out a compatible migration while versions coexist: backfill, indexes, locking, verification and rollout recovery. Link from Designing your data and Indexes | Planned `schema-changes` |
+| **Backups and recovery** | Establish recovery requirements and test a restore, including time and data-loss requirements and point-in-time recovery where supported. Link from Storage and durability and Replication and failover | Planned `backup-and-restore` |
+| **Controlling access** | Establish identities, roles, privileges, least privilege and useful audit boundaries. Link from Designing your data | Access portion of `access-and-lifecycle` |
+| **Retention and deletion** | Follow removal through related data, history, replicas, exports and backups, including partition expiry. Link from Designing your data, Partitioning and sharding, and Backups and recovery | Lifecycle portion of `access-and-lifecycle` |
+
+### Introduction, practice and shared field reading
+
+The introduction remains `/learn/databases/relational/`. Each major subject points
+to its main deep dive; constraints and relationships can point to suitable sections
+of Designing your data. Main pages show optional subarticles where their questions
+arise and in a compact further-reading section. The full map should visibly nest
+children beneath their main article, with working-draft/planned status per page.
+The operational group is labelled as such and creates no empty overview route.
+
+Keep **Start the SQL practice** (`practice`) as optional setup and **The last blue
+mug** (`checkout`) as an optional worked synthesis with its distinct simpler shop.
+The existing `normalisation` redirect remains an anchor into design. Preserve
+working draft routes while main replacements are developed; redirect only once a
+reviewed destination contains the material the old link promised. Old placeholder
+routes can lead to their revised main or child destination when the tree is
+implemented. A planned main must not hide an already-readable child draft.
+
+Shared reading keeps its current field-level home:
+
+- `/learn/databases/distributed-sql/`: cross-machine transactions and regional
+  placement, linked from transactions and scaling.
+- `/learn/databases/partitioned/`: comparative query-led keys and hot buckets,
+  linked from partitioning/sharding.
+- `/learn/databases/caching/`: cache behaviour, linked from scaling and performance.
+- `/learn/databases/column-stores/`: analytical storage, linked from reporting,
+  storage and the decision to add another system.
+- Documents, search, graphs, object storage and the dated Postgres vector assessment:
+  relevant representation and capability reading, rather than duplicate relational
+  children. The shared distributed-systems programme remains parked.
+
+### Every current leaf accounted for
+
+The slugs below identify existing entries in `src/lib/relational-collection.ts`.
+They are provenance, not evidence that a planned or expanded article is complete.
+
+| Current leaf | Revised home |
+| --- | --- |
+| `modelling` (draft) | Main: Designing your data, expanded |
+| `constraints` (draft) | Design child: Constraints in depth; core reasoning also taught in main |
+| `tables-and-documents` (draft) | Design child: Tables and JSON; representation choice also taught in main |
+| `query-results` (draft) | Main: Querying your data, expanded |
+| `large-results` (draft) | Query child: Pagination and large results |
+| `transaction-boundaries` (draft) | Main: Transactions and concurrency, reworked with concurrent updates |
+| `concurrent-updates` (draft) | Main: Transactions and concurrency |
+| `isolation` (draft) | Transaction child: Isolation and snapshots; necessary isolation reasoning also taught in main |
+| `conflicts-and-retries` (draft) | Transaction child: Handling conflicts and uncertain outcomes; necessary failure reasoning also taught in main |
+| `storage` | Main: Storage and durability |
+| `indexes` | Main: Indexes |
+| `join-algorithms` | Query child: How a query runs; concrete execution also taught in main |
+| `query-execution` | Query child: How a query runs |
+| `commit-and-recovery` | Main: Storage and durability |
+| `slow-queries` | Main: Understanding database performance |
+| `choosing-indexes` | Main: Indexes |
+| `request-cost` | Performance child: The database work behind an application request; application-level investigation also taught in main |
+| `diagnosing-waits` | Main: Understanding database performance |
+| `reporting` | Performance child: Reporting on operational data |
+| `performance-testing` | Validation within the performance main and locally in indexes, application work, reporting and scaling |
+| `access-and-lifecycle` | Operational guides: Controlling access; Retention and deletion |
+| `backup-and-restore` | Operational guide: Backups and recovery |
+| `schema-changes` | Operational guide: Changing a schema while the application runs |
+| `maintenance` | Space growth/upkeep in Storage and durability; index upkeep in Indexes; statistics/estimates in How a query runs; observations/regressions in performance; version cleanup in PostgreSQL/vacuum reading |
+| `replicas-and-failover` | Scaling child: Replication and failover; arrangements and failure consequences also taught in main |
+| `embedded-databases` | Main: Choosing a relational database |
+| `product-comparison` | Main: Choosing a relational database |
+| `adding-another-system` | Main: When should you add another system? |
+| `postgresql/architecture` | Main: Inside PostgreSQL |
+| `postgresql/query-execution` | Main: Inside PostgreSQL |
+| `postgresql/indexes` | PostgreSQL child: Indexes in PostgreSQL; ordinary index implementation also taught in main |
+| `postgresql/row-versions` | PostgreSQL child: Row versions, transactions and vacuum; visibility/cleanup also taught in main |
+| `postgresql/recovery` | PostgreSQL child: WAL, checkpoints and recovery; persistence/restart also taught in main |
+| `postgresql/extensions` | Main: When should you add another system?, through a concrete capability decision |
+
+### First batch and independent planning review
+
+The requested first writing batch is **Designing your data**, **Querying your data**
+and **Transactions and concurrency**. Expand the first two existing drafts and
+combine the transaction-boundary/concurrent-update drafts into the third. Reconcile
+the child drafts and shared practice setup as needed; retaining a child does not
+mean commissioning an unrelated rewrite of its whole subject.
+
+Two independent planning perspectives examined the nested structure. Both supported
+self-contained main explanations, retaining useful draft children, combining index
+mechanics/selection, concrete replication and sharding children, and operational
+guides with independent entrances. This plan retains application-work and specialised
+PostgreSQL-index children because those develop distinct practical choices. It
+absorbs embedded deployment into product selection, and distributes testing and
+maintenance into the explanations where their purpose is visible. A symmetric
+number of children is not a goal.
+
+Author and review the main articles as explanations first. A review should ask what
+the reader can now understand or decide without following a child link. Then review
+the children for additional value, readable direct entrances, repetition and missing
+bridges. Some local recap is useful; repeating the main explanation wholesale is
+not. The first three main articles need a sequential fresh reading as well as
+independent technical and editorial review under the authoring/review skills.
+
+The site map and placeholders should reflect this nesting when implemented. No
+main page is marked written merely because its component drafts exist. Planning,
+drafting and reviewing do not authorise publication.
+
+### Earlier plan and production history
+
+The remaining sections preserve earlier commissions and decisions. Their counts,
+boundaries and production orders are historical. Use the nested proposal above
+for subsequent site and article work; the current site map still records available
+routes and drafts.
 
 ## Querying and transactions: commissioned sequence
 

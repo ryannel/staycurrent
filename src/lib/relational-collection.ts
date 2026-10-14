@@ -1,24 +1,23 @@
-/** Reading map with available drafts and explicitly requested planned outlines.
- * An omitted status means planned; a draft is reading, not an authorised publication.
- */
+/** Main deep dives and their further reading. Omitted status means planned. */
 export interface RelationalArticle { slug: string; title: string; description: string; scope: string; status?: 'draft'; }
-export interface RelationalGroup { id: string; title: string; overviewAnchor: string; articles: RelationalArticle[]; }
+export interface RelationalGroup { id: string; title: string; overviewAnchor: string; main?: string; articles: RelationalArticle[]; }
 export const relationalCollection: RelationalGroup[] = [
   {
     "id": "design",
     "title": "Designing your data",
     "overviewAnchor": "relationships",
+    "main": "modelling",
     "articles": [
       {
         "slug": "modelling",
-        "title": "Designing a relational schema",
-        "description": "Work from an application's facts to tables, relationships, and a design that survives change.",
-        "scope": "Choose identities, types and units; use normalisation to separate shared facts, and preserve purchase history as facts of its own.",
+        "title": "Designing your data",
+        "description": "Derive a relational schema, protect its rules, and choose how to represent its facts.",
+        "scope": "Connect identity, types, relationships, normalisation and history with constraints and the choice between related rows and JSON.",
         "status": "draft"
       },
       {
         "slug": "constraints",
-        "title": "Constraints",
+        "title": "Constraints in depth",
         "description": "Make the database enforce your schema's rules, and recognise where those rules stop.",
         "scope": "Work through required values, uniqueness, checks, and foreign keys, including rules that require coordination across records.",
         "status": "draft"
@@ -36,13 +35,20 @@ export const relationalCollection: RelationalGroup[] = [
     "id": "queries",
     "title": "Querying your data",
     "overviewAnchor": "queries",
+    "main": "query-results",
     "articles": [
       {
         "slug": "query-results",
-        "title": "Queries and joins",
-        "description": "Follow records through filters, joins and totals, and see where extra result rows come from.",
-        "scope": "Introduce SQL result meaning and syntax, then work through matching, missing values, aggregation, multiplied rows and existence tests.",
+        "title": "Querying your data",
+        "description": "Express a question, check its answer, and follow the work that produces it.",
+        "scope": "Develop filters, joins, missing matches, grouping and cardinality, then trace a concrete execution plan.",
         "status": "draft"
+      },
+      {
+        "slug": "query-execution",
+        "title": "How a query runs",
+        "description": "Compare execution strategies that produce the same answer.",
+        "scope": "Follow scans, join algorithms, sorting and aggregation through plans, statistics and estimates. Explain when a different strategy changes the work."
       },
       {
         "slug": "large-results",
@@ -55,21 +61,15 @@ export const relationalCollection: RelationalGroup[] = [
   },
   {
     "id": "transactions",
-    "title": "Transactions and concurrent work",
+    "title": "Transactions and concurrency",
     "overviewAnchor": "transactions",
+    "main": "transaction-boundaries",
     "articles": [
       {
         "slug": "transaction-boundaries",
-        "title": "What belongs in one transaction?",
-        "description": "Choose which changes need to succeed or fail together.",
-        "scope": "Work from a concrete business rule to a transaction boundary. Explain what happens when payment or another outside service is involved.",
-        "status": "draft"
-      },
-      {
-        "slug": "concurrent-updates",
-        "title": "When two requests change the same data",
-        "description": "Explain how overlapping requests can break an application rule.",
-        "scope": "Compare a stale read and write with conditional updates and locking reads. Explain affected rows and protecting the decision, with broader isolation and retry handling in their own articles.",
+        "title": "Transactions and concurrency",
+        "description": "Keep related changes correct while requests overlap and fail.",
+        "scope": "Connect atomicity and boundaries to conditional updates, locks, snapshots, isolation, retries and uncertain commit outcomes.",
         "status": "draft"
       },
       {
@@ -81,7 +81,7 @@ export const relationalCollection: RelationalGroup[] = [
       },
       {
         "slug": "conflicts-and-retries",
-        "title": "Handling waits, deadlocks, and retries",
+        "title": "Handling conflicts and uncertain outcomes",
         "description": "Respond correctly when a transaction cannot proceed or its outcome is unknown.",
         "scope": "Separate waiting, a rejected transaction, and a lost response after a possible commit. Cover retry boundaries and outside effects; diagnosing a slow service belongs in the performance branch.",
         "status": "draft"
@@ -89,102 +89,90 @@ export const relationalCollection: RelationalGroup[] = [
     ]
   },
   {
-    "id": "internals",
-    "title": "How the database works",
+    "id": "indexes",
+    "title": "Indexes",
+    "overviewAnchor": "indexes",
+    "main": "indexes",
+    "articles": [
+      {
+        "slug": "indexes",
+        "title": "Indexes",
+        "description": "Connect an index's structure to the queries it helps and the work it adds.",
+        "scope": "Develop ordered lookups, ranges, composite keys, filtering, sorting, covering access and selectivity. Weigh table fetches, storage and writes, then verify an index choice."
+      }
+    ]
+  },
+  {
+    "id": "storage",
+    "title": "Storage and durability",
     "overviewAnchor": "tables",
+    "main": "storage",
     "articles": [
       {
         "slug": "storage",
-        "title": "How records are stored and retrieved",
-        "description": "Follow records through pages, memory, and storage.",
-        "scope": "Use an explicitly identified row-oriented engine to explain the cost of accessing data. A relational interface does not require this physical layout."
-      },
-      {
-        "slug": "indexes",
-        "title": "How indexes work",
-        "description": "See how an index locates records and what it costs to maintain.",
-        "scope": "Trace a lookup and a change through a search structure. Practical index selection has its own article."
-      },
-      {
-        "slug": "join-algorithms",
-        "title": "How joins work",
-        "description": "Compare ways to find matching records in separate tables.",
-        "scope": "Start with an understood join result, then compare execution strategies and their costs. Query meaning belongs in the query-writing article."
-      },
-      {
-        "slug": "query-execution",
-        "title": "From SQL to an execution plan",
-        "description": "Understand how the database turns a request into work.",
-        "scope": "Follow parsing, planning, and execution for a small query. Explain alternative strategies without becoming a performance investigation guide."
-      },
-      {
-        "slug": "commit-and-recovery",
-        "title": "What happens when a write commits?",
-        "description": "Understand how a database makes changes recoverable.",
-        "scope": "Follow changes in memory, logging, persistence, and recovery through one failure. Identify the engine and durability settings used in the explanation."
+        "title": "Storage and durability",
+        "description": "Follow records through memory, persistent storage and recovery after a crash.",
+        "scope": "Connect record placement, pages and buffers to changes, logging, checkpoints and restart in an identified engine. Explain the durability promise and which failures require another copy."
       }
     ]
   },
   {
     "id": "performance",
-    "title": "Understanding and improving performance",
+    "title": "Understanding database performance",
     "overviewAnchor": "indexes",
+    "main": "slow-queries",
     "articles": [
       {
         "slug": "slow-queries",
-        "title": "Investigating a slow query",
-        "description": "Find where a query spends its time using plans and measurements.",
-        "scope": "Compare estimated and observed work in one investigation. Explain plan notation locally and distinguish excess work from waiting."
-      },
-      {
-        "slug": "choosing-indexes",
-        "title": "Choosing indexes for your queries",
-        "description": "Choose an access path for a particular query and workload.",
-        "scope": "Relate filters, ordering, column order, and coverage to index choices. Check the proposed benefit against an execution plan and the cost of writes."
+        "title": "Understanding database performance",
+        "description": "Trace a request through application work, query execution and waits, then verify an improvement.",
+        "scope": "Begin with connections, generated queries and round trips; use plans and observations to distinguish work from waiting. Account for changing statistics and upkeep, and validate changes under representative conditions."
       },
       {
         "slug": "request-cost",
-        "title": "Understanding the database work behind a request",
+        "title": "The database work behind an application request",
         "description": "Trace the queries, connections, and round trips created by an application request.",
         "scope": "Inspect ORM-generated work, repeated queries, batching, and transaction scope. Keep application request cost distinct from one query’s execution plan."
-      },
-      {
-        "slug": "diagnosing-waits",
-        "title": "Diagnosing database waits",
-        "description": "Distinguish connection, lock, storage, and resource waits.",
-        "scope": "Investigate a stalled request using observations. Link to transaction handling when the diagnosis calls for changing how the application responds."
       },
       {
         "slug": "reporting",
         "title": "Reporting on operational data",
         "description": "Understand when reports interfere with everyday requests.",
         "scope": "Compare aggregation and precomputed results within an existing database. Use measured workload pressure to motivate a separate analytical system."
+      }
+    ]
+  },
+  {
+    "id": "scaling",
+    "title": "Scaling a relational database",
+    "overviewAnchor": "scaling",
+    "main": "scaling",
+    "articles": [
+      {
+        "slug": "scaling",
+        "title": "Scaling a relational database",
+        "description": "Find the limit and understand the arrangements that could meet it.",
+        "scope": "Develop work reduction, larger instances, caching, replicas, clusters, partitioning and sharding. Trace where reads and writes go, what remains shared, and what happens when a node or region fails."
       },
       {
-        "slug": "performance-testing",
-        "title": "Testing a change before trusting it",
-        "description": "Check whether a proposed improvement survives a representative workload.",
-        "scope": "Choose data, measurements, and comparisons that expose regressions as well as gains. Avoid treating a small synthetic speedup as production evidence."
+        "slug": "replicas-and-failover",
+        "title": "Replication and failover",
+        "description": "Understand what another copy of the database can and cannot provide.",
+        "scope": "Follow copying, acknowledgements, read routing and freshness, writer promotion and authority, failure domains and regional failures through concrete scenarios."
+      },
+      {
+        "slug": "partitioning-and-sharding",
+        "title": "Partitioning and sharding",
+        "description": "Develop the choices behind dividing tables and distributing data ownership.",
+        "scope": "Work through keys, pruning, co-location, routing, hot tenants, cross-shard queries and rules. Follow safe data movement, verification and cutover while writes continue; distinguish local partitions from distributed ownership."
       }
     ]
   },
   {
     "id": "operations",
-    "title": "Running and evolving the database",
+    "title": "Operating and evolving the database",
     "overviewAnchor": "choice",
     "articles": [
-      {
-        "slug": "access-and-lifecycle",
-        "title": "Controlling access and managing the data lifecycle",
-        "description": "Decide who can use data and what must happen when it is removed.",
-        "scope": "Keep access-control and retention/deletion outcomes distinct in the commission. This broad candidate may become two articles once the examples are developed."
-      },
-      {
-        "slug": "backup-and-restore",
-        "title": "Backups you can actually recover from",
-        "description": "Establish whether a backup can restore the service you need.",
-        "scope": "Work through a tested restore and its time and data-loss requirements. Distinguish having backup files from a verified recovery procedure."
-      },
       {
         "slug": "schema-changes",
         "title": "Changing a schema while the application runs",
@@ -192,41 +180,50 @@ export const relationalCollection: RelationalGroup[] = [
         "scope": "Work through compatibility, migration, backfill, and locking concerns for one schema change."
       },
       {
-        "slug": "maintenance",
-        "title": "Keeping a database healthy over time",
-        "description": "Recognise how accumulated work and changing data affect an engine.",
-        "scope": "Use a concrete growth or maintenance problem to explain statistics, upkeep, and useful observations. Engine-specific cleanup belongs in the PostgreSQL collection."
+        "slug": "backup-and-restore",
+        "title": "Backups and recovery",
+        "description": "Establish whether a backup can restore the service you need.",
+        "scope": "Work through a tested restore and its time and data-loss requirements. Distinguish having backup files from a verified recovery procedure."
       },
       {
-        "slug": "replicas-and-failover",
-        "title": "Replicas and failover",
-        "description": "Understand what another copy of the database can and cannot provide.",
-        "scope": "Separate read capacity, replication lag, failover, and recovery limits in a bounded database scenario."
+        "slug": "access-control",
+        "title": "Controlling access",
+        "description": "Decide which people and applications may read or change the data.",
+        "scope": "Work through identities, roles, privileges, least privilege and useful audit boundaries in a concrete application."
+      },
+      {
+        "slug": "data-lifecycle",
+        "title": "Retention and deletion",
+        "description": "Follow data through its useful life and its removal.",
+        "scope": "Trace related records, history, replicas, exports and backups, including partition expiry. Explain what the process removes immediately and what remains in retained copies."
       }
     ]
   },
   {
     "id": "products",
-    "title": "Choosing products and recognising limits",
+    "title": "Choosing a relational database",
     "overviewAnchor": "choice",
+    "main": "product-comparison",
     "articles": [
       {
-        "slug": "embedded-databases",
-        "title": "When an embedded database fits",
-        "description": "Decide whether the engine should run inside the application.",
-        "scope": "Use SQLite to examine the embedded/server choice, including deployment and concurrent use. Readers can enter this comparison without an internals course."
-      },
-      {
         "slug": "product-comparison",
-        "title": "PostgreSQL, MySQL, and SQL Server",
-        "description": "Compare consequential product differences for stated application needs.",
-        "scope": "Research deployment, behaviour, operating work, and relevant edition or service limits. This placeholder establishes no ranking or current suitability claim."
-      },
+        "title": "Choosing a relational database",
+        "description": "Compare relational products and deployment choices for stated application needs.",
+        "scope": "Develop embedded versus server deployment alongside PostgreSQL, MySQL, SQL Server and SQLite. Compare consequential behaviour, operating work and relevant edition or service limits using current evidence."
+      }
+    ]
+  },
+  {
+    "id": "additional-systems",
+    "title": "When should you add another system?",
+    "overviewAnchor": "choice",
+    "main": "adding-another-system",
+    "articles": [
       {
         "slug": "adding-another-system",
         "title": "When should you add another system?",
         "description": "Weigh another service against capabilities in the existing database.",
-        "scope": "Compare documents, search, vectors, or analytics for a concrete workload, including resource competition and the cost of keeping copies current."
+        "scope": "Develop one workload to compare native capabilities, extensions and specialised access methods with a separate service. Account for resource competition, operating effort and keeping copies current; link to the relevant family explanations."
       }
     ]
   },
@@ -234,18 +231,13 @@ export const relationalCollection: RelationalGroup[] = [
     "id": "postgresql",
     "title": "Inside PostgreSQL",
     "overviewAnchor": "choice",
+    "main": "postgresql/architecture",
     "articles": [
       {
         "slug": "postgresql/architecture",
-        "title": "PostgreSQL architecture — an overview",
-        "description": "Connect PostgreSQL’s major components to their roles in a read and a write.",
-        "scope": "Establish the implementation’s shape without repeating the relational introduction. Reassess overlap with the query tour when commissioning."
-      },
-      {
-        "slug": "postgresql/query-execution",
-        "title": "Following a query through PostgreSQL",
-        "description": "Follow PostgreSQL’s implementation of planning and execution.",
-        "scope": "Trace buffers and access paths for one query, extending the family explanation with implementation detail rather than teaching SQL again."
+        "title": "Inside PostgreSQL",
+        "description": "Follow a read and a committed change through PostgreSQL's implementation.",
+        "scope": "Connect processes, buffers, heap and index access, planning, visibility, locks, logging, checkpoints, restart and eventual cleanup through an actual read/write journey."
       },
       {
         "slug": "postgresql/indexes",
@@ -264,14 +256,21 @@ export const relationalCollection: RelationalGroup[] = [
         "title": "WAL, checkpoints, and recovery",
         "description": "Follow a committed change through PostgreSQL’s recovery machinery.",
         "scope": "Connect the shared durability explanation to PostgreSQL’s log, checkpoints, and recovery, with explicit version and configuration boundaries."
-      },
-      {
-        "slug": "postgresql/extensions",
-        "title": "Extending PostgreSQL",
-        "description": "Evaluate an extension as part of a running database.",
-        "scope": "Distinguish core features from extensions through one concrete capability and its operating consequences. This is not a catalogue or a claim of production readiness."
       }
     ]
   }
 ];
+/** Former outlines point to the article that now owns their explanation. */
+export const relationalAliases: Record<string, string> = {
+  "choosing-indexes": "indexes",
+  "join-algorithms": "query-execution",
+  "commit-and-recovery": "storage",
+  "diagnosing-waits": "slow-queries",
+  "performance-testing": "slow-queries",
+  "maintenance": "slow-queries",
+  "embedded-databases": "product-comparison",
+  "access-and-lifecycle": "access-control",
+  "postgresql/query-execution": "postgresql/architecture",
+  "postgresql/extensions": "adding-another-system"
+};
 export const relationalArticleHref = (slug: string) => `/learn/databases/relational/${slug}/`;

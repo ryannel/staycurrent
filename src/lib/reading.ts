@@ -32,6 +32,9 @@ export function breadcrumbs(path: string, title: string) {
     if (path.startsWith(relationalHome)) {
       trail.push({ href: relationalHome, title: 'Relational databases' });
       if (path === relationalHome) return trail;
+      const group = relationalCollection.find(group => group.articles.some(article => relationalArticleHref(article.slug) === path));
+      const main = group?.articles.find(article => article.slug === group.main);
+      if (main && relationalArticleHref(main.slug) !== path) trail.push({ href: relationalArticleHref(main.slug), title: main.title });
     }
   }
   trail.push({ href: path, title: title.replace(/ — planned article$/, '') });
