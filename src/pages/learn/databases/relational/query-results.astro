@@ -5,11 +5,29 @@ import Sql from '../../../../components/explainers/querying/Sql.astro';
 import ResultTable from '../../../../components/explainers/querying/ResultTable.astro';
 import QueryShape from '../../../../components/explainers/querying/QueryShape.astro';
 import JoinFanout from '../../../../components/explainers/querying/JoinFanout.astro';
+import RDQueryWorkLab from '../../../../components/explainers/querying/RDQueryWorkLab.astro';
+import executionExamples from '../../../../../docs/article-work/querying-data-deep-dive/execution.sql?url&no-inline';
 import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url&no-inline';
 import queryExamples from '../../../../../docs/article-work/querying-transactions/query-results.sql?url&no-inline';
 import '../../../../styles/explorables.css';
 import '../../../../styles/relational-design.css';
 import '../../../../components/explainers/design/schema-sketch.css';
+const receiptQuery = `SELECT l.line_no, p.name,
+       l.quantity * l.unit_price AS line_total
+FROM order_lines AS l
+JOIN products AS p ON p.product_id = l.product_id
+WHERE l.order_id = 'O13'
+ORDER BY l.line_no;`;
+const receiptPlan = `Sort (actual rows=2.00 loops=1)
+  Sort Key: l.line_no
+  -> Nested Loop (actual rows=2.00 loops=1)
+       Join Filter: (p.product_id = l.product_id)
+       Rows Removed by Join Filter: 1
+       -> Seq Scan on order_lines l (actual rows=2.00 loops=1)
+            Filter: (order_id = 'O13'::text)
+            Rows Removed by Filter: 1
+       -> Materialize (actual rows=1.50 loops=2)
+            -> Seq Scan on products p (actual rows=2.00 loops=1)`;
 const firstQuery = `SELECT order_id, line_no, quantity,
        quantity * unit_price AS line_total
 FROM order_lines
@@ -108,18 +126,20 @@ CREATE TABLE shipments (
 INSERT INTO shipments (shipment_id, order_id)
 VALUES ('S1', 'O13'), ('S2', 'O13');`;
 ---
-<Base title="Queries and joins" description="Understand what a SQL result row represents, follow joins and missing matches, and diagnose totals inflated by repeated combinations.">
+<Base title="Querying your data" description="Follow SQL from the question to its answer: filters, joins, missing values, summaries, and the execution work that produces the result.">
   <meta slot="head" name="robots" content="noindex" />
   <article class="visual-essay relational-design schema-sketches">
     <header class="essay-header">
       <p class="eyebrow">Databases and storage · Working draft</p>
-      <h1>Queries and joins</h1>
-      <div class="essay-meta"><span>Querying your data · 1 of 2</span><a href="/learn/databases/relational/">Relational introduction ↗</a><a href="/learn/databases/relational/large-results/">Next: Pagination and large results →</a></div>
+      <h1>Querying your data</h1>
+      <div class="essay-meta"><span>Relational deep dive</span><a href="/learn/databases/relational/">Relational introduction ↗</a><a href="/learn/databases/relational/transaction-boundaries/">Next: Transactions and concurrency →</a></div>
     </header>
     <p>The tables in a relational database are arranged to store information without having to repeat it everywhere. A customer’s details can live in one table, their orders in another, and the contents of each order in a third. That is useful when we change the information, but it rarely matches the way we want to read it. An order history needs details from several tables. A sales report may need totals that are not stored in any table at all.</p>
     <p>A <strong>query</strong> describes the result we want the database to produce from that stored information. We can ask for particular records, combine related records, or calculate summaries. The same tables can support many different questions without needing a new stored copy for each answer.</p>
     <p>SQL is the language we use to express those questions. A <code>SELECT</code> query produces a result with columns and rows, much like a table. The important difference is that we decide what those rows represent. They might be individual purchases, customers who made a purchase, or monthly sales totals. Understanding that choice makes it much easier to write a query and recognise when its answer is wrong.</p>
-    <p>We’ll start with a query that reads one table, then bring in related information using a <strong>join</strong>, and finally calculate totals. The examples use PostgreSQL 18 and the small shop from the <a href="/learn/databases/relational/">relational introduction</a>. We assume you know what tables, columns and keys are; we’ll introduce the SQL as we use it.</p>
+    <p>We’ll start with a query that reads one table, bring in related information using a <strong>join</strong>, and calculate totals. Then we’ll follow the engine’s work: how it finds matching rows, why two ways of producing the same answer can do different amounts of work, and what an execution plan tells us. The examples use PostgreSQL 18 and the small shop from the <a href="/learn/databases/relational/">relational introduction</a>. We assume you know what tables, columns and keys are; we’ll introduce the SQL as we use it.</p>
+
+    <nav class="query-contents" aria-label="In this deep dive"><p>In this article</p><ol><li><a href="#first-query">A query and its result</a></li><li><a href="#joins">Joins and matching rows</a></li><li><a href="#missing-matches">Missing matches</a></li><li><a href="#aggregation">Grouping and totals</a></li><li><a href="#multiplied-rows">When a join inflates a total</a></li><li><a href="#existence">Asking whether a match exists</a></li><li><a href="#execution">From the answer to the work</a></li><li><a href="#different-work">Different ways to find the same rows</a></li><li><a href="#plan-choice">Why the plan can change</a></li></ol></nav>
 
     <section id="first-query">
       <h2>A query and its result</h2>
@@ -213,12 +233,58 @@ VALUES ('S1', 'O13'), ('S2', 'O13');`;
       <h2>Checking an answer</h2>
       <p>When a result looks wrong, expose the identities before hiding them in a total. In the shipment query, selecting the line number and shipment ID made the four combinations visible. Looking only at €88 would have left the multiplication unexplained.</p>
       <p>Then follow one familiar record. Does it have no match, one match, or several? Does a filter intentionally remove it? After grouping, which original rows contribute to its total? Small examples with an empty order, two lines, and two related shipments reveal mistakes that a large set of ordinary orders can conceal.</p>
-      <p>This establishes what the query means. How the engine finds those rows belongs to execution plans and indexing; how we read a large answer in pieces adds another concern. Even a correct result can lose or repeat records when we paginate it while the underlying data changes.</p>
+      <p>At this point we know what our query should return. That gives us a way to judge an execution strategy: however it finds the answer, it must preserve the same matches, missing rows and contributions to each total. We can now follow the work without losing sight of what it is for.</p>
     </section>
-    <nav class="series-reading" aria-label="Querying your data sequence"><p><a href="/learn/databases/relational/">← Relational databases</a></p><p><a href="/learn/databases/relational/large-results/">2. Pagination and large results →</a><span>Choose an order and a continuation rule, then decide what changes between reads should mean.</span></p></nav>
+    <section id="execution">
+      <h2>From the answer to the work</h2>
+      <p>Return to O13’s receipt. We need its two lines, the matching product names, and each line’s amount, ordered by line number. We have already seen all the parts of this query:</p>
+      <Sql code={receiptQuery} label="The receipt whose execution we will follow" />
+      <p>One possible method is to read all three purchase lines and keep the two for O13. For each of those, search the products for its ID. Calculate the amount from the line’s quantity and agreed price, then put the two results in line-number order. This produces Blue mug at €20 and Bowl at €24, exactly as before.</p>
+      <p>Notice that we can discard O12’s line before looking up its product. For this inner join, that changes the work without changing the answer: O12 could never satisfy the order filter. Earlier, moving a cutoff across a left join changed which customers survived. A database can rearrange work only when the rearrangement preserves the query’s meaning.</p>
+      <p>The engine chooses an <strong>execution plan</strong>: a set of operations that will produce the result. A plan might read a whole table, look up selected records through an index, join two streams of rows, or sort an intermediate answer. We can ask PostgreSQL to show those operations by putting <code>EXPLAIN</code> before the query.</p>
+      <p>Plain <code>EXPLAIN</code> shows the proposed plan and estimates. <code>EXPLAIN ANALYZE</code> actually runs the statement and adds observed information. For our receipt, use the command below. The options hide estimated costs and timing detail so we can concentrate on rows and repetition.</p>
+      <Sql code={'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)\n' + receiptQuery} label="Execute the receipt SELECT and report its plan" />
+      <p>Here is the plan observed on our small practice dataset after gathering statistics with <code>ANALYZE products; ANALYZE order_lines;</code>. Buffer and memory details have been omitted from this excerpt. Your database may choose a different route; the result still has to be the same.</p>
+      <div class="sql-scroll" tabindex="0" role="region" aria-label="Observed PostgreSQL receipt plan"><pre><code>{receiptPlan}</code></pre></div>
+      <p>The indentation shows which operation supplies rows to another. Start with <code>Seq Scan on order_lines</code>. “Seq” means sequential: it scans the table, applying the O13 condition. It returns two rows and removes one. The <code>actual rows</code> value counts rows emitted by this operation, so the two returned rows alone do not tell us that it inspected three.</p>
+      <p>The other branch reads the two products. <code>Materialize</code> retains the rows it reads so the join can revisit them without rescanning the product table each time. The <strong>nested loop</strong> takes one line at a time and seeks its matching product in that retained input. Line 1 finds P7; line 2 passes P7 and finds P8. The products’ unique key lets the join stop searching once it has a match.</p>
+      <figure class="receipt-trace paper-surface">
+        <figcaption><strong>Following O13 through this plan</strong><br />The lines and products arrive through separate branches. The join combines them; sorting supplies the requested order.</figcaption>
+        <div class="trace-inputs"><div><strong>Purchase lines</strong><span>O12/1 · O13/1 · O13/2</span><span>Filter order_id = O13</span><b>2 lines continue ↓</b></div><div><strong>Products</strong><span>P7 Blue mug · P8 Bowl</span><span>Read once, retain for reuse</span><b>2 names available ↓</b></div></div>
+        <div class="trace-join"><strong>Match each line’s product ID</strong><span>O13/1 + P7 → Blue mug, €20</span><span>O13/2 + P8 → Bowl, €24</span></div>
+        <div class="trace-sort">↓ Sort by line number → 2 receipt rows</div>
+      </figure>
+      <p>The materialized input reports <code>rows=1.50 loops=2</code>. It ran twice, returning one product row on the first pass and two on the second: three in total, averaging 1.5 per pass. Fractional row counts in a repeated operation are averages, not fractions of a record. The nested loop discards the one nonmatching pair, so it emits two rows overall.</p>
+      <p>Finally, <code>Sort</code> orders those two rows by <code>l.line_no</code>. It sits at the top because it receives the join’s output. This is a tree of dependencies, not a list to execute from its first printed line downwards.</p>
+      <p>Use <a href={executionExamples} download="query-execution.sql">the receipt execution script</a> after the article’s practice setup to reproduce the query and collect your own plan. Remember that <code>EXPLAIN ANALYZE</code> executes its statement: adding it to an <code>UPDATE</code> would perform the update. Here we are observing a read in a practice database.</p>
+    </section>
+
+    <section id="different-work">
+      <h2>Different ways to find the same rows</h2>
+      <p>Our catalogue contains two products. Looking through them again for each receipt line hardly seems troublesome. Imagine instead that the catalogue has 200 products and the receipt has six lines. A simple method that compares every line against every product performs 1,200 ID comparisons. Most of those products are irrelevant to the receipt, but the method keeps considering them.</p>
+      <p>We could build a temporary lookup from product ID to product name. Reading the 200 products once fills that lookup; each of the six lines then asks it for the matching ID. A <strong>hash join</strong> uses this kind of arrangement: organise one input by its join key, then use the other input’s keys to find candidate matches. The lookup has a construction and memory cost of its own.</p>
+      <p>Try the two approaches below. This is deliberately simpler than the observed PostgreSQL plan: the scanning method always checks the whole catalogue, even after it finds a match. That makes the repeated work visible. Both methods must still produce the same receipt.</p>
+      <RDQueryWorkLab />
+      <p>Adding unrelated products enlarges the search without enlarging the answer. Adding receipt lines repeats that search. The lookup method separates those two kinds of work: catalogue growth adds entries to build, while receipt growth adds probes. But when there is only one line, the lookup still has to be built. It does not become free just because each later probe is convenient.</p>
+      <p>There is a third possibility in our actual shop. The primary key on products already has an <strong>index</strong>, a maintained structure that helps locate a row from its key. A nested-loop plan could use the line’s product ID to search that index, rather than revisit every product. With only a few lines to look up, this can avoid both repeated full scans and building a temporary lookup over the whole catalogue.</p>
+      <p>“Nested loop” therefore does not by itself tell us that a plan is wasteful. What matters is what the inner operation does and how often it runs. A few selective index lookups and thousands of full rescans can share that same outer label. Conversely, scanning a tiny products table can cost less than traversing its index and fetching the corresponding records.</p>
+      <p>Another strategy, a <strong>merge join</strong>, works with inputs ordered by the matching key. It can advance through both ordered streams, combining matching keys without restarting at the beginning each time. If the inputs are not already in a suitable order, obtaining that order adds work. PostgreSQL chooses among these possibilities using what it knows about the query, the available access paths and the expected data.</p>
+    </section>
+
+    <section id="plan-choice">
+      <h2>Why the plan can change</h2>
+      <p>A receipt and a month’s sales report can join the same tables but require very different amounts of data. A receipt may need two product lookups. A report may touch most lines and products. Repeating a small lookup many times can eventually become more expensive than reading a larger input once. The most useful strategy depends on how much work reaches each stage.</p>
+      <p>The number of rows is called <strong>cardinality</strong>. Earlier we used it to catch a correctness problem: two lines and two shipments became four pairs. The planner must also estimate cardinality before running a query, because that affects whether repeated lookups, a hash table, sorting, or a scan are likely to be worthwhile.</p>
+      <p>PostgreSQL gathers statistics about tables, including approximate sizes and value distributions. <code>ANALYZE</code> refreshes that information. If a product is unusually popular, assuming every product has equally many purchases can underestimate how many lines will match it. If two conditions are related, treating them as independent can also give a poor estimate. Statistics improve the prediction; they cannot turn it into foreknowledge.</p>
+      <p>When looking at a fuller <code>EXPLAIN ANALYZE</code>, compare estimated rows with observed rows at the operation where they begin to diverge. An estimate of two outer rows followed by 20,000 actual rows could explain why a seemingly cheap inner lookup was repeated far more often than expected. The plan’s cost numbers are estimates in planner units, not milliseconds or a bill for the query.</p>
+      <p>Grouping and sorting also need work. Our order summary must read the contributing line amounts before it knows each total. An engine might accumulate groups in a hash table, or gather equal keys together and calculate each group in turn. A sort must establish the requested ordering; enough data can exceed the memory available to that operation and require temporary disk work. Returning only a small summary does not imply that little input was processed.</p>
+      <p>These observations give us a useful sequence when a query disappoints. First establish that the answer means what we intend. Then inspect how many rows reach each operation, how often an operation repeats, and which access path it uses. A faster route to the inflated €88 shipment total would still be the wrong answer. A correct €44 total gives us a result to preserve as we change the work.</p>
+      <p>Reading that answer in several requests introduces another decision: which ordering and continuation rule keep the pages useful while data changes? That is the subject of <a href="/learn/databases/relational/large-results/">Pagination and large results</a>. When the application starts changing related records, <a href="/learn/databases/relational/transaction-boundaries/">Transactions and concurrency</a> develops what must succeed together and what overlapping requests can observe.</p>
+    </section>
+    <nav class="series-reading" aria-label="Further relational reading"><p><a href="/learn/databases/relational/modelling/">← Designing your data</a><span>How the stored facts and their rules support the questions we can ask.</span></p><p><a href="/learn/databases/relational/transaction-boundaries/">Next main deep dive: Transactions and concurrency →</a><span>Keep related changes correct as requests overlap and fail.</span></p><p><a href="/learn/databases/relational/large-results/">Pagination and large results →</a><span>A supporting article on ordering and continuation across changing data.</span></p><p><a href="/learn/databases/relational/query-execution/">How a query runs</a> (planned)<span>Further depth on access paths, join strategies, estimates and execution plans.</span></p><p><a href="/learn/databases/relational/indexes/">Indexes</a> (planned)<span>Connect index structure to query choices and the cost of maintaining it.</span></p></nav>
     <section class="essay-sources" id="further-reading">
       <h2>Sources and further reading</h2>
-      <p>Working draft, researched 4 October 2026. The shop is an invented teaching example. SQL results were checked with PostgreSQL 18.3 in PGlite 0.5.8; diagrams explain those results rather than execution plans.</p>
+      <p>Working draft, expanded and checked 14 October 2026. The shop is an invented teaching example. SQL results and the receipt plan were checked with PostgreSQL 18.3 in PGlite 0.5.8. The interactive experiment is a separate browser model of join work, not a PostgreSQL benchmark.</p>
       <ul>
         <li><a href="https://www.postgresql.org/docs/18/tutorial-select.html">PostgreSQL 18: querying a table</a> and <a href="https://www.postgresql.org/docs/18/tutorial-join.html">joins</a> — starting with a statement and following the records into its answer.</li>
         <li><a href="https://www.postgresql.org/docs/18/queries-table-expressions.html">Table expressions</a> — matching rows, retaining unmatched rows, and the distinction between join conditions and later filters.</li>
@@ -226,8 +292,26 @@ VALUES ('S1', 'O13'), ('S2', 'O13');`;
         <li><a href="https://www.postgresql.org/docs/18/queries-select-lists.html">Select lists and DISTINCT</a> — what output expressions and duplicate removal actually do.</li>
         <li><a href="https://www.postgresql.org/docs/18/functions-subquery.html">Subquery expressions</a> — existence tests and their relationship to an outer query.</li>
         <li><a href="https://www.postgresql.org/docs/18/libpq-exec.html#LIBPQ-PQEXECPARAMS">Passing query parameters</a> — PostgreSQL’s client-library example of sending values separately from statement text.</li>
+        <li><a href="https://www.postgresql.org/docs/18/using-explain.html">Using EXPLAIN</a> — reading operation trees, observed rows and repeated operations.</li>
+        <li><a href="https://www.postgresql.org/docs/18/planner-optimizer.html">Planner and optimizer</a> — how scans, nested loops, hash joins and merge joins supply alternative routes.</li>
+        <li><a href="https://www.postgresql.org/docs/18/planner-stats.html">Statistics used by the planner</a> — the information behind row estimates and why related conditions can be difficult to predict.</li>
         <li><a href="https://www.postgresql.org/docs/18/functions-comparison.html">Comparison functions</a> — why missing values need explicit tests.</li>
       </ul>
     </section>
   </article>
 </Base>
+<style>
+  .query-contents { border-block:1px solid var(--color-rule); padding:1rem 0; margin:2rem 0; font-family:var(--font-sans); }
+  .query-contents p { font-size:.8rem; color:var(--color-text-secondary); margin:0 0 .6rem; }
+  .query-contents ol { display:grid; grid-template-columns:1fr 1fr; gap:.5rem 1.7rem; padding-left:1.3rem; margin:0; font-size:.82rem; }
+  .receipt-trace { border:1px solid var(--color-rule); padding:1.2rem; margin:2rem 0; font: .85rem/1.65 var(--font-sans); }
+  .receipt-trace figcaption { margin:0 0 1rem; }
+  .trace-inputs { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+  .trace-inputs > div { border-top:2px solid var(--teal); padding:.7rem; background:var(--color-surface-alt); }
+  .trace-inputs > div:last-child { border-color:var(--purple); }
+  .receipt-trace span,.receipt-trace b,.receipt-trace strong { display:block; }
+  .receipt-trace b { font-weight:500; color:var(--color-text-secondary); margin-top:.6rem; }
+  .trace-join { margin-top:1rem; padding:.9rem; border:1px solid var(--color-rule-strong); }
+  .trace-sort { margin-top:.8rem; text-align:center; }
+  @media(max-width:550px) { .query-contents ol,.trace-inputs { grid-template-columns:1fr; } .receipt-trace { padding:1rem; } }
+</style>
