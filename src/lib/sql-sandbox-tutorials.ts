@@ -1,8 +1,13 @@
+import { foundationsTutorials } from './sql-lessons/foundations.ts';
+import { performanceTutorials } from './sql-lessons/performance.ts';
+
 export type TutorialStep = {
   title: string;
   instruction: string;
   sql: string;
   expected: string;
+  /** SQLSTATE deliberately produced by this step; edited SQL may behave differently. */
+  expectedError?: string;
 };
 
 export type Tutorial = {
@@ -26,7 +31,7 @@ RETURNING product_id, available;`;
 const insertOrder = `INSERT INTO orders (order_id, customer_id, placed_at)
 VALUES ('O14', 'C4', '2026-10-15 11:00:00+00');`;
 
-export const sandboxTutorials: Tutorial[] = [
+const introductoryTutorials: Tutorial[] = [
   {
     id: 'queries',
     title: 'From product IDs to an order',
@@ -94,6 +99,7 @@ RETURNING order_id, line_no, quantity;`,
       },
       {
         title: 'Send a value the rule excludes',
+        expectedError: '23514',
         instruction: 'Run this deliberately invalid update. An error is the intended result: zero does not satisfy quantity > 0. The database checks the value even if the application forgot to validate it.',
         sql: `UPDATE order_lines SET quantity = 0
 WHERE order_id = 'O12' AND line_no = 1
@@ -184,6 +190,7 @@ VALUES ('O14', 1, 'P7', 2, 20.00);`,
       },
       {
         title: 'Send the wrong line quantity',
+        expectedError: '23514',
         instruction: 'Run this deliberately invalid line insert. The value 0 fills quantity, which must be positive. In application code, the awaited query would throw and skip the later COMMIT call.',
         sql: `INSERT INTO order_lines
   (order_id, line_no, product_id, quantity, unit_price)
@@ -192,6 +199,7 @@ VALUES ('O14', 1, 'P7', 0, 20.00);`,
       },
       {
         title: 'Observe the failed transaction',
+        expectedError: '25P02',
         instruction: 'Try this ordinary read before rolling back. This is a deliberate extra experiment: a handler would normally move straight to its rollback error handler after the rejection.',
         sql: "SELECT available FROM stock WHERE product_id = 'P7';",
         expected: 'An error with SQLSTATE 25P02 says the transaction is aborted. Even this read is refused until the failed transaction is ended. It is not evidence that the stock row is missing.',
@@ -210,4 +218,10 @@ VALUES ('O14', 1, 'P7', 0, 20.00);`,
       },
     ],
   },
+];
+
+export const sandboxTutorials: Tutorial[] = [
+  ...introductoryTutorials,
+  ...foundationsTutorials,
+  ...performanceTutorials,
 ];

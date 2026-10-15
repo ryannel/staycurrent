@@ -129,19 +129,22 @@ export const relationalCollection: RelationalGroup[] = [
         "slug": "slow-queries",
         "title": "Understanding database performance",
         "description": "Trace a request through application work, query execution and waits, then verify an improvement.",
-        "scope": "Begin with connections, generated queries and round trips; use plans and observations to distinguish work from waiting. Account for changing statistics and upkeep, and validate changes under representative conditions."
+        "scope": "Begin with connections, generated queries and round trips; use plans and observations to distinguish work from waiting. Account for changing statistics and upkeep, and validate changes under representative conditions.",
+        "status": "draft"
       },
       {
         "slug": "request-cost",
         "title": "The database work behind an application request",
         "description": "Trace the queries, connections, and round trips created by an application request.",
-        "scope": "Inspect ORM-generated work, repeated queries, batching, and transaction scope. Keep application request cost distinct from one query’s execution plan."
+        "scope": "Inspect ORM-generated work, repeated queries, batching, and transaction scope. Keep application request cost distinct from one query’s execution plan.",
+        "status": "draft"
       },
       {
         "slug": "reporting",
         "title": "Reporting on operational data",
         "description": "Understand when reports interfere with everyday requests.",
-        "scope": "Compare aggregation and precomputed results within an existing database. Use measured workload pressure to motivate a separate analytical system."
+        "scope": "Compare aggregation and precomputed results within an existing database. Use measured workload pressure to motivate a separate analytical system.",
+        "status": "draft"
       }
     ]
   },

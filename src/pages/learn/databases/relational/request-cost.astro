@@ -1,0 +1,87 @@
+---
+import Base from '../../../../layouts/Base.astro';
+import Sql from '../../../../components/explainers/querying/Sql.astro';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+const batch = `SELECT order_id, line_no, quantity, unit_price
+FROM request_lines
+WHERE order_id = ANY (ARRAY[101, 102, 103])
+ORDER BY order_id, line_no;`;
+const fanout = `SELECT o.order_id, l.line_no, p.payment_id,
+       l.quantity * l.unit_price AS line_amount,
+       p.amount AS payment_amount
+FROM request_orders AS o
+LEFT JOIN request_lines AS l ON l.order_id = o.order_id
+LEFT JOIN request_payments AS p ON p.order_id = o.order_id
+ORDER BY o.order_id, l.line_no, p.payment_id;`;
+const totals = `SELECT o.order_id, coalesce(l.total, 0) AS ordered,
+       coalesce(p.total, 0) AS paid
+FROM request_orders AS o
+LEFT JOIN (
+  SELECT order_id, sum(quantity * unit_price) AS total
+  FROM request_lines GROUP BY order_id
+) AS l ON l.order_id = o.order_id
+LEFT JOIN (
+  SELECT order_id, sum(amount) AS total
+  FROM request_payments GROUP BY order_id
+) AS p ON p.order_id = o.order_id
+ORDER BY o.order_id;`;
+---
+<Base title="The database work behind an application request" description="Follow ORM-generated queries, batching and join fan-out through an order-list response, then choose connection and transaction boundaries.">
+ <meta slot="head" name="robots" content="noindex" />
+ <article class="visual-essay relational-design">
+  <header class="essay-header"><p class="eyebrow">Databases and storage · Working draft</p><h1>The database work behind an application request</h1><div class="essay-meta"><span>Relational further reading</span><a href="/learn/databases/relational/slow-queries/">Understanding database performance ↗</a></div></header>
+  <p>An application request usually asks for something larger than a table row: an order screen, a receipt, a dashboard. The application turns that request into SQL, obtains connections, waits for results and assembles the response. Its cost depends on that whole sequence. Ten quick queries sent one after another can take longer than one query doing more work inside the database.</p>
+  <p>Query generation changes the sequence without always making it obvious in the source code. An object-relational mapper, or <strong>ORM</strong>, maps records to application objects and can generate SQL for their relationships. Loading an order’s lines may use records already fetched, issue another query immediately, or wait until code accesses the property. The generated SQL tells us which behaviour the application actually uses.</p>
+  <p>We will build an order-list response and change how it fetches related records. The example uses a tiny dataset so we can derive every row. The same arithmetic tells us what to inspect when the list grows.</p>
+  <nav aria-label="In this article"><ol><li><a href="#repeated">Repeated relationship queries</a></li><li><a href="#batching">Batching the children</a></li><li><a href="#joins">Joining several collections</a></li><li><a href="#connections">Connections and consistency</a></li><li><a href="#checking">Checking the response</a></li></ol></nav>
+
+  <section id="repeated"><h2>Repeated relationship queries</h2>
+   <p>Our handler serves a staff screen showing order headers and their lines. It first checks the caller’s permission and selects a bounded page of authorised orders. The response must keep the selected order even when it has no lines. For this example the parent query has returned 101 for Ada, 102 for Lin and 103 for Sam.</p>
+   <p>Ada’s order has two lines: two items at €10 and one at €5, totalling €25. Lin has one item at €8. Sam’s order is still empty. The <a href="/learn/databases/relational/sandbox/?tutorial=request-batching">request-batching lesson</a> creates these exact records independently of the sandbox’s default shop.</p>
+   <p>Suppose the handler then walks through its order objects and accesses each one’s unloaded lines. It sends a line query for 101, awaits the result, sends one for 102, awaits it, and finally asks for 103. We have one parent query plus three child queries. With <em>N</em> parent orders, the pattern becomes <strong>N + 1 queries</strong>.</p>
+   <p>The individual lookups may all use good indexes and return promptly. The handler still pays for each exchange and for decoding each response. In an illustrative deployment where each sequential exchange contributes five milliseconds before useful execution time, twenty child lookups add about a hundred milliseconds of that delay. This is arithmetic for the stated example, not a latency claim about an ORM or database product.</p>
+   <p>To find this pattern, trace one request from entry to response and count repeated SQL shapes. Capture the number of calls as well as the duration of the slowest query. If the count grows with the page size, inspect relationship loading. ORM settings called eager loading or prefetching may help, but those names do not establish whether the library produces a join, several batched queries, or a different result shape. Inspect what it sends.</p>
+  </section>
+
+  <section id="batching"><h2>Batching the children</h2>
+   <p>Once the handler has the three authorised order IDs, it can ask for their lines together:</p>
+   <Sql code={batch} label="Fetch the selected orders’ lines in one batch" />
+   <p><code>ANY</code> tests membership in the supplied PostgreSQL array. Here the array is written literally so you can run it. Application code should bind the array as a parameter rather than assemble SQL from user input. The handler derives it from its authorised parent results; accepting arbitrary IDs supplied by the browser would change the access boundary.</p>
+   <p>This returns three rows: two for 101 and one for 102. Initialise an empty line list for every selected order, then append each result to the list named by <code>order_id</code>. Sam’s list stays empty. Keep the parent query’s order when constructing the response; the child query’s ordering helps arrange each list but does not replace the parent order.</p>
+   <p>We now have two commands: one for the parents and one for all their lines. The database still needs to locate the three lines, and the application still receives their contents. The saving is the repeated query setup and exchanges. As the page grows, this batch grows with it, so bound the parent page and request only the child fields the response needs.</p>
+   <p>A page of twenty orders is not necessarily a small response if one order has a hundred thousand lines. Decide whether the screen needs every line, just a total, or a separately paginated detail view. Batching an unbounded result into one response can exchange a latency problem for a memory problem. The <a href="/learn/databases/relational/large-results/">large-results article</a> explains continuation and export boundaries.</p>
+   <p>Launching all three original queries concurrently is another possible change, but it does not remove their work. Through a pool it may require three simultaneous connections per request. Under many requests that can exhaust the pool or saturate the database sooner. On one connection, a driver does not acquire three independent database workers just because application promises are awaited together. Choose concurrency based on the connection and driver behaviour actually in use.</p>
+  </section>
+
+  <section id="joins"><h2>Joining several collections</h2>
+   <p>Could one join fetch the entire response? For one child collection it can be useful, but parent fields repeat for each child. Joining two independently repeating collections creates another effect.</p>
+   <p>Add payments to the screen. Ada paid €10 and then €15, so order 101 has two payment rows. Lin paid €8 once. Sam has no payment. A join matches each order line to every payment with the same order ID:</p>
+   <Sql code={fanout} label="Join lines and payments to the same order" />
+   <p>Ada’s two lines each match two payments. Her order therefore produces four combinations:</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-label="Four combinations for Ada's order"><table><thead><tr><th>Line</th><th>Line amount</th><th>Payment</th><th>Payment amount</th></tr></thead><tbody><tr><td>1</td><td>€20</td><td>1</td><td>€10</td></tr><tr><td>1</td><td>€20</td><td>2</td><td>€15</td></tr><tr><td>2</td><td>€5</td><td>1</td><td>€10</td></tr><tr><td>2</td><td>€5</td><td>2</td><td>€15</td></tr></tbody></table></div>
+   <p>Summing the displayed line amounts gives €50 even though she ordered €25. Summing payment amounts also gives €50. The query has not invented a line or payment; it has repeated each one in the valid combinations requested by the joins. Lin adds one result row and the left joins preserve Sam with null child fields, giving six rows overall.</p>
+   <p>An ORM may collapse these rows back into three order objects, but the database still constructs them, the connection still transfers them and the library still processes them. For an order with twenty lines and ten payments, the join creates two hundred combinations. Counting only SQL commands would miss that increase.</p>
+   <p>If the response needs all individual children, use a parent query and separate bounded batches for lines and payments. That is three commands with no cross-product between the child collections. If the response needs only amounts, reduce each collection to one row per order before joining:</p>
+   <Sql code={totals} label="Calculate each total before joining it to the order" />
+   <p>The result is three rows: 101 has ordered €25 and paid €25; 102 has €8 and €8; 103 has €0 and €0. <code>COALESCE</code> turns an absent aggregate into the screen’s chosen zero convention. This example aggregates every order because there are only three. For a large system, restrict each aggregate to the selected authorised IDs, then inspect the actual plan.</p>
+   <p><code>SUM(DISTINCT amount)</code> would not be a general repair. If two legitimate payments were both €10, deduplicating values would erase one. The repair follows record identity and the intended result’s <strong>grain</strong>: one row per order, one per line, or one per payment. The <a href="/learn/databases/relational/query-results/">querying article</a> develops that reasoning for joins and grouping.</p>
+   <p>In the sandbox, add Ada’s third payment of €2. Predict both results before rerunning them. The raw join now creates six combinations for Ada. The preaggregated response keeps her ordered amount at €25 and changes only paid to €27. That is the behaviour the screen needs.</p>
+  </section>
+
+  <section id="connections"><h2>Connections and consistency</h2>
+   <p>Splitting a response into several queries also raises a question about time. Another request can commit changes between the parent query and the child query. At PostgreSQL Read Committed, ordinary statements take their own snapshots, even inside one explicit transaction. A second query might therefore see a new line that the first query’s view did not yet contain.</p>
+   <p>For a browsing screen, that may be acceptable. For a document that must represent one consistent point in time, choose a suitable single statement or a transaction with the required snapshot behaviour, such as PostgreSQL Repeatable Read for these ordinary reads. The <a href="/learn/databases/relational/isolation/">isolation article</a> explains the exact promise. Batching is a performance change; it should not silently change the consistency the response requires.</p>
+   <p>An explicit transaction belongs to one database connection. The handler must acquire that connection, send <code>BEGIN</code>, perform its statements there, then send <code>COMMIT</code> or <code>ROLLBACK</code> before returning the connection. A pool-level convenience method that can choose a new connection for every query cannot establish that sequence. The <a href="https://node-postgres.com/features/transactions">node-postgres transaction documentation</a> gives a concrete driver example.</p>
+   <p>Keep connection ownership visible in application code. A cleanup path must release an acquired client on success and failure, or the pool can eventually have no clients left to lend. A failed transaction must be resolved before that connection is reused. Driver and pool behaviour varies, so use the driver’s documented cleanup pattern; <a href="https://node-postgres.com/features/pooling">node-postgres pooling</a> shows the acquire-and-release boundary.</p>
+   <p>A connection need not remain occupied while the handler formats a large response or contacts an unrelated service. Once all required database work and its transaction have ended, return it. If a later command depends on an external response, design the workflow explicitly rather than stretching an open transaction across the whole HTTP request. Otherwise a slow external call can retain both a scarce connection and database locks.</p>
+  </section>
+
+  <section id="checking"><h2>Checking the response</h2>
+   <p>Compare the old and new responses before comparing their speed. Use an empty parent, multiple children, repeated equal amounts and a parent with unusually many children. Verify ordering, null handling, permissions and totals. In our example, the third payment should change paid but never ordered, and Sam should remain in the list.</p>
+   <p>Then compare query count, returned rows and bytes, connection occupancy and endpoint latency under the same traffic. The batched version should stop adding one SQL command per extra parent. The separate child batches should avoid multiplying lines by payments. If a single large aggregate scans unrelated customers, its low query count has not delivered the intended saving.</p>
+   <p>Keep the database plan and the application trace together. The plan explains how each statement gets its rows. The trace explains how often that statement runs, who waits for its answer and how long the handler owns the connection. Both are needed to explain the cost of the screen.</p>
+  </section>
+  <section class="series-reading" aria-labelledby="reading"><h2 id="reading">Further reading</h2><p><a href="/learn/databases/relational/slow-queries/">Understanding database performance →</a><span>Use waits, plans and representative traffic to evaluate the complete service.</span></p><p><a href="/learn/databases/relational/large-results/">Pagination and large results →</a><span>Choose the continuation and consistency rules for bounded responses and exports.</span></p><p><a href="/learn/databases/relational/sandbox/?tutorial=request-batching">Try the request-batching lesson →</a><span>Compare batched children, a multiplying join and correct independent totals.</span></p></section>
+ </article>
+</Base>

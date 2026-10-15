@@ -18,6 +18,8 @@ Array.from({length:50},()=>"SELECT 1;").join('')+"SELECT 1/0;",
 "SELECT repeat('x',2001) AS value;",
 "SELECT generate_series(1,201);",
 "COPY (SELECT 42 AS answer) TO STDOUT;",
+"SELECT " + Array.from({length:45},(_,i)=>`NULL AS c${i}`).join(",") + " FROM generate_series(1,200);",
+"SELECT repeat('x',2000) AS value FROM generate_series(1,200); SELECT 42;",
 ];
 for(let i=0;i<queries.length;i++){
  await self.onmessage({data:{type:'run',id:i+1,sql:queries[i]}});
@@ -31,6 +33,8 @@ for(let i=0;i<queries.length;i++){
  if(i===5) assert.equal(x.outputs[0].cellsTruncated,true);
  if(i===6) { assert.equal(x.outputs[0].rows.length,200);assert.equal(x.outputs[0].truncated,true); }
  if(i===7) assert.ok(x.outputs.some(o=>o.text?.includes('COPY output is not displayed')));
+ if(i===8) { assert.equal(x.outputs[0].fields.length,40); assert.ok(x.outputs[0].rows.length*40<=5000); assert.equal(x.outputs[0].truncated,true); }
+ if(i===9) { assert.equal(x.outputs[1].truncated,true); assert.equal(x.outputs[1].rows.length,0); }
  console.log(JSON.stringify({case:i+1,status:x.status,responses:x.outputs.length,omitted:x.omitted,passed:true}));
 }
 process.exit();

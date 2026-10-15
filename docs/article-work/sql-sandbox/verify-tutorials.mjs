@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PGlite } from '/private/tmp/staycurrent-design-sql/node_modules/@electric-sql/pglite/dist/index.js';
+import { PGlite } from '@electric-sql/pglite';
 import { sandboxTutorials } from '../../../src/lib/sql-sandbox-tutorials.ts';
 const seed = readFileSync('docs/article-work/designing-data/schema.sql', 'utf8') + `
 CREATE TABLE stock (
@@ -10,7 +10,7 @@ CREATE TABLE stock (
 INSERT INTO stock (product_id, available) VALUES ('P7', 3);`;
 const expectedErrors = { 'constraints:2': '23514', 'rollback:3': '23514', 'rollback:4': '25P02' };
 const summaries = [];
-for (const tutorial of sandboxTutorials) {
+for (const tutorial of sandboxTutorials.filter(item => ['queries', 'constraints', 'checkout', 'rollback'].includes(item.id))) {
   const db = new PGlite(); await db.exec(seed);
   const steps = [];
   for (const [index, step] of tutorial.steps.entries()) {

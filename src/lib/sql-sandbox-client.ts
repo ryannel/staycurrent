@@ -24,6 +24,7 @@ let changed = false;
 let runNumber = 0;
 let loadedSQL = editor.value;
 let sentSQL = '';
+let ranStep = false;
 let timer: ReturnType<typeof setTimeout>;
 
 const node = (tag: string, text: string, className?: string) => {
@@ -38,9 +39,10 @@ function controls() {
   start.disabled = busy;
   previous.disabled = busy || !tutorial || step === 0;
   next.disabled = busy || !tutorial || step === tutorial.steps.length - 1;
-  stop.hidden = !busy || !ready;
+  stop.hidden = !busy;
+  stop.textContent = ready ? 'Stop and discard session' : 'Cancel loading';
   const proceed = element<HTMLButtonElement>('continue');
-  proceed.hidden = !tutorial || step === tutorial.steps.length - 1 || !results.children.length;
+  proceed.hidden = !tutorial || step === tutorial.steps.length - 1 || !ranStep;
   proceed.disabled = busy;
   root.querySelectorAll<HTMLButtonElement>('[data-sample],[data-schema]').forEach(button => button.disabled = busy);
 }
@@ -58,6 +60,7 @@ function showStep(checkEdits = false, proposedStep = step) {
   const item = tutorial.steps[proposedStep];
   if (!loadSQL(item.sql, checkEdits)) return;
   step = proposedStep;
+  ranStep = false;
   guide.hidden = false;
   element('step-count').textContent = `Step ${step + 1} of ${tutorial.steps.length}`;
   element('guide-title').textContent = tutorial.title;
@@ -81,6 +84,13 @@ function preview() {
   element('preview').textContent = selected?.description || 'Start with customers, products, orders, order lines and stock. Change the data, try your own queries and reset whenever you want.';
 }
 function discard(message: string) {
+  if (busy && ready && sentSQL) {
+    const pending = node('section', '', 'sandbox-run');
+    pending.append(node('h3', `Run ${runNumber} stopped`), node('p', 'The disposable session was discarded. This is the SQL that was sent; no successful response was received.'), node('pre', sentSQL));
+    results.prepend(pending);
+    while (results.children.length > 5) results.lastElementChild?.remove();
+    element('empty').hidden = true;
+  }
   clearTimeout(timer);
   worker?.terminate(); worker = undefined;
   ready = busy = false;
@@ -94,7 +104,7 @@ function begin(selected: Tutorial | undefined, ask = true) {
   if (ask && (changed || editor.value !== loadedSQL) && !confirm('Restore the original shop? This discards your database changes, edited SQL and response history.')) return;
   worker?.terminate(); clearTimeout(timer);
   ready = false; busy = true; changed = false; runNumber = 0;
-  tutorial = selected; step = 0;
+  tutorial = selected; step = 0; ranStep = false;
   picker.value = selected?.id || ''; preview();
   results.replaceChildren(); element('empty').hidden = false;
   element('empty').textContent = 'No SQL sent yet. Edit a query above and choose Run SQL.';
@@ -120,7 +130,7 @@ function begin(selected: Tutorial | undefined, ask = true) {
         ready = true; busy = false; showTransaction('I');
         status.textContent = selected ? 'Shop ready. Read the first step, then choose Run SQL.' : 'Shop ready. Edit the query or choose a sample, then Run SQL.';
       } else if (data.type === 'result') {
-        busy = false; showTransaction(data.status);
+        busy = false; ranStep = true; showTransaction(data.status);
         renderResults(data);
       }
       controls();
@@ -135,7 +145,9 @@ function renderResults(data: any) {
   sent.append(node('summary', 'SQL you sent'), node('pre', sentSQL));
   section.append(sent);
   let errors = 0;
+  let statement = 0;
   for (const output of data.outputs) {
+    statement++;
     if (output.kind === 'error' || output.kind === 'notice') {
       if (output.kind === 'error') errors++;
       const box = node('div', '', output.kind === 'error' ? 'sandbox-error' : 'sandbox-notice');
@@ -145,7 +157,7 @@ function renderResults(data: any) {
       section.append(node('p', output.tag || 'Command completed', 'sandbox-tag'));
       if (output.fields) {
         const wrapper = node('div', '', 'sandbox-output-table');
-        wrapper.tabIndex = 0; wrapper.setAttribute('role', 'region'); wrapper.setAttribute('aria-label', `Rows returned in run ${data.id}`);
+        wrapper.tabIndex = 0; wrapper.setAttribute('role', 'region'); wrapper.setAttribute('aria-label', `Response ${statement} in run ${data.id}`);
         const table = document.createElement('table');
         const heading = document.createElement('tr');
         for (const name of output.fields) { const th = node('th', name); th.setAttribute('scope', 'col'); heading.append(th); }
@@ -153,13 +165,17 @@ function renderResults(data: any) {
         const body = document.createElement('tbody');
         for (const row of output.rows) {
           const tr = document.createElement('tr');
-          for (const value of row) tr.append(node('td', value === null ? 'NULL' : value, value === null ? 'sandbox-null' : ''));
+          for (const value of row) {
+            const cell = node('td', value === null ? 'NULL' : value, value === null ? 'sandbox-null' : '');
+            if (value === null) cell.setAttribute('aria-label', 'SQL NULL: no value');
+            tr.append(cell);
+          }
           body.append(tr);
         }
         table.append(body); wrapper.append(table); section.append(wrapper);
-        if (output.rows.length === 0) section.append(node('p', 'No rows returned.'));
-        if (output.cellsTruncated) section.append(node('p', 'Long cells are marked and shortened to 2,000 characters.'));
-        if (output.truncated) section.append(node('p', 'Showing the first 200 rows. Add a WHERE clause or LIMIT to narrow the result.'));
+        if (output.rows.length === 0 && !output.truncated) section.append(node('p', 'No rows returned.'));
+        if (output.cellsTruncated) section.append(node('p', 'Cells exceeding the display budget are marked and shortened (at most 2,000 characters per cell).'));
+        if (output.truncated) section.append(node('p', 'Result display shortened (up to 200 rows and 40 columns per statement; 5,000 cells and 250,000 cell characters per run). Select fewer columns, add a WHERE clause or use LIMIT.'));
       }
     }
   }
@@ -168,7 +184,9 @@ function renderResults(data: any) {
   results.prepend(section);
   while (results.children.length > 5) results.lastElementChild?.remove();
   element('empty').hidden = true;
-  status.textContent = errors ? `Run ${data.id} returned a database error. Read the response below. ${data.status === 'E' ? 'The transaction is failed; send ROLLBACK to continue.' : ''}` : `Run ${data.id} completed. Responses are shown below; the tutorial does not grade your edited SQL.`;
+  const expectedError = tutorial?.steps[step].expectedError;
+  const expectedRejection = expectedError && data.outputs.some((output: any) => output.kind === 'error' && output.code === expectedError) && sentSQL.trim() === tutorial?.steps[step].sql.trim();
+  status.textContent = expectedRejection ? `Run ${data.id} produced the rejection this lesson asks you to inspect. Read the response and “What to look for” before continuing.` : errors ? `Run ${data.id} returned a database error. Read the response below. ${data.status === 'E' ? 'The transaction is failed; send ROLLBACK to continue.' : ''}` : `Run ${data.id} completed. Responses are shown below; the tutorial does not grade your edited SQL.`;
 }
 function execute() {
   if (!ready || busy || !worker) return;
