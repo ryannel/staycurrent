@@ -11,7 +11,7 @@ distributed-systems programme remain outside this commission.
 - [x] Reconcile the current inventory and read the authoring, research, review and voice guidance.
 - [x] Performance: slow-queries, request-cost, reporting. Research, author, execute examples, independently review, repair, build, commit and push.
 - [x] Operations: schema-changes, backup-and-restore, access-control, data-lifecycle. Apply the same production and review process.
-- [ ] Capacity: scaling, replicas-and-failover, partitioning-and-sharding. Apply the same production and review process.
+- [x] Capacity: scaling, replicas-and-failover, partitioning-and-sharding. Apply the same production and review process.
 - [ ] PostgreSQL: architecture, indexes, row-versions, recovery. Apply the same production and review process.
 - [ ] Choices: product-comparison, adding-another-system. Check current primary evidence and apply the same review process.
 - [x] Existing reading: audit all eleven articles, the introduction and checkout for practical examples and useful sandbox links, including the six articles mentioned in the commission.

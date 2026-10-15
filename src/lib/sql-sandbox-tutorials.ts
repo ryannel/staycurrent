@@ -1,3 +1,4 @@
+import { capacityTutorials } from './sql-lessons/capacity.ts';
 import { operationsTutorials } from './sql-lessons/operations.ts';
 import { foundationsTutorials } from './sql-lessons/foundations.ts';
 import { performanceTutorials } from './sql-lessons/performance.ts';
@@ -226,4 +227,5 @@ export const sandboxTutorials: Tutorial[] = [
   ...foundationsTutorials,
   ...performanceTutorials,
   ...operationsTutorials,
+  ...capacityTutorials,
 ];

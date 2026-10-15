@@ -158,19 +158,22 @@ export const relationalCollection: RelationalGroup[] = [
         "slug": "scaling",
         "title": "Scaling a relational database",
         "description": "Find the limit and understand the arrangements that could meet it.",
-        "scope": "Develop work reduction, larger instances, caching, replicas, clusters, partitioning and sharding. Trace where reads and writes go, what remains shared, and what happens when a node or region fails."
+        "scope": "Develop work reduction, larger instances, caching, replicas, clusters, partitioning and sharding. Trace where reads and writes go, what remains shared, and what happens when a node or region fails.",
+        "status": "draft"
       },
       {
         "slug": "replicas-and-failover",
         "title": "Replication and failover",
         "description": "Understand what another copy of the database can and cannot provide.",
-        "scope": "Follow copying, acknowledgements, read routing and freshness, writer promotion and authority, failure domains and regional failures through concrete scenarios."
+        "scope": "Follow copying, acknowledgements, read routing and freshness, writer promotion and authority, failure domains and regional failures through concrete scenarios.",
+        "status": "draft"
       },
       {
         "slug": "partitioning-and-sharding",
         "title": "Partitioning and sharding",
         "description": "Develop the choices behind dividing tables and distributing data ownership.",
-        "scope": "Work through keys, pruning, co-location, routing, hot tenants, cross-shard queries and rules. Follow safe data movement, verification and cutover while writes continue; distinguish local partitions from distributed ownership."
+        "scope": "Work through keys, pruning, co-location, routing, hot tenants, cross-shard queries and rules. Follow safe data movement, verification and cutover while writes continue; distinguish local partitions from distributed ownership.",
+        "status": "draft"
       }
     ]
   },
