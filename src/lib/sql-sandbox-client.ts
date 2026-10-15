@@ -187,7 +187,8 @@ function renderResults(data: any) {
     } else {
       section.append(node('p', output.tag || 'Command completed', 'sandbox-tag'));
       if (output.fields) {
-        const wrapper = node('div', '', 'sandbox-output-table');
+        const isPlan = output.tag === 'EXPLAIN' && output.fields.length === 1 && output.fields[0] === 'QUERY PLAN';
+        const wrapper = node('div', '', isPlan ? 'sandbox-output-table sandbox-output-plan' : 'sandbox-output-table');
         wrapper.tabIndex = 0; wrapper.setAttribute('role', 'region'); wrapper.setAttribute('aria-label', `Response ${statement} in run ${data.id}`);
         const table = document.createElement('table');
         const heading = document.createElement('tr');

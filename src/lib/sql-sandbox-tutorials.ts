@@ -1,4 +1,6 @@
 import { postgresqlTutorials } from './sql-lessons/postgresql.ts';
+import { relationalDepthPerformanceTutorials } from './sql-lessons/relational-depth-performance.ts';
+import { relationalDepthChoicesTutorials } from './sql-lessons/relational-depth-choices.ts';
 import { postgresqlVersionTutorials } from './sql-lessons/postgresql-versions.ts';
 import { postgresqlScalingTutorials } from './sql-lessons/postgresql-scaling.ts';
 import { postgresqlCapabilityTutorials } from './sql-lessons/postgresql-capabilities.ts';
@@ -232,6 +234,7 @@ export const sandboxTutorials: Tutorial[] = [
   ...introductoryTutorials,
   ...foundationsTutorials,
   ...performanceTutorials,
+  ...relationalDepthPerformanceTutorials,
   ...operationsTutorials,
   ...capacityTutorials,
   ...postgresqlTutorials,
@@ -240,4 +243,5 @@ export const sandboxTutorials: Tutorial[] = [
   ...postgresqlScalingTutorials,
   ...postgresqlCapabilityTutorials,
   ...choicesTutorials,
+  ...relationalDepthChoicesTutorials,
 ];

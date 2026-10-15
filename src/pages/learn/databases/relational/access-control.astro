@@ -1,6 +1,7 @@
 ---
 import Base from '../../../../layouts/Base.astro';
 import Sql from '../../../../components/explainers/querying/Sql.astro';
+import { relationalDepthChoicesTutorials } from '../../../../lib/sql-lessons/relational-depth-choices';
 import '../../../../styles/explorables.css';
 import '../../../../styles/relational-design.css';
 const grants = `GRANT USAGE ON SCHEMA ops_access TO ops_shipping;
@@ -13,6 +14,7 @@ WITH CHECK (tenant_id = 1);`;
 const defaults = `-- Run as the role that creates these tables, or an authorised administrator.
 ALTER DEFAULT PRIVILEGES FOR ROLE order_owner IN SCHEMA orders
 GRANT SELECT ON TABLES TO order_reporting;`;
+const composition = relationalDepthChoicesTutorials.find(t => t.id === 'policy-composition')!;
 ---
 <Base title="Controlling access" description="Separate ownership from application roles, grant only the operations and columns needed, and verify row policies through real allowed and denied queries.">
  <article class="visual-essay relational-design">
@@ -20,7 +22,7 @@ GRANT SELECT ON TABLES TO order_reporting;`;
   <p>A database connection acts with an identity and a set of permissions. Those permissions determine which objects it may use and what it may do to them. If the application connects as a database owner, a bug can have the same authority as the person who created its tables. Giving the application a narrower identity limits the consequences of mistakes and compromised code.</p>
   <p>Access control has several boundaries. Authentication establishes who connected. Privileges allow operations such as reading a table or updating a column. Row policies can limit which records a permitted operation can see or change. Application authorisation still decides which user request should cause that operation. Each boundary answers a different question.</p>
   <p>We will give a shipping worker enough authority to mark its own tenant’s orders packed. It needs the order ID and status, but not the customer’s email, another tenant’s records or permission to delete an order.</p>
-  <nav aria-label="In this article"><ol><li><a href="#roles">Owners and application roles</a></li><li><a href="#privileges">Granting the required work</a></li><li><a href="#rows">Restricting rows</a></li><li><a href="#testing">Testing with the actual identity</a></li><li><a href="#evolution">New objects and audit boundaries</a></li></ol></nav>
+  <nav aria-label="In this article"><ol><li><a href="#roles">Owners and application roles</a></li><li><a href="#privileges">Granting the required work</a></li><li><a href="#rows">Restricting rows</a></li><li><a href="#testing">Testing with the actual identity</a></li><li><a href="#composition">Combining policies</a></li><li><a href="#evolution">New objects and audit boundaries</a></li></ol></nav>
 
   <section id="roles"><h2>Owners and application roles</h2>
    <p>In PostgreSQL, a <strong>role</strong> can own objects, receive privileges and belong to other roles. A role with <code>LOGIN</code> can be used to establish a session; a <code>NOLOGIN</code> role can hold permissions without being a direct login identity. Membership lets a login use a deliberately defined set of authority, according to the membership’s inheritance and role-switching rules.</p>
@@ -45,7 +47,7 @@ GRANT SELECT ON TABLES TO order_reporting;`;
    <Sql code={policy} label="Restrict the shipping role to tenant 1" />
    <p><code>USING</code> determines which existing rows the role can see or target. <code>WITH CHECK</code> determines which new row values it may create through an allowed insert or update. The policy here applies to all commands for this role, but it does not grant commands: DELETE remains forbidden because no DELETE privilege exists.</p>
    <p>The fixed tenant ID is deliberate. The worker identity in this example serves only tenant 1. A multi-tenant application needs a trustworthy mapping from the authenticated caller to its permitted rows. A policy that trusts a session setting the same untrusted caller can freely change would not establish that boundary. Decide who sets the context and who can change it, and test that authority.</p>
-   <p>With row security enabled, an applicable policy is needed for ordinary row access; absent a permitting policy, access is denied by default. Multiple policies can combine, so adding a broad policy may widen access unexpectedly. Review the full policy set rather than reading one restrictive-looking expression in isolation.</p>
+   <p>With row security enabled, an applicable policy is needed for ordinary row access; absent a permitting policy, access is denied by default. When several policies apply, their combination matters. We will first test this single tenant rule, then add another rule and inspect how the visible rows change.</p>
    <p>Table owners normally bypass row policies, and superusers and roles with <code>BYPASSRLS</code> bypass them. <code>FORCE ROW LEVEL SECURITY</code> can make the owner subject to policies in ordinary access, but it does not turn a superuser or bypass role into a restricted runtime identity. Referential-integrity checks have their own behaviour as well: constraint errors can disclose facts about values the caller cannot read. These limits are documented in <a href="https://www.postgresql.org/docs/18/ddl-rowsecurity.html">row security policies</a>.</p>
    <p>This makes the ownership separation practical. A test executed as the table owner can return all records even when the shipping worker is correctly restricted. Running the service as that owner would bypass the boundary we intended to test.</p>
   </section>
@@ -63,6 +65,20 @@ WHERE order_id = 1 RETURNING order_id, status;" label="Perform the allowed statu
    <p>Finally try <code>DELETE FROM ops_access.orders WHERE order_id = 1</code>. It fails with <code>42501</code> because DELETE was never granted. Run <code>RESET ROLE</code> and inspect as administrator: order 1 still exists, packed; order 2 remains ready.</p>
    <p>The rejected statements in this lesson run outside an explicit transaction, so the session remains available for the next command. If a permission error happens inside <code>BEGIN</code>, the application must roll that failed transaction back before continuing ordinary work. Connection pools also need to reset role and session context correctly before lending a connection to another request; otherwise the next caller may inherit the previous caller’s effective authority.</p>
    <p>Test both permitted and forbidden paths with the actual runtime identity after deployment. Include an object the role should not see, a column it should not read and an operation it should not perform. Then make the allowed workflow succeed. A policy that denies everything is restrictive, but it does not run the shipping service.</p>
+  </section>
+
+  <section id="composition"><h2>Combining policies</h2>
+   <p>Suppose the shipping worker should now see only orders ready to pack. It is tempting to add a second policy saying <code>status = 'ready'</code> and assume both conditions must hold. PostgreSQL's default policies are <strong>permissive</strong>: each supplies another way to allow a row. Their conditions combine with OR.</p>
+   <p>The <a href="/learn/databases/relational/sandbox/?tutorial=policy-composition">policy-composition lesson</a> starts a separate fixture, <code>depth_access.orders</code>, with a nonowner role called <code>depth_shipping</code>. Order 1 belongs to tenant 1 and is ready; order 2 belongs to tenant 2 and is ready; order 3 belongs to tenant 1 and is packed. Its initial tenant policy permits orders 1 and 3. This resets the statuses for the new example; it does not continue the earlier packing operation.</p>
+   <p>The administrator adds a readiness policy, then switches back to the worker before inspecting its result:</p>
+   <Sql code={composition.steps[1].sql} label="Add a permissive readiness policy and inspect the worker's view" />
+   <p>All three orders appear. Order 2 passes the readiness condition even though it fails the tenant condition. Order 3 passes the tenant condition even though it is already packed. Adding a policy has widened the worker's view.</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-label="How permissive and restrictive row policies combine"><table><thead><tr><th>Order</th><th>Tenant 1?</th><th>Ready?</th><th>Either condition · OR</th><th>Both conditions · AND</th></tr></thead><tbody><tr><td>1</td><td>Yes</td><td>Yes</td><td>Visible</td><td>Visible</td></tr><tr><td>2</td><td>No</td><td>Yes</td><td>Visible</td><td>Hidden</td></tr><tr><td>3</td><td>Yes</td><td>No</td><td>Visible</td><td>Hidden</td></tr></tbody></table></div>
+   <p>A <strong>restrictive</strong> policy supplies an additional requirement instead. Keep the permissive tenant policy and replace the readiness rule:</p>
+   <Sql code={composition.steps[2].sql} label="Require readiness as well as the tenant permission" />
+   <p>Now only order 1 appears. For this policy set, a row needs permission from the tenant rule <em>and</em> must pass readiness. In the general case, PostgreSQL combines applicable permissive policies with OR and then requires every applicable restrictive policy as well. The <a href="https://www.postgresql.org/docs/18/sql-createpolicy.html">policy reference</a> defines the combination for each command and role.</p>
+   <p>A restrictive policy cannot grant access by itself. The lesson removes the permissive tenant policy while leaving readiness in place: the worker sees no rows. Restoring the tenant policy restores order 1. The lesson also tries reading email from the permitted order and gets a privilege error. Row filtering has not widened the column grants.</p>
+   <p>Before running the variation, predict the effect of changing the restrictive condition to <code>status = 'packed'</code>. Only order 3 should remain. This is a useful access test because it distinguishes three possibilities: the intended extra condition, an accidentally broader OR, and a configuration that denies every row.</p>
   </section>
 
   <section id="evolution"><h2>New objects and audit boundaries</h2>

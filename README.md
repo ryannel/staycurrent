@@ -40,11 +40,14 @@ switcher. Keep new reading discoverable here as it becomes available.
 `src/lib/relational-collection.ts` holds the relational reading order and publication
 status. The 15 October 2026 commission explicitly authorised publication of its
 34 articles, introduction, checkout and practice pages, including an eleven-article
-PostgreSQL branch. The SQL sandbox has 39 article-linked lessons and 214 steps;
+PostgreSQL branch. The SQL sandbox has 43 article-linked lessons and 238 steps;
 `/playgrounds/` is the entrance for this and future technology playgrounds. Other draft reading keeps its own publication state.
 The PostgreSQL rebuild covers internals, replication and sharding, JSON, full-text
 and vector search, temporal rules and spatial queries. Its experiment and review
-records are in `docs/article-work/postgresql-rebuild/`. Review alone does not
+records are in `docs/article-work/postgresql-rebuild/`. The subsequent review of all
+26 remaining relational destinations, including six deeper operational examples
+and four new lessons, is recorded in `docs/article-work/relational-depth-review/`.
+Review alone does not
 authorise publication of a new commission.
 
 The site was consolidated on 4 October 2026. The old field directories, Explore overview, About, Updates and RSS were removed.

@@ -2,6 +2,7 @@
 import { Code } from 'astro:components';
 import Base from '../../../../layouts/Base.astro';
 import practiceSchema from '../../../../../docs/article-work/designing-data/schema.sql?url&no-inline';
+import sessionWorksheet from '../../../../../docs/article-work/relational-depth-review/isolation/session-worksheet.sql?url&no-inline';
 import IsolationSnapshotLab from '../../../../components/explainers/transactions/IsolationSnapshotLab.astro';
 import IsolationWriteSkew from '../../../../components/explainers/transactions/IsolationWriteSkew.astro';
 import IsolationControlRow from '../../../../components/explainers/transactions/IsolationControlRow.astro';
@@ -56,6 +57,36 @@ RETURNING product_id;
 
 COMMIT;`;
 const serial = hide.replace('REPEATABLE READ', 'SERIALIZABLE');
+const resetFlags = `-- First finish or roll back any attempt on BOTH connections.
+-- Then run this on A, outside an explicit transaction.
+UPDATE featured_products SET enabled = true;
+SELECT product_id, enabled
+FROM featured_products ORDER BY product_id;`;
+const retryB = `-- On B, after A's successful commit and B's 40001 rejection:
+ROLLBACK;
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+UPDATE featured_products
+SET enabled = false
+WHERE product_id = 'P8'
+  AND EXISTS (
+    SELECT 1 FROM featured_products
+    WHERE product_id = 'P7' AND enabled
+  )
+RETURNING product_id;
+-- Expected: zero rows. P7 is no longer enabled.
+COMMIT;
+SELECT product_id, enabled
+FROM featured_products ORDER BY product_id;`;
+const controlSetup = `-- Once, after creating featured_products:
+CREATE TABLE display_control (display_id text PRIMARY KEY);
+INSERT INTO display_control VALUES ('front-page');`;
+const controlLock = `-- Send on each connection, in the order shown below.
+BEGIN ISOLATION LEVEL READ COMMITTED;
+SELECT display_id FROM display_control
+WHERE display_id = 'front-page'
+FOR UPDATE;`;
+const flagRead = `SELECT product_id, enabled
+FROM featured_products ORDER BY product_id;`;
 ---
 <Base title="Isolation and snapshots" description="Understand which committed data a transaction reads, compare PostgreSQL statement and transaction snapshots, and see why a stable view can still permit conflicting decisions.">
   <article class="visual-essay relational-design schema-sketches">
@@ -89,6 +120,7 @@ const serial = hide.replace('REPEATABLE READ', 'SERIALIZABLE');
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Separate writer changes the catalogue price"><Code code={writer} lang="sql" theme="css-variables" /></div>
     <p class="example-note">To run the SQL yourself, <a href="/learn/databases/relational/practice/">start the shared practice setup</a>. It explains opening PostgreSQL, loading the files and choosing a fresh database for this article.</p>
       <p>Use a fresh practice database for this article. Load the <a href={practiceSchema} download="designing-data.sql">shop schema and records</a> once; it includes P7 at EUR 20 and the historical orders O12 and O13. Open two PostgreSQL query-editor connections to that same database. Run the first report query, pause that connection, run and commit the writer on the other connection, then finish the report. Repeatable Read returns 20 twice. Reset P7 to 20 before repeating the schedule with <code>READ COMMITTED</code>; it then returns 20 and 22. Merely running these blocks one after another on one connection would not test the overlapping schedule.</p>
+      <p>These are also the results of our PostgreSQL 18.6 server run: the writer committed 22 in both cases; only the existing report’s second answer differed. A new read after the report ended returned 22 in both cases. You can <a href={sessionWorksheet} download="isolation-session-worksheet.sql">download the two-connection worksheet</a> for this and the display experiments below. It labels which commands belong on A and B; follow its numbered steps rather than running the whole file on one connection.</p>
       <p><code>READ ONLY</code> prevents this report from changing ordinary application tables. We choose the isolation level at the start, before a query establishes the view. <a href="https://www.postgresql.org/docs/18/sql-set-transaction.html">SET TRANSACTION</a> documents these settings and their timing.</p>
     </section>
 
@@ -115,6 +147,21 @@ const serial = hide.replace('REPEATABLE READ', 'SERIALIZABLE');
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Hide P7 only while P8 is enabled"><Code code={hide} lang="sql" theme="css-variables" /></div>
       <p><code>EXISTS</code> is true when its subquery finds a row. Here <code>AND enabled</code> means that the boolean flag must be true. The UPDATE therefore changes P7 only if the visible P8 row is enabled; <code>RETURNING</code> reports whether it changed P7. Putting that check inside one statement removes a gap between the application’s read and write. It still does not make these two independent writes meet at one record.</p>
       <p>A valid overlapping schedule establishes both snapshots while both flags are true. A hides P7, B hides P8 before A commits, then both commit. The conditional statements make the same decisions as the drawing. Guarding a single stock decrement against a value in that same row solved the previous article’s problem; this predicate depends on the other row.</p>
+      <details class="sql-setup" id="display-experiment"><summary>Run the overlapping display decisions on two connections</summary>
+        <p>Use two query editors or psql sessions connected to the same practice database. Create <code>featured_products</code> once with the definition above. A is the staff handler hiding P7; B hides P8. You send each handler’s commands separately and inspect each result. Do not run its whole transaction block at once: pause before COMMIT so the other handler can act.</p>
+        <p>Before each comparison, end any transaction on <em>both</em> connections with <code>ROLLBACK;</code>. Then reset on A outside a transaction:</p>
+        <div class="sql-scroll" role="region" tabindex="0" aria-label="Reset the display between independent isolation trials"><Code code={resetFlags} lang="sql" theme="css-variables" /></div>
+        <p>The result must show P7 and P8 both true. A uses the conditional UPDATE printed above. For B, swap the two product IDs: it updates P8 only if P7 is enabled. The download includes both exact statements.</p>
+        <div class="table-scroll" role="region" tabindex="0" aria-label="Ordered two-session write-skew experiment"><table><caption>Send each row before moving to the next; A and B remain separate connections</caption><thead><tr><th scope="col">Step</th><th scope="col">A</th><th scope="col">B</th></tr></thead><tbody>
+          <tr><th scope="row">1</th><td><code>BEGIN ISOLATION LEVEL REPEATABLE READ;</code></td><td>Not started</td></tr>
+          <tr><th scope="row">2</th><td>Transaction open</td><td><code>BEGIN ISOLATION LEVEL REPEATABLE READ;</code></td></tr>
+          <tr><th scope="row">3</th><td>Conditional UPDATE returns P7. Do not commit.</td><td>Transaction open</td></tr>
+          <tr><th scope="row">4</th><td>Change still uncommitted</td><td>Conditional UPDATE returns P8. Do not commit.</td></tr>
+          <tr><th scope="row">5</th><td><code>COMMIT;</code></td><td>Change still uncommitted</td></tr>
+          <tr><th scope="row">6</th><td>Finished</td><td><code>COMMIT;</code></td></tr>
+        </tbody></table></div>
+        <p>Read the flags on either connection after step 6. Our server returned P7 false and P8 false. Each UPDATE established its snapshot when it began; BEGIN alone did not take one. B could still read the earlier committed P7 while A’s replacement was uncommitted, and its own write targeted P8, so these statements did not wait on each other’s row writes.</p>
+      </details>
     </section>
 
     <section id="serializable">
@@ -124,9 +171,27 @@ const serial = hide.replace('REPEATABLE READ', 'SERIALIZABLE');
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Select Serializable before running the conditional display update"><Code code={serial} lang="sql" theme="css-variables" /></div>
       <p>This is the same complete decision, with a different isolation level. A serialization failure can arrive during a statement or at commit. The application must treat its earlier results as provisional until commit succeeds.</p>
       <p>Retry the failed transaction with a fresh view and repeat its decision. If A’s successful change hid P7, B’s new attempt now finds P7 disabled and changes no row. That is a successful evaluation of the rule, even though B did not get its original wish. Retrying only “set P8 disabled” would discard the very check that made the transaction correct.</p>
+      <p>We repeated the <a href="#display-experiment">six-step experiment</a> after resetting both flags, changing both BEGIN commands to <code>SERIALIZABLE</code>. Both UPDATE statements returned a product ID. A committed, then B’s COMMIT was rejected with SQLSTATE <code>40001</code>. A new query showed P7 disabled and P8 still enabled: B’s earlier returned row had described provisional work, not a completed change.</p>
+      <p>The database may choose a different victim or report the failure during an UPDATE instead. When a statement reports <code>40001</code>, stop that attempt and send <code>ROLLBACK</code> on its connection; do not keep running its remaining statements. Finish the other attempt, then restart the rejected decision. If using psql, <code>\set VERBOSITY verbose</code> makes SQLSTATE visible in its error output.</p>
+      <details class="sql-setup"><summary>Finish B’s rejected attempt and repeat its decision</summary>
+        <p>This branch starts from the observed result: A committed P7 false, and B received 40001. Keep that result; do not reset the flags before retrying. A rejection during COMMIT may already have ended B’s transaction, so the cleanup ROLLBACK can report that no transaction is in progress. It is still the right boundary before starting fresh.</p>
+        <div class="sql-scroll" role="region" tabindex="0" aria-label="Clean up and retry the complete display decision after serialization rejection"><Code code={retryB} lang="sql" theme="css-variables" /></div>
+        <p>The retried UPDATE returns zero rows and COMMIT succeeds. The final flags remain P7 false and P8 true. Unlike 40001, zero rows is not a rejected transaction: the new view let the decision conclude that hiding P8 would empty the display. If A was rejected instead, retry A’s original P7 decision against B’s committed result.</p>
+      </details>
       <p>Serializable preserves an outcome consistent with the transaction logic; it cannot repair logic that never checked the rule. Every path that changes these display flags must participate in the chosen protection. A writer that unconditionally hides the last product can still create an invalid display.</p>
       <p>Explicit coordination is another option. We could add one display-control record, separate from the two product flags, for all display writers to lock. Its purpose is to give their decisions one shared place to wait. At Read Committed, each transaction first takes a <code>FOR UPDATE</code> lock on that record, then reads the flags in a subsequent statement while still holding the lock.</p>
       <IsolationControlRow />
+      <p>The separate read in that sequence is doing real work. B’s locking statement began while A was still deciding. Starting the flag query only after the lock returns gives it a new Read Committed snapshot containing A’s committed change. The control row itself does not need to change; its lock establishes which handler may make the decision next.</p>
+      <details class="sql-setup"><summary>Run the shared-control-row alternative</summary>
+        <p>Finish both prior transactions and reset both flags to true with the earlier reset command. Create the control table once:</p>
+        <div class="sql-scroll" role="region" tabindex="0" aria-label="Create the shared display-control record"><Code code={controlSetup} lang="sql" theme="css-variables" /></div>
+        <p>Send this block on A, then on B:</p>
+        <div class="sql-scroll" role="region" tabindex="0" aria-label="Acquire the common display lock at Read Committed"><Code code={controlLock} lang="sql" theme="css-variables" /></div>
+        <p>A returns <code>front-page</code>; B waits. Leave B’s query running and return to A. On A, read the flags with the query below, run A’s conditional P7 update, and send COMMIT. B’s waiting query can now return <code>front-page</code>. Only then send the same flag query on B:</p>
+        <div class="sql-scroll" role="region" tabindex="0" aria-label="Read the flags after obtaining the control lock"><Code code={flagRead} lang="sql" theme="css-variables" /></div>
+        <p>A saw both true; B now sees P7 false and P8 true. If B sends its conditional P8 update, it returns no rows. Send COMMIT on B to finish and release its lock. Our server run observed B actually waiting for A, then these results. If you abandon the exercise, finish both connections with ROLLBACK so neither retains a lock.</p>
+      </details>
+      <p>Changing both transactions in this last exercise to Repeatable Read breaks the protocol. We tested that variation from the same reset state: B waited for the unchanged control row, then its later flag query still saw both products enabled in its older snapshot. B could hide P8 after A had hidden P7. The control row was locked, but A had not updated it, so there was no changed-control-row rejection to rescue B’s stale decision. The successful alternative combines the common lock with the fresh subsequent Read Committed statement; using a more restrictive view is not automatically a stronger implementation of that protocol.</p>
     </section>
 
     <section id="choosing">
@@ -139,7 +204,7 @@ const serial = hide.replace('REPEATABLE READ', 'SERIALIZABLE');
     <nav class="series-reading" aria-label="Transactions and concurrency sequence"><p><a href="/learn/databases/relational/transaction-boundaries/#concurrent-work">← Main: Transactions and concurrency</a></p><p><a href="/learn/databases/relational/conflicts-and-retries/">Handling conflicts and uncertain outcomes →</a><span>Distinguish an unfinished attempt, a known rollback, and an outcome that still needs recovery.</span></p></nav>
     <section class="essay-sources" id="further-reading">
       <h2>Sources and further reading</h2>
-      <p>Researched 4 October 2026. The shop and schedules are invented teaching examples for PostgreSQL 18. Single-session SQL syntax, own-write visibility and sequential display decisions were checked with PostgreSQL 18.3 through PGlite 0.5.8. The overlapping two-session outcomes are derived from the documented rules; that execution did not demonstrate them.</p>
+      <p>Expanded and checked 15 October 2026. The shop is an invented teaching example. PostgreSQL 18.6 server experiments reproduced both price-view schedules, Repeatable Read write skew, a Serializable rejection and complete retry, and the control-row comparison at Read Committed and Repeatable Read. A third observation connection confirmed the control-lock wait; the two staff connections performed the decisions. The sandbox uses PostgreSQL 18.3 through PGlite 0.5.8 and demonstrates single-connection transaction state, not these overlaps.</p>
       <ul>
         <li><a href="https://www.postgresql.org/docs/18/transaction-iso.html">PostgreSQL 18: Transaction isolation</a> — ordinary views, conflicting writes, and the distinction between Repeatable Read and Serializable.</li>
         <li><a href="https://www.postgresql.org/docs/18/sql-set-transaction.html">SET TRANSACTION</a> — selecting the level, read-only mode, and when a transaction’s characteristics can change.</li>
