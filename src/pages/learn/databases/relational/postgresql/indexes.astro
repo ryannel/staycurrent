@@ -1,0 +1,83 @@
+---
+import Base from '../../../../../layouts/Base.astro';
+import Sql from '../../../../../components/explainers/querying/Sql.astro';
+import '../../../../../styles/explorables.css';
+import '../../../../../styles/relational-design.css';
+const recent = `CREATE INDEX pg_method_recent
+ON pg_method_events (occurred_at DESC, event_id DESC);
+
+SELECT event_id, occurred_at FROM pg_method_events
+ORDER BY occurred_at DESC, event_id DESC LIMIT 5;`;
+const gin = `CREATE INDEX pg_method_attributes
+ON pg_method_events USING gin (attributes jsonb_path_ops);
+
+SELECT event_id FROM pg_method_events
+WHERE attributes @> '{"tag":"priority"}';`;
+const brin = `DROP INDEX pg_method_recent;
+CREATE INDEX pg_method_time_ranges
+ON pg_method_events USING brin (occurred_at)
+WITH (pages_per_range = 4);
+
+SELECT count(*) FROM pg_method_events
+WHERE occurred_at >= timestamp '2026-01-01 00:30:00'
+  AND occurred_at < timestamp '2026-01-01 00:31:00';`;
+---
+<Base title="Indexes in PostgreSQL" description="Compare ordered B-tree entries, GIN's extracted keys and BRIN's page summaries, then match the method and operator class to a real query.">
+ <meta slot="head" name="robots" content="noindex" />
+ <article class="visual-essay relational-design">
+  <header class="essay-header"><p class="eyebrow">Databases and storage · Working draft</p><h1>Indexes in PostgreSQL</h1><div class="essay-meta"><span>PostgreSQL 18</span><a href="/learn/databases/relational/indexes/">General index principles ↗</a></div></header>
+  <p>PostgreSQL offers several index methods because queries ask different questions about values. Finding the newest timestamp needs order. Finding a tag inside a document needs a way to locate records containing that tag. Excluding a large stretch of old events may need only a summary of the timestamps stored there.</p>
+  <p>An index’s useful operations follow from the information it stores. A compact summary cannot identify an exact row without checking candidates. An index of document contents does not automatically provide timestamp ordering. Choosing an index method therefore starts with the query’s operator and the work we want to avoid.</p>
+  <p>We will compare B-tree, GIN and BRIN using one event table. The <a href="/learn/databases/relational/indexes/">family index article</a> explains ordered lookup, composite keys and covering access in depth; here the new question is how PostgreSQL’s different access methods change the choices.</p>
+  <nav aria-label="In this article"><ol><li><a href="#workload">Three questions about events</a></li><li><a href="#btree">B-tree ordering</a></li><li><a href="#gin">GIN and contained values</a></li><li><a href="#brin">BRIN and physical order</a></li><li><a href="#choice">Checking the choice</a></li></ol></nav>
+
+  <section id="workload"><h2>Three questions about events</h2>
+   <p>The <a href="/learn/databases/relational/sandbox/?tutorial=pg-access-methods">access-method lesson</a> generates 20,000 events. Event 1 occurs at 00:00:01 on 1 January; each next event is one second later, so event 20,000 occurs at 05:33:20. Records are inserted in that time order. Each also has a JSON object with a tag and a source, plus a longer note.</p>
+   <p>Every thousandth event has <code>&#123;"tag":"priority","source":"web"&#125;</code>; the rest have a normal tag. There are twenty priority events. These deliberate regularities let us derive the results before inspecting a plan.</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-label="Queries and useful index information"><table><thead><tr><th>Question</th><th>Useful stored information</th><th>Candidate</th></tr></thead><tbody><tr><td>What are the newest five events?</td><td>Entries ordered by timestamp and event ID</td><td>B-tree</td></tr><tr><td>Which documents contain the priority tag?</td><td>Extracted keys identifying candidate documents</td><td>GIN with a JSON operator class</td></tr><tr><td>How many events occurred during this minute?</td><td>Timestamp bounds for groups of heap pages</td><td>BRIN when physical order correlates with time</td></tr></tbody></table></div>
+   <p>All three return answers from the same table. They do not require moving the event records into three differently ordered copies. Each maintains additional information beside the heap, with its own write and space cost.</p>
+  </section>
+
+  <section id="btree"><h2>B-tree ordering</h2>
+   <p>PostgreSQL’s default B-tree keeps keys ordered and supports equality and ordered comparisons for suitable data types. A timestamp index can identify a range, and its ordering can also supply the first few rows of an ordered result. For newest-first browsing we use:</p>
+   <Sql code={recent} label="Provide the order needed by the newest-events query" />
+   <p>The leading timestamp orders the events; event ID breaks ties. The lesson’s five IDs are 20000, 19999, 19998, 19997 and 19996. The observed plan reads them through the B-tree without a separate sort, and stops after five. It does not need to compute the newest five by examining all event rows.</p>
+   <p>A B-tree can be scanned backwards too; the explicitly descending keys here make the intended order easy to read. Mixed directions and several query conditions require attention to the complete key order. The <a href="https://www.postgresql.org/docs/18/indexes-ordering.html">ordering documentation</a> develops that relationship.</p>
+   <p>The order itself depends on the data type and its comparison rules. PostgreSQL connects index methods to operators through an <strong>operator class</strong>: the set of operations and supporting functions defining how a particular kind of value behaves in that method. The default is usually appropriate for ordinary integer or timestamp comparisons. With specialised types or operators, verify the match instead of assuming that an index on the column supports every expression using it.</p>
+   <p>For example, a B-tree on an extracted JSON text expression could support equality on that expression. It would store one extracted value per row rather than index arbitrary document containment. That is a useful focused choice when the application repeatedly filters one known field.</p>
+  </section>
+
+  <section id="gin"><h2>GIN and contained values</h2>
+   <p>An event’s JSON object contains several pieces of information. A GIN index extracts searchable keys from a value and associates them with references to rows containing them. This is an <strong>inverted index</strong>: searching a key leads towards the records containing it, rather than inspecting each complete document to discover its keys.</p>
+   <p>How the keys are extracted depends on the operator class. For our containment query we choose <code>jsonb_path_ops</code>, whose entries encode path-and-value information into hashes. That is more specific than simply keeping a separate entry for the word “priority”.</p>
+   <Sql code={gin} label="Use JSON containment with a matching GIN operator class" />
+   <p><code>@&gt;</code> asks whether the left JSON value contains the structure on the right. Twenty rows match: events 1000, 2000 and so on through 20000. The lesson’s plan uses a bitmap index scan to identify candidates and visits their heap pages. Candidate conditions can require rechecking against the full JSON value, including when hashed information is not sufficient to establish an exact match.</p>
+   <p>A bitmap groups candidate locations for heap access. It does not preserve newest-first timestamp order, so adding <code>ORDER BY occurred_at DESC LIMIT 5</code> can still require ordering the matching candidates. Finding matching tags and finding the newest matching tags are related but different tasks.</p>
+   <p>The default <code>jsonb_ops</code> supports more JSON operators, including key-existence tests such as <code>?</code>. <code>jsonb_path_ops</code> supports containment and specified JSON-path operators but not that key-existence operator. Its more focused representation can be useful for containment-heavy work, while shapes with no extracted values have their own limitations. The <a href="https://www.postgresql.org/docs/18/datatype-json.html#JSON-INDEXING">JSON indexing documentation</a> explains the precise tradeoff.</p>
+   <p>Now change the query to <code>attributes -&gt;&gt; 'tag' = 'priority'</code>. For our records it produces the same twenty IDs, but it asks for text equality on an extracted expression. The whole-document GIN index does not automatically supply that access path. The verified plan scans the table. If this expression is the real workload, an expression B-tree is a candidate to test.</p>
+   <p>One document can produce many GIN entries, so changes can add appreciable maintenance. PostgreSQL can buffer new entries in a pending list when GIN fast update is enabled, with later cleanup moving them into the main structure. Read latency and cleanup work can therefore vary with the list’s state. The <a href="https://www.postgresql.org/docs/18/gin.html#GIN-IMPLEMENTATION">GIN implementation</a> describes those mechanisms. Test sustained writes as well as an index built once over static data.</p>
+  </section>
+
+  <section id="brin"><h2>BRIN and physical order</h2>
+   <p>Our events were inserted in timestamp order. Nearby heap pages therefore tend to contain nearby times. A BRIN index takes advantage of this correlation by summarising groups of heap pages. With the usual timestamp min/max operator class, each summary records bounds that can rule out a whole page range.</p>
+   <p>Imagine these simplified summaries, with minute numbers standing in for timestamps. They illustrate the mechanism rather than measurements of the lesson’s page layout:</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-label="Illustrative BRIN summaries"><table><thead><tr><th>Heap-page range</th><th>Earliest minute</th><th>Latest minute</th><th>Could contain minute 25?</th></tr></thead><tbody><tr><td>First range</td><td>0</td><td>9</td><td>No</td></tr><tr><td>Second range</td><td>10</td><td>19</td><td>No</td></tr><tr><td>Third range</td><td>20</td><td>29</td><td>Yes: visit its pages</td></tr><tr><td>Fourth range</td><td>30</td><td>39</td><td>No</td></tr></tbody></table></div>
+   <p>The third range still contains events from other minutes. BRIN has identified where the answer might be, not which exact rows form the answer. PostgreSQL visits those pages and checks the actual condition. This is why its bitmap heap scan reports <strong>lossy</strong> blocks: the candidate information covers pages rather than exact row locations.</p>
+   <p>In the lesson, remove the timestamp B-tree before creating BRIN so the planner can expose this alternative. The GIN index can remain because it serves another condition.</p>
+   <Sql code={brin} label="Summarise timestamp ranges and count one minute" />
+   <p>The interval includes seconds 1800 through 1859, so it returns sixty events. The observed plan uses BRIN to exclude unrelated page ranges and rechecks candidates in the retained ranges. The small <code>pages_per_range=4</code> setting makes the behaviour visible on this teaching table. Smaller ranges give more precise summaries but require more index entries; larger ranges are more compact but can retain more irrelevant pages.</p>
+   <p>Now imagine inserting older events into later pages or repeatedly changing timestamps without moving their rows into time order. A page range that once covered minutes 30–39 might now also contain minute 2. Its bounds spread, so it can no longer exclude as many time queries. BRIN remains correct, but weaker correlation reduces the work its summaries can avoid.</p>
+   <p>New page ranges also need summaries. PostgreSQL provides maintenance and summarisation functions, and an autosummarize option; it does not assume an unsummarised range contains no matches. Consult the <a href="https://www.postgresql.org/docs/18/brin.html">BRIN documentation</a> when operating an append-heavy table. A small index size without effective, current summaries is not evidence of a successful access path.</p>
+   <p>BRIN does not put the heap into timestamp order and does not divide the table into separately managed partitions. It stores information about existing physical ranges. A table scan can still be sensible for a full-day query here, because every event in the table belongs to that day.</p>
+  </section>
+
+  <section id="choice"><h2>Checking the choice</h2>
+   <p>The three indexes solve different parts of the event workload. The B-tree supplies a precise ordered run for the latest events. GIN finds candidate documents using supported contained-value operators. BRIN can cheaply exclude large physical ranges when their values are correlated with the heap layout.</p>
+   <p>PostgreSQL also offers other methods, including GiST and SP-GiST for suitable specialised operators and hash indexes for equality. Their names are not a ranking. An application working with ranges, geometry or nearest-neighbour operators needs the access method and operator class supporting those operations; adding every method to this event table would teach little about that decision.</p>
+   <p>Use the application’s exact expression and parameter values when checking a candidate. Compare result identity first, then actual rows, rechecks, heap and buffer work, sorting and storage size. Include the rate and shape of changes, because the index’s contents must remain current. Avoid disabling sequential scans to manufacture an “index used” result.</p>
+   <p>Finally, account for building the index on the live table. Ordinary creation and concurrent creation have different lock and failure behaviour. A concurrent build takes more operational work and can leave an invalid index after failure; it deserves a planned migration and verification. The <a href="https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY">concurrent-build reference</a> explains that procedure.</p>
+   <p>The lesson’s plans show mechanisms in PGlite, not a throughput ranking for production servers. What transfers is the reasoning: identify the information the query can use, choose a structure that stores it, and check whether that structure removes enough real work to justify maintaining it.</p>
+  </section>
+  <section class="series-reading" aria-labelledby="reading"><h2 id="reading">Further reading</h2><p><a href="/learn/databases/relational/sandbox/?tutorial=pg-access-methods">Try the access-method comparison →</a><span>Change the operator or time interval and inspect how the selected path changes.</span></p><p><a href="https://www.postgresql.org/docs/18/indexes-types.html">PostgreSQL 18: Index types ↗</a><span>Locate the supported operations for other built-in methods.</span></p><p><a href="/learn/databases/relational/slow-queries/">Understanding database performance →</a><span>Connect an improved access path to the workload’s overall latency and resource use.</span></p></section>
+ </article>
+</Base>

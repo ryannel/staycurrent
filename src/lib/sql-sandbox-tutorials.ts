@@ -1,5 +1,7 @@
+import { postgresqlTutorials } from './sql-lessons/postgresql.ts';
 import { capacityTutorials } from './sql-lessons/capacity.ts';
 import { operationsTutorials } from './sql-lessons/operations.ts';
+import { choicesTutorials } from './sql-lessons/choices.ts';
 import { foundationsTutorials } from './sql-lessons/foundations.ts';
 import { performanceTutorials } from './sql-lessons/performance.ts';
 
@@ -69,7 +71,7 @@ ORDER BY l.line_no;`,
       },
       {
         title: 'Calculate the purchase total',
-        instruction: 'Multiply each line’s quantity by its agreed price, then SUM those amounts. This query asks for one total rather than one row per line. You can change O13 to O12 afterwards to inspect another purchase.',
+        instruction: 'Multiply each line’s quantity by its agreed price, then predict their total before running SUM. This query asks for one total rather than one row per line. Afterwards change O13 to O12: predict the total for two mugs bought at €18 each. Reset the database to start this lesson again.',
         sql: `SELECT sum(quantity * unit_price) AS order_total
 FROM order_lines
 WHERE order_id = 'O13';`,
@@ -110,11 +112,11 @@ RETURNING quantity;`,
       },
       {
         title: 'Check what remains',
-        instruction: 'Read the practice line again. There is no explicit transaction left open after the rejected standalone update, so this query can run normally. In the rollback tutorial, we will see how an error behaves inside BEGIN and ROLLBACK.',
+        instruction: 'Predict the retained quantity, then read the practice line again. There is no explicit transaction left open after the rejected standalone update. For a variation, change step 3 to send -1, then 4, running this read after each attempt. Predict which edit survives. Reset the database to restore quantity 2. The rollback tutorial explores errors inside BEGIN and ROLLBACK.',
         sql: `SELECT order_id, line_no, quantity
 FROM order_lines
 WHERE order_id = 'O12' AND line_no = 1;`,
-        expected: 'Quantity is still 3. The constraint refused the invalid change; it did not undo a different statement that had already committed.',
+        expected: 'Quantity is still 3. The constraint refused the invalid change; it did not undo a different statement that had already committed. In the variation, -1 is rejected and leaves 3; 4 is accepted and becomes the stored quantity.',
       },
     ],
   },
@@ -160,9 +162,9 @@ VALUES ('O14', 1, 'P7', 2, 20.00);`,
       },
       {
         title: 'Inspect the committed result',
-        instruction: 'This query runs after the transaction has ended. Compare the counts with the beginning of the tutorial. Starting the rollback tutorial creates a fresh shop, so you can compare another ending from the same initial state.',
+        instruction: 'This query runs after the transaction has ended. Predict the stock and counts from the successful steps. For a variation, reset and repeat steps 1–3, changing both 2s in the reservation to 4. With only three mugs, no row should return: send ROLLBACK and use this inspection instead of creating an order. The rollback tutorial explores a failure after a reservation succeeds.',
         sql: inspectCheckout,
-        expected: 'available = 1, orders = 1, lines = 1. Two mugs have a recorded purchase explaining where they went.',
+        expected: 'available = 1, orders = 1, lines = 1. Two mugs have a recorded purchase explaining where they went. In the four-mug variation, the refused reservation and rollback leave available = 3, orders = 0, lines = 0.',
       },
     ],
   },
@@ -228,4 +230,6 @@ export const sandboxTutorials: Tutorial[] = [
   ...performanceTutorials,
   ...operationsTutorials,
   ...capacityTutorials,
+  ...postgresqlTutorials,
+  ...choicesTutorials,
 ];

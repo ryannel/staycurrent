@@ -222,7 +222,8 @@ export const relationalCollection: RelationalGroup[] = [
         "slug": "product-comparison",
         "title": "Choosing a relational database",
         "description": "Compare relational products and deployment choices for stated application needs.",
-        "scope": "Develop embedded versus server deployment alongside PostgreSQL, MySQL, SQL Server and SQLite. Compare consequential behaviour, operating work and relevant edition or service limits using current evidence."
+        "scope": "Develop embedded versus server deployment alongside PostgreSQL, MySQL, SQL Server and SQLite. Compare consequential behaviour, operating work and relevant edition or service limits using current evidence.",
+        "status": "draft"
       }
     ]
   },
@@ -236,7 +237,8 @@ export const relationalCollection: RelationalGroup[] = [
         "slug": "adding-another-system",
         "title": "When should you add another system?",
         "description": "Weigh another service against capabilities in the existing database.",
-        "scope": "Develop one workload to compare native capabilities, extensions and specialised access methods with a separate service. Account for resource competition, operating effort and keeping copies current; link to the relevant family explanations."
+        "scope": "Develop one workload to compare native capabilities, extensions and specialised access methods with a separate service. Account for resource competition, operating effort and keeping copies current; link to the relevant family explanations.",
+        "status": "draft"
       }
     ]
   },
@@ -250,25 +252,29 @@ export const relationalCollection: RelationalGroup[] = [
         "slug": "postgresql/architecture",
         "title": "Inside PostgreSQL",
         "description": "Follow a read and a committed change through PostgreSQL's implementation.",
-        "scope": "Connect processes, buffers, heap and index access, planning, visibility, locks, logging, checkpoints, restart and eventual cleanup through an actual read/write journey."
+        "scope": "Connect processes, buffers, heap and index access, planning, visibility, locks, logging, checkpoints, restart and eventual cleanup through an actual read/write journey.",
+        "status": "draft"
       },
       {
         "slug": "postgresql/indexes",
         "title": "Indexes in PostgreSQL",
         "description": "Understand PostgreSQL’s access methods and the workloads they support.",
-        "scope": "Choose a bounded comparison of index implementations and specialised methods. General lookup principles remain in the family index article."
+        "scope": "Choose a bounded comparison of index implementations and specialised methods. General lookup principles remain in the family index article.",
+        "status": "draft"
       },
       {
         "slug": "postgresql/row-versions",
         "title": "Row versions, transactions, and vacuum",
         "description": "Understand visibility, cleanup, and the effects of long-running work.",
-        "scope": "Follow record versions through transactions and cleanup in PostgreSQL, making the operational consequence of retained versions visible."
+        "scope": "Follow record versions through transactions and cleanup in PostgreSQL, making the operational consequence of retained versions visible.",
+        "status": "draft"
       },
       {
         "slug": "postgresql/recovery",
         "title": "WAL, checkpoints, and recovery",
         "description": "Follow a committed change through PostgreSQL’s recovery machinery.",
-        "scope": "Connect the shared durability explanation to PostgreSQL’s log, checkpoints, and recovery, with explicit version and configuration boundaries."
+        "scope": "Connect the shared durability explanation to PostgreSQL’s log, checkpoints, and recovery, with explicit version and configuration boundaries.",
+        "status": "draft"
       }
     ]
   }

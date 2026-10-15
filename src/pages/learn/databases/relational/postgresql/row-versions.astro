@@ -1,0 +1,73 @@
+---
+import Base from '../../../../../layouts/Base.astro';
+import Sql from '../../../../../components/explainers/querying/Sql.astro';
+import '../../../../../styles/explorables.css';
+import '../../../../../styles/relational-design.css';
+const inspect = `SELECT product_id, available,
+       ctid::text AS location, xmin::text AS created_by
+FROM pg_visibility_products WHERE product_id = 1;`;
+const plan = `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)
+SELECT product_id, available FROM pg_visibility_products
+WHERE product_id <= 5 ORDER BY product_id;`;
+const serverSetup = `CREATE TABLE version_demo (
+  product_id integer PRIMARY KEY,
+  available integer NOT NULL
+);
+INSERT INTO version_demo (product_id, available) VALUES (1, 3);`;
+---
+<Base title="Row versions, transactions, and vacuum" description="Follow a PostgreSQL update through old and new versions, retained snapshots, index-only scans, HOT updates and eventual vacuum cleanup.">
+ <meta slot="head" name="robots" content="noindex" />
+ <article class="visual-essay relational-design">
+  <header class="essay-header"><p class="eyebrow">Databases and storage · Working draft</p><h1>Row versions, transactions, and vacuum</h1><div class="essay-meta"><span>PostgreSQL 18</span><a href="/learn/databases/relational/postgresql/architecture/">Inside PostgreSQL ↗</a></div></header>
+  <p>When PostgreSQL updates a record, it normally creates a new row version. Keeping the previous version allows a reader with an older snapshot to continue seeing the earlier value while newer work sees the change. This is the physical foundation of PostgreSQL’s multiversion concurrency control, or MVCC.</p>
+  <p>Those versions eventually need maintenance. Some remain necessary for active readers; others can be removed. The difference affects table space, index access and the amount of work a query performs. Vacuum is part of operating the versioned storage model, not an occasional repair for an exceptional event.</p>
+  <p>We will follow a stock value from three units to one, then see how a covering query’s heap visits change after vacuum. A separate two-session schedule explains why an older reader can delay cleanup. The browser exercise observes versions and access counters on one connection; it cannot run that independent reader schedule.</p>
+  <nav aria-label="In this article"><ol><li><a href="#versions">One record, two versions</a></li><li><a href="#reader">The older reader</a></li><li><a href="#visibility">Visibility and index-only scans</a></li><li><a href="#hot">Updates and index entries</a></li><li><a href="#maintenance">Keeping cleanup effective</a></li></ol></nav>
+
+  <section id="versions"><h2>One record, two versions</h2>
+   <p>The <a href="/learn/databases/relational/sandbox/?tutorial=pg-visibility">visibility lesson</a> creates 2,000 products with <code>available=3</code>. Each has a stable integer product ID. For product 1, inspect two PostgreSQL system columns alongside its application data:</p>
+   <Sql code={inspect} label="Inspect the currently visible row version" />
+   <p><code>ctid</code> identifies the version’s physical location as a heap page and item position. <code>xmin</code> identifies the transaction that created that version. After a committed update sets available to one, the same query returns product ID 1 and a new location and creator ID. The application record persists while its physical representation changes.</p>
+   <p>That does not mean a normal SELECT returns both versions. PostgreSQL checks them against the query’s snapshot and transaction status. A newer query sees the committed replacement; an appropriate older snapshot can still see the predecessor. The <a href="https://www.postgresql.org/docs/18/ddl-system-columns.html">system-column documentation</a> describes these fields and warns against using <code>ctid</code> as a long-lived row identifier.</p>
+   <p>Tuple headers also contain information associated with deleting or updating a version, commonly discussed through <code>xmax</code>. It is not a simple “deleted” flag: row locks and multiple-transaction metadata affect its interpretation. Visibility uses tuple flags and transaction state as well as IDs. Comparing two numeric IDs is not a replacement for PostgreSQL’s snapshot rules.</p>
+   <p>A rolled-back update may leave physical work for later cleanup, but its new version is not a committed replacement visible to other transactions. The <a href="/learn/databases/relational/postgresql/recovery/">WAL lesson</a> shows a related distinction: log records can exist for an update whose logical effect is later rolled back.</p>
+  </section>
+
+  <section id="reader"><h2>The older reader</h2>
+   <p>To see why a version must be retained, consider two real PostgreSQL connections, A and B. In a disposable PostgreSQL 18 database, an operator first creates this separate table and commits the setup:</p>
+   <Sql code={serverSetup} label="Server-only setup for the two-connection schedule" />
+   <p>Connection A represents a report that needs one stable view. Connection B represents a stock writer. Execute the following in the stated order, keeping A open between its commands:</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-label="Two-session snapshot schedule"><table><thead><tr><th>Step</th><th>Connection A: report</th><th>Connection B: writer</th><th>Consequence</th></tr></thead><tbody><tr><td>1</td><td><code>BEGIN ISOLATION LEVEL REPEATABLE READ;</code><br /><code>SELECT available FROM version_demo WHERE product_id=1;</code></td><td>—</td><td>A reads 3 and establishes its snapshot</td></tr><tr><td>2</td><td>Leave transaction open</td><td><code>UPDATE version_demo SET available=1 WHERE product_id=1;</code> in autocommit</td><td>B commits a new version containing 1</td></tr><tr><td>3</td><td><code>SELECT available FROM version_demo WHERE product_id=1;</code></td><td><code>SELECT available FROM version_demo WHERE product_id=1;</code></td><td>A still reads 3; B reads 1</td></tr><tr><td>4</td><td>Leave transaction open</td><td><code>VACUUM (VERBOSE) version_demo;</code></td><td>The version A can still need is not reclaimable</td></tr><tr><td>5</td><td><code>COMMIT;</code></td><td>Run the same VACUUM again</td><td>That snapshot no longer prevents cleanup</td></tr></tbody></table></div>
+   <p>This is a documented server procedure, not an executed two-session browser test. It follows PostgreSQL 18’s <a href="https://www.postgresql.org/docs/18/transaction-iso.html#XACT-REPEATABLE-READ">Repeatable Read rules</a>. A’s snapshot is established by its first ordinary statement, not merely by sending BEGIN. At Read Committed, separate ordinary SELECT statements would take separate snapshots and this exact repeated-read result would differ.</p>
+   <p>The writer does not have to wait for A’s ordinary read to finish before making a new version. That improves coexistence, but the cost is retained storage. Vacuum cannot remove the old version while A may still read it. Ending A makes removal eligible; it does not mean the operating system instantly receives a smaller file.</p>
+   <p>On a busy table, a long-held snapshot can retain many superseded versions as other requests keep changing rows. The effect is not limited to the one product the report happened to read. Snapshot retention belongs to transaction visibility across the database, and other mechanisms such as replication-related retention can constrain cleanup too.</p>
+  </section>
+
+  <section id="visibility"><h2>Visibility and index-only scans</h2>
+   <p>A covering index stores every field required by a particular query. It still needs a way to establish whether its entries refer to visible rows. PostgreSQL keeps a <strong>visibility map</strong> with small bits of information per heap page, including whether all its tuples are known visible to all transactions.</p>
+   <p>When that all-visible bit is set, an index-only scan can avoid fetching the corresponding heap page for a visibility check. When it is not set, the executor must visit the heap as needed. The map is conservative: a cleared bit means the shortcut is unavailable, not that every tuple on the page is invisible.</p>
+   <p>The browser lesson creates an index on product ID including available stock. Its first-five-products query can obtain all selected values from that index. Run vacuum as its own statement, outside a transaction, then inspect the plan:</p>
+   <Sql code="VACUUM (ANALYZE) pg_visibility_products;" label="Allow cleanup and visibility-map maintenance" />
+   <Sql code={plan} label="Read five products through a covering access path" />
+   <p>In the verified run, the plan is an Index Only Scan with five returned rows and <code>Heap Fetches: 0</code>. Next update product 1 from available three to one and run the same plan again. The update changes a row version and clears applicable visibility information. The observed plan now performs heap fetches, even though its name is still Index Only Scan.</p>
+   <p>Run vacuum separately after that update commits, with no independent old reader in this lesson, then repeat the query. Heap fetches return to zero. The values remain one, three, three, three, three. Vacuum has not undone the stock reservation; it has changed the cleanup and visibility state that allows an access shortcut.</p>
+   <p>The <a href="https://www.postgresql.org/docs/18/storage-vm.html">visibility-map reference</a> distinguishes its all-visible and all-frozen bits. The <a href="https://www.postgresql.org/docs/18/indexes-index-only-scans.html">index-only scan documentation</a> explains why this optimisation is most effective when enough relevant pages remain all-visible. A covering index on a heavily changing table may save fewer heap visits than the same index on stable data.</p>
+  </section>
+
+  <section id="hot"><h2>Updates and index entries</h2>
+   <p>Creating a new heap version does not always require new ordinary index entries. PostgreSQL’s heap-only tuple optimisation, <strong>HOT</strong>, can link versions on the same heap page when there is enough room and the update does not change columns referenced by non-summarising indexes. Summarising methods such as BRIN have a different role in that condition.</p>
+   <p>Imagine an index only on product ID and an update to available stock. The key stays the same. If the new version fits on the original page, an existing index entry can lead into a heap chain whose visible member depends on the reader’s snapshot. Avoiding new ordinary index entries reduces maintenance, while heap version cleanup still has to happen.</p>
+   <p>The covering index in our exercise includes <code>available</code>. Changing that field changes information stored in the index, even though it is not part of the ordered search key. The update therefore cannot use HOT on the basis of an unchanged primary key alone. Adding an included column for reads can change the write path.</p>
+   <p>Table <code>fillfactor</code> can leave more page space for future updates, increasing the chance that eligible new versions fit on the same page. That trades denser initial storage for update room; it does not make indexed-column changes HOT-compatible. PostgreSQL’s <a href="https://www.postgresql.org/docs/18/storage-hot.html">HOT documentation</a> sets out the conditions. Measure the actual read/write workload before changing layout settings.</p>
+  </section>
+
+  <section id="maintenance"><h2>Keeping cleanup effective</h2>
+   <p>Ordinary vacuum makes eligible dead-version space reusable and maintains information needed for efficient access and transaction-ID safety. It generally does not compact the whole table into a smaller file. <code>VACUUM FULL</code> rewrites the table and takes a stronger lock, making it a different operational procedure.</p>
+   <p>Transaction IDs have a finite representation. PostgreSQL must eventually treat sufficiently old committed tuple creators as permanently old, called <strong>freezing</strong>, so ID reuse cannot make ancient rows look like new uncommitted work. This is another reason maintenance is required even when reclaiming visible disk space is not urgent.</p>
+   <p>Autovacuum schedules maintenance as tables change. Investigate a growing table by combining live/dead-row estimates, update rates, vacuum history and old transaction or snapshot ages. Those statistics are observations with collection delays, not an exact census of removable versions. A large count does not by itself say whether vacuum is too slow or whether something is preventing removal.</p>
+   <p>If an abandoned report retains an old snapshot, running vacuum repeatedly cannot reclaim versions that report may still need. Resolve the transaction’s ownership and lifetime. If no retention barrier exists but updates outpace maintenance, adjust the table’s maintenance policy and resources using measured workload evidence. The <a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">routine-vacuuming chapter</a> connects those responsibilities.</p>
+   <p>The row-version model now explains both benefits and costs. Readers can keep a stable view while writers proceed, but somebody must eventually establish that older versions are no longer needed. A covering index can answer without heap visits, but only when visibility information supports it. Those are consequences of the same storage design.</p>
+  </section>
+  <section class="series-reading" aria-labelledby="reading"><h2 id="reading">Further reading</h2><p><a href="/learn/databases/relational/sandbox/?tutorial=pg-visibility">Try visibility and heap fetches →</a><span>Update another product and compare the plan before and after vacuum.</span></p><p><a href="/learn/databases/relational/isolation/">Isolation and snapshots →</a><span>Connect physical versions to the guarantees an application’s transaction actually receives.</span></p><p><a href="/learn/databases/relational/slow-queries/#maintenance">Maintenance and performance →</a><span>Use these mechanisms in a service investigation rather than treating every slow query as an index problem.</span></p></section>
+ </article>
+</Base>
