@@ -1,0 +1,68 @@
+---
+import Base from '../../../../layouts/Base.astro';
+import Sql from '../../../../components/explainers/querying/Sql.astro';
+import { operationsTutorials } from '../../../../lib/sql-lessons/operations';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+const lesson = operationsTutorials.find(t => t.id === 'schema-evolution')!;
+const boundedDDL = `BEGIN;
+SET LOCAL lock_timeout = '2s';
+SET LOCAL statement_timeout = '10s';
+ALTER TABLE migration_orders ADD COLUMN delivery_instructions text;
+COMMIT;`;
+---
+<Base title="Changing a schema while the application runs" description="Expand a schema, keep old writers compatible, backfill and validate existing records, then retire the old representation deliberately.">
+ <meta slot="head" name="robots" content="noindex" />
+ <article class="visual-essay relational-design">
+  <header class="essay-header"><p class="eyebrow">Databases and storage · Working draft</p><h1>Changing a schema while the application runs</h1><div class="essay-meta"><span>Relational operations</span><a href="/learn/databases/relational/">Relational introduction ↗</a></div></header>
+  <p>A schema change changes the agreement between the database and its callers. Renaming a column can be quick for the database and immediately break every application process that still uses the old name. Adding a required field can reject inserts from workers deployed last week. Updating application code and updating the schema are separate events, even when one deployment command starts both.</p>
+  <p>A live migration therefore has several jobs: introduce a compatible structure, keep incoming changes correct, transform existing records, and eventually remove the old structure. The database may serve old and new application versions throughout that process. We need to know what each version reads and writes at every stage.</p>
+  <p>We will replace an order’s <code>delivery_note</code> with <code>delivery_instructions</code> in PostgreSQL 18. The meaning stays the same; the challenge is changing the interface safely. This modest change makes the compatibility problem visible without also requiring a data-conversion policy.</p>
+  <nav aria-label="In this article"><ol><li><a href="#compatibility">Compatible stages</a></li><li><a href="#expansion">Adding the new column</a></li><li><a href="#backfill">Backfilling existing records</a></li><li><a href="#validation">Validation and constraints</a></li><li><a href="#cutover">Cutover and retirement</a></li></ol></nav>
+
+  <section id="compatibility"><h2>Compatible stages</h2>
+   <p>At the beginning, orders 1, 2 and 3 contain the notes “Front desk”, “Ring bell” and “Side door”. The old column is required. Version A reads and writes it. A direct rename would make A’s next query fail with a missing-column error, so we first add the new name alongside the old one.</p>
+   <p>For this migration, the database will copy old-column writes into the new column with a small trigger. That covers application servers, workers and scripts using the old interface. During this stage the old field remains the source of truth. A new reader can use <code>coalesce(delivery_instructions, delivery_note)</code> while historical rows are being copied.</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-label="Application and database migration stages"><table><thead><tr><th>Stage</th><th>Readers</th><th>Writers</th><th>Database responsibility</th></tr></thead><tbody><tr><td>Original</td><td>A reads old column</td><td>A writes old column</td><td>Require the old value</td></tr><tr><td>Expansion and backfill</td><td>A reads old; B reads new with fallback</td><td>A and B write old</td><td>Copy old writes into new; fill historical gaps</td></tr><tr><td>New read path</td><td>Every reader uses new</td><td>B writes old; C starts writing new</td><td>Require new; permit omitted old; retain old-write trigger</td></tr><tr><td>Retirement</td><td>C reads new</td><td>All writers use new</td><td>Remove old column and compatibility trigger</td></tr></tbody></table></div>
+   <p>B and C are successive application releases, not two modes chosen independently for every statement. B must be deployed everywhere that reads notes before C starts creating records without old values. An overlooked export job is a reader too. This order is what makes the transition valid.</p>
+  </section>
+
+  <section id="expansion"><h2>Adding the new column</h2>
+   <p>The <a href="/learn/databases/relational/sandbox/?tutorial=schema-evolution">schema-evolution lesson</a> prepares the three orders. You act as the migration operator on one connection, then send representative old-application writes. Run its setup first; the SQL below expands that prepared table and installs synchronisation:</p>
+   <Sql code={lesson.steps[1].sql} label="Add the nullable replacement and copy future old-column writes" />
+   <p>The trigger runs before each insertion or update that names <code>delivery_note</code>. On an insert with an old note, it copies that note to the new field. On an old-column update it copies the changed value. An insert supplying only the new field is left alone, which will matter at cutover. Existing rows still have null in the new column: a trigger handling future writes does not backfill history.</p>
+   <p>Do not let callers invent conflicting values for both columns during the compatibility stage. Here old-column writes are authoritative and the trigger overwrites any new value supplied with them. That is a deliberate migration rule, not a general bidirectional synchronisation system.</p>
+   <p>Adding a nullable column without a default avoids rewriting every existing row, but it still requires a schema lock. A short operation can wait behind a long transaction, and a waiting strong lock can delay later operations. On a server, bound how long the migration waits rather than letting it queue indefinitely:</p>
+   <Sql code={boundedDDL} label="Alternative server execution for the column addition, before installing the trigger" />
+   <p>This block replaces the first <code>ALTER</code> above; do not run both additions. The sample two-second lock wait and ten-second statement timeout are explicit operating choices to adjust for the service, not universal tuning values. If the statement errors inside this transaction, send <code>ROLLBACK</code> before retrying. Record the failed attempt, inspect blockers and retry after a bounded delay, with a limited number of attempts. Increasing the timeout does not remove the blocker.</p>
+   <p>Inspect the exact operation in the <a href="https://www.postgresql.org/docs/18/sql-altertable.html">PostgreSQL ALTER TABLE reference</a>. Lock strength and rewriting depend on the subcommand and expression. Combining several alterations takes the strongest lock any of them requires. A fast test on three rows does not establish the duration or waiting behaviour on the live table.</p>
+  </section>
+
+  <section id="backfill"><h2>Backfilling existing records</h2>
+   <p>The old records need values in the new field. Updating the whole table in one transaction may produce a large amount of WAL, retain locks for a long time and create cleanup work all at once. Instead, a backfill worker can commit bounded batches. The lesson uses batches of two so that the intermediate state is visible:</p>
+   <Sql code={lesson.steps[2].sql} label="Copy a bounded set of missing values inside one UPDATE" />
+   <p>The first run selects orders 1 and 2. Order 3 remains missing. Repeating the statement selects only remaining gaps, so the job can resume after a completed batch without recopying everything. <code>RETURNING</code> shows affected rows, but does not promise their display order.</p>
+   <p>Now the old application changes order 1’s note to “Reception”. The trigger updates the new column too. Without it, the backfill would have copied “Front desk” once and then allowed the two representations to disagree. A backfill is correct only if ongoing writes are accounted for as well as existing records.</p>
+   <p>The copy expression reads <code>o.delivery_note</code> from the row being updated rather than using a value fetched earlier into application memory. Under concurrent modification, PostgreSQL coordinates the row update and rechecks the current target as its isolation rules require. The extra null condition avoids replacing a new value already supplied by a competing old-column update. The trigger then keeps later old writes in sync. Test that interaction on an actual server before a production migration; the browser sequence demonstrates compatibility but does not run competing sessions.</p>
+   <p>On a large table, choose an access path for locating remaining work. Repeatedly scanning from the beginning to find the next missing value can become expensive near completion. A resumable primary-key range or a temporary partial index on missing rows may help, with a final sweep for gaps. Bound each transaction’s duration, pause when replication lag or request latency rises, and record progress after commit. More backfill workers can increase contention without finishing sooner.</p>
+  </section>
+
+  <section id="validation"><h2>Validation and constraints</h2>
+   <p>Finish order 3, then check the new representation. At this stage every value should be present and equal to the old value. The equality check matters because a non-null field can still contain the wrong note.</p>
+   <Sql code="SELECT order_id FROM migration_orders WHERE delivery_instructions IS DISTINCT FROM delivery_note;" label="Find any disagreement before switching readers" />
+   <p>A single empty query result is useful evidence, but a database constraint makes the required-value rule apply to future writes. PostgreSQL can add a check as <code>NOT VALID</code>, enforce it for new changes, and validate existing rows in a later operation:</p>
+   <Sql code={lesson.steps[4].sql} label="Finish the copy, validate presence and establish NOT NULL" />
+   <p><code>NOT VALID</code> does not mean “ignore this rule”. New and updated rows must satisfy it immediately; validation checks the older population. Separating those operations allows the historical scan to use the validation lock rather than keeping the initial stronger lock for that scan. The validated check can then establish that a <code>SET NOT NULL</code> scan is unnecessary. These commands still acquire locks.</p>
+   <p>The lesson has one connection and commits its submitted block as a unit. On a live server, execute and commit the add-check operation separately from validation and the final short alterations, with appropriate timeouts for each. Keeping every stage inside one transaction would retain earlier locks and defeat much of the intended benefit.</p>
+  </section>
+
+  <section id="cutover"><h2>Cutover and retirement</h2>
+   <p>Deploy B so that every reader uses the verified new column. Keep B’s writes on the old column while the trigger copies them. At this point rolling back to A still works: all notes continue to exist in both representations.</p>
+   <p>Before deploying C, drop the old column’s not-null requirement. C reads and writes only the new field. Its new order 4 contains “Loading bay” in <code>delivery_instructions</code> and null in <code>delivery_note</code>. B can coexist briefly because it reads new values and its old-column writes still invoke the trigger. A can no longer return every note correctly.</p>
+   <p>That is the rollback boundary. Keeping an old column does not make an old application safe to restore when new writes stop maintaining it. If rollback to A is required after this point, stop new-only writes and reconcile the old representation from the new one before allowing old-only readers. Decide that procedure before enabling C.</p>
+   <p>After C is everywhere, verify that no worker, report, script or application instance still names the old field. Remove the trigger, old column and helper function in a separately scheduled change. Do not use <code>CASCADE</code> to silence unexpected dependencies: inspect what still depends on the column and decide how to migrate it.</p>
+   <p>The finished schema has four orders and one required delivery-instructions column. Getting there required more than a successful <code>ALTER TABLE</code>: the readers were compatible, new writes stayed correct during copying, historical values were checked, and retirement happened after the old interface stopped being used.</p>
+  </section>
+  <section class="series-reading" aria-labelledby="reading"><h2 id="reading">Further reading</h2><p><a href="/learn/databases/relational/sandbox/?tutorial=schema-evolution">Try the staged migration →</a><span>Change the batch size and make an old writer update a row that has already been copied.</span></p><p><a href="https://www.postgresql.org/docs/18/ddl-alter.html">PostgreSQL 18: Modifying tables ↗</a><span>Compare adding, converting and removing columns and constraints.</span></p><p><a href="/learn/databases/relational/slow-queries/#waiting">Investigating waits →</a><span>Find the transaction behind a blocked migration before retrying it.</span></p></section>
+ </article>
+</Base>

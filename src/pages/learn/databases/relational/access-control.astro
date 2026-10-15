@@ -1,0 +1,80 @@
+---
+import Base from '../../../../layouts/Base.astro';
+import Sql from '../../../../components/explainers/querying/Sql.astro';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+const grants = `GRANT USAGE ON SCHEMA ops_access TO ops_shipping;
+GRANT SELECT (order_id, status), UPDATE (status)
+ON ops_access.orders TO ops_shipping;`;
+const policy = `ALTER TABLE ops_access.orders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY shipping_tenant ON ops_access.orders TO ops_shipping
+USING (tenant_id = 1)
+WITH CHECK (tenant_id = 1);`;
+const defaults = `-- Run as the role that creates these tables, or an authorised administrator.
+ALTER DEFAULT PRIVILEGES FOR ROLE order_owner IN SCHEMA orders
+GRANT SELECT ON TABLES TO order_reporting;`;
+---
+<Base title="Controlling access" description="Separate ownership from application roles, grant only the operations and columns needed, and verify row policies through real allowed and denied queries.">
+ <meta slot="head" name="robots" content="noindex" />
+ <article class="visual-essay relational-design">
+  <header class="essay-header"><p class="eyebrow">Databases and storage · Working draft</p><h1>Controlling access</h1><div class="essay-meta"><span>Relational operations</span><a href="/learn/databases/relational/">Relational introduction ↗</a></div></header>
+  <p>A database connection acts with an identity and a set of permissions. Those permissions determine which objects it may use and what it may do to them. If the application connects as a database owner, a bug can have the same authority as the person who created its tables. Giving the application a narrower identity limits the consequences of mistakes and compromised code.</p>
+  <p>Access control has several boundaries. Authentication establishes who connected. Privileges allow operations such as reading a table or updating a column. Row policies can limit which records a permitted operation can see or change. Application authorisation still decides which user request should cause that operation. Each boundary answers a different question.</p>
+  <p>We will give a shipping worker enough authority to mark its own tenant’s orders packed. It needs the order ID and status, but not the customer’s email, another tenant’s records or permission to delete an order.</p>
+  <nav aria-label="In this article"><ol><li><a href="#roles">Owners and application roles</a></li><li><a href="#privileges">Granting the required work</a></li><li><a href="#rows">Restricting rows</a></li><li><a href="#testing">Testing with the actual identity</a></li><li><a href="#evolution">New objects and audit boundaries</a></li></ol></nav>
+
+  <section id="roles"><h2>Owners and application roles</h2>
+   <p>In PostgreSQL, a <strong>role</strong> can own objects, receive privileges and belong to other roles. A role with <code>LOGIN</code> can be used to establish a session; a <code>NOLOGIN</code> role can hold permissions without being a direct login identity. Membership lets a login use a deliberately defined set of authority, according to the membership’s inheritance and role-switching rules.</p>
+   <p>Separate the role that owns and migrates application objects from the role serving ordinary requests. The owner can alter its objects and their access rules. A runtime worker should ordinarily receive only its required operations and no path to assume the owner role. Giving a role a modest list of grants does not help if it also inherits a broad administrative role.</p>
+   <p>On a server, authentication and connection permission come first: configure the database’s connection rules, the role’s login mechanism, transport protection and database <code>CONNECT</code> privilege. Grants on tables do not establish any of those. The <a href="https://www.postgresql.org/docs/18/client-authentication.html">PostgreSQL authentication chapter</a> describes that separate connection boundary.</p>
+   <p>The sandbox already runs as an administrator. The <a href="/learn/databases/relational/sandbox/?tutorial=least-privilege">least-privilege lesson</a> creates a nonlogin role called <code>ops_shipping</code> and uses <code>SET ROLE</code> to exercise its authority on the existing connection. This tests database permissions; it does not test a network login, password policy or credential storage.</p>
+  </section>
+
+  <section id="privileges"><h2>Granting the required work</h2>
+   <p>The lesson creates <code>ops_access.orders</code>, owned by the administrator, with these two records:</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-label="Orders before access restrictions"><table><thead><tr><th>Order</th><th>Tenant</th><th>Email</th><th>Status</th></tr></thead><tbody><tr><td>1</td><td>1</td><td>ada@example.invalid</td><td>ready</td></tr><tr><td>2</td><td>2</td><td>lin@example.invalid</td><td>ready</td></tr></tbody></table></div>
+   <p>A schema is a namespace containing objects. Using a table inside it requires the relevant schema access as well as privileges on the table. We grant <code>USAGE</code> so the worker can resolve objects in <code>ops_access</code>, then permit two selected columns to be read and only status to be updated:</p>
+   <Sql code={grants} label="Allow the worker to read IDs and status and change status" />
+   <p>We do not grant schema <code>CREATE</code>, table ownership, <code>DELETE</code> or access to email. <code>USAGE</code> does not itself grant table reads. Likewise, a table-level <code>SELECT</code> grant would allow reading all its columns, so it would defeat this deliberate column restriction even if the narrower grant remained present.</p>
+   <p>The worker’s update needs to read <code>order_id</code> in its <code>WHERE</code> condition and return ID and status. Those read privileges are included. A role needs the privileges for the statement it actually executes, not only the verb at its beginning.</p>
+   <p>Use explicit field lists in the application query. <code>SELECT *</code> asks for email and tenant ID too, so it is rejected under these grants. Adding a new column later should not automatically widen what this worker reads. For other use cases, a carefully designed view can provide a stable restricted interface, but its ownership and security options need review; a view name alone is not an access guarantee.</p>
+   <p>Check grants received through every path, including role membership and <code>PUBLIC</code>, the implicit set of all roles. Revoking one direct grant does not remove authority acquired elsewhere. PostgreSQL’s <a href="https://www.postgresql.org/docs/18/ddl-priv.html">privileges documentation</a> explains how these object permissions combine.</p>
+  </section>
+
+  <section id="rows"><h2>Restricting rows</h2>
+   <p>The column grants still allow reading order IDs and status for both tenants. For this worker, only tenant 1 is appropriate. PostgreSQL row-level security adds a condition to which rows the permitted operation can use:</p>
+   <Sql code={policy} label="Restrict the shipping role to tenant 1" />
+   <p><code>USING</code> determines which existing rows the role can see or target. <code>WITH CHECK</code> determines which new row values it may create through an allowed insert or update. The policy here applies to all commands for this role, but it does not grant commands: DELETE remains forbidden because no DELETE privilege exists.</p>
+   <p>The fixed tenant ID is deliberate. The worker identity in this example serves only tenant 1. A multi-tenant application needs a trustworthy mapping from the authenticated caller to its permitted rows. A policy that trusts a session setting the same untrusted caller can freely change would not establish that boundary. Decide who sets the context and who can change it, and test that authority.</p>
+   <p>With row security enabled, an applicable policy is needed for ordinary row access; absent a permitting policy, access is denied by default. Multiple policies can combine, so adding a broad policy may widen access unexpectedly. Review the full policy set rather than reading one restrictive-looking expression in isolation.</p>
+   <p>Table owners normally bypass row policies, and superusers and roles with <code>BYPASSRLS</code> bypass them. <code>FORCE ROW LEVEL SECURITY</code> can make the owner subject to policies in ordinary access, but it does not turn a superuser or bypass role into a restricted runtime identity. Referential-integrity checks have their own behaviour as well: constraint errors can disclose facts about values the caller cannot read. These limits are documented in <a href="https://www.postgresql.org/docs/18/ddl-rowsecurity.html">row security policies</a>.</p>
+   <p>This makes the ownership separation practical. A test executed as the table owner can return all records even when the shipping worker is correctly restricted. Running the service as that owner would bypass the boundary we intended to test.</p>
+  </section>
+
+  <section id="testing"><h2>Testing with the actual identity</h2>
+   <p>After the lesson setup, switch the session to the worker and read the columns it needs:</p>
+   <Sql code="SET ROLE ops_shipping;
+SELECT current_user;
+SELECT order_id, status FROM ops_access.orders ORDER BY order_id;" label="Inspect the effective role and its visible orders" />
+   <p>The effective role is <code>ops_shipping</code>, and the only returned order is 1, ready. Now ask for email with <code>SELECT order_id, email FROM ops_access.orders</code>. PostgreSQL returns SQLSTATE <code>42501</code>, insufficient privilege. The row policy permits order 1, but the column grant still excludes its email.</p>
+   <p>Send the permitted update for order 1:</p>
+   <Sql code="UPDATE ops_access.orders SET status = 'packed'
+WHERE order_id = 1 RETURNING order_id, status;" label="Perform the allowed status change" />
+   <p>It returns order 1, packed. Change the filter to order 2 and run again. The statement has the required operation and column privileges, but the row is outside its visible set, so it updates zero rows. That is a different response from a permission error. The handler must decide what zero rows means for its request, rather than assuming a successful command changed an order.</p>
+   <p>Finally try <code>DELETE FROM ops_access.orders WHERE order_id = 1</code>. It fails with <code>42501</code> because DELETE was never granted. Run <code>RESET ROLE</code> and inspect as administrator: order 1 still exists, packed; order 2 remains ready.</p>
+   <p>The rejected statements in this lesson run outside an explicit transaction, so the session remains available for the next command. If a permission error happens inside <code>BEGIN</code>, the application must roll that failed transaction back before continuing ordinary work. Connection pools also need to reset role and session context correctly before lending a connection to another request; otherwise the next caller may inherit the previous caller’s effective authority.</p>
+   <p>Test both permitted and forbidden paths with the actual runtime identity after deployment. Include an object the role should not see, a column it should not read and an operation it should not perform. Then make the allowed workflow succeed. A policy that denies everything is restrictive, but it does not run the shipping service.</p>
+  </section>
+
+  <section id="evolution"><h2>New objects and audit boundaries</h2>
+   <p>Grants on existing tables do not automatically establish the desired privileges for future tables. PostgreSQL default privileges apply to objects created later by a specified creating role. They do not retroactively modify existing objects, and defaults attached to another role are not inherited merely because the creator belongs to it.</p>
+   <p>For a separate reporting role allowed to read every column of newly created reporting tables, a migration owner might configure:</p>
+   <Sql code={defaults} label="Example default for future tables created by order_owner" />
+   <p>This is a different policy from the shipping worker’s restricted columns. Do not give that worker broad default SELECT privileges to save migration code. Name its allowed columns on each new object and verify the result. Also distinguish schema-local defaults from global defaults: schema-local revocation cannot undo privileges granted globally. The <a href="https://www.postgresql.org/docs/18/sql-alterdefaultprivileges.html">default-privileges reference</a> describes that composition.</p>
+   <p>Audit records should answer who performed which consequential action, on which record and through which request. A database role shared by every web request identifies the application, not the individual person. Carry authenticated application identity and request identity into a protected audit design when that distinction matters. Separate privileged administration and migration actions from ordinary service activity.</p>
+   <p>A statement log is not automatically a complete or suitable audit trail. It may omit the application user and can expose sensitive values. Decide what evidence is needed, where it is protected, how failures are detected and how long it is retained. The service role should not be able to quietly rewrite the evidence of its own consequential actions.</p>
+   <p>Recheck these boundaries when adding a new worker, changing role memberships or restoring a backup. The useful end state is concrete: the shipping role can pack order 1, cannot observe its email, cannot touch tenant 2 and cannot delete either order. That result should come from the role actually serving the application.</p>
+  </section>
+  <section class="series-reading" aria-labelledby="reading"><h2 id="reading">Further reading</h2><p><a href="/learn/databases/relational/sandbox/?tutorial=least-privilege">Try least privilege →</a><span>Switch identities, inspect allowed results and exercise deliberate permission failures.</span></p><p><a href="https://www.postgresql.org/docs/18/user-manag.html">PostgreSQL 18: Database roles ↗</a><span>Follow role attributes and membership before designing runtime and owner identities.</span></p><p><a href="/learn/databases/relational/data-lifecycle/">Retention and deletion →</a><span>Follow the same records through retained copies and eventual removal.</span></p></section>
+ </article>
+</Base>

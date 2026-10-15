@@ -1,0 +1,73 @@
+---
+import Base from '../../../../layouts/Base.astro';
+import Sql from '../../../../components/explainers/querying/Sql.astro';
+import drillUrl from '../../../../../docs/article-work/operations-completion/restore-drill.sh?url&no-inline';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+const commands = `pg_dump --format=custom --file=shop.dump sc_recovery_source
+createdb --template=template0 sc_recovery_restore
+pg_restore --exit-on-error --single-transaction --no-owner --no-acl \
+  --dbname=sc_recovery_restore shop.dump
+psql -X --set=ON_ERROR_STOP=1 --dbname=sc_recovery_restore -c 'ANALYZE;'`;
+const reconcile = `WITH receipts(request_key, expected_amount) AS (
+  VALUES ('req-a', 25.00), ('req-b', 8.00)
+)
+SELECT r.request_key, r.expected_amount, o.amount AS recovered_amount
+FROM receipts AS r
+LEFT JOIN orders AS o USING (request_key)
+WHERE o.request_key IS NULL
+   OR o.amount IS DISTINCT FROM r.expected_amount;`;
+---
+<Base title="Backups and recovery" description="Plan a restore against data-loss and service-recovery requirements, execute a bounded server drill, and validate the recovered application's records.">
+ <meta slot="head" name="robots" content="noindex" />
+ <article class="visual-essay relational-design">
+  <header class="essay-header"><p class="eyebrow">Databases and storage · Working draft</p><h1>Backups and recovery</h1><div class="essay-meta"><span>Relational operations</span><a href="/learn/databases/relational/">Relational introduction ↗</a></div></header>
+  <p>A backup preserves something from which a database can be recovered. Recovery is the larger operation: obtain the copy, reconstruct a usable database, check its contents, reconnect the application and establish what happened to work near the failure. A backup file can exist while one of those steps is impossible.</p>
+  <p>Start with the failure the service must survive. Losing a server, accidentally deleting orders and losing access to an entire account are different events. A replica may help with a lost server but faithfully reproduce the accidental deletion. A backup in the same account may be unreachable in the account failure. The location and authority of the surviving copy are part of its usefulness.</p>
+  <p>We will recover a small order database to an isolated target and compare it with acknowledged requests. The example shows how a technically successful restore can still be missing a purchase the customer was told succeeded.</p>
+  <nav aria-label="In this article"><ol><li><a href="#requirements">Recovery requirements</a></li><li><a href="#copies">What the backup contains</a></li><li><a href="#drill">A restore drill</a></li><li><a href="#validation">Validating the service</a></li><li><a href="#operation">Keeping recovery usable</a></li></ol></nav>
+
+  <section id="requirements"><h2>Recovery requirements</h2>
+   <p>Suppose order 101, request <code>req-a</code>, is acknowledged at 09:58. A recoverable copy includes it. Order 102, <code>req-b</code>, is acknowledged at 10:04, but the surviving copy does not include it. The primary is lost at 10:05. Restoring that copy can return a valid database containing 101 and missing 102.</p>
+   <p>A <strong>recovery point objective</strong>, or RPO, limits the acceptable gap between the failure and the recoverable data. If the service requires no more than two minutes of lost committed work, a copy missing a purchase acknowledged one minute before failure might still fall within the time bound, while a recoverable point seven minutes earlier would not. The actual restore must establish its recovery point; the backup job’s scheduled start time does not prove it.</p>
+   <p>A <strong>recovery time objective</strong>, or RTO, limits how long restoring service may take from the defined incident starting point. Loading rows is only one part. Detecting the problem, obtaining credentials and keys, provisioning a target, replaying changes, checking data, restoring permissions and reconnecting callers all consume time.</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-label="Recovery questions"><table><thead><tr><th>Requirement</th><th>Evidence from a drill</th></tr></thead><tbody><tr><td>Which acknowledged work survives?</td><td>Compare known committed request identities with the recovered database</td></tr><tr><td>How long until users can work?</td><td>Time the full run through validation and application reconnection</td></tr><tr><td>Can the copy survive the chosen failure?</td><td>Recover using only the storage, identities and keys expected to remain available</td></tr><tr><td>Can recovery be repeated?</td><td>Another operator follows the recorded procedure and obtains the same valid state</td></tr></tbody></table></div>
+   <p>An RPO allowing a small gap still needs a policy for purchases in that gap. Payments, emails and shipments outside the database do not rewind when its records do. Independent request identities and authoritative external records help find the discrepancy; an automatic “try everything again” can create a second charge or shipment.</p>
+  </section>
+
+  <section id="copies"><h2>What the backup contains</h2>
+   <p>A PostgreSQL logical dump describes database objects and their data so they can be recreated. <code>pg_dump</code> takes a consistent view of one database while ordinary activity continues. The archive can be restored selectively and is useful for a bounded drill. Roles and other cluster-wide objects need separate handling; a dump of one database is not a complete copy of the service’s configuration.</p>
+   <p>A physical base backup preserves the cluster’s storage representation. With the necessary uninterrupted WAL archive, recovery can replay changes beyond that base copy and stop at a chosen point. A logical dump is not a starting point for WAL replay. The <a href="https://www.postgresql.org/docs/18/continuous-archiving.html">continuous-archiving documentation</a> explains the required chain and recovery procedure.</p>
+   <p>For an accidental deletion at 10:05, a recoverable point just before the bad transaction can be more useful than the newest possible state. But stopping there also excludes legitimate transactions committed afterwards. Restoring to an isolated environment lets the team inspect the damage and choose whether to recover particular records or replace the service’s database, with reconciliation of later work.</p>
+   <p>A copy’s scope must include what makes its contents usable: encryption keys, compatible engine and extension versions, roles, permissions, application configuration and any required external objects. A database containing references to missing object-storage files is not a complete application recovery. Record which procedure restores each dependency and which identities can perform it during the failure being tested.</p>
+  </section>
+
+  <section id="drill"><h2>A restore drill</h2>
+   <p>The <a href={drillUrl} download="restore-drill.sh">downloadable server drill</a> creates two new databases on a disposable PostgreSQL 18 server: <code>sc_recovery_source</code> and <code>sc_recovery_restore</code>. It refuses to replace an existing database. Configure <code>PGHOST</code>, <code>PGPORT</code> and <code>PGUSER</code>, or a libpq service, for that test server, using a role allowed to create databases. Run it with <code>sh restore-drill.sh</code> from a terminal with PostgreSQL 18 client tools installed.</p>
+   <p>The script creates an <code>orders</code> table with a primary order ID, unique request key and amount. It inserts 101/<code>req-a</code>/€25, takes a custom-format dump, then inserts 102/<code>req-b</code>/€8 after the dump completes. Both purchases exist in the source, but only the first belongs to the dump’s snapshot. The restore commands use the archive to build the separate target:</p>
+   <pre><code>{commands}</code></pre>
+   <p>The full script uses a private temporary directory for the archive and checks command failures. <code>--exit-on-error</code> stops restoration on an error; <code>--single-transaction</code> makes this small restore succeed or roll back as a unit. Large restores may need a different approach, including parallelism and a repeatable cleanup procedure for a failed target. Consult <a href="https://www.postgresql.org/docs/18/app-pgrestore.html">pg_restore</a> before changing those options.</p>
+   <p>For this isolated fixture, <code>--no-owner --no-acl</code> deliberately leaves ownership and permissions with the restoring role instead of recreating the source’s grants. That makes it easy to inspect, but it is not the permission state of a recovered application. A production drill must separately restore and test the intended owners and nonowner application roles before calling the service ready.</p>
+   <p>The script checks that the restored table has exactly the expected first purchase, runs <code>ANALYZE</code> to collect planner statistics, then compares it with the two independently recorded acknowledgements. It reports the elapsed time for target creation, restoration and these SQL checks. That interval is only part of an RTO measurement.</p>
+   <p>This server procedure was checked against PostgreSQL 18 documentation and shell syntax, but was not executed for this article: the authoring environment has no server client tools. The <a href="/learn/databases/relational/sandbox/?tutorial=recovery-reconciliation">browser reconciliation lesson</a> executes the comparison using tables that model a saved copy and external receipts. It verifies the SQL reasoning, not actual backup integrity, media recovery or restore time.</p>
+  </section>
+
+  <section id="validation"><h2>Validating the service</h2>
+   <p>For the drill, the independent acknowledgement record says <code>req-a</code> succeeded for €25 and <code>req-b</code> succeeded for €8. A small <code>VALUES</code> table stands in for that record. Compare it with the restored orders:</p>
+   <Sql code={reconcile} label="Find acknowledged requests missing from the recovered copy or carrying different amounts" />
+   <p>The expected result is <code>req-b</code>, expected amount €8, recovered amount null. The restore has faithfully reconstructed its snapshot. It has not recovered the later acknowledged purchase. Treat that result as a reconciliation case, not a reason to charge the payment method again.</p>
+   <p>A real order includes more than these three fields. Check related lines, stock reservations, payment references and the state of external fulfilment before repairing it. Stable request identities allow the application to ask whether a particular operation exists, rather than guessing from a row count. The <a href="/learn/databases/relational/conflicts-and-retries/">uncertain-outcome article</a> explains why a missing reply and a missing transaction require different responses.</p>
+   <p>Counts and totals are useful but incomplete. Two wrong records can preserve the same count, and an incorrect amount can still satisfy its type. Validate constraints, important invariants, known records across the recovery interval and representative application reads. In the sandbox variation, changing €8 to €9 leaves the count at two while reconciliation catches the wrong amount.</p>
+   <p>Exercise a disposable application against the isolated target with its real role and credentials. Confirm that it can perform allowed work and cannot perform forbidden work. Disable payment, email and shipping side effects during the drill so validation cannot send them again. Include restored schema versions and required extensions; successful SQL imports do not show that the deployed application understands the result.</p>
+   <p>Before reopening traffic, also apply deletion decisions made after the recovered point. Otherwise an older copy can revive records removed since it was taken. The <a href="/learn/databases/relational/data-lifecycle/">retention and deletion article</a> follows that step with a replayable deletion record.</p>
+  </section>
+
+  <section id="operation"><h2>Keeping recovery usable</h2>
+   <p>A restore drill should leave evidence: the backup identity, source and target versions, required keys and extensions, recoverable point, elapsed stages, validation results and any manual decisions. Repeat after changes that could invalidate it, such as a new extension, different backup encryption, much larger data volume or a new service dependency.</p>
+   <p>Monitor the copies being produced, not just the scheduler. For physical recovery, a successful base backup with a gap in the required WAL is insufficient. Verify archive arrival and retention against the recovery window. PostgreSQL’s <a href="https://www.postgresql.org/docs/18/app-pgverifybackup.html">pg_verifybackup</a> can check a physical backup’s manifest and other integrity information; its documentation explicitly preserves the need for actual test restores.</p>
+   <p>Protect backup access separately from ordinary application access. The job that reads source data, the storage that holds retained copies and the identity allowed to delete those copies need deliberate privileges. Retention should leave the copies needed for the promised recovery window, including the WAL and keys required to use them. Expiring one necessary component can make the remaining files worthless.</p>
+   <p>The useful result is a recovery procedure with a demonstrated boundary: this surviving copy restores these records, on this target, within this measured time, and the remaining discrepancies have a defined resolution. The existence of a backup is the beginning of that claim.</p>
+  </section>
+  <section class="series-reading" aria-labelledby="reading"><h2 id="reading">Further reading</h2><p><a href="https://www.postgresql.org/docs/18/backup-dump.html">PostgreSQL 18: SQL dump ↗</a><span>Understand a dump’s consistent view and the scope of logical restoration.</span></p><p><a href="/learn/databases/relational/postgresql/recovery/">WAL, checkpoints and recovery →</a><span>Follow the physical recovery machinery behind replaying committed changes.</span></p><p><a href="/learn/databases/relational/sandbox/?tutorial=recovery-reconciliation">Try recovery reconciliation →</a><span>Find an acknowledged purchase absent from a model of an older restore.</span></p></section>
+ </article>
+</Base>

@@ -183,25 +183,29 @@ export const relationalCollection: RelationalGroup[] = [
         "slug": "schema-changes",
         "title": "Changing a schema while the application runs",
         "description": "Plan a change while old and new application versions coexist.",
-        "scope": "Work through compatibility, migration, backfill, and locking concerns for one schema change."
+        "scope": "Work through compatibility, migration, backfill, and locking concerns for one schema change.",
+        "status": "draft"
       },
       {
         "slug": "backup-and-restore",
         "title": "Backups and recovery",
         "description": "Establish whether a backup can restore the service you need.",
-        "scope": "Work through a tested restore and its time and data-loss requirements. Distinguish having backup files from a verified recovery procedure."
+        "scope": "Work through a tested restore and its time and data-loss requirements. Distinguish having backup files from a verified recovery procedure.",
+        "status": "draft"
       },
       {
         "slug": "access-control",
         "title": "Controlling access",
         "description": "Decide which people and applications may read or change the data.",
-        "scope": "Work through identities, roles, privileges, least privilege and useful audit boundaries in a concrete application."
+        "scope": "Work through identities, roles, privileges, least privilege and useful audit boundaries in a concrete application.",
+        "status": "draft"
       },
       {
         "slug": "data-lifecycle",
         "title": "Retention and deletion",
         "description": "Follow data through its useful life and its removal.",
-        "scope": "Trace related records, history, replicas, exports and backups, including partition expiry. Explain what the process removes immediately and what remains in retained copies."
+        "scope": "Trace related records, history, replicas, exports and backups, including partition expiry. Explain what the process removes immediately and what remains in retained copies.",
+        "status": "draft"
       }
     ]
   },
