@@ -43,3 +43,51 @@ snapshot changes, lock waits, SSI rejection or deadlock detection. The article's
 schedules and controls are documentation-based teaching models; none is described
 as a live database or benchmark. A psql binary was unavailable. Docker's presence
 alone was not treated as an existing PostgreSQL server.
+
+## Application-led revision, 15 October 2026
+
+Read official node-postgres transactions, queries and pool API documentation:
+https://node-postgres.com/features/transactions
+https://node-postgres.com/features/queries
+https://node-postgres.com/apis/pool
+They support the checked-out client throughout a transaction, parameterised queries,
+promise results and release(true) discarding a connection. The explanatory function
+is imported as raw text so the page and exercised lifecycle have one source.
+
+`verify-application.mjs` executes checkout-attempt.mjs against PGlite with a small
+client adapter and injected faults. Passed: successful purchase, unavailable stock
+without inserts, quantity rejection skips COMMIT and rolls back, rollback failure
+discards the connection, confirmed 40001/40P01 rejection cleanup, unknown server
+codes 08007/40003, and connection loss before/after COMMIT takes effect. Both unknown
+server codes are classified as unknown, not evidence of rollback. Releasing happens
+once on every acquired-client path tested. The commit-after-loss fixture preserves
+the actual committed records, demonstrating why subsequent rollback is not recovery.
+
+The adapter's isKnownTransactionRejection contract is deliberately narrow and
+application-owned. It must establish the attempt did not commit, not merely recognise
+any server response. It is not advertised as a complete production error-classifier
+implementation. Fault injection checks application branching; it does not establish
+real network or multi-session semantics. Existing verify.mjs also passes after the
+guarded SQL is presented as a statement inside an already-open handler transaction.
+
+Final review disposition: ready as a draft after independent technical and sequential
+fresh-reader review (application-technical-review.md and application-fresh-reader.md).
+The fresh reader could follow the handler, driver and database without supplying an
+interactive-console setting. Local repairs explicitly connect the featured-product
+count to the diagram's dependency, end/release an existing-order replay attempt
+before returning its result, and define a lagging replica at first use. The original
+reader observations remain in the review record.
+
+Rendered verification: application-browser.json and application-screenshots/ cover
+light/dark at 390px/1280px. The coordinator visually inspected checkout, failed-query
+and optional psql presentation. The optional practice disclosure starts closed,
+opens with keyboard input, and the page has no horizontal overflow or uncaught JS
+errors. Wide code remains internally scrollable. The final site build passes and
+the built-link audit reports 1,131 internal links/fragments with no failures.
+
+The user requested discussion of a browser SQL playground. No playground was added.
+PGlite's documented browser engine and REPL make a single-connection exercise
+feasible; it cannot supply independent concurrent sessions for lock demonstrations.
+Those remain the role of the labelled existing simulations.
+Sources checked 15 October 2026: https://pglite.dev/docs/repl and
+https://pglite.dev/docs/multi-tab-worker.

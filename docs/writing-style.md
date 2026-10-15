@@ -222,3 +222,19 @@ version a report should see; the concrete price change tests that idea afterward
 What was missing was motivation and a connection between thoughts, not simply
 more introductory words. A review that recognises the correct concepts can still
 miss reasoning that an expert reader supplies for themselves.
+
+## SQL needs someone to send it
+
+On 15 October 2026, the user questioned a checkout snippet that ended in COMMIT
+without showing BEGIN. The BEGIN was in an earlier block. Adding numbered steps
+and continuation comments did not settle the confusion: the user then asked
+whether someone was sending commands on a live connection or writing a script in
+an IDE. The article had assumed an interactive database session without explaining
+that setting. Its independent reviews had supplied this context themselves.
+
+The requested revision follows application code handling a checkout. It must show
+who sends a query, who returns rows or an error, and which application branch sends
+the next query. The psql exercise becomes optional and names its different setting.
+This is a change in the explanation's viewpoint, not a rule to add more comments
+to every SQL block. Correct statements and explicit transaction boundaries can
+still leave a reader unable to place the code in a running system.

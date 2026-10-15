@@ -38,3 +38,21 @@ Media purposes:
 
 Independent reviews and browser verification are owned by the integrating agent;
 this author has not supplied its own review as independent acceptance.
+
+## Application-led revision, 15 October 2026
+
+The reader repeatedly lost track of who sends SQL, where BEGIN lives, what a
+comment means, and why ROLLBACK is sent after an error. Extra SQL headings did not
+supply the missing execution context. The revised main path follows a checkout
+handler: browser request, server code, borrowed client, awaited query, result rows,
+JavaScript branch, inserts, commit, thrown error, catch and connection cleanup.
+Await pauses this handler while the server can serve another handler on another
+connection. A compact exchange table keeps application and database roles visible.
+
+The original psql walkthrough is retained in an optional disclosure, with commands
+and expected results distinct. The complete application lifecycle is also optional,
+with an explicit teaching-adapter contract for confirmed transaction rejection.
+Later A/B examples retain the handler context; unsafe and locking branches are
+JavaScript, the guarded SQL is explicitly the command inside the awaited call,
+report and featured-product terminal reproductions are optional. Retry flow now
+uses JavaScript consistently. No playground is built as part of this revision.
