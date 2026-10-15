@@ -23,7 +23,7 @@ necessary explanation into optional practice. Preserve strong existing teaching.
 - [x] Deepen the selected articles, examples and teaching aids; verify changed SQL and system claims.
 - [x] Review the revised explanations independently and reread them continuously for flow and voice.
 - [x] Check relevant sandbox behaviour, links, rendered desktop/phone layouts and both themes; build all pages.
-- [ ] Commit, push and verify the published result.
+- [x] Commit, push and verify the published result.
 
 ## Evidence and ownership
 
@@ -35,3 +35,7 @@ Later captures will use a separate directory. Root owns builds, shared lesson
 integration and publication. Article ownership will follow the review findings.
 The first-reading log, informed review, author evidence and final reread retain
 their separate purposes. Review findings are not replaced by retrospective approval.
+
+Completed 16 October 2026. Content commit `167de42` passed the Publish workflow
+and live verification. The final review and deployment evidence are recorded in
+`verification.md`, `deployment.json` and `live-verification.json`.

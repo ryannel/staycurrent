@@ -65,7 +65,7 @@ clarifications explain NULL-aware validation, JOIN USING, DELETE USING and
 concrete input conversion. Those repairs passed independent source and editorial
 review. The final continuous reader accepted all six expanded articles and the lifecycle
 clarification, with no remaining required explanation or prose-flow repair.
-Publication verification remains.
+Publication verification passed, as recorded below.
 The final site build currently passes all 62 pages.
 
 ## Plan presentation repair
@@ -107,3 +107,18 @@ reading are preserved separately under `review/`. The final reading resolves all
 four original required teaching gaps. Optional answer-pacing preferences remain
 visible in the log; they do not leave an explanation or working example incomplete.
 The source is ready to publish under the user's existing explicit instruction.
+
+## Publication
+
+Content commit `167de422a75d61aa70c2cdc6ca702fc71c44d2be` was pushed to main.
+[Publish run 38815578277](https://github.com/ryannel/staycurrent/actions/runs/38815578277)
+completed successfully, including the clean install, site build and Pages deploy.
+Live browser verification at https://staycurrent.dev checked nine changed articles,
+eight downloadable exercise assets and all 24 steps in the four new lessons.
+The live catalogue contains 43 lessons; the index lesson also confirms the new
+monospaced plan presentation. There were no page JavaScript errors.
+`live-verification.json` and `deployment.json` retain the observed results.
+
+The final documentation commit closes this work queue and records publication;
+it does not change the deployed article or playground source. Unrelated local
+Serena memory files were preserved outside these commits.

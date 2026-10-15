@@ -7,7 +7,7 @@ const output=process.env.LIVE_REPORT||'docs/article-work/relational-depth-review
 const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
 const page=await browser.newPage({viewport:{width:1280,height:900}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
 const articles=[],downloads=[],steps=[];
-const pages={isolation:'40001','schema-changes':'Deploy application release B','backup-and-restore':'Recovering beyond the base backup','access-control':'restrictive','product-comparison':'SQLITE_BUSY_SNAPSHOT','adding-another-system':'Follow a delivery through interruption',indexes:'index-order lesson','query-execution':'join-work lesson'};
+const pages={isolation:'40001','schema-changes':'Deploy application release B','backup-and-restore':'Recovering beyond the base backup','access-control':'restrictive','data-lifecycle':'deletion ledger intact','product-comparison':'SQLITE_BUSY_SNAPSHOT','adding-another-system':'Follow a delivery through interruption',indexes:'index-order lesson','query-execution':'join-work lesson'};
 try {
  for(const [slug,phrase]of Object.entries(pages)){
   const response=await page.goto(base+'/learn/databases/relational/'+slug+'/');assert.equal(response.status(),200);
@@ -23,9 +23,11 @@ try {
   const tutorial=sandboxTutorials.find(t=>t.id===id);await page.goto(base+'/learn/databases/relational/sandbox/?tutorial='+id);
   const ready=()=>page.waitForFunction(()=>!document.querySelector('[data-run]').disabled,{},{timeout:65000});await ready();
   assert.equal(await page.locator('[data-session-title]').innerText(),tutorial.title);
+  assert.equal(await page.locator('[data-lesson-card]').count(),sandboxTutorials.length);
   for(const [index,step]of tutorial.steps.entries()){
    await page.locator('[data-run]').click();await ready();const result=await page.locator('[data-results]').innerText();
    if(step.expectedError)assert.match(result,new RegExp(step.expectedError));else assert.doesNotMatch(result,/Error · SQLSTATE/);
+   if(id==='index-order'&&index===1){const plan=page.locator('[data-results] .sandbox-output-plan');assert.equal(await plan.count(),1);assert.equal(await plan.locator('td').first().evaluate(e=>getComputedStyle(e).whiteSpace),'pre');}
    steps.push({id,step:index+1,expectedError:step.expectedError||null});
    if(index<tutorial.steps.length-1)await page.locator('[data-continue]').click();
   }
