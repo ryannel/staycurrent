@@ -10,10 +10,14 @@ records the wider coverage discussion.
 ## Relational publication, 15 October 2026
 
 The user explicitly commissioned completion and publication of the aligned relational
-collection. All 27 article destinations now contain finished reading, alongside the
-introduction, checkout and local practice guide. The SQL sandbox has 29 linked lessons
+collection. All 34 article destinations now contain finished reading, alongside the
+introduction, checkout and local practice guide. The SQL sandbox has 39 linked lessons
 covering design, queries, transactions, performance, operations, capacity, PostgreSQL
-and product choices. This publication does not change other families’ draft status.
+and product choices. The subsequent PostgreSQL commission rebuilt its four short
+chapters into eleven connected articles, with three entrances: server internals,
+distribution across servers, and richer queries and types. The practical work
+includes isolated PostgreSQL, pgvector and PostGIS experiments alongside browser
+lessons. This publication does not change other families’ draft status.
 
 ## Where readers enter
 

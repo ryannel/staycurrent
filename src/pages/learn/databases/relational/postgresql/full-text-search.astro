@@ -1,0 +1,86 @@
+---
+import Base from '../../../../../layouts/Base.astro';
+import Sql from '../../../../../components/explainers/querying/Sql.astro';
+import Words from '../../../../../components/explainers/pg-capability-text.astro';
+import { textCapabilitySql as sql } from '../../../../../lib/sql-lessons/postgresql-capabilities';
+import '../../../../../styles/explorables.css';
+import '../../../../../styles/relational-design.css';
+const generated = `search tsvector GENERATED ALWAYS AS (
+  setweight(to_tsvector('english', title), 'A') ||
+  setweight(to_tsvector('english', body), 'D')
+) STORED`;
+const phraseFields = `SELECT document_id FROM pg_cap_documents
+WHERE tenant_id=7 AND published
+  AND (to_tsvector('english',title) @@ phraseto_tsquery('english','running shoes')
+    OR to_tsvector('english',body) @@ phraseto_tsquery('english','running shoes'))
+ORDER BY document_id;`;
+const trigram = `CREATE EXTENSION IF NOT EXISTS pg_trgm;
+SELECT similarity('runnng','running') AS spelling_similarity,
+       similarity('runnng','roads') AS unrelated_similarity;`;
+---
+<Base title="Full-text search in PostgreSQL" description="See how words become lexemes and positions, how a GIN index finds candidates, and how ranking and application filters produce useful search results.">
+<article class="visual-essay relational-design">
+ <header class="essay-header"><p class="eyebrow">PostgreSQL</p><h1>Full-text search in PostgreSQL</h1><div class="essay-meta"><span>PostgreSQL 18</span><a href="/learn/databases/relational/postgresql/json/">JSON queries ↗</a></div></header>
+ <p>Full-text search matches documents by their words and the relationships between those words. It gives the database a searchable representation that is more useful than a sequence of characters: “running” can become the same search term as “run,” while a phrase can require terms to occur at particular positions.</p>
+ <p>In PostgreSQL, a <code>tsvector</code> stores that document representation, and a <code>tsquery</code> describes a match. An index helps find documents that might satisfy it. Ranking then decides how to order the matches. These are separate operations: finding the word “running” is not yet the same as deciding which article a runner wanted, or whether the current reader may see it.</p>
+ <p>We will make those stages visible in a small document collection, then inspect a larger query plan. The built-in machinery is enough to provide useful lexical search alongside ordinary relational filters. Knowing what it stores also explains where spelling correction, semantic retrieval and a separate search service begin to offer different work.</p>
+ <nav aria-label="In this article"><ol><li><a href="#words">Words and positions</a></li><li><a href="#collection">A searchable collection</a></li><li><a href="#matching">Queries and phrases</a></li><li><a href="#ranking">Ranking and eligibility</a></li><li><a href="#gin">Finding candidates</a></li><li><a href="#change">Updates and search quality</a></li></ol></nav>
+
+ <section id="words"><h2>Words and positions</h2>
+ <p>A search configuration supplies the rules for parsing and normalising text. Using PostgreSQL's English configuration, “Running on roads” produces two <strong>lexemes</strong>, the normalised search terms <code>run</code> and <code>road</code>. The common word “on” is a stop word and is omitted. Its place in the original sequence still matters.</p>
+ <Sql code={sql.lexemes} label="Inspect the representation and three query forms" />
+ <p>The document vector prints as <code>'road':3 'run':1</code>. It lists lexemes in its stored order, not the original sentence order; the numbers retain their original positions. The all-words query is <code>'run' &amp; 'road'</code>. The adjacent phrase is <code>'run' &lt;-&gt; 'road'</code>, while the phrase containing “on” becomes <code>'run' &lt;2&gt; 'road'</code>.</p>
+ <Words />
+ <p>The gap is why a phrase search can be stricter than searching for its remaining words. Treating stop-word removal as “delete the word and close up the sentence” would make “running roads” appear to be the same phrase as “running on roads.” The positions preserve the distinction.</p>
+ <p>These are rules of the chosen configuration, not universal language understanding. A product code, a person's name and prose in another language may need different treatment. Specify the configuration on both document and query conversion. Depending on an unnoticed session default can make the two sides normalise the same text differently.</p>
+ </section>
+
+ <section id="collection"><h2>A searchable collection</h2>
+ <p>Our application stores each document's tenant, publication state, title and body. Tenant 7 owns documents 1, 2, 3 and 5; tenant 8 owns document 4. Document 3 is an unpublished draft. These facts matter before relevance: tenant 7's public search must exclude both 3 and 4 even when their words are a perfect match.</p>
+ <div class="table-scroll" role="region" tabindex="0" aria-label="Document search corpus"><table><thead><tr><th>ID / eligibility</th><th>Title</th><th>Body</th></tr></thead><tbody><tr><td>1 · Tenant 7, public</td><td>Running shoes</td><td>Light shoes for running on roads.</td></tr><tr><td>2 · Tenant 7, public</td><td>Trail guide</td><td>Running safely on wet trails.</td></tr><tr><td>3 · Tenant 7, draft</td><td>Shoe repair</td><td>Repair running shoes rather than replacing them.</td></tr><tr><td>4 · Tenant 8, public</td><td>Running shoes</td><td>Private fitting notes.</td></tr><tr><td>5 · Tenant 7, public</td><td>Road safety</td><td>Running on roads in wet weather.</td></tr></tbody></table></div>
+ <p>The <a href="/learn/databases/relational/sandbox/?tutorial=pg-text-search">words and ranked search lesson</a> creates this table on your editor's connection. Run its setup first. Each subsequent command reads that persistent state until you edit a record or reset the setup. The application's search handler would send the query with its established tenant identity; the editor lets us inspect its parts directly.</p>
+ <p>We store a generated search column beside each document. Title lexemes get weight A; body lexemes get weight D. Those labels let ranking give title occurrences more importance without losing the body matches.</p>
+ <Sql code={generated} label="The generated column in the lesson's table definition" />
+ <p><code>||</code> concatenates the two vectors and adjusts the second vector's positions. <code>STORED</code> means PostgreSQL computes and stores the representation when the source row changes. It costs space and write work, but later matching does not need to rebuild the vector from the whole text every time. PostgreSQL 18 also has virtual generated columns, so stating <code>STORED</code> explicitly preserves this choice.</p>
+ <p>Our title and body are required values. If either were nullable, <code>coalesce(field,'')</code> could supply an empty string before conversion; otherwise a null could make the concatenation null and hide a nonempty other field. The <a href="https://www.postgresql.org/docs/18/textsearch-tables.html">text-search indexing examples</a> show both stored vectors and expression indexes. The latter can save the stored vector's space, with different recomputation costs.</p>
+ </section>
+
+ <section id="matching"><h2>Queries and phrases</h2>
+ <p>A search box receives text, not a preconstructed <code>tsquery</code>. <code>websearch_to_tsquery</code> accepts ordinary input and recognises a small syntax including quoted phrases, <code>OR</code> and exclusions. It tolerates punctuation rather than requiring users to write PostgreSQL query operators. The application still binds that input as a parameter; query parsing does not replace SQL parameterisation.</p>
+ <p>For our phrase experiment, <code>phraseto_tsquery</code> makes the intended positional relationship explicit. Documents 1 and 5 both contain “running on roads” in their bodies. We can now predict three answers for each:</p>
+ <Sql code={sql.phrase} label="Word membership and phrase positions produce different matches" />
+ <p>Both rows return true, false, true. They have the two words. Those words are not adjacent in either body. They do have the two-position distance expected by “running on roads.” A reader who only saw the indexed terms without their positions would be unable to explain the middle result.</p>
+ <p>Concatenating title and body introduces another boundary. Positions continue from one field into the other, so a phrase may span that join. If an application promises that a phrase occurs wholly within a field, match the fields separately and combine the match decisions:</p>
+ <Sql code={phraseFields} label="Require the phrase within title or within body" />
+ <p>This query returns document 1 in our initial state. It encodes the promised field boundary at the cost of separately converting the fields here. At larger scale, separate stored vectors or matching expression indexes can support that design. Keeping only a combined vector and hoping the phrase never crosses its join is not the same rule.</p>
+ </section>
+
+ <section id="ranking"><h2>Ranking and eligibility</h2>
+ <p>Searching for “running” matches all five documents before application filters. We first restrict it to tenant 7's published documents, then score those candidates.</p>
+ <Sql code={sql.ranked} label="Rank matches inside the application's eligible set" />
+ <p>The checked result puts document 1 first with a score of about 0.623. Documents 2 and 5 tie at about 0.061, and the document ID gives their order a stable tie-break. Document 1 has a title occurrence with weight A as well as a body occurrence; the other two have only body occurrences with weight D.</p>
+ <p>The magnitude is not “62.3% relevant.” <code>ts_rank</code> applies a formula to occurrences and weights. A different formula, title policy or query can change the scores. PostgreSQL also provides <code>ts_rank_cd</code>, which considers proximity. The <a href="https://www.postgresql.org/docs/18/textsearch-controls.html#TEXTSEARCH-RANKING">ranking documentation</a> treats relevance as application-specific. A support site may favour the exact product version or current guidance even when an older page repeats the words more often.</p>
+ <p>Now require both “running” and “shoes.” Only document 1 survives the same tenant/publication filters. Documents 3 and 4 also contain those lexemes, but should not enter this result at all. Ranking cannot repair an eligibility error: an unauthorised document with a low score is still an unauthorised document. The example trusts an application that establishes tenant identity; the <a href="/learn/databases/relational/access-control/">access-control article</a> explains an additional row-policy boundary where one is needed.</p>
+ </section>
+
+ <section id="gin"><h2>Finding candidates</h2>
+ <p>Without a suitable index, PostgreSQL can test every stored vector. GIN instead keeps lexeme entries with references to documents containing them. For <code>run &amp; shoe</code>, candidate retrieval can combine the entries for the two lexemes. The ordinary row still carries publication state, tenant and the information needed to complete the query.</p>
+ <p>The lesson's separate scale fixture has 10,000 documents. Every two-hundredth body is “running shoes”; the others are “database maintenance.” That makes the fifty matching IDs 200, 400, and so on through 10,000. We can check the answer independently of the plan:</p>
+ <Sql code={sql.index} label="Observe GIN candidate retrieval on a known answer set" />
+ <p>Our PostgreSQL 18.6 run uses a bitmap index scan on <code>pg_cap_text_words</code>, followed by a bitmap heap scan, and emits fifty rows. GIN is helping locate matches. If we add a computed rank and request the best ten, the matching scores still have to be calculated and ordered; this index does not store every possible query's ranked list.</p>
+ <p>There is also less information in a GIN lexeme entry than in the complete vector. PostgreSQL documents that <a href="https://www.postgresql.org/docs/18/textsearch-indexes.html">GIN does not store weight labels</a>; weight-sensitive conditions need row rechecks. The same distinction matters when inspecting a plan: an index can narrow candidates without resolving every condition by itself. Phrase and ranking requirements should be verified against the actual vector and result.</p>
+ </section>
+
+ <section id="change"><h2>Updates and search quality</h2>
+ <p>Rename document 2 to “Running shoes for trails.” The update returns its newly generated vector, and the next “running shoes” search returns documents 1 and 2. The old body remains unchanged. No separate indexing worker has to copy the title into this column after commit; the generated value is part of the same row change.</p>
+ <Sql code={sql.update} label="Edit the source and inspect its new search representation" />
+ <p>Maintaining the GIN index adds work to that change. A write-heavy document collection still needs space, vacuum and index maintenance planning. Keeping lexical search in the primary database avoids a separate copy's delivery lag, but its queries and updates share resources with the rest of the application.</p>
+ <p>Try the misspelled query “runnng shoes.” It produces a valid query containing <code>runnng</code> and <code>shoe</code>, but matches none of our documents. The English normaliser is not a general spelling corrector. The supplied <code>pg_trgm</code> extension compares text through overlapping three-character groups and can support a different spelling or substring investigation:</p>
+ <Sql code={trigram} label="An optional pg_trgm comparison on a server with the extension available" />
+ <p>This compares the misspelling with two candidate words. It does not decide the intended word from context or automatically rewrite our search query. A production suggestion feature would need a vocabulary, a candidate policy and evaluation on actual misspellings. <a href="/learn/databases/relational/postgresql/vector-search/">Vector search</a> explores another distinction: proximity in an embedding can retrieve related meaning without shared words, but introduces its own model and recall choices.</p>
+ <p>Evaluate the lexical search with questions that have known useful documents: an exact product name, a phrase, a broad topic, a typo and a restricted document. Inspect missed answers as well as the top result. If you display highlighted excerpts, <code>ts_headline</code> can help select them, but its output is <a href="https://www.postgresql.org/docs/18/textsearch-controls.html#TEXTSEARCH-HEADLINE">not guaranteed safe HTML</a>. Keep it text or apply the application's sanitisation policy.</p>
+ <p>These tests expose the actual decision: whether language configuration, matching, ranking and filtering meet this application's search needs at an acceptable operating cost. They give a concrete basis for improving PostgreSQL search or comparing another service, while keeping the expected answers the same.</p>
+ </section>
+ <section class="article-sources"><h2>Continue exploring</h2><p>Checked 15 October 2026. Corpus results, generated-column updates and the GIN plan were executed on PostgreSQL 18.6. The corpus is invented to expose matching rules, not to measure real-world search relevance.</p><ul><li><a href="/learn/databases/relational/sandbox/?tutorial=pg-text-search">Words, positions and ranked search</a> — change phrases, eligibility and source text.</li><li><a href="https://www.postgresql.org/docs/18/textsearch-controls.html">Controlling text search</a> — query forms, weights, ranking and excerpts.</li><li><a href="https://www.postgresql.org/docs/18/textsearch-tables.html">Tables and indexes</a> — choose stored vectors or expression indexes.</li><li><a href="https://www.postgresql.org/docs/18/pgtrgm.html">pg_trgm</a> — the distinct semantics of trigram similarity and its indexes.</li></ul></section>
+</article>
+</Base>

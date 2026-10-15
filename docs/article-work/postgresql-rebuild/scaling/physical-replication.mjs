@@ -1,0 +1,75 @@
+// Isolated PostgreSQL 18 experiment. Never touches the shared lab server.
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import pg from '/private/tmp/staycurrent-pg-lab/node_modules/pg/lib/index.js';
+const bin='/opt/homebrew/opt/postgresql@18/bin/';
+const root=mkdtempSync('/private/tmp/pg-scale-');
+const socket=root+'/socket'; mkdirSync(socket);
+const primary=root+'/primary', standby=root+'/standby';
+const output=[]; let a,b; let aRunning=false,bRunning=false;
+const run=(name,args)=>execFileSync(bin+name,args,{encoding:'utf8',stdio:['ignore','pipe','pipe']});
+const options=p=>`-c listen_addresses='' -c unix_socket_directories=${socket} -p ${p} -c wal_level=replica -c max_wal_senders=5 -c max_replication_slots=5 -c wal_keep_size=128MB`;
+const start=(dir,port)=>run('pg_ctl',['-D',dir,'-l',dir+'.log','-o',options(port),'-w','start']);
+const stop=dir=>run('pg_ctl',['-D',dir,'-m','fast','-w','stop']);
+const client=async port=>{const c=new pg.Client({host:socket,port,user:'ryannel',database:'postgres'});c.on('error',()=>{});await c.connect();return c;};
+const q=async(c,sql)=>(await c.query(sql)).rows;
+const wait=async(fn)=>{for(let i=0;i<200;i++){if(await fn())return;await new Promise(r=>setTimeout(r,50));}throw Error('wait exceeded');};
+const record=async(label,c,sql)=>{const rows=await q(c,sql);output.push({label,sql,rows});return rows;};
+try {
+ run('initdb',['-D',primary,'-A','trust','-U','ryannel','--no-locale','-E','UTF8']);
+ start(primary,55439);aRunning=true;a=await client(55439);
+ await record('version',a,'SELECT version()');
+ await q(a,'CREATE TABLE prices (product_id integer PRIMARY KEY, price integer NOT NULL); INSERT INTO prices VALUES (7,20)');
+ run('pg_basebackup',['-D',standby,'-d',`host=${socket} port=55439 user=ryannel application_name=scale_b`,'-R','-X','stream','-C','-S','scale_b']);
+ start(standby,55440);bRunning=true;b=await client(55440);
+ await wait(async()=> (await q(a,"SELECT count(*)::int n FROM pg_stat_replication WHERE state='streaming'"))[0].n===1);
+ await record('initial standby',b,'SELECT pg_is_in_recovery(), * FROM prices');
+ await q(b,'SELECT pg_wal_replay_pause()');
+ await wait(async()=> (await q(b,'SELECT pg_get_wal_replay_pause_state() s'))[0].s==='paused');
+ await q(a,'UPDATE prices SET price=25 WHERE product_id=7');
+ const marker=(await q(a,'SELECT pg_current_wal_lsn() p'))[0].p;
+ await wait(async()=> (await q(b,`SELECT pg_last_wal_receive_lsn() >= '${marker}'::pg_lsn ready`))[0].ready);
+ await record('received, not replayed',b,`SELECT price, pg_last_wal_receive_lsn() AS received, pg_last_wal_replay_lsn() AS replayed, pg_last_wal_receive_lsn() >= '${marker}'::pg_lsn AS received_marker, pg_last_wal_replay_lsn() >= '${marker}'::pg_lsn AS replayed_marker FROM prices`);
+ await q(b,'SELECT pg_wal_replay_resume()');
+ await wait(async()=> (await q(b,`SELECT pg_last_wal_replay_lsn() >= '${marker}'::pg_lsn ready`))[0].ready);
+ await record('new snapshot after replay',b,'SELECT * FROM prices');
+ await q(a,"ALTER SYSTEM SET synchronous_standby_names='FIRST 1 (scale_b)'");
+ await q(a,'SELECT pg_reload_conf()');
+ await wait(async()=> (await q(a,"SELECT count(*)::int n FROM pg_stat_replication WHERE sync_state='sync'"))[0].n===1);
+ await q(b,'SELECT pg_wal_replay_pause()');
+ await wait(async()=> (await q(b,'SELECT pg_get_wal_replay_pause_state() s'))[0].s==='paused');
+ await q(a,"SET synchronous_commit=on; UPDATE prices SET price=26 WHERE product_id=7");
+ await record('remote flush acknowledged while replay paused',b,'SELECT * FROM prices');
+ await q(a,"SET synchronous_commit=remote_apply");
+ const observer=await client(55439);
+ let finished=false;const pending=q(a,'UPDATE prices SET price=27 WHERE product_id=7').then(()=>{finished=true;});
+ await wait(async()=> (await q(observer,"SELECT count(*)::int n FROM pg_stat_activity WHERE wait_event='SyncRep'"))[0].n===1);
+ output.push({label:'remote_apply waits',acknowledged:finished,activity:await q(observer,"SELECT wait_event_type,wait_event FROM pg_stat_activity WHERE wait_event='SyncRep'")});
+ await q(b,'SELECT pg_wal_replay_resume()');await pending;await observer.end();
+ await record('remote_apply complete',b,'SELECT * FROM prices');
+ await q(a,"ALTER SYSTEM SET synchronous_standby_names=''");await q(a,'SELECT pg_reload_conf()');
+ await wait(async()=> (await q(a,"SHOW synchronous_standby_names"))[0].synchronous_standby_names==='');
+ await q(a,'SET synchronous_commit=on');
+ // Stop B before the final A write: deliberately demonstrate async acknowledged loss.
+ await b.end();b=null;stop(standby);bRunning=false;
+ await q(a,'UPDATE prices SET price=35 WHERE product_id=7');
+ await record('acknowledged only on old primary',a,'SELECT * FROM prices');
+ await a.end();a=null;stop(primary);aRunning=false;
+ start(standby,55440);bRunning=true;b=await client(55440);
+ await q(b,'SELECT pg_promote(true,10)');
+ await record('promoted surviving history',b,'SELECT pg_is_in_recovery(), * FROM prices');
+ await q(b,"SELECT pg_create_physical_replication_slot('scale_b',true)");
+ run('pg_rewind',['-D',primary,'--source-server',`host=${socket} port=55440 user=ryannel dbname=postgres`,'--write-recovery-conf']);
+ start(primary,55439);aRunning=true;a=await client(55439);
+ await wait(async()=> (await q(a,'SELECT price FROM prices'))[0].price===27);
+ await record('old primary rewound and rejoined',a,'SELECT pg_is_in_recovery(), * FROM prices');
+ await q(b,'UPDATE prices SET price=30 WHERE product_id=7');
+ await wait(async()=> (await q(a,'SELECT price FROM prices'))[0].price===30);
+ await record('new primary change reaches rejoined standby',a,'SELECT pg_is_in_recovery(), * FROM prices');
+} catch(error) {output.push({error:String(error),stderr:error.stderr?.toString(),primaryLog:readFileSync(primary+'.log','utf8').slice(-6000),standbyLog:readFileSync(standby+'.log','utf8').slice(-2000)});process.exitCode=1;}
+finally {
+ if(a)await a.end().catch(()=>{});if(b)await b.end().catch(()=>{});
+ try{stop(primary);}catch{};try{stop(standby);}catch{};
+ writeFileSync(new URL('./physical-observed.json',import.meta.url),JSON.stringify(output,null,2)+'\n');
+ console.log(JSON.stringify(output,null,2));rmSync(root,{recursive:true,force:true});
+}

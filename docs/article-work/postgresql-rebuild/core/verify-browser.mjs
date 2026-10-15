@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';import {writeFileSync} from 'node:fs';
+import {PGlite,protocol} from '@electric-sql/pglite';
+import {postgresqlCoreTutorials} from '../../../../src/lib/sql-lessons/postgresql-core.ts';
+async function run(db,sql){const parser=new protocol.Parser(),out={results:[],errors:[],status:''};let rows=[];await db.execProtocolRawStream(protocol.serialize.query(sql),{onRawData:b=>parser.parse(b,m=>{if(m.name==='dataRow')rows.push(m.fields);if(m.name==='commandComplete'){out.results.push({command:m.text,rows});rows=[];}if(m.name==='error')out.errors.push({code:m.code,message:m.message});if(m.name==='readyForQuery')out.status=m.status;})});return out;}
+const all=[];
+for(const tutorial of postgresqlCoreTutorials){const db=await PGlite.create();const steps=[];try{for(const [i,step] of tutorial.steps.entries()){const out=await run(db,step.sql);assert.deepEqual(out.errors,[]);assert.equal(out.status,'I');steps.push({title:step.title,...out});console.log(tutorial.id+' '+(i+1)+' passed');}
+const text=i=>JSON.stringify(steps[i].results);const last=i=>steps[i].results.at(-1).rows;
+if(tutorial.id==='pg-plan-parameters'){assert.deepEqual(last(0),[['0','45000'],['1','50']]);assert.match(text(1),/Index Scan/);assert.match(text(2),/Seq Scan/);assert.match(text(3),/Index Scan/);assert.match(text(3),/actual rows=45000/);assert.deepEqual(last(4),[['500','500','100']]);assert.match(text(5),/actual rows=500/);}
+if(tutorial.id==='pg-executor-demand'){assert.match(text(1),/actual rows=50000/);assert.match(text(1),/top-N heapsort/);assert.deepEqual(last(1),[['101','0'],['202','0'],['303','0'],['404','0'],['505','0']]);assert.match(text(2),/Index Only Scan/);assert.doesNotMatch(text(2),/Sort/);assert.match(text(3),/Rows Removed by Filter/);assert.match(text(4),/external merge/);assert.match(text(5),/quicksort/);}
+if(tutorial.id==='pg-index-candidates'){assert.deepEqual(last(1),[['40','240']]);assert.match(text(1),/Bitmap Index Scan/);assert.match(text(2),/Seq Scan/);assert.deepEqual(last(4),[['60','60']]);assert.match(text(4),/Bitmap Heap Scan on core_ordered/);assert.match(text(4),/Seq Scan on core_scattered/);assert.deepEqual(last(6),[['20000']]);}
+all.push({id:tutorial.id,steps});}finally{await db.close();}}
+writeFileSync(new URL('browser-observed.json',import.meta.url),JSON.stringify(all,null,2));console.log('All 3 lessons / 19 literal steps and semantic assertions passed.');

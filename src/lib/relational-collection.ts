@@ -256,6 +256,13 @@ export const relationalCollection: RelationalGroup[] = [
         "status": "published"
       },
       {
+        "slug": "postgresql/query-execution",
+        "title": "Planning and executing a PostgreSQL query",
+        "description": "Follow parameters, estimates and execution through a PostgreSQL plan.",
+        "scope": "Derive custom and generic prepared-plan choices, executor work and resource consequences from observed PostgreSQL plans.",
+        "status": "published"
+      },
+      {
         "slug": "postgresql/indexes",
         "title": "Indexes in PostgreSQL",
         "description": "Understand PostgreSQL’s access methods and the workloads they support.",
@@ -275,6 +282,48 @@ export const relationalCollection: RelationalGroup[] = [
         "description": "Follow a committed change through PostgreSQL’s recovery machinery.",
         "scope": "Connect the shared durability explanation to PostgreSQL’s log, checkpoints, and recovery, with explicit version and configuration boundaries.",
         "status": "published"
+      },
+      {
+        "slug": "postgresql/replication",
+        "title": "Following a change to another PostgreSQL server",
+        "description": "Follow WAL across servers and design for lag, promotion and lost acknowledgements.",
+        "scope": "Distinguish send, flush and replay positions; derive physical and logical replication guarantees, retention, read routing and safe writer authority.",
+        "status": "published"
+      },
+      {
+        "slug": "postgresql/sharding",
+        "title": "Where distributed PostgreSQL work runs",
+        "description": "Choose data ownership and query boundaries before distributing writes.",
+        "scope": "Compare native partitions, application sharding, Citus and foreign tables; derive co-location, constraint scope, skew and safe movement.",
+        "status": "published"
+      },
+      {
+        "slug": "postgresql/json",
+        "title": "JSON queries in PostgreSQL",
+        "description": "Preserve document relationships and match indexes to the expressions you query.",
+        "scope": "Derive correlated array predicates, SQL/JSON rows, GIN expression matching, guarded numeric indexes and document write costs.",
+        "status": "published"
+      },
+      {
+        "slug": "postgresql/full-text-search",
+        "title": "Full-text search in PostgreSQL",
+        "description": "Follow documents through lexemes, matching, ranking and indexed retrieval.",
+        "scope": "Develop configurations, positions, phrase matching, weighted ranking and filtered GIN retrieval with concrete search results.",
+        "status": "published"
+      },
+      {
+        "slug": "postgresql/vector-search",
+        "title": "Vector search in PostgreSQL",
+        "description": "Compare exact and approximate neighbours while preserving eligibility filters.",
+        "scope": "Separate embedding relevance from retrieval recall, examine pgvector index choices and derive filtered approximate-search tradeoffs.",
+        "status": "published"
+      },
+      {
+        "slug": "postgresql/extensions",
+        "title": "Types and extensions in PostgreSQL",
+        "description": "Use temporal and spatial examples to understand PostgreSQL’s extensibility.",
+        "scope": "Connect ranges, exclusion constraints, specialised operators and index methods to extension installation, lifecycle and operational dependencies.",
+        "status": "published"
       }
     ]
   }
@@ -288,8 +337,6 @@ export const relationalAliases: Record<string, string> = {
   "performance-testing": "slow-queries",
   "maintenance": "slow-queries",
   "embedded-databases": "product-comparison",
-  "access-and-lifecycle": "access-control",
-  "postgresql/query-execution": "postgresql/architecture",
-  "postgresql/extensions": "adding-another-system"
+  "access-and-lifecycle": "access-control"
 };
 export const relationalArticleHref = (slug: string) => `/learn/databases/relational/${slug}/`;

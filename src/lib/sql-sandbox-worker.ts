@@ -1,4 +1,5 @@
 import { PGlite, protocol } from '@electric-sql/pglite';
+import { btree_gist } from '@electric-sql/pglite/contrib/btree_gist';
 import schema from '../../docs/article-work/designing-data/schema.sql?raw';
 
 // One worker owns one disposable database and one PostgreSQL connection.
@@ -14,7 +15,7 @@ SET statement_timeout = '10s';`;
 self.onmessage = async ({ data }) => {
   try {
     if (data.type === 'init') {
-      db = await PGlite.create();
+      db = await PGlite.create({ extensions: { btree_gist } });
       await db.exec(seed);
       self.postMessage({ type: 'ready' });
       return;

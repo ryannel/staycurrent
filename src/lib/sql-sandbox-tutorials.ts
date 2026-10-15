@@ -1,4 +1,8 @@
 import { postgresqlTutorials } from './sql-lessons/postgresql.ts';
+import { postgresqlVersionTutorials } from './sql-lessons/postgresql-versions.ts';
+import { postgresqlScalingTutorials } from './sql-lessons/postgresql-scaling.ts';
+import { postgresqlCapabilityTutorials } from './sql-lessons/postgresql-capabilities.ts';
+import { postgresqlCoreTutorials } from './sql-lessons/postgresql-core.ts';
 import { capacityTutorials } from './sql-lessons/capacity.ts';
 import { operationsTutorials } from './sql-lessons/operations.ts';
 import { choicesTutorials } from './sql-lessons/choices.ts';
@@ -231,5 +235,9 @@ export const sandboxTutorials: Tutorial[] = [
   ...operationsTutorials,
   ...capacityTutorials,
   ...postgresqlTutorials,
+  ...postgresqlCoreTutorials,
+  ...postgresqlVersionTutorials,
+  ...postgresqlScalingTutorials,
+  ...postgresqlCapabilityTutorials,
   ...choicesTutorials,
 ];

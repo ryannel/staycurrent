@@ -1,0 +1,9 @@
+import pg from '/private/tmp/staycurrent-pg-lab/node_modules/pg/lib/index.js';import assert from 'node:assert/strict';import {writeFileSync} from 'node:fs';
+const cfg={host:'/private/tmp/staycurrent-pg-rebuild/socket',port:55438,user:'ryannel',database:'pg_core_lab'};const clients=await Promise.all([0,1,2].map(async()=>{const c=new pg.Client(cfg);await c.connect();return c;}));const [o,w,r]=clients;const out={};
+try{
+await o.query('UPDATE core_products SET available=3 WHERE product_id=7');await r.query('BEGIN ISOLATION LEVEL READ COMMITTED');out.before=(await r.query('SELECT available FROM core_products WHERE product_id=7')).rows;
+await w.query('UPDATE core_products SET available=1 WHERE product_id=7');out.after=(await r.query('SELECT available FROM core_products WHERE product_id=7')).rows;assert.equal(out.before[0].available,3);assert.equal(out.after[0].available,1);await r.query('COMMIT');
+await o.query('UPDATE core_products SET available=3 WHERE product_id=7');await w.query('BEGIN');await w.query('UPDATE core_products SET available=available-2 WHERE product_id=7 AND available>=2');const pid=(await r.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;const pending=r.query('UPDATE core_products SET available=available-2 WHERE product_id=7 AND available>=2 RETURNING available');
+for(let i=0;i<100;i++){const row=(await o.query('SELECT pg_blocking_pids($1) AS blockers',[pid])).rows[0];if(row.blockers.length){out.blocked=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}assert(out.blocked);await w.query('ROLLBACK');out.reservation=(await pending).rows;assert.deepEqual(out.reservation,[{available:1}]);
+writeFileSync(new URL('architecture-variations.json',import.meta.url),JSON.stringify(out,null,2));console.log(out);
+}finally{for(const c of clients){await c.query('ROLLBACK').catch(()=>{});await c.end();}}
