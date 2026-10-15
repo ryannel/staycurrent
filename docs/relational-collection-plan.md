@@ -1,5 +1,15 @@
 # Planning the relational collection
 
+Current status, 15 October 2026: the user authorised completion and publication of
+the aligned relational collection. Its 27 articles are now implemented and linked
+to practical lessons, with the introduction, checkout and practice routes retained.
+The plan below records the commissioning reasoning; its original proposal language
+does not describe the current availability. The completed inventory is
+`src/lib/relational-collection.ts`, and production evidence is under
+`docs/article-work/relational-completion/`. Other fields and the shared
+distributed-systems programme remain outside this commission.
+
+
 Working plan, completion status reconciled 15 October 2026. This develops the
 [coverage structure](content-structure.md) into reader journeys and bounded article
 candidates. The design, querying, transaction, and access/persistence sequences were subsequently

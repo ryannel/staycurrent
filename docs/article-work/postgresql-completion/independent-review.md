@@ -37,3 +37,8 @@ that example. Access-method and checkpoint sections introduce specialised vocabu
 where it explains an observed difference. No unresolved material teaching or factual
 finding remained after the two bounded repairs. Rendered checks cover each page in
 both themes at phone and desktop sizes; source/verification evidence is retained.
+
+The collection first reader also found a state-signposting ambiguity: an early
+paragraph sounded as though the stock update had already been performed before
+the later visibility section. It now explicitly previews an update later in the
+lesson. This is a prose repair; literal SQL and transaction boundaries are unchanged.

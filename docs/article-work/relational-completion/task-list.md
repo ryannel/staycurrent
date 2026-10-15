@@ -15,11 +15,12 @@ distributed-systems programme remain outside this commission.
 - [x] PostgreSQL: architecture, indexes, row-versions, recovery. Apply the same production and review process.
 - [x] Choices: product-comparison, adding-another-system. Check current primary evidence and apply the same review process.
 - [x] Existing reading: audit all eleven articles, the introduction and checkout for practical examples and useful sandbox links, including the six articles mentioned in the commission.
-- [ ] Sandbox: review every lesson's setup, prediction, execution, interpretation, variation and reset; execute all SQL and repair the experience.
-- [ ] Discoverability: establish a clear playgrounds entrance that can accommodate future technologies, with direct article-to-lesson and lesson-to-article navigation.
-- [ ] Collection review: preserve an independent sequential first reading; repair gaps, duplication, prerequisites and operational context.
-- [ ] Publication: remove relational draft presentation and noindex only after review; reconcile documentation, navigation and all planned routes.
-- [ ] Final verification: build, route/link checks, desktop and phone inspection in both themes, and sandbox interaction checks; commit and push.
+- [x] Sandbox: review every lesson's setup, prediction, execution, interpretation, variation and reset; execute all SQL and repair the experience.
+- [x] Discoverability: establish a clear playgrounds entrance that can accommodate future technologies, with direct article-to-lesson and lesson-to-article navigation.
+- [x] Collection review: preserve an independent sequential first reading; repair gaps, duplication, prerequisites and operational context.
+- [x] Publication: remove relational draft presentation and noindex only after review; reconcile documentation, navigation and all planned routes.
+- [x] Final verification: build, route/link checks, desktop and phone inspection in both themes, and sandbox interaction checks.
+- [x] Release: commit and push the publication. Deployment and live routes are checked after this commit; the chat records that result.
 
 ## Verification and handoff
 

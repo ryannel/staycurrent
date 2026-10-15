@@ -70,7 +70,7 @@ FROM cap_replica_prices p JOIN cap_replica_progress r USING (node) ORDER BY node
     steps: [
       {
         title: 'Create two months of orders',
-        instruction: 'This lesson uses real PostgreSQL partitioned tables on one database server. Run setup first. October has orders 1 and 2; November has order 3. A lower range boundary is included and its upper boundary is excluded. Reset and rerun this step to undo changes.',
+        instruction: 'This lesson uses real PostgreSQL partitioned tables inside one database. Run setup first. October has orders 1 and 2; November has order 3. A lower range boundary is included and its upper boundary is excluded. Reset and rerun this step to undo changes.',
         sql: `DROP TABLE IF EXISTS cap_partition_orders CASCADE;
 CREATE TABLE cap_partition_orders (
   placed_on date NOT NULL, order_id integer NOT NULL,
@@ -85,7 +85,7 @@ INSERT INTO cap_partition_orders (placed_on, order_id, tenant_id, total)
 VALUES ('2026-10-15',1,7,25),('2026-10-20',2,8,8),('2026-11-01',3,7,40);
 SELECT tableoid::regclass AS stored_in, placed_on, order_id, tenant_id, total
 FROM cap_partition_orders ORDER BY placed_on, order_id;`,
-        expected: 'Orders 1 and 2 live in cap_orders_oct. Order 3 belongs to cap_orders_nov because November 1 is outside October’s upper boundary. tableoid identifies the actual relation holding each row; all remain on this one server.',
+        expected: 'Orders 1 and 2 live in cap_orders_oct. Order 3 belongs to cap_orders_nov because November 1 is outside October’s upper boundary. tableoid identifies the actual relation holding each row; all remain inside this one database.',
       },
       {
         title: 'Filter on the partition key',

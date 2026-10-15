@@ -9,7 +9,10 @@ let acceptDialog=true;page.on('dialog',d=>acceptDialog?d.accept():d.dismiss());
 const base=process.env.REVIEW_URL||'http://127.0.0.1:4326';
 const url=base+'/learn/databases/relational/sandbox/';
 const report=[];
-async function ready(){await page.waitForFunction(()=>document.querySelector('[data-status]').textContent.startsWith('Shop ready'),{},{timeout:60000});}
+async function ready(){
+ try { await page.waitForFunction(()=>document.querySelector('[data-status]').textContent.startsWith('Shop ready'),{},{timeout:65000}); }
+ catch(error){ console.error('Startup failed',page.url(),await page.locator('[data-status]').innerText(),errors); await page.screenshot({path:'/private/tmp/relational-sandbox-startup-failure.png'}); throw error; }
+}
 async function run(sql){
   if(sql!==undefined)await page.locator('[data-editor]').fill(sql);
   await page.locator('[data-run]').click();
@@ -17,6 +20,7 @@ async function run(sql){
   return page.locator('.sandbox-run').first().innerText();
 }
 for(const tutorial of sandboxTutorials){
+  console.log('Checking '+tutorial.id);
   await page.goto(url+'?tutorial='+tutorial.id);
   await page.locator('[data-start]').click();await ready();
   for(const [index,step] of tutorial.steps.entries()){

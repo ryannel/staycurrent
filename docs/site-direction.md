@@ -7,6 +7,14 @@ overview and the database guide's linked reading, while removing obsolete conten
 and unused infrastructure. The [earlier direction](history/site-direction-2026-10-02.md)
 records the wider coverage discussion.
 
+## Relational publication, 15 October 2026
+
+The user explicitly commissioned completion and publication of the aligned relational
+collection. All 27 article destinations now contain finished reading, alongside the
+introduction, checkout and local practice guide. The SQL sandbox has 29 linked lessons
+covering design, queries, transactions, performance, operations, capacity, PostgreSQL
+and product choices. This publication does not change other families’ draft status.
+
 ## Where readers enter
 
 `/` is the site-wide overview. It introduces the purpose of the publication,
@@ -15,9 +23,10 @@ APIs and service communication, messaging and event-driven systems, observabilit
 and AI application engineering. Planned fields are plain descriptions, not empty
 article destinations. There is no invented news or updates section to fill.
 
-The shared navigation offers the overview, All articles and Databases and storage.
-`/articles/` lists available reading with a subject filter; planned outlines stay
-in the relational collection. Breadcrumbs expose the hierarchy on reading pages,
+The shared navigation offers the overview, All articles, Databases and storage, and
+Playgrounds. `/playgrounds/` lists actual available tools, starting with the SQL
+sandbox; future technologies can join this entrance when useful experiments exist.
+`/articles/` lists available reading with a subject filter. Breadcrumbs expose the hierarchy on reading pages,
 and a compact collection switcher connects relational articles without requiring
 a return through the introduction. Available groups in the collection map open
 by default. Within that
@@ -27,16 +36,17 @@ explanations.
 
 The retained reading includes:
 
-- Relational databases, their design/query/transaction articles, the checkout
-  example, and the explicitly labelled planned outlines in that collection.
+- The published relational collection: design, queries, transactions, indexes,
+  storage, performance, operations, capacity, PostgreSQL internals and product choices;
+  its checkout example, practice guide and SQL sandbox.
 - Documents, partitioned stores, distributed SQL, caches, search, graphs and
   object storage.
 - Column stores, moved from Explore to `/learn/databases/column-stores/`.
 - The Postgres vector-search assessment already linked by the field guide.
 
 The assessment remains a dated working draft. Its presence does not establish
-publication or current production-readiness beyond its stated evidence. Planned
-relational pages remain outlines, clearly distinct from written articles.
+publication or current production-readiness beyond its stated evidence. The relational
+commission is complete; former outline aliases resolve to the articles that own them.
 
 ## What was removed
 
@@ -56,8 +66,8 @@ time, not current route instructions.
 Extend the database field guide's reading tree first; add other fields as useful
 reading becomes available. Use the relational collection as the current
 worked example of an introduction leading to focused articles with meaningful
-reading order. Keep the planned coverage in `src/lib/relational-collection.ts`
-aligned with available drafts as articles are completed.
+reading order. Keep coverage and publication status in `src/lib/relational-collection.ts`
+aligned with the available reading. Future planned items must remain distinguishable.
 
 The broader purpose is still to help engineers understand choices and developments
 that affect them. That does not require building navigation or empty destinations

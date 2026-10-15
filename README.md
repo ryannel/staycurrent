@@ -24,10 +24,11 @@ Every push to `main` builds and deploys to GitHub Pages through
 | --- | --- |
 | `/` | Site overview, available reading and planned fields |
 | `/articles/` | Searchable directory of available reading |
+| `/playgrounds/` | Guided, editable engineering experiments, starting with the SQL sandbox |
 | `/learn/databases/choosing/` | Databases and storage field guide |
 | `/learn/databases/relational/` | Relational introduction and collection |
 | `/learn/databases/relational/sandbox/` | Browser PostgreSQL sandbox with free exploration and linked tutorials |
-| `/learn/databases/relational/*/` | Written articles and clearly labelled planned outlines |
+| `/learn/databases/relational/*/` | Published relational articles, practical guides and preserved route aliases |
 | `/learn/databases/column-stores/` | Illustrated column-store essay with four experiments |
 | `/learn/databases/*/` | Documents, partitioning, distributed SQL, caching, search, graphs and object storage |
 | `/assessments/postgres-vectors/` | Dated vector-search assessment draft linked from the guide |
@@ -36,9 +37,12 @@ Every push to `main` builds and deploys to GitHub Pages through
 breadcrumbs. The shared layout provides breadcrumbs and a relational article
 switcher. Keep new reading discoverable here as it becomes available.
 
-`src/lib/relational-collection.ts` holds the relational reading order and draft
-status. Preserve the difference between available articles and planned coverage.
-Articles remain working drafts with `noindex`; review does not publish them.
+`src/lib/relational-collection.ts` holds the relational reading order and publication
+status. The 15 October 2026 commission explicitly authorised publication of its
+27 articles, introduction, checkout and practice pages. The SQL sandbox has 29
+article-linked lessons and 152 steps; `/playgrounds/` is the entrance for this and
+future technology playgrounds. Other draft reading keeps its own publication state.
+Review alone does not authorise publication of a new commission.
 
 The site was consolidated on 4 October 2026. The old field directories, Explore overview, About, Updates and RSS were removed.
 The homepage remains a site-wide overview. The column-store essay was

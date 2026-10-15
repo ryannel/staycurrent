@@ -31,3 +31,7 @@ The prose develops the example continuously. Tables clarify release and recovery
 states. SQL panels have concrete actor, setup and outcome context. No material
 technical or teaching repairs were required in this pass. Rendered checks and
 execution are recorded in the collection verification artifacts.
+
+A later phone inspection found the shell continuation was consumed by the JavaScript
+template literal. Preserved it with String.raw and made the horizontally scrollable
+terminal block explicitly keyboard-focusable and named. Command meaning is unchanged.

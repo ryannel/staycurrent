@@ -233,7 +233,7 @@ ORDER BY placed_at DESC, order_id DESC LIMIT 2;`,
       },
       {
         title: 'Add a new first row, then skip two',
-        instruction: 'Between page requests, a new order arrives at 10:06. This single connection commits the insert before the next read; it reproduces the changed data, not concurrent sessions. Predict what OFFSET 2 skips in the new ordering.',
+        instruction: 'Between page requests, a new order arrives at 10:06. On this one connection, the SELECT sees the preceding INSERT in the same submitted batch; both finish before the next step. This reproduces the changed ordering, not concurrent sessions. Predict what OFFSET 2 skips in that ordering.',
         sql: `INSERT INTO lesson_page_orders (order_id, placed_at) VALUES (6, '2026-10-15 10:06+00');
 SELECT order_id, placed_at FROM lesson_page_orders
 ORDER BY placed_at DESC, order_id DESC LIMIT 2 OFFSET 2;`,
