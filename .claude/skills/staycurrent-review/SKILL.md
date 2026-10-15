@@ -9,6 +9,14 @@ The aim is a trustworthy, coherent explanation an unfamiliar reader can follow.
 Review should reveal where the page fails that reader and help the author repair
 it. A count of checks, reviewers or revisions cannot establish quality.
 
+For depth reviews, distinguish a missing mechanism, a missing consequence and an
+already complete explanation. Preserve the last of these. For practical collections,
+review the lesson and the article together: does the experiment expose the actual
+decision the article teaches, and can the reader interpret its result? The authoring
+skill's [depth and experiments reference](../staycurrent-authoring/references/depth-and-experiments.md)
+records examples from the relational review. It is coordinator context, not material
+to give an uncued reader before their first interpretation.
+
 For a read-through commission, use [first-reading guidance](references/first-reading.md)
 to establish the actual reading order and preserve questions before diagnosing them.
 Keep the requested scope: a reading log and improvement plan do not require article
@@ -39,6 +47,27 @@ findings. Use `staycurrent-style` for editorial judgement and
 `staycurrent-research` for source-based claims. The
 [review examples](references/protocol.md) describe what these perspectives found
 in practice and how to preserve an uncued interpretation of teaching aids.
+
+Give the editorial reviewer an explicit writing judgement alongside the
+comprehension judgement. A reader can understand every sentence and still find
+the piece laboured. Ask for passages that work and passages that strain, with their
+surrounding context and a concrete account of the difference. Read headings together,
+then paragraphs and section transitions in sequence: repeated framing or conclusions
+may be conspicuous across a page while seeming harmless in isolation. Prior review
+approval and technical completeness do not establish that the prose reads well.
+
+The opening deserves attention in its own right. A reader's account of what they
+understand at that point can reveal a gap that disappears when an expert considers
+the finished article. Useful evidence distinguishes what the passage has explained
+from what it has made interesting or promised to explain. The first section then
+shows whether that beginning prepared the reader for the next thought.
+
+The Indexes example in `docs/writing-style.md` records why this distinction mattered:
+the customer story was easy to follow, yet the user still lacked an introduction to
+the subject. The successful direction explained what the index held and how its
+arrangement helped find orders. When similar feedback recurs, consider the brief's
+picture of the reader as well as the sentences. More polish may leave the same
+assumption intact.
 
 Ask for consequences, not a checklist of preferences. Where did understanding fail?
 What unsupported promise could lead someone to a wrong decision? What does the
@@ -99,6 +128,14 @@ Recheck what changed and anything that depends on it. The scope of that recheck
 should follow the repair: a new narrative needs another reader, while a contrast
 adjustment may need a rendered inspection. Actual browser and example checks
 complement agent comprehension; neither substitutes for the other.
+
+After substantive repairs, have the editorial reviewer reread the assembled piece
+for flow and voice, including changed captions and supporting copy. Checking each
+finding as resolved can miss new repetition or qualifications added by several
+reviewers. If an edit improves the voice by removing detail, verify that it has not
+removed a condition the reader needs. Record the writing judgement separately from
+technical and comprehension findings, with passage evidence and remaining doubts;
+a count of edits or a declaration that it sounds human is not evidence.
 
 Leave a concise record in the article's existing review notes: consequential
 findings, decisions, evidence, the revision checked and remaining uncertainty.

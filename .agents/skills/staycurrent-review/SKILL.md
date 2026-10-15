@@ -9,6 +9,14 @@ The aim is a trustworthy, coherent explanation an unfamiliar reader can follow.
 Review should reveal where the page fails that reader and help the author repair
 it. A count of checks, reviewers or revisions cannot establish quality.
 
+For depth reviews, distinguish a missing mechanism, a missing consequence and an
+already complete explanation. Preserve the last of these. For practical collections,
+review the lesson and the article together: does the experiment expose the actual
+decision the article teaches, and can the reader interpret its result? The authoring
+skill's [depth and experiments reference](../staycurrent-authoring/references/depth-and-experiments.md)
+records examples from the relational review. It is coordinator context, not material
+to give an uncued reader before their first interpretation.
+
 For a read-through commission, use [first-reading guidance](references/first-reading.md)
 to establish the actual reading order and preserve questions before diagnosing them.
 Keep the requested scope: a reading log and improvement plan do not require article

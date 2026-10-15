@@ -35,6 +35,13 @@ A browser simulation is not a benchmark; reading valid SQL is not running it.
 Be candid about evidence that is missing, and narrow a claim when that still answers
 the reader's question.
 
+For service APIs, identify the product and resource type before generalising a
+guarantee. A vendor's default bucket, specialised bucket and compatible third-party
+endpoint may differ. Record enough of a request, response and resulting state to
+support the lesson; a success status alone may leave a retry or publication outcome
+unresolved. Local emulation can test the teaching code without verifying the hosted
+service. Keep that evidence boundary visible in the article and its playground.
+
 Offer a small set of annotated sources that help the reader continue. Preserve
 reusable references in the evidence notes for the proposed shared library; local
 claims should still be traceable. Where guidance may change, record what new evidence

@@ -32,6 +32,14 @@ Ask what orientation the new subject needs before transplanting these branches o
 the relational order example. The planning-review reference preserves how the
 first introduction missed its intended reader despite a thoughtful tree.
 
+A product branch needs room to explain the mechanisms behind its important
+capabilities. The first PostgreSQL deep dive named too much and taught too little.
+Plan from decisions a reader should be able to make, then give substantial new
+investigations their own articles. Full coverage needs an explicit boundary; it
+does not require a page for every API or a generic outline copied from another
+family. Plan practical lessons alongside those decisions, including which can run
+here and which need a model or an external environment.
+
 Treat dependencies and reading order as related judgements. Our eventual relational
 path moved from designing and querying data through concurrent work into internals,
 performance and operation. Product-choice readers also got a direct entrance.

@@ -94,6 +94,13 @@ needed earlier. Application code, a query editor and an interactive terminal can
 be useful viewpoints. Choose one deliberately and explain a switch when it occurs.
 The transaction revision in `docs/writing-style.md` records why this mattered.
 
+For a collection with practical lessons, read the
+[depth and experiments reference](references/depth-and-experiments.md). It follows
+the PostgreSQL rebuild and the later relational review: a capability the deep dive
+promises to teach needs an explained mechanism and a consequential decision;
+a runnable example needs an observable outcome. It also helps choose between a real engine, a local model and
+a worksheet for a service that cannot run inside this website.
+
 Use `staycurrent-research` for the evidence behind consequential claims. Keep the
 difference between a family principle, a particular implementation, and an invented
 teaching example intelligible. Further reading should offer a useful next step,

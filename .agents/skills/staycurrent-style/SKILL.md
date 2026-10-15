@@ -53,6 +53,13 @@ Judge the cumulative effect in context; none of these is a banned construction.
 A useful edit names what happens and lets the reasoning develop. It need not make
 the sentences shorter, remove technical terms, or add a chatty voice.
 
+Depth can stay easy to follow when the prose follows the consequences of a concrete
+change. Explain what the reader needs to predict the next state, then let that state
+raise the next question. The later relational review added the valid purchase lost
+by an earlier restore target and the work needed to recover it. That continuation
+taught more than another list of recovery features would have. Keep such reasoning
+in the main path when the article's promise depends on it.
+
 When a passage feels strained, try a direct alternative beside the original and
 read both with their neighbours. Keep the version that carries the thought more
 naturally while preserving the mechanism, example and necessary conditions.
