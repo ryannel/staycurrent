@@ -1,7 +1,7 @@
-// Run from the repository root. Uses the shared temporary PostgreSQL runtime.
+// Run from the repository root. Uses the project's PostgreSQL runtime.
 import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
-import { PGlite } from '/private/tmp/staycurrent-design-sql/node_modules/@electric-sql/pglite/dist/index.js';
+import { PGlite } from '@electric-sql/pglite';
 import { queryWork } from '../../../src/components/explainers/querying/query-work-model.ts';
 const source=readFileSync('src/pages/learn/databases/relational/query-results.astro','utf8');
 const sql=Object.fromEntries([...source.matchAll(/const (\w+) = `([\s\S]*?)`;/g)].map(m=>[m[1],m[2]]));

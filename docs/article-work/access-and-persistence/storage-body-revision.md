@@ -1,0 +1,11 @@
+# Storage body revision · 15 October 2026
+
+Revised the article and its three figures after the user found the batch’s titles unnatural and requested the same scrutiny of its body text. Read the house style and authoring skills, the writing reference, and Sam Who’s original *Load Balancing* opening through the round-robin explanation before editing.
+
+The main change is to follow the price, page and log records directly. The earlier opening described a “deceptively small event”; the replacement introduces files, memory and the need to recover a committed change. “This gives physical arrangement a consequence the query does not reveal” became an explanation of P3 and P9 entering memory with P7. The WAL section now says what PostgreSQL saves, flushes and acknowledges, without framing the mechanism as a changing promise. The ending explains what a backup adds for this price update.
+
+Removed repeated abstract conclusions and moved several documentation links onto the supported claims. Retained onward links where the source supplies useful further explanation. Figure copy now describes the page contents and the reply received by the application. The commit caption still explains that a data page can be written before commit; the crash caption retains the synchronous local commit and reliable-storage assumptions.
+
+Reread the complete revised source, including figure text. SQL, settings, values, citations and element IDs remain. Preserved the distinctions between buffered and durable data, committed and visible row versions, WAL replay and transaction visibility, checkpoints and vacuuming, asynchronous commit and disabled fsync, and local crash recovery and backups. Corrected an overstatement introduced during rewriting that backups were the only possible way to recover lost data; the body now says another copy is needed and then explains the backup method.
+
+No executable experiment changed. The coordinator will run the shared build, inspect the assembled pages and commission independent review. A fresh reader should check that the page-layout paragraph gives enough orientation before the row-version explanation, and that the necessary configuration detail at the end still reads as an explanation rather than an audit report. This revision is not independent approval of its own prose.

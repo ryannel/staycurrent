@@ -1,10 +1,87 @@
 # Planning the relational collection
 
-Working plan, revised 14 October 2026. This develops the
+Working plan, completion status reconciled 15 October 2026. This develops the
 [coverage structure](content-structure.md) into reader journeys and bounded article
-candidates. The design, querying and transaction sequences were subsequently
+candidates. The design, querying, transaction, and access/persistence sequences were subsequently
 commissioned; the other branches remain planned coverage. Titles, groupings, and destinations can change
 as the explanations develop.
+
+## Completion plan, 15 October 2026
+
+The current scope is the revised tree below: **27 articles, with eleven available
+working drafts and sixteen planned articles**. The introduction, optional practice,
+checkout synthesis and SQL sandbox sit alongside that count. A planned route is an
+outline, not a completed article. `src/lib/relational-collection.ts` agrees with
+these counts; the older commissioning and tree records later in this document
+preserve earlier decisions rather than describe the current inventory.
+
+The available drafts are Designing your data, Constraints in depth, Tables and
+JSON, Querying your data, Pagination and large results, Transactions and
+concurrency, Isolation and snapshots, Handling conflicts and uncertain outcomes,
+Indexes, How a query runs, and Storage and durability. Five main deep dives and
+six supporting articles now have working drafts; the querying branch is complete.
+
+The earlier [collection review decisions](article-work/collection-reader-passes/decisions.md)
+and [verification record](article-work/collection-reader-passes/verification.md)
+cover the introduction and the preceding eight drafts. They record repaired explanations,
+focused SQL execution, browser checks and a successful 56-page build. These are
+existing results, not checks rerun for this planning update. They do not complete
+the unwritten branches or establish publication readiness by themselves.
+The [access and persistence review](article-work/access-and-persistence/review.md)
+records the three new articles, independent review, repairs and current verification.
+
+### Production order
+
+This queue preserves the agreed article boundaries. It orders remaining work so
+later explanations can build on available reading; it does not require readers to
+follow the same sequence. Each batch needs bounded authoring briefs before writing.
+
+| Batch | Articles | Purpose and progress |
+| --- | --- | --- |
+| 1. Access and persistence | Indexes; How a query runs; Storage and durability | Written and independently reviewed; see the batch review record for repairs and final checks. |
+| 2. Performance | Understanding database performance; The database work behind an application request; Reporting on operational data | Connect application demand, execution and waiting, then test interventions and reporting choices. |
+| 3. Operating safely | Changing a schema while the application runs; Backups and recovery; Controlling access; Retention and deletion | Turn design and durability into concrete migration, restore, access and removal tasks. |
+| 4. Capacity and availability | Scaling a relational database; Replication and failover; Partitioning and sharding | Start from measured needs, then develop copying and divided ownership, including failure and data movement. |
+| 5. Implementation | Inside PostgreSQL; Indexes in PostgreSQL; Row versions, transactions and vacuum; WAL, checkpoints and recovery | Extend the family explanations through one identified implementation without repeating them. |
+| 6. Choices and boundaries | Choosing a relational database; When should you add another system? | Synthesize the consequences through stated workloads and freshly researched product evidence. The comparison can move earlier if product selection becomes the immediate reader need. |
+
+### Batch 1 commission: Indexes
+
+The reader should be able to explain why an ordered index helps a particular
+query, propose an index for its predicates and ordering, and check whether the
+saved read work justifies its costs. Follow equality and range access into composite
+keys, remaining filters, sorting, covering access, table fetches and selectivity.
+Carry the choice through representative reads and writes rather than ending at
+CREATE INDEX. Identify the engine and version used for observations; explain which
+conclusions depend on them. Plans and measurements must distinguish counted work
+from elapsed time.
+
+The parent Querying your data already traces a concrete execution. How a query
+runs should deepen alternative strategies and estimated versus actual work rather
+than replay that lesson. Indexes should teach general access-path reasoning;
+specialised PostgreSQL methods retain their implementation home. Storage and
+durability owns logging and restart; the backup guide owns establishing and testing
+a restore. These boundaries governed the first batch and remain useful when commissioning the later implementation and operating articles.
+
+### What finishing means
+
+For each selected article, record planned, drafting, in review, ready as a draft,
+or blocked in its production record. Complete the explanation, evidence and useful
+media, run the independent authoring/review workflow, and resolve consequential
+findings before marking it ready as a draft. Make it discoverable through the
+collection and article directory when the reviewed draft exists.
+
+After the remaining branches are written, read the collection across its main and
+supporting paths for gaps, repeated lessons, prerequisites and useful onward links.
+Recheck the introduction, practice and sandbox against the completed examples;
+verify routes, redirects, fragments, responsive layouts and both themes. Run the
+required `pnpm build` and the focused behavioural checks warranted by the changes.
+Keep review limitations visible. Publication remains a separate editorial decision.
+
+Batch 1 has been written and reviewed. Batch 2, performance and application work,
+is next in this proposed sequence. The remaining sixteen articles are planned.
+The 14 October tree below retains its original commissioning labels; the current
+inventory and completion records above take precedence for status.
 
 ## Revised article tree, 14 October 2026
 

@@ -1,13 +1,14 @@
 # Designing your data: evidence and SQL verification
 
-Checked 4 October 2026. PostgreSQL references use version 18. These articles are
+Originally checked 4 October 2026; current article SQL rechecked 15 October 2026.
+PostgreSQL references use version 18. These articles are
 drafts; verification does not authorise publication.
 
 ## Execution
 
 `schema.sql` and `verify-sql.mjs` ran in an isolated, in-memory PGlite instance.
-The runtime was installed under `/private/tmp/staycurrent-design-sql`; it is not a
-site dependency. `SELECT version()` returned:
+The original run used a temporary runtime. The project now includes PGlite 0.5.8;
+the current article verifier uses that installed dependency by default. `SELECT version()` returned:
 
 ```text
 PostgreSQL 18.3 (PGlite 0.5.8) on wasm32-unknown-emscripten,
@@ -21,9 +22,8 @@ not a JavaScript simulation of SQL. It is not a multi-session server test.
 Reproduce from the repository root:
 
 ```sh
-npm install --prefix /private/tmp/staycurrent-design-sql @electric-sql/pglite@0.5.8 --ignore-scripts --no-audit --no-fund
-node docs/article-work/designing-data/verify-sql.mjs /private/tmp/staycurrent-design-sql/node_modules/@electric-sql/pglite/dist/index.js
-node docs/article-work/designing-data/verify-article-sql.mjs /private/tmp/staycurrent-design-sql/node_modules/@electric-sql/pglite/dist/index.js
+node docs/article-work/designing-data/verify-sql.mjs "$PWD/node_modules/@electric-sql/pglite/dist/index.js"
+node docs/article-work/designing-data/verify-article-sql.mjs
 ```
 
 The run passed 48 SQL cases. `sql-results.json` preserves the executed statements,
@@ -32,17 +32,25 @@ so the next example does not inherit an aborted transaction. Normal psql usage
 can reproduce that arrangement; inside an explicit transaction an error needs
 rollback or a savepoint.
 
-`verify-article-sql.mjs` also extracts the actual SQL constants from the modelling
-and constraints Astro sources. It passed 34 exact article statements plus four
-focused JSON contract probes, including
-the receipt result, schema, seed rows, CHECK-only probe, line attempts, SKU
-attempts, and the serial lookup/insert pair. `article-sql-results.json` includes
-the article source hashes for that run. The JSON source constants also ran:
-related details, attribute setup, value/type probe, capacity query, type check,
-indexes, and `jsonb_set`. The query returns capacity 350 before the update and
-375 after it. An additional accepted fractional JSON number fails the integer
-query and an indexed write, showing why a number-type check alone does not
-establish the integer extraction contract.
+`verify-article-sql.mjs` extracts SQL constants from the current modelling,
+constraints and JSON article sources. The repaired verifier passed 110 statements
+on 15 October. `article-sql-results.json` records the source hashes and outcomes.
+It runs the alternative related-row design in its own database, then follows the
+JSON example through extraction, the incomplete type rule, conversion into
+`mug_details`, the hybrid query, the final indexes and the material update.
+
+The conversion accepts JSON numbers 350 and 350.0. It rejects missing capacity,
+JSON null, a numeric string, a fraction, zero, a negative number, overflow and an
+object-valued capacity. After each rejected conversion, rollback preserves the
+original JSON and removes the newly created details table. Successful conversion
+keeps capacity 350 in the typed column and removes its duplicate from JSON. The
+later `jsonb_set` changes material to stoneware while capacity remains 350.
+
+The six-article review found that the previous verifier still expected capacity
+375 and an expression index from an older article revision. Those expectations
+have been replaced. The original 48-case `verify-sql.mjs` remains useful for its
+individual PostgreSQL probes, but its capacity update and expression-index tests
+are historical examples, not verification of the current article workflow.
 
 The companion schema contains the same C4, P7 and P8 seed values as Constraints
 (P8 costs EUR 24; O12 was placed at 09:00 UTC on 4 October), plus SchemaMap's
@@ -76,8 +84,9 @@ Observed outcomes:
 | Integer cast of `"350"` / `"350 ml"` | Accepts 350 / rejects invalid integer text |
 | Object-level JSON CHECK | Rejects array and JSON null; does not constrain the type of a member |
 | Explicit capacity type CHECK | Rejects a string or JSON null, permits absent capacity |
-| `jsonb_set` capacity change | Changes capacity while preserving material |
-| GIN and capacity expression indexes | Created and their definitions inspected |
+| Current capacity migration | Validated capacity moves into `mug_details`; rejected inputs leave source JSON intact after rollback |
+| Current `jsonb_set` material change | Changes material to stoneware; typed capacity stays 350 |
+| Current GIN and typed-capacity indexes | Created after the conversion |
 
 Concurrency waiting, index selection, execution time and physical storage were
 not tested. The index examples establish valid definitions; two catalogue rows
@@ -153,8 +162,9 @@ that key physically. The demonstrated single-level path avoids the function's
 requirement that earlier path steps already exist.
 
 [PostgreSQL 18: Indexes on Expressions](https://www.postgresql.org/docs/18/indexes-expressional.html)
-supports indexing the capacity expression. The example must match the query's
-integer extraction. A contract for capacity values is needed: malformed strings
-can fail a cast during query, index creation, or subsequent indexed writes.
-Promoting a frequently queried shared field to a typed column can make that
-contract easier to express; it does not follow merely from using an index.
+supports the expression-index alternative discussed in the article. Its conversion
+would have to work for every input admitted by validation. The displayed final
+index instead uses the typed `mug_details.capacity_ml` column. The current example
+validates whole-number, range and JSON-type requirements before converting the
+capacity and removing it from the object. This is a choice for the catalogue's
+queries and rules, rather than a requirement to move every JSON field into a column.

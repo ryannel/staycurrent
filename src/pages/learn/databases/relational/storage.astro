@@ -1,0 +1,101 @@
+---
+import Base from '../../../../layouts/Base.astro';
+import Sql from '../../../../components/explainers/querying/Sql.astro';
+import PageRead from '../../../../components/explainers/storage/PageRead.astro';
+import CrashOutcomes from '../../../../components/explainers/storage/CrashOutcomes.astro';
+import CommitOrder from '../../../../components/explainers/storage/CommitOrder.astro';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+import '../../../../components/explainers/design/schema-sketch.css';
+const read = `SELECT current_price
+FROM products
+WHERE product_id = 'P7';`;
+const update = `BEGIN;
+UPDATE products
+SET current_price = 22.00
+WHERE product_id = 'P7';
+COMMIT;`;
+---
+<Base title="Storage and durability" description="Follow a PostgreSQL row through pages, memory, updates and recovery to understand what a successful commit preserves.">
+  <meta slot="head" name="robots" content="noindex" />
+  <article class="visual-essay relational-design schema-sketches">
+    <header class="essay-header"><p class="eyebrow">Databases and storage · Working draft</p><h1>Storage and durability</h1></header>
+    <p>A relational table presents data as rows and columns. To store and retrieve that data, the database needs a physical arrangement of bytes. PostgreSQL keeps tables in files and reads parts of those files into memory to work on them. The arrangement affects how much it must read to answer a query, where it can put a new row, and what has to change when a row is updated.</p>
+    <p>Changes made only in memory can disappear when the server crashes. <strong>Durability</strong> is the guarantee that a committed transaction survives such a failure. To provide it, the database must save enough information on persistent storage to recover the transaction before telling the application that the commit succeeded. That information does not have to be the finished table files: a saved log of changes can let the database reconstruct them after a crash.</p>
+    <p>PostgreSQL uses this approach for ordinary logged tables. With its default durability settings, it saves the required log records before acknowledging a commit, while the changed table contents may be written later. Recovery uses the log to restore changes missing from the table files. This depends on the storage surviving and correctly saving the writes PostgreSQL asks it to save. The examples use PostgreSQL 18 on one server; the final section explains how configuration and storage failures affect what can be recovered.</p>
+
+    <section aria-labelledby="pages"><h2 id="pages">Rows and pages</h2>
+      <p>Suppose a shop’s <code>products</code> table contains P7, a blue mug whose current price is 20.00. A product-page request sends this query to PostgreSQL:</p>
+      <Sql code={read} label="Read the blue mug’s price" />
+      <p>The table is stored in a collection of fixed-size <a href="https://www.postgresql.org/docs/18/storage-page-layout.html"><strong>pages</strong></a>, usually 8 kB each. Each page has a header, row data and usually some unused space. It also records where each row begins within the page. A stored row has its own header, including transaction information that PostgreSQL uses to decide which queries can see it. We’ll see shortly why a row can have more than one stored version.</p>
+      <p>The values in our small product row fit together on a page. A long product description might be compressed or moved into separate storage by PostgreSQL’s <a href="https://www.postgresql.org/docs/18/storage-toast.html">TOAST mechanism</a>. Reading that description could then require additional reads that a query for just the product ID would avoid.</p>
+      <p>An ordinary PostgreSQL table is a <strong>heap</strong>, which means rows are not kept in a chosen key order. P7 could share a page with products added at much the same time, whatever their IDs. An index can locate P7 without searching the whole table; the <a href="/learn/databases/relational/indexes/">indexes article</a> explains how. For this example, suppose PostgreSQL has located P7 on page 12.</p>
+      <p>PostgreSQL works on the page in its <a href="https://www.postgresql.org/docs/18/runtime-config-resource.html#GUC-SHARED-BUFFERS"><strong>shared buffers</strong></a>, a cache in server memory. If page 12 is already there, PostgreSQL can read P7’s price from it. Otherwise it reads the page from the table file, possibly through the operating system’s file cache. A page missing from shared buffers therefore does not always require a read from the drive.</p>
+      <PageRead />
+      <p>Reading P7’s price brought P3 and P9 into memory too, because they share page 12. A request for either product can now use the same buffered page. If those three products had occupied separate pages, fetching all three could have required three page reads. The number of rows a query returns tells us only part of what PostgreSQL had to read.</p>
+      <p>This arrangement also means reading each product’s name and price together, even when a query only asks for prices. <a href="/learn/databases/column-stores/">Column-oriented databases</a> group values from the same column instead, so a query can read prices without bringing the other columns into memory. Both arrangements can support SQL tables.</p>
+    </section>
+
+    <section aria-labelledby="updates"><h2 id="updates">Updates and row versions</h2>
+      <p>A staff member changes the blue mug’s price to 22.00. The shop’s update handler borrows one database connection, sends <code>BEGIN</code>, sends the update, and checks that it succeeded for P7 before sending <code>COMMIT</code>. These are the statements on that successful path, all on the same connection:</p>
+      <Sql code={update} label="The price-change handler’s successful transaction" />
+      <p>In PostgreSQL, this update creates a new row version. The earlier version still contains 20.00; the new one contains 22.00. Transaction information lets the engine decide which version a reader can see. An ordinary query from another connection cannot see the unfinished price change. A report with an older snapshot may continue to see 20.00 even after the writer commits. This is <a href="https://www.postgresql.org/docs/18/mvcc-intro.html">multiversion concurrency control</a>, developed further in <a href="/learn/databases/relational/isolation/">Isolation and snapshots</a>.</p>
+      <p>The new version may fit on the same page or need another page. PostgreSQL can sometimes avoid creating new ordinary index entries when the changed columns and available space allow a <a href="https://www.postgresql.org/docs/18/storage-hot.html">heap-only tuple update</a>. The old price remains in its row version until PostgreSQL can remove it safely.</p>
+      <p>A changed buffer page is called <strong>dirty</strong> because it needs to be written back to its file. The page can contain changes from both committed and unfinished transactions. Writing it to the file does not commit those unfinished transactions, and committing a transaction does not necessarily write the page.</p>
+      <p>If the changed page in memory were the only copy of our update, a server crash could lose the new price. PostgreSQL could wait for every changed table and index page to be written before acknowledging a commit. Instead, it saves the changes in a log that it can use to restore those pages.</p>
+    </section>
+
+    <section aria-labelledby="wal"><h2 id="wal">The write-ahead log</h2>
+      <p>As it changes pages, PostgreSQL generates <strong>write-ahead log</strong> records, or WAL. These records describe the changes to pages, so PostgreSQL can reconstruct them during recovery. Transactions append to the same log, which is stored separately from table and index files. Recovery uses those records rather than running the original SQL again: repeating an instruction to increase a price by two could increase it a second time.</p>
+      <p>Before PostgreSQL writes a changed data page to its file, it must <strong>flush</strong> the WAL records for those changes to persistent storage. This is the ordering that gives write-ahead logging its name. The page can change in memory before that flush. Each page records its <a href="https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/access/transam/README#L358">position in the log</a>, allowing PostgreSQL to check that the WAL has been flushed up to that point. During recovery, it uses that position to avoid applying changes the page already contains.</p>
+      <p>For our price update, PostgreSQL can flush the change records and commit record, then tell the application that the commit succeeded. Page 12 in the table file may still contain just the 20.00 version. If the server crashes now, PostgreSQL can recover the 22.00 version from the log.</p>
+      <CommitOrder />
+      <p>This is why <a href="https://www.postgresql.org/docs/18/wal-intro.html">WAL reduces the work a commit must wait for</a>. Appending to the log lets PostgreSQL defer writes to scattered table and index pages. Several transactions can share one log flush. A page can also accumulate several changes in memory before PostgreSQL writes it back, reducing how often that page has to be written.</p>
+      <p>A normal write call may leave data in a cache that loses its contents when the power fails. To flush WAL, PostgreSQL requests that the operating system and storage devices make the write durable. This depends on them reporting completion correctly. If a drive reports success while the only copy is still in a volatile cache, PostgreSQL may acknowledge a transaction that a power failure can erase. <a href="https://www.postgresql.org/docs/18/wal-reliability.html">PostgreSQL’s reliability documentation</a> explains the requirements for reliable storage.</p>
+    </section>
+
+    <section aria-labelledby="restart"><h2 id="restart">After a crash</h2>
+      <p>At restart, the table files may contain a mixture of older pages and newer ones. Recovery reads the durable WAL and <a href="https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/access/heap/heapam_xlog.c">redoes the necessary changes</a>. Some of those changes may belong to transactions that never committed. Replaying them can restore their row versions to a page, but PostgreSQL <a href="https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/access/heap/heapam_visibility.c">checks transaction status</a> when deciding which versions a query can see.</p>
+      <p>If no commit record survives for our price change, a new query after recovery sees 20.00. The table may contain a 22.00 version, but PostgreSQL treats its transaction as uncommitted and keeps that version hidden. If the update and commit records both survive, the query sees 22.00, even if recovery had to restore it from the log. This is how PostgreSQL preserves its <a href="https://www.postgresql.org/docs/18/tutorial-transactions.html">transaction guarantee</a> through a crash.</p>
+      <CrashOutcomes />
+      <p>Case C is awkward for the application. It sent <code>COMMIT</code>, then lost the connection. PostgreSQL recovered the committed price of 22.00, but the application never received confirmation. It cannot assume the transaction rolled back and safely repeat the operation. <a href="/learn/databases/relational/conflicts-and-retries/">Handling conflicts and uncertain outcomes</a> explains how an application can recover the original operation’s outcome without blindly repeating its effects.</p>
+      <p>A crash can also interrupt the writing of a page itself. The surviving page might contain a mixture of old and new pieces, rather than either complete version. With <a href="https://www.postgresql.org/docs/18/runtime-config-wal.html#GUC-FULL-PAGE-WRITES"><code>full_page_writes</code></a> enabled, PostgreSQL includes a full image of a page in WAL on its first modification after a checkpoint. That gives recovery a complete image to restore when a partially written page cannot safely accept incremental changes. This kind of partially completed page write is called a <strong>torn write</strong>.</p>
+    </section>
+
+    <section aria-labelledby="checkpoints"><h2 id="checkpoints">Checkpoints</h2>
+      <p>As the database keeps running, it generates more WAL. Replaying all of it since the database was created would make recovery increasingly slow. A <a href="https://www.postgresql.org/docs/18/wal-configuration.html"><strong>checkpoint</strong></a> gives recovery a more recent starting position in the log. PostgreSQL writes the dirty pages needed to ensure that all changes before that position are saved in the data files, then records that the checkpoint is complete.</p>
+      <p>Transactions continue during a checkpoint, and PostgreSQL can spread the page writes over time. After a crash, recovery reads WAL from the checkpoint’s recorded redo position to restore any later changes missing from the files. Once older log segments are no longer needed for recovery, archiving or replication, PostgreSQL can reuse them.</p>
+      <p>The price update was durable as soon as its WAL records were flushed; it did not have to wait for a checkpoint. Checkpoint frequency instead affects how much WAL a future recovery may have to replay. More frequent checkpoints can shorten recovery, at the cost of more page writes and more full-page images in the log.</p>
+    </section>
+
+    <section aria-labelledby="cleanup"><h2 id="cleanup">Vacuum and space reuse</h2>
+      <p>The table still has one blue-mug product, but it may be storing both the 20.00 and 22.00 versions. Further updates create more versions. Once no query can need an old version, PostgreSQL can remove it and reuse the space. A report holding an older snapshot can delay that cleanup because it still needs to read the old price.</p>
+      <p>PostgreSQL’s vacuuming reclaims dead versions so the space can be reused. Autovacuum arranges routine cleanup, while page pruning can also recover space during normal work. A <a href="https://www.postgresql.org/docs/18/storage-fsm.html">free space map</a> helps later writes find pages with room. A table that is updated regularly needs this cleanup even if it always contains the same number of products.</p>
+      <p>Ordinary <code>VACUUM</code> generally leaves the table’s files at their existing size, though it can remove empty pages at the end. The freed space inside those files is available for later inserts and updates. <code>VACUUM FULL</code> rewrites a compact copy, requiring extra temporary disk capacity and an exclusive table lock. <a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">Routine vacuuming</a> explains why regularly reusing space is usually preferable to repeatedly shrinking and regrowing it.</p>
+      <p>Writing a checkpoint will not remove these old row versions. Checkpoints save dirty pages so recovery can start further along in the log. Vacuuming finds versions that can be removed, makes their space reusable, and performs other visibility and transaction-age maintenance. A regularly updated database needs both.</p>
+    </section>
+
+    <section aria-labelledby="promise"><h2 id="promise">Durability guarantees</h2>
+      <p>The crash examples assume <code>fsync = on</code>, <code>full_page_writes = on</code>, and <code>synchronous_commit = on</code>, with no configured synchronous standby. With these settings, PostgreSQL waits for the required WAL to become durable on the local server before acknowledging a transaction that changes an ordinary logged table. It can then recover that transaction after a server crash, operating-system crash or power failure, provided the storage survives and correctly honours flush requests.</p>
+      <p>With <code>synchronous_commit = off</code>, PostgreSQL can acknowledge a commit before its WAL is durable. A crash can then lose recent transactions whose commits were acknowledged, although recovery still produces a consistent database. Disabling <code>fsync</code> also removes the write synchronisation needed to prevent corruption after a system crash. <a href="https://www.postgresql.org/docs/18/wal-async-commit.html">Asynchronous Commit</a> explains why turning off these two settings has different consequences.</p>
+      <p>PostgreSQL also lets you create <code>UNLOGGED</code> tables, whose data changes are not written to WAL. They are emptied after a crash or unclean shutdown, including data from committed transactions. Use them only for data you can discard and rebuild. The <a href="https://www.postgresql.org/docs/18/sql-createtable.html#SQL-CREATETABLE-UNLOGGED">unlogged-table documentation</a> describes their behaviour.</p>
+      <p>Even with reliable storage and all these protections enabled, the log has limits. If the device holding both the table and WAL is destroyed, PostgreSQL has nothing to recover from locally. If someone commits an accidental deletion, crash recovery preserves that deletion. Recovering the lost data requires another copy. A physical base backup together with an unbroken sequence of archived WAL lets you restore to a chosen point after the backup, such as just before the deletion. The active WAL directory alone is insufficient. <a href="https://www.postgresql.org/docs/18/continuous-archiving.html">PostgreSQL’s point-in-time recovery guide</a> explains how to keep the backup and log archive needed for this.</p>
+      <p>For our price update, a successful commit means PostgreSQL can recover 22.00 after a crash with its storage intact. To recover after losing a device or making a mistaken update, keep a suitable copy elsewhere, such as a backup with archived WAL, and test that you can restore the data you need.</p>
+    </section>
+
+    <nav class="series-reading" aria-label="Further reading">
+      <p><a href="/learn/databases/relational/indexes/">Indexes →</a><span>See how an index locates rows and what it costs to maintain.</span></p>
+      <p><a href="/learn/databases/relational/backup-and-restore/">Backups and recovery →</a><span>Planned guide: establish recovery requirements and test the restore process.</span></p>
+      <p><a href="/learn/databases/relational/#collection">Relational collection →</a><span>Browse the draft articles and see what is planned next.</span></p>
+    </nav>
+    <section class="essay-sources"><h2>Sources and further reading</h2>
+      <p>Working draft, researched 15 October 2026 against PostgreSQL 18 documentation. The product records and page numbers are invented for these examples. The crash diagrams illustrate the documented recovery behaviour; they were not produced by crashing a test server.</p>
+      <ul>
+        <li><a href="https://www.postgresql.org/docs/18/storage-page-layout.html">Database Page Layout</a> gives the exact page and row-header structures behind the simplified page drawing.</li>
+        <li><a href="https://www.postgresql.org/docs/18/wal-intro.html">Write-Ahead Logging</a> explains how logging reduces commit costs and supports recovery. Continue into the linked reliability and configuration chapters for storage assumptions and checkpoints.</li>
+        <li><a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">Routine Vacuuming</a> explains how PostgreSQL removes old row versions and reuses their space.</li>
+        <li><a href="https://www.postgresql.org/docs/18/continuous-archiving.html">Continuous Archiving and Point-in-Time Recovery</a> explains how to prepare a base backup and log archive, then use them to restore a database.</li>
+      </ul>
+    </section>
+  </article>
+</Base>

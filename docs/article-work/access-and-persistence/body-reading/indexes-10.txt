@@ -1,0 +1,20 @@
+Covering indexes
+Return to the original history query, which includes pending and paid orders. Our composite index contains customer ID, timestamp and order ID. The result also asks for total. Each of its ten rows therefore needs a table fetch to obtain that amount.
+We can add total to the index with PostgreSQL’s INCLUDE clause. It stores the value alongside each entry without making it part of the sort key.
+DROP INDEX index_orders_history;
+CREATE INDEX index_orders_cover
+ON index_orders (customer_id, placed_at DESC, order_id DESC)
+INCLUDE (total);
+
+This index covers the query: all the values it needs are available there. An index-only scan can return those values. PostgreSQL still has to establish that each row is visible to the transaction. It keeps a small visibility map recording table pages whose rows are visible to all transactions. When a page has that mark, the scan can avoid fetching it; otherwise it must visit the heap to check.
+Before vacuuming, our covering plan reported Heap Fetches: 10: it still fetched all ten rows from the table. Run this command on its own, with autocommit enabled:
+VACUUM (ANALYZE) index_orders;
+
+Vacuum marked eligible pages as visible to all transactions. The same history query then reported Heap Fetches: 0. Vacuum changed the table’s visibility information, so PostgreSQL could now get the same answer without visiting the table. The final section shows how to collect these plan counters at each step. A busy table with recent changes may offer fewer opportunities to avoid those visits.
+The covering index can also help with a query that reads many more rows. Consider summing the amounts for 900 of our 1,000 customers:
+SELECT sum(total)
+FROM index_orders
+WHERE customer_id BETWEEN 1 AND 900;
+
+That condition matches 54,000 orders. With an index that requires table fetches, visiting nearly the whole table through individual references can be more work than simply scanning it. With our vacuumed covering index, PostgreSQL chose an index-only scan instead: the smaller index supplied all the amounts. Reading 54,000 entries from this smaller index was the planner’s preferred choice.
+Selectivity describes the fraction of rows a condition selects. A condition matching very few rows is usually called selective. The planner also considers how wide the rows are, how they are spread over pages, expected caching, and whether the query can stop early. Depending on those factors, it may choose a table scan or read much of a smaller covering index. The fraction of matching rows is useful information, but cannot by itself tell us which will do less work.

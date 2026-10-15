@@ -177,3 +177,7 @@ The [implementation record](../relational-read-through-2026-10-05/implementation
 links independent sequential/editorial readings, technical execution and browser
 checks. Their material findings are resolved; the final build passes with 50 pages.
 These are ready working drafts, with no publication or commit performed.
+
+
+The [six-article review of 15 October](../six-article-review/review.md) records
+the subsequent full reading, prose repairs and current example verification.

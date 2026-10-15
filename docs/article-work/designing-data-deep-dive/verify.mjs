@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
-import { PGlite } from '/private/tmp/staycurrent-design-sql/node_modules/@electric-sql/pglite/dist/index.js';
+import { PGlite } from '@electric-sql/pglite';
 const db = new PGlite();
 const source = await readFile('src/pages/learn/databases/relational/modelling.astro', 'utf8');
 const sql = name => source.match(new RegExp(`const ${name} = \x60([\\s\\S]*?)\x60;`))[1];

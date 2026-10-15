@@ -1,0 +1,45 @@
+Testing an index
+We expect the customer index to skip other customers’ orders. The composite index should also remove the sort and let the scan stop after ten matches. The covering index may avoid table fetches. To check, run the history query with EXPLAIN:
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)
+SELECT order_id, placed_at, total
+FROM index_orders
+WHERE customer_id = 42
+AND placed_at >= timestamptz '2026-02-01 00:00:00+00'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;
+
+EXPLAIN ANALYZE executes the query and reports what its plan nodes actually did. BUFFERS adds page-access counters; TIMING OFF avoids measuring each node’s elapsed time while retaining row counts and total execution time. The word ANALYZE here means “run and observe”; the standalone ANALYZE index_orders command earlier collects planner statistics.
+The complete experiment runs the setup and each replacement in order, with a plan after each step. It also exercises inserts, amount changes and deletes. Run the file with psql -f index-experiment.sql against your practice database, or execute its statements individually in a query editor with autocommit enabled. VACUUM cannot run inside a transaction block. Use a fresh session; running the setup twice in the same session will find the temporary table already there. Our verification used PGlite 0.5.8, an embedded WebAssembly build reporting PostgreSQL 18.3. These are observed row counts in that setting, not server latency measurements:
+Available history index | Observed work | Separate sort? | 
+None | Table scan: 15 rows passed, 59,985 rejected | Yes | 
+Customer only | 60 candidates; 45 rejected by the date filter | Yes | 
+Customer, date, order | Index scan returned 10 rows, then stopped | No | 
+Same keys, including total | 10 rows; heap fetches fell from 10 to 0 after vacuum | No | 
+
+For the customer-only case, PostgreSQL chose a bitmap scan: collect matching row locations, then visit the table pages holding them. That improves the organisation of table access, but does not preserve the index’s ordering. It still needed the date filter and sort. PostgreSQL can also combine results from multiple indexes this way; two single-column indexes do not automatically supply the ordered run of one composite index. See combining indexes.
+The essential part of the composite plan looked like this, with costs, buffer counts and PostgreSQL’s explicit type casts omitted:
+Limit (actual rows=10 loops=1)
+-> Index Scan using index_orders_history on index_orders
+(actual rows=10 loops=1)
+Index Cond: ((customer_id = 42) AND
+(placed_at >= '2026-02-01 00:00:00+00'))
+Read it from the indented scan towards its parent. The scan supplies rows in order; Limit stops requesting them after ten. actual rows=10 means ten rows emitted by that node, not ten total operations inside the tree. It does not count all key comparisons or page visits. Here each node ran once. In more complex plans, row counts are per loop and need to be read with loops.
+So far we have read from a fixed set of orders. The downloadable experiment also inserts 1,000 orders, changes 200 amounts and deletes 100 orders:
+-- Continue after the covering-index experiment.
+INSERT INTO index_orders
+(order_id, customer_id, placed_at, status, total, note)
+SELECT n, 1 + n % 1000,
+timestamptz '2026-01-01 00:00:00+00' + n * interval '1 minute',
+'pending', 25.00, repeat('delivery note ', 12)
+FROM generate_series(60001, 61000) AS series(n);
+
+UPDATE index_orders
+SET total = total + 1.00
+WHERE order_id BETWEEN 60001 AND 60200;
+
+DELETE FROM index_orders
+WHERE order_id BETWEEN 60901 AND 61000;
+
+The script verifies the resulting count of 60,900 rows and reports relation sizes. This checks that queries still return the expected results after the changes. To measure the cost of maintaining the index, we need a different test: temporary tables have different storage and logging behaviour, and PGlite does not reproduce a networked server’s workload.
+Before choosing an index for the application, repeat the comparison on a disposable test database with ordinary durable tables. Use realistic row sizes, customers with different numbers of orders, and the application’s prepared queries. Run the same read and write mix against the current indexes and each candidate. Compare query latency and throughput, including slower requests, alongside changed plans, buffer work, index size and write latency. Let the run include sustained updates and maintenance; a freshly built index on an otherwise idle database misses part of the cost.
+For this history screen, the composite index lets PostgreSQL find one customer’s recent orders and stop after ten, without a separate sort. Including total can save the remaining table fetches, but makes the index larger and adds work when totals change. The read and write measurements will help us decide whether that saving is worth it.

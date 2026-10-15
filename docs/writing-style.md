@@ -300,3 +300,110 @@ to make the children appear deeper. The useful editorial question is what new
 investigation a supporting article offers and how soon the reader can recognise
 it. The [four-reader record](article-work/collection-reader-passes/commission.md)
 preserves the broader suggestions and the coordinator's more bounded decisions.
+
+
+## Reading the body after changing the headings
+
+The access-and-persistence batch repeated this problem on 15 October. The user
+found its titles unlike those a human author would write, despite the completed
+agent reviews. “Give the route a useful order” and “Check the choice against the
+work” leaned on an extended route metaphor and vague abstractions. We revised
+them to “Composite indexes” and “Testing an index,” and made a similar pass through
+the other two articles and their figure titles. Read a page's headings together:
+repeated claims and metaphors can sound manufactured even when each heading
+describes its section accurately. These revisions are candidates for the user's
+reading, not proof that the wider prose now meets their expectations.
+
+The user then asked for the same scrutiny across the body of all three articles.
+The next editorial reading found that understandable prose still repeatedly left
+the example to announce a lesson or describe the author's investigation. The earlier
+review had treated a coherent explanation and sound technical claims as sufficient
+evidence of editorial readiness. It had not judged the cumulative voice separately.
+
+In Indexes, the transition to the write experiment was:
+
+> Finally, give the candidate the work it will have to live with. The downloadable
+> experiment inserts another 1,000 orders, corrects 200 amounts and deletes 100 orders.
+> Those mutations are deliberately visible:
+
+The revision stays with the experiment:
+
+> So far we have read from a fixed set of orders. The downloadable experiment also
+> inserts 1,000 orders, changes 200 amounts and deletes 100 orders:
+
+The earlier transition asked readers to interpret a metaphor and then explained
+how we had presented the commands. Naming the data changes connects the read
+experiment to the write experiment without that extra framing.
+
+The query-execution draft described a result with “Those fields establish
+temporary-file work.” The revision puts the output and its meaning in one sentence:
+
+> Our run reported `Sort Method: external merge`, `Disk: 544kB`, and counts of
+> temporary blocks read and written, confirming that the sort used temporary storage.
+
+The surrounding text still says that sizes vary and that PGlite does not measure a
+server's physical disk speed. Direct writing retains conditions that change what
+readers can conclude. It can also keep a necessary contrast, such as the difference
+between a committed transaction and a dirty page. Removing every contrast or
+qualification would damage these explanations.
+
+Other paragraphs now link the relevant claim directly to its source instead of
+ending repeatedly with a sentence describing what the documentation explains.
+Further-reading descriptions remain where they offer a useful next investigation.
+The point is the flow across several paragraphs, not a preferred way to format links.
+
+The repair review also caught an overcorrection: “Each page can point to many child
+pages” accidentally included leaves. The revised sentence names the root and other
+branching pages. Simplifying prose can change a claim, so the writing pass needs a
+technical recheck of its changes as well as a continuous editorial reading.
+
+These are revisions made in response to the user's request, not user-approved
+models of natural writing. The [body editorial review](article-work/access-and-persistence/body-editorial-review.md)
+records the diagnosis and rereading. The useful change to our process is to judge
+writing alongside comprehension, with connected passages as evidence, and reread
+the whole piece after integrating repairs. Adding a phrase blacklist, a prose score,
+or another automatic approval would not establish that the writing works.
+
+
+The user immediately rejected the revised Indexes opening too: it still jumped
+into a customer story and did not say enough about the subject. The preceding
+body review and skill changes had not resolved that. We had made sentences more
+direct while preserving a commission built around the scenario, and accepted a
+promise of later explanation as sufficient orientation. This repeats the earlier
+schema-design lesson already recorded here; the guidance existed but was not
+applied to the opening.
+
+The next revision introduces the index's contents and row references, explains
+why grouped customer entries help find scattered orders, and connects the chosen
+arrangement to query needs and maintenance. The B-tree section then explains how
+the database finds the matching entries. The commission now states that opening
+outcome instead of prescribing a customer opening an order-history screen. The user
+responded ‘That’s better’ and asked for the same approach in How a query
+runs and Storage and durability. That endorses this direction: establish the subject
+before asking the reader to track the example. It does not make the exact wording a
+template. An invitation to keep reading is not evidence that an opening has already
+introduced its subject.
+
+The revised opening begins:
+
+> An **index** helps a database find rows without searching the whole table. It
+> stores values from selected columns in a structure that supports fast lookups.
+> In PostgreSQL, it also stores references to the table rows those values came from.
+>
+> Consider finding one customer’s orders in a table containing orders for thousands
+> of customers. Without a suitable index, the database may have to check every row
+> to find the ones belonging to that customer. An index ordered by customer ID
+> groups the customer’s entries together and points to their orders, even when
+> those orders are scattered through the table. Once it finds the first matching
+> entry, the database can read the following matching entries.
+
+The next paragraph connects that arrangement to date ordering and maintenance.
+The example now gives the reader a way to reason about an index. It still leaves
+the B-tree section something to explain: how the database finds those entries.
+
+The user's further guidance was about the skills themselves: lead with context,
+goals and good examples, and trust the agent to find an approach suited to the
+writing. The revisions therefore describe the reader's situation and the desired
+understanding, with this passage as a reference. They leave the composition to the
+author. Independent reading remains useful evidence of where that composition
+helps or loses the reader; it is not a prose metric or a formula for an opening.

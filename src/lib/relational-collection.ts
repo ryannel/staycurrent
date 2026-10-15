@@ -48,7 +48,8 @@ export const relationalCollection: RelationalGroup[] = [
         "slug": "query-execution",
         "title": "How a query runs",
         "description": "Compare execution strategies that produce the same answer.",
-        "scope": "Follow scans, join algorithms, sorting and aggregation through plans, statistics and estimates. Explain when a different strategy changes the work."
+        "scope": "Follow scans, join algorithms, sorting and aggregation through plans, statistics and estimates. Explain when a different strategy changes the work.",
+        "status": "draft"
       },
       {
         "slug": "large-results",
@@ -98,7 +99,8 @@ export const relationalCollection: RelationalGroup[] = [
         "slug": "indexes",
         "title": "Indexes",
         "description": "Connect an index's structure to the queries it helps and the work it adds.",
-        "scope": "Develop ordered lookups, ranges, composite keys, filtering, sorting, covering access and selectivity. Weigh table fetches, storage and writes, then verify an index choice."
+        "scope": "Develop ordered lookups, ranges, composite keys, filtering, sorting, covering access and selectivity. Weigh table fetches, storage and writes, then verify an index choice.",
+        "status": "draft"
       }
     ]
   },
@@ -112,7 +114,8 @@ export const relationalCollection: RelationalGroup[] = [
         "slug": "storage",
         "title": "Storage and durability",
         "description": "Follow records through memory, persistent storage and recovery after a crash.",
-        "scope": "Connect record placement, pages and buffers to changes, logging, checkpoints and restart in an identified engine. Explain the durability promise and which failures require another copy."
+        "scope": "Connect record placement, pages and buffers to changes, logging, checkpoints and restart in an identified engine. Explain the durability promise and which failures require another copy.",
+        "status": "draft"
       }
     ]
   },

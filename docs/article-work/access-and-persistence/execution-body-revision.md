@@ -1,0 +1,13 @@
+# Query execution body revision — 15 October 2026
+
+Revised the whole article and both figures after the user's objection to the titles exposed a wider problem with the voice. Read the style and authoring skills, the writing reference, and the opening sections of Sam Who's original *Load Balancing* article, then reread the complete revised article.
+
+The earlier text repeatedly described its own teaching: “This observation explains a choice”, “The useful lesson is”, and “The naturally chosen plan”. It also used vague substitutes for the objects being explained: routes, contributions, preparation and observations. These sentences sounded like a review report between otherwise concrete explanations of orders and lines.
+
+The revision explains the operations directly. For example, the nested-loop paragraph now follows an order ID into the inner scan and describes the joined pairs. The hash-join paragraph explains building and using the hash table, then attributes the choice to the planner's cost estimate. “Those fields establish temporary-file work” becomes a direct account of the sort output and what it confirms. Figure captions and labels name the rows, hash table, quantities and operations shown.
+
+The connected explanations remain: the two sorts have different inputs and purposes; a limit cannot avoid reading the lines needed for totals; the merge join's order does not supply the ordering needed by grouping; dependency statistics change the estimate even when the chosen scan stays the same. Rounding, planner variability, EXPLAIN ANALYZE executing writes, local-setting restoration, memory allowances and the PGlite measurement limit remain beside the claims they qualify. SQL strings, plans, results and source URLs are unchanged. Some documentation links now sit within the claim they support rather than adding another explanatory tail to the paragraph.
+
+`git diff --check` passed for the three owned files. The coordinator will build the assembled pages and commission independent reading; this author's reread is not that approval. Layout should be checked for the longer “Hash table of 10,000 order IDs” figure label.
+
+For the skills discussion, this pass suggests two useful distinctions. Technical specificity alone does not ensure a natural voice: the previous prose was usually accurate and often concrete, yet repeatedly announced what the reader should learn. Also, retaining a source does not require a miniature further-reading sentence at the end of every paragraph. Review should examine the accumulated rhythm across consecutive paragraphs, while preserving qualifications that actually change the meaning.

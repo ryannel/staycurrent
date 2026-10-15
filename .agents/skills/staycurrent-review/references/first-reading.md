@@ -14,6 +14,13 @@ better than receiving the whole article and retrospectively describing a first
 impression. Keep enough nearby text to read a thought rather than judging isolated
 sentences.
 
+An observation made at the end of the opening is especially useful: what can you
+now explain about the subject, and which passage gave you that understanding?
+That is different from wanting to know more or recognising something from expertise.
+Keep this early impression alongside what the first section adds. It helps the
+author see whether the beginning has prepared the reader for the explanation that
+follows, even when every sentence was easy to understand.
+
 Follow each sentence, code statement, result and label in sequence, stopping at the
 first unsupported inference even within a section. Reading source files may expose
 code constants or implementation comments before their place in the article;

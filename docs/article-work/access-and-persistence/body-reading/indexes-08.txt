@@ -1,0 +1,70 @@
+Composite indexes
+Let’s put the order-history request into a running database. You are the developer, sending SQL from a query editor or psql to a PostgreSQL 18 session. Run the setup below once in a fresh session, then keep that session open as we change the indexes. It creates a temporary table that disappears on disconnect. All the commands in this article act on that table. The practice guide explains how to open a PostgreSQL database; use the separate setup here for this investigation.
+We generate 60,000 invented orders for 1,000 customers. Each customer has 60 orders, spread through time. Order IDs increase by one each minute from 1 January; customers repeat in a cycle. Customer 42 has 15 orders on or after 1 February. Each row also has a long delivery note, making it much larger than an index entry containing just a customer ID and a row location. We use regular, invented data so we can check the counts as we go.
+-- PostgreSQL 18. Run in a new session; the table disappears on disconnect.
+-- No production table is read or modified.
+SET TIME ZONE 'UTC';
+CREATE TEMP TABLE index_orders (
+order_id integer PRIMARY KEY,
+customer_id integer NOT NULL,
+placed_at timestamptz NOT NULL,
+status text NOT NULL,
+total numeric(10,2) NOT NULL,
+note text NOT NULL
+);
+INSERT INTO index_orders
+(order_id, customer_id, placed_at, status, total, note)
+SELECT n, 1 + n % 1000,
+timestamptz '2026-01-01 00:00:00+00' + n * interval '1 minute',
+CASE WHEN (n / 1000) % 5 = 0 THEN 'pending' ELSE 'paid' END,
+(1000 + n % 9000)::numeric / 100,
+repeat('delivery note ', 12)
+FROM generate_series(1, 60000) AS series(n);
+ANALYZE index_orders;
+
+ANALYZE collects statistics that help PostgreSQL estimate how many rows a condition will match. The primary key already creates an index on order_id. That index is useful when we know an order ID. Our history request knows a customer and a date instead:
+SELECT order_id, placed_at, total
+FROM index_orders
+WHERE customer_id = 42
+AND placed_at >= timestamptz '2026-02-01 00:00:00+00'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;
+
+WHERE specifies the customer and earliest date. ORDER BY asks for newest first, with descending order ID breaking any timestamp ties. LIMIT 10 keeps the first ten of that ordered result. The query returns order IDs 59041, 58041, 57041, 56041, 55041, 54041, 53041, 52041, 51041 and 50041. Each index we try should return those same ten orders.
+Start by giving the database the customer lookup we just pictured:
+CREATE INDEX index_orders_customer
+ON index_orders (customer_id);
+
+Now the engine can identify the customer’s 60 orders without inspecting every other customer. But the index has no date key. It still has to fetch those orders, reject the 45 before February, and sort the remaining 15 to find the newest ten. An index on the date as well would let us skip those older orders.
+A composite index has more than one key column. Its column order defines how entries are arranged: compare the first column, use the next to order entries tied on the first, and continue if those values tie too. For this screen, put the customer first and dates newest first within each customer:
+DROP INDEX index_orders_customer;
+CREATE INDEX index_orders_history
+ON index_orders (customer_id, placed_at DESC, order_id DESC);
+
+Illustration · A composite key Ordering a composite index
+customer_id ↑   then placed_at ↓   then order_id ↓
+Customer 41
+DateOrder
+Feb 1159040
+Feb 1058040
+… earlier orders …
+
+Customer 42
+DateOrder
+Feb 1159041
+Feb 1058041
+Feb 0957041
+… earlier orders …
+
+Customer 43
+DateOrder
+Feb 1159042
+Feb 1058042
+… earlier orders …
+
+customer_id = 42 selects the middle run
+A small excerpt from the generated data, with dates shortened to days. The index puts customer 42’s newest orders next to each other. Date order starts again for each customer, so February 11 appears in three separate groups here.
+The equality condition selects customer 42’s run. Within that run the dates are ordered, so the February boundary cuts off the older entries. Starting from the newest end also produces exactly the requested order. Once ten qualifying rows have been returned, the executor can stop. It does not need to collect and sort all 15.
+The final order_id DESC makes the index order agree with the complete SQL order, including ties. These examples contain no tied timestamps, but actual order histories can. An index on just customer and date does not itself supply the requested ordering between orders placed at the same instant. Keep ORDER BY in the query even when an index can provide it: SQL does not promise result order without it.
+Would putting the date first do the same thing? It would group all customers’ newest orders together. That could help a screen showing the newest orders across the shop, but finding ten for one customer could require passing many other customers’ entries. Choose the column order for the query: which entries should be together, which should come first, and when can the scan stop?
+PostgreSQL can scan a B-tree backwards as well as forwards. An all-ascending index on these same three keys could serve this query by scanning customer 42’s run backwards. Mixed ordering needs more care: scanning backwards reverses every key direction together. The ordering documentation develops that distinction.

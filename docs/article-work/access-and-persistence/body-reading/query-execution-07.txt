@@ -1,0 +1,43 @@
+Hash joins and aggregation
+Now replace o.customer_id = 42 with o.customer_id <= 1000. Every customer in our example qualifies. The totals become 30,000, 20,000 and 10,000 units, still in three result rows. Run the same EXPLAIN command with that changed filter.
+PostgreSQL now chooses a hash join and a hash aggregate. Each builds a hash table, though they use it for different purposes:
+Sort (actual rows=3.00 loops=1)
+-> HashAggregate (actual rows=3.00 loops=1)
+Group Key: l.product_id
+-> Hash Join (actual rows=30000.00 loops=1)
+Hash Cond: (l.order_id = o.order_id)
+-> Seq Scan on order_lines l
+(actual rows=30000.00 loops=1)
+-> Hash (actual rows=10000.00 loops=1)
+-> Seq Scan on orders o
+(actual rows=10000.00 loops=1)
+Filter: (customer_id <= 1000)
+
+Start with the orders branch underneath Hash. A sequential scan reads the table and checks the customer condition. All 10,000 orders qualify, so an index would not let this report leave any order out. Reading the table directly avoids looking up every order through the customer index.
+The Hash operation builds a temporary hash table from these orders, using order ID as the key. The other branch scans all 30,000 lines. For each line, PostgreSQL uses a hash of its order ID to find possible matches in the hash table, then compares the IDs to check that they really match. Order 42’s three lines all match the same order row, giving us three joined rows.
+The hash join has to build that table before it can return any matches, and the table takes memory. Once it is built, PostgreSQL can look up each line’s order while scanning the lines. For this report, the planner estimates that two scans and a hash join will cost less than 10,000 separate searches through the lines’ index.
+The HashAggregate builds its own hash table, keyed by product ID. Each joined line updates a running total: a product-2 line adds two to product 2’s entry. There are only three products, so this hash table needs three entries. After reading all 30,000 lines, the aggregate returns the finished totals for the final sort. Keeping a running total for each product saves it from having to sort the lines by product first.
+Comparing the two plans
+The plans from our example, showing how many rows each operation handles.
+Customer 42
+Find 10 ordersBitmap index scan → table rows
+10 order IDs ↓
+10 line lookupsNested loop · 3 lines per order
+30 joined rows ↓
+Sort by product IDPut each product’s lines together
+30 sorted rows ↓
+Add the quantitiesGroupAggregate · 3 totals
+3 totals ↓
+Sort by units soldProduct 3: 30 · 2: 20 · 1: 10
+
+All 1,000 customers
+Read 10,000 ordersBuild a hash table by order ID
+Hash table of 10,000 order IDs ↓
+Read 30,000 linesHash join · probe with each order ID
+30,000 joined rows ↓
+Add quantities by productHashAggregate · one entry per product
+3 totals ↓
+Sort by units soldProduct 3: 30,000 · 2: 20,000 · 1: 10,000
+
+The report for all customers reads each table once. For customer 42, PostgreSQL fetches ten orders and looks up the lines for each one. The counts show rows processed; they do not tell us how long either plan took.
+Both reports return three rows, but the first joins 30 lines and the second joins 30,000. Looking at those intermediate row counts helps explain why PostgreSQL chose different plans.

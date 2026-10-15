@@ -1,11 +1,12 @@
 // From the repository root: node docs/article-work/querying-transactions/query-verify.mjs
 // Extracts displayed SQL, verifies results, and refreshes the downloadable examples.
-// Supply PGLITE_MODULE if the existing test installation is elsewhere.
+// Supply PGLITE_MODULE to use a runtime outside the project dependency.
 import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
-const modulePath = process.env.PGLITE_MODULE || '/private/tmp/staycurrent-design-sql/node_modules/@electric-sql/pglite/dist/index.js';
-const { PGlite } = await import(pathToFileURL(modulePath).href);
+const { PGlite } = await import(process.env.PGLITE_MODULE
+  ? pathToFileURL(process.env.PGLITE_MODULE).href
+  : '@electric-sql/pglite');
 const directory = 'docs/article-work/querying-transactions/';
 const base = readFileSync('docs/article-work/designing-data/schema.sql', 'utf8');
 const extract = slug => Object.fromEntries([...readFileSync(`src/pages/learn/databases/relational/${slug}.astro`,'utf8').matchAll(/const (\w+) = `([\s\S]*?)`;/g)].map(match=>[match[1], match[2]]));
@@ -66,10 +67,16 @@ const cursor=await paging.exec(p.snapshotCursor);
 const batches=cursor.filter(result=>result.rows.length>0).map(result=>ids(result.rows));
 assert.deepEqual(batches,[['O12','O13'],['O14','O15'],['O16']]);
 results.push({label:'Read-only cursor batches',sql:p.snapshotCursor,batches});
+assert.deepEqual(await rows(paging,'Two order headers with all their lines',p.pageWithLines),[
+ {order_id:'O12',line_no:1,product_id:'P7',quantity:2},
+ {order_id:'O13',line_no:1,product_id:'P7',quantity:1},
+ {order_id:'O13',line_no:2,product_id:'P8',quantity:1}
+]);
 await paging.close();
 const header='-- PostgreSQL 18 practice examples.\n-- Run the shared designing-data.sql in a FRESH database first.\n-- Use a separate fresh database for each article extension.\n-- These statements do not drop or overwrite existing tables.\n\n';
 const queryOrder=['setup','firstQuery','joinQuery','customerJoin','filterSetup','onFilter','whereFilter','totalsQuery','havingQuery','fanoutQuery','safeTotals','existsQuery','noLinesQuery'];
 writeFileSync(directory+'query-results.sql',header+queryOrder.map(name=>`-- ${name}\n${q[name]}`).join('\n\n')+'\n');
-writeFileSync(directory+'query-pagination.sql',header+p.setup+'\n\n-- First page\n'+p.firstPage+'\n\n'+scenarios.map(([label,change])=>`-- ${label}: each experiment starts from the original five orders.\nBEGIN;\n${change}\n${p.offsetPage}\n${p.nextPage}\nROLLBACK;`).join('\n\n')+'\n\n'+p.pageIndex+'\n\n'+p.snapshotCursor+'\n');
+const paginationHeader=header.replace('-- These statements', '-- Send statements one at a time, or use SQL script mode (for example psql -f).\n-- Do not send this whole file as one multi-statement server query.\n-- These statements');
+writeFileSync(directory+'query-pagination.sql',paginationHeader+p.setup+'\n\n-- First page\n'+p.firstPage+'\n\n'+scenarios.map(([label,change])=>`-- ${label}: each experiment starts from the original five orders.\nBEGIN;\n${change}\n${p.offsetPage}\n${p.nextPage}\nROLLBACK;`).join('\n\n')+'\n\n'+p.pageIndex+'\n\n'+p.snapshotCursor+'\n\n-- Select two oldest headers, then all their lines, in one statement.\n'+p.pageWithLines+'\n');
 writeFileSync(directory+'query-results-observed.json',JSON.stringify({checked:'2026-10-04',version,limits:'Single-connection executions. Pagination mutations simulate newly visible committed states; no multi-session isolation or performance benchmark.',results:normalized(results)},null,2)+'\n');
 console.log(`Verified ${results.length} query outcomes with ${version}. Refreshed both downloads and observed results.`);

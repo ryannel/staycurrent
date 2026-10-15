@@ -1,0 +1,31 @@
+Nested-loop joins
+Run the report with EXPLAIN ANALYZE in front of it, as shown below. This runs the query and reports what each operation did; plain EXPLAIN would show only the proposed plan. We turn timing off because we’re interested in the row counts here. Bear in mind that EXPLAIN ANALYZE also executes writes when you use it with an INSERT, UPDATE or DELETE.
+EXPLAIN (ANALYZE, TIMING OFF, BUFFERS OFF, SUMMARY OFF)
+SELECT l.product_id, sum(l.quantity) AS units
+FROM orders AS o
+JOIN order_lines AS l ON l.order_id = o.order_id
+WHERE o.customer_id = 42
+GROUP BY l.product_id
+ORDER BY units DESC, l.product_id;
+
+Here is the plan from our PostgreSQL 18.3 run, with costs and some other details left out. The operations, indentation and row counts are unchanged. Your installation may choose a different plan.
+Sort (actual rows=3.00 loops=1)
+Sort Key: sum(l.quantity) DESC, l.product_id
+-> GroupAggregate (actual rows=3.00 loops=1)
+Group Key: l.product_id
+-> Sort (actual rows=30.00 loops=1)
+Sort Key: l.product_id
+-> Nested Loop (actual rows=30.00 loops=1)
+-> Bitmap Heap Scan on orders o
+(actual rows=10.00 loops=1)
+-> Bitmap Index Scan on orders_customer
+(actual rows=10.00 loops=1)
+-> Index Scan using order_lines_pkey on order_lines l
+(actual rows=3.00 loops=10)
+Index Cond: (order_id = o.order_id)
+
+Find the Bitmap Index Scan near the bottom. It searches orders_customer for customer 42 and records where the ten matching rows live. The Bitmap Heap Scan above it uses those locations to fetch the order rows. “Heap” is PostgreSQL’s name for the table storage here.
+The index groups entries by customer, but the orders themselves can be scattered across the table. Collecting their locations in a bitmap lets PostgreSQL visit the table’s pages in physical order, instead of fetching each row as it finds an index entry. Rows fetched this way no longer follow the index’s order. PostgreSQL can also combine locations from several indexes in one bitmap, though this query uses only one.
+The nested loop takes an order from the first, or outer, branch and passes its ID to the second, or inner, branch. For order 42, the inner index scan finds lines 42/1, 42/2 and 42/3. The join pairs each of those lines with order 42, then repeats the lookup for order 1042, continuing through all ten orders.
+The inner scan reports actual rows=3.00 loops=10: an average of three rows on each of ten executions, giving us 30 lines altogether. All ten executions happen inside this one SQL statement. In other plans, a displayed average may be rounded, so multiplying rows by loops gives an approximate total.
+The join handles only customer 42’s ten orders, leaving out the other 9,990, and the index lookups avoid a scan of all 30,000 lines. It can start returning matches as soon as it finds the first order. Before the report can return a total, though, those matches still have to be grouped and added up.

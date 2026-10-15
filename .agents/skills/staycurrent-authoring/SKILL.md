@@ -23,12 +23,19 @@ can help another agent without deciding the explanation for it. Keep a concise
 record in `docs/article-work/<slug>/` or an existing equivalent; expand it where
 the work warrants it.
 
-The relational collection taught us that completeness belongs to the collection.
-An introduction needs enough substance to orient someone who has never met the
-technology. A detailed checkout walkthrough was coherent but began too far inside
-the subject. The better introduction established tables and relationships, then
-showed what queries, constraints and transactions contribute. Its small examples
-answered local questions; deeper workings had their own destinations.
+The brief gives the author a reader to write for: what brought this person here,
+what they already understand, and what understanding would make the article useful.
+This matters at the opening as much as at the end. A supporting article may be
+someone's first encounter with its subject. Give the author room to find a beginning
+that establishes the idea and makes the example worth following.
+
+In the Indexes revision recorded in `docs/writing-style.md`, a customer looking up
+orders was a clear situation, but it did little to introduce indexing. Explaining
+the stored entries and their references to rows gave the same example a purpose:
+the reader could see how grouped entries help find scattered orders. The useful
+outcome was that understanding, rather than a particular opening scene or paragraph
+structure. A brief can name the understanding sought while leaving the writer free
+to discover how to convey it.
 
 For a main deep dive with supporting articles, identify what new investigation
 each child offers. A direct entrant needs orientation; a continuing reader needs
@@ -123,6 +130,13 @@ Reviewers should expose consequential weaknesses, not generate work
 by asking for every related subject. Resolve their findings with evidence and your
 own editorial judgement; choose another explanation or medium when the current
 one keeps failing to communicate.
+
+Integrate review repairs into the author's explanation. A useful qualification can
+become awkward when appended as another warning or summary; put it where the reader
+needs it and reconnect the surrounding paragraphs. Before the final editorial
+reading, read the revised piece continuously, including its headings and captions.
+Keep concrete reasoning that already works rather than rewriting every sentence
+to demonstrate that a style pass happened.
 
 For website work, inspect the rendered result in light and dark, at desktop and
 phone widths. Exercise the controls that matter and verify examples appropriately.
