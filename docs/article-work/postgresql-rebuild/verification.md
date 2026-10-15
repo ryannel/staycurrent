@@ -93,3 +93,16 @@ The final continuous editorial reread accepted all eleven pages with no unresolv
 consequential finding. The original progressive log, informed reread and technical
 reports remain separate. One optional word choice was then adopted: “small tenant”
 replaces “cold tenant” without changing the query or its reasoning.
+
+## Published result
+
+Commit `6069e2d` passed the final 62-page build and 2,720-link audit, then deployed
+successfully in GitHub Pages run
+[38809630051](https://github.com/ryannel/staycurrent/actions/runs/38809630051).
+The live check on 15 October 2026 loaded all eleven public chapters with status 200,
+confirmed the published metadata, fetched the vector and spatial SQL downloads,
+and found all 39 lessons in the chooser. On the public site's actual worker, the
+range lesson created its extension-backed tables, accepted an adjacent booking
+and rejected an overlapping booking with the expected 23P01 result. No page error
+was recorded. `live-verification.json` preserves that check; `verify-live.mjs`
+contains the bounded public-site procedure.

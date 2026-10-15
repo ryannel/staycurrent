@@ -56,7 +56,7 @@ first depth checkpoint before accepting the remaining chapters.
 - [x] Integrate and execute practical lessons and isolated server experiments.
 - [x] Independently review technical claims, continuous reading, depth and diagrams; repair findings.
 - [x] Inspect desktop/phone in both themes, test the sandbox and routes, and build.
-- [ ] Commit, push and verify deployment.
+- [x] Commit, push and verify deployment.
 
 Authors own their prose, examples, evidence and diagrams. The coordinator owns the
 registry, shared lesson imports, shared styles, continuous-reader coordination and
@@ -83,3 +83,13 @@ The server lab was created under `/private/tmp/staycurrent-pg-rebuild`, with Uni
 sockets only, port 55438, local trust and rejected host authentication. It is a
 disposable authoring cluster, not the Homebrew default cluster or a running service.
 Each author uses a separate database or separately owned temporary cluster.
+
+## Publication
+
+Commit `6069e2d` was pushed to main after independent technical review, the uncued
+reading, repairs and the final continuous editorial reread. GitHub Pages run
+[38809630051](https://github.com/ryannel/staycurrent/actions/runs/38809630051)
+completed successfully. The public-site check then loaded all eleven chapters,
+confirmed their published state, fetched both downloadable experiment files and
+executed the extension-backed booking lesson through setup, adjacent acceptance
+and overlap rejection. `live-verification.json` records the result.
