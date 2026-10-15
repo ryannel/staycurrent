@@ -26,6 +26,7 @@ Every push to `main` builds and deploys to GitHub Pages through
 | `/articles/` | Searchable directory of available reading |
 | `/learn/databases/choosing/` | Databases and storage field guide |
 | `/learn/databases/relational/` | Relational introduction and collection |
+| `/learn/databases/relational/sandbox/` | Browser PostgreSQL sandbox with free exploration and linked tutorials |
 | `/learn/databases/relational/*/` | Written articles and clearly labelled planned outlines |
 | `/learn/databases/column-stores/` | Illustrated column-store essay with four experiments |
 | `/learn/databases/*/` | Documents, partitioning, distributed SQL, caching, search, graphs and object storage |
