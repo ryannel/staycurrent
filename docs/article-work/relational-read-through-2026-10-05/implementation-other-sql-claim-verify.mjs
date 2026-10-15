@@ -18,7 +18,7 @@ const extract = name => {
   assert.ok(match,name);
   return match[1];
 };
-const sql = Object.fromEntries(['setup','claim','reserve','lookup'].map(n=>[n,extract(n)]));
+const sql = Object.fromEntries(['setup','claim','reserve','insertLine','lookup'].map(n=>[n,extract(n)]));
 assert.ok(sql.claim.startsWith('BEGIN ISOLATION LEVEL READ COMMITTED;'));
 const reserveUpdate = sql.reserve.slice(0,sql.reserve.indexOf(';')+1);
 const runtime = process.env.PGLITE_MODULE || '/private/tmp/staycurrent-design-sql/node_modules/@electric-sql/pglite/dist/index.js';
@@ -35,6 +35,7 @@ const freshClaim = (await db.exec(sql.claim)).flatMap(r=>r.rows);
 assert.deepEqual(freshClaim,[{order_id:'O14'}]);
 const reservation = await db.exec(sql.reserve);
 assert.deepEqual(reservation[0].rows,[{available:1}]);
+await db.exec(sql.insertLine);
 await db.exec('COMMIT');
 const purchase = (await db.query(sql.lookup)).rows;
 assert.deepEqual(purchase,[{order_id:'O14',customer_id:'C4',product_id:'P7',quantity:2,unit_price:'20.00'}]);

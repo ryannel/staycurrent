@@ -1,0 +1,384 @@
+Home
+Databases and storage
+Relational databases
+Transactions and concurrency
+Handling conflicts and uncertain outcomes
+Relational databases: articles
+
+DATABASES AND STORAGE · WORKING DRAFT
+
+Handling conflicts and uncertain outcomes
+Transactions and concurrency · Further depth
+Main: Transactions and concurrency
+Relational collection ↗
+
+An application asks the database to do some work and waits for an answer. On the successful path, that exchange is straightforward: the database commits the transaction, confirms it, and the application can tell the user the action is complete. In a running system, the application also needs to handle the times when that exchange does not finish normally.
+
+A transaction may be waiting for another one to release a lock. The database may stop an attempt because its work conflicts with another transaction. Or the connection may fail before the application receives an answer. From outside, all three can look like a request that is taking too long or has failed. What the application should do depends on what actually happened.
+
+The distinction matters most when the request changes data. Repeating a read usually just asks the question again. Repeating a purchase can create another order and reserve more stock. Before retrying, we need to know whether the earlier attempt is still running, whether its changes were rolled back, or whether it may already have committed.
+
+This article follows those cases in turn: waits, deadlocks, retries after a known rollback, and recovery when the commit outcome is unknown. We’ll use PostgreSQL 18 and the shop from the transaction-boundary article, where a purchase groups its stock reservation, order and lines into one transaction.
+
+A wait is still part of an attempt
+
+When a transaction updates a stock record, the database locks the row so another transaction cannot change it at the same time. A second UPDATE on that row may therefore wait for the first transaction to finish. Committing or rolling back releases the lock; the waiting command then proceeds according to its isolation rules.
+
+Suppose Ada wants to buy two Blue mugs, product P7, while another checkout is already changing that product’s stock record.
+
+At Read Committed, a guarded decrement such as “reduce P7 by two only if at least two remain” can wait, then recheck the updated stock. If the other checkout left only one mug, Ada’s command updates no row. That is an ordinary result requiring a business decision, not a reason to keep retrying until two mugs appear.
+
+The waiting transaction has not necessarily failed or reserved anything yet. Sending another checkout because the first one is slow creates another contender. A request deadline limits how long the application is prepared to wait; reaching it does not prove the database stopped. Even sending a cancellation request is not confirmation that it took effect: the database may have finished the command before the cancellation arrived. PostgreSQL’s cancellation documentation makes that distinction explicit.
+
+If the server confirms that a statement was cancelled inside this explicit transaction, finish the failed transaction block with ROLLBACK before reusing the connection. If the connection is broken, discard it. When COMMIT may already have been sent and its result is unknown, cancelling or abandoning the connection cannot establish whether the purchase committed; use the recovery path below.
+
+Do not hold an open stock transaction while a person decides whether to buy, or while an unrelated remote call takes an indefinite time. Keeping the transaction short reduces the time other requests need its locks.
+
+When waits form a cycle
+
+Suppose both carts contain a mug, P7, and a bowl, P8. Checkout A updates P7 first; checkout B updates P8 first. A now needs P8, which B holds. B needs P7, which A holds. Each transaction is waiting for a lock that the other will release only when it can finish.
+
+Waiting longer cannot let either transaction finish this sequence. This cycle is a deadlock. PostgreSQL detects it and aborts one transaction so the other can continue. The rejected attempt receives SQLSTATE 40P01, named deadlock_detected. It cannot commit its earlier stock reservation. The lock documentation describes the cycle and why the victim should not be predicted.
+
+ILLUSTRATION · A CYCLE OF WAITS
+Neither checkout can reach commit
+
+Two carts contain P7 and P8. Their transactions reserve stock in opposite orders. Each UPDATE holds its row lock until the transaction ends.
+
+Checkout A
+
+Holds stock row P7
+
+Next needs P8
+
+B holds P8.
+Checkout B
+
+Holds stock row P8
+
+Next needs P7
+
+A holds P7.
+
+A waits for B’s P8 →
+
+← B waits for A’s P7
+
+PostgreSQL breaks the cycle
+
+One transaction receives 40P01 · deadlock_detected and is aborted. Its changes roll back and its locks are released, so the other can continue.
+
+The victim is not predictable from this drawing. Both carts can reduce this risk by reserving P7 before P8, using the same order everywhere. This is a dependency diagram, not a measurement of how long deadlock detection takes; other records or lock types can create other cycles.
+
+A common prevention is to acquire shared records in the same order everywhere. For these carts, sort product IDs and reserve P7 before P8. If A holds P7, B waits there before taking P8. A can acquire P8 and finish; B has not created the opposing half of the cycle.
+
+The stock table records each product’s available quantity. To run this query, use the fresh practice setup below, which creates those records.
+
+BEGIN;
+SELECT product_id, available
+FROM stock
+WHERE product_id IN ('P7', 'P8')
+ORDER BY product_id
+FOR UPDATE;
+-- This inspection example makes no changes.
+ROLLBACK;  -- Release its locks and end the transaction.
+
+IN ('P7', 'P8') selects either product ID, and ORDER BY puts P7 first. The query shows the acquisition order for these stock records, then ends the inspection transaction with ROLLBACK. A real purchase checks availability and records its stock changes, order, and lines while holding the locks, then commits or rolls back the whole attempt. Ordering just these two locks does not prove that the whole application is free of deadlocks: an order row, another table, or a different code path can add more dependencies.
+
+Prevention and handling belong together. Consistent ordering makes this deadlock less likely. The application must still be able to abandon and, where appropriate, retry an attempt selected as a victim.
+
+Retry the decision, not the last statement
+
+A serialization failure means the database rejected an execution that could not safely complete under the selected isolation rules. PostgreSQL reports SQLSTATE 40001. Repeatable Read can produce it for a conflicting changed row; Serializable can also produce it when related reads and writes would create a nonserial outcome.
+
+Both a serialization failure and a deadlock rejection concern the transaction attempt. Suppose an attempt had already reserved mugs before failing to reserve bowls. Repeating only the bowl UPDATE would leave the retry detached from the mug reservation that was rolled back. Repeating a final write computed from old reads can be just as wrong.
+
+Start a new transaction and run the whole operation again: read current facts, make the decisions, perform the changes, and attempt commit. The fresh attempt might now discover insufficient stock, a changed offer, or a display product that must remain enabled. A retry is another evaluation of the same intent; it is not a promise to force the old answer through.
+
+PostgreSQL explicitly calls for retrying the complete transaction, including the logic that chooses its SQL. After a failed transaction block, finish cleanup with rollback before returning a usable connection to the pool. If the connection is broken, discard it instead. Driver and transaction-helper APIs differ, so their cleanup contract must be understood.
+
+Use error codes, rather than matching a translated error message. Do not make every error retryable. A quantity rejected by a CHECK, an unauthorised request, or a duplicate stock code usually needs a correction or a deliberate duplicate-handling rule. Sending the same invalid input again does not repair it.
+
+operation_id = original_request.checkout_token
+# Retained for this intent across requests and process restarts.
+
+for attempt in 1..3:
+  try:
+    return run_complete_transaction(operation_id, original_request)
+  catch database_rejection with SQLSTATE 40001 or 40P01:
+    finish rollback; release the connection
+    if attempt == 3 or request_deadline_has_passed:
+      return "could not complete now"
+    wait a small random delay outside the transaction
+    # The next attempt starts over: fresh reads and decisions.
+  catch connection_failure_when_commit_may_have_been_sent:
+    discard connection
+    return recover_same_operation(operation_id, original_request)
+  catch other_failure:
+    clean up the transaction
+    return or raise that failure
+
+This is application pseudocode, not a particular driver API. Three attempts is an illustrative bound, not a universal setting. Choose a limit and a total deadline that fit the request. Small, random delays between attempts can keep contenders from repeatedly restarting together; increasing those delays under repeated conflict can reduce pressure. Wait after releasing the failed transaction and its connection.
+
+Repeated failures are also evidence to investigate. A hot stock record, transactions that stay open too long, or inconsistent lock ordering can make a retry loop busy without making the application dependable. Record the operation, SQLSTATE, number of attempts, and elapsed time so the conflict can be understood.
+
+A missing commit reply leaves another question
+
+A server-reported serialization or deadlock rejection tells us the attempt did not commit. A connection failure after sending COMMIT does not supply the same information.
+
+The database may have committed the order and reduced stock, then lost the connection before its success reply arrived. It may also have lost the connection before COMMIT took effect, leaving the abandoned transaction to roll back. The application sees no reply in either history.
+
+ILLUSTRATION · A MISSING ANSWER
+The same silence can follow two endings
+
+The application sends COMMIT for checkout K14. Its connection then fails before an answer arrives. These are alternative histories, not two simultaneous purchases.
+
+History 1 · committed
+
+Order O14 and stock reduction kept.
+
+The database’s reply is lost.
+
+No reply reaches the application
+History 2 · not committed
+
+COMMIT never takes effect. The abandoned transaction’s changes are discarded.
+
+No success reply exists.
+
+No reply reaches the application
+What the application knows
+
+“I have no commit result for K14.”
+
+Use K14 to find or safely resume the same checkout. A new key would describe another operation.
+
+A broken connection alone does not identify which history happened. A stable key and database uniqueness can coordinate a repeated database checkout; recovery still has to consult authoritative state. Payment providers and other services have separate outcomes and require their own reconciliation.
+
+Sending a fresh checkout with a new identity is dangerous in the first history: it can create a second order and reserve two more mugs. Declaring failure without checking is also misleading if the original order already exists. The next step is recovery of the original operation’s outcome.
+
+A driver can report an unknown transaction state when its connection is bad; for example, libpq’s status functions make that distinction explicit. A new connection gives us a way to ask the database again. It does not turn the lost reply into proof of rollback.
+
+Give the checkout an identity that survives attempts
+
+Let K14 identify Ada’s intention to buy two P7 mugs at an agreed EUR 20 each. The application creates this key once and carries it through retries and recovery. It is distinct from an order ID: one attempt may propose O14 and another O15, but both are attempts at K14.
+
+The identity must survive more than a database retry loop. For example, the caller keeps K14 with its pending checkout and supplies that token on another HTTP request if the first request loses its answer. A service that continues work after a restart retains the same identity in its durable pending-work record. Generating a new key for every incoming request would make those repeated deliveries look like new purchases.
+
+Only the attempt that creates the order should reserve stock. If K14 already has a completed order, a repeated request should find that order and return it. Even if the new attempt proposes O15, the answer may still be O14.
+
+ILLUSTRATION · ONE CHECKOUT, REPEATED
+Follow checkout K14
+
+Ada wants two P7 mugs at EUR 20 each. There are three available. The caller keeps K14 for this purchase, even when it has to ask again.
+
+Request
+Committed order for K14
+Available mugs
+Before the first attempt
+
+K14 is saved by the caller.
+
+Committed order
+
+No order yet
+
+Available mugs
+3
+First attempt commits
+
+Proposes O14, reserves two mugs and records their order line.
+
+Committed order
+K14
+O14
+
+Two mugs · EUR 20 each
+
+Available mugs
+3 → 1
+Two reserved
+Same request arrives again
+
+Proposes O15 with K14. That key already belongs to O14, so O15 is not inserted.
+
+Committed order
+K14
+O14
+
+Read and return this order
+
+Available mugs
+1 → 1
+No second reservation
+Each row shows committed state at a different moment, not another stored copy of O14. Until the first attempt commits, its order, operation key, line and stock change are provisional; rollback removes them together. A repeated request must match the saved customer and purchase details before it can reuse the result.
+
+We can enforce this choice by storing K14 in a unique column on the order. The following SQL shows the two branches: create the order and finish its purchase, or find the purchase already recorded for that key.
+
+To run the SQL yourself, start the shared practice setup. It explains opening PostgreSQL, loading the files and choosing a fresh database for this article.
+
+Practice setup for this one-product checkout
+
+Start a new Read Committed transaction on one database connection, then try to insert the proposed order with the unique operation key. Keep that transaction open while choosing and completing the appropriate branch below:
+
+BEGIN ISOLATION LEVEL READ COMMITTED;
+
+INSERT INTO orders (order_id, customer_id, placed_at, operation_id)
+VALUES ('O14', 'C4', '2026-10-04 11:00:00+00', 'K14')
+ON CONFLICT (operation_id) DO NOTHING
+RETURNING order_id;
+
+ON CONFLICT (operation_id) DO NOTHING handles only a conflict on that operation key. A returned order ID means this attempt inserted the order and can continue. No returned row means that key already has an order, so this attempt must skip reservation and find the existing result. An unrelated primary-key collision on an order ID is a different error.
+
+The new order is provisional. In the inserted branch, the same transaction reserves stock, verifies the reservation succeeded, and inserts its line:
+
+UPDATE stock
+SET available = available - 2
+WHERE product_id = 'P7' AND available >= 2
+RETURNING available;
+
+-- After a successful reservation, still in the same transaction:
+INSERT INTO order_lines
+  (order_id, line_no, product_id, quantity, unit_price)
+VALUES ('O14', 1, 'P7', 2, 20.00);
+
+The guarded UPDATE returns the remaining quantity when it reserves the two mugs. If it returns no row, the application rolls back the provisional order and reports insufficient stock. It must not run the line INSERT or commit. With three mugs initially available, the successful fresh branch leaves one and records O14 with two mugs at EUR 20 each.
+
+Commit makes the order, its unique operation key, the stock reduction, and its line durable together. A rollback removes all four consequences. The application must never commit just the provisional order and call that a completed checkout.
+
+After the reservation returned one row and the line INSERT succeeded, finish the new-order branch:
+
+COMMIT;
+SELECT o.order_id, o.customer_id,
+       l.product_id, l.quantity, l.unit_price
+FROM orders AS o
+JOIN order_lines AS l ON l.order_id = o.order_id
+WHERE o.operation_id = 'K14'
+ORDER BY l.line_no;
+
+The lookup returns O14, C4, P7, quantity 2, and unit price 20 after the fresh branch commits. A repeated attempt at K14 returns this order rather than taking another two mugs. The stored customer and complete line details must match the repeated request before it can be treated as the same operation.
+
+In the existing-order branch, skip the reservation and line INSERT, run this lookup in the claim’s still-open transaction, and verify the complete request matches. If it does, enter COMMIT; to end that branch before returning O14. If it does not, enter ROLLBACK; and reject the conflicting request.
+
+The key is bound to the meaningful intent: authenticated customer, products, quantities, agreed prices and currency. This shop uses EUR throughout. A caller who reuses K14 for three mugs, a different customer, or a different agreed price has sent a conflicting request and must receive a rejection. Larger carts need a comparison or stored canonical representation covering all their lines. A random key alone does not establish this match.
+
+record_or_find_checkout(request):
+  BEGIN ISOLATION LEVEL READ COMMITTED
+  inserted = insert_order_if_new(request.operation_id, new_order_id(),
+                                 request.customer_id)
+  if inserted has no row:
+    existing = read_order_and_lines(request.operation_id)
+    require existing matches the complete request
+    COMMIT
+    return existing.order_id
+
+  reserved = guarded_stock_decrement(request.product_id, request.quantity)
+  if reserved has no row:
+    ROLLBACK
+    return "not enough stock"
+  insert_line(inserted.order_id, request.product_id,
+              request.quantity, request.agreed_unit_price)
+  COMMIT
+  return inserted.order_id
+
+  on any error before successful commit:
+    clean up or discard the connection
+    pass the failure to the retry/recovery policy
+
+The pseudocode connects the SQL fragments, including their result checks and rollback branch. Queries in real application code use bound parameters rather than concatenating request values into SQL. Fresh reads should reevaluate current constraints and stock; the retry retains the customer’s agreed intent. If that offer can no longer be honoured, reject or renegotiate it explicitly instead of silently changing K14 into a different purchase.
+
+Recover before creating another operation
+
+If COMMIT’s reply is lost, look up K14 on an authoritative database connection. Finding the matching complete order resolves the committed case. Reading a lagging replica would be a poor way to decide absence.
+
+Not finding it yet is not conclusive: the original transaction may still be finishing. Reenter the same recording protocol with K14. PostgreSQL’s uniqueness check can wait for the original insert’s outcome. If that transaction commits, the new claim inserts nothing; a subsequent Read Committed SELECT uses a fresh view to read the existing order. If the original rolls back, the repeated claim can proceed.
+
+ILLUSTRATION · RECOVERY WHILE AN ATTEMPT IS PENDING
+An empty lookup can still lead back to O14
+
+Checkout K14 is Ada’s purchase of two mugs from three available. The first attempt has inserted O14 and reserved those mugs but has not finished. A new connection cannot see that uncommitted order. It finds nothing when it looks up K14.
+
+Repeat the claim using K14
+
+The new attempt proposes O15. The unique-key check waits for the first attempt to finish. It has not reserved stock again.
+
+Two possible endings for the first attempt ↓
+
+If the first attempt commits
+K14
+O14
+
+O14 and its two mugs are kept.
+
+Available stock: 1
+
+The repeated claim inserts nothing.
+
+A subsequent Read Committed query sees O14. Check that its details match and return it.
+
+Return O14
+One order for K14 · stock stays 1
+
+If the first attempt rolls back
+
+No order for K14
+
+O14 and its reservation are discarded.
+
+Available stock: 3
+
+The repeated claim inserts O15.
+
+Check stock again, reserve two mugs, add the line and commit this attempt.
+
+Return O15 after commit
+One order for K14 · stock becomes 1
+
+These are alternative histories in PostgreSQL Read Committed, with no other stock changes and a successful recovery attempt. The lookup alone cannot choose between them; claiming the same unique key coordinates with the unfinished transaction. If the database is unavailable or the wait cannot finish, the outcome remains unresolved.
+
+Keep the stored key and original purchase details for as long as the application accepts retries of that checkout. If O14 is deleted or its operation key cleared, a later K14 claim can look new and reserve stock again. Keeping K14 at the caller is only half of the arrangement; the database must retain the result it identifies too.
+
+Every participating writer must follow the protocol, and the authoritative database must preserve its committed state. If that database is unavailable or its recovery is still in progress, keep the outcome pending and reconcile it when evidence is available. A retry budget expiring does not establish that an uncertain checkout failed.
+
+The unique operation key coordinates these local database effects. It does not make a payment provider’s charge part of the transaction. Calling that provider again after a timeout can repeat an external effect unless its own operation contract prevents it. Use the provider’s stable payment identity and outcome lookup where available, and reconcile payment state with the order.
+
+For an effect triggered after checkout, a durable work record written in the order transaction can preserve the intention to send it. A worker may then deliver that work more than once, so the recipient still needs suitable duplicate handling. Transactions and concurrency explains why a local commit cannot settle another service’s outcome.
+
+A dependable retry policy therefore follows the evidence. Continue or cancel an attempt that is waiting. Start the whole transaction again after a known retryable rejection. Recover the same identified operation after an uncertain commit. Those paths can share an operation key while answering different questions.
+
+TRY A VARIATION
+
+An empty lookup after a lost reply
+
+Ada submits K14 for two mugs. The connection breaks after COMMIT is sent, and a new authoritative lookup returns no order. The first transaction may still be active. Should the application declare failure, create a new key K15, or continue recovery with K14? How would a known deadlock rejection change the next step?
+
+Make a prediction and explain which facts support it before opening the answer.
+
+Compare your reasoning
+Choose the response from the evidence
+
+Once the mechanisms are clear, these are the distinctions to keep beside the application’s retry policy. An ordinary result, a rejected attempt and an uncertain commit establish different facts.
+
+Responses for the checkout protocol in this article
+Evidence	What we know	Next action
+The guarded stock UPDATE returns zero rows	This statement reserved nothing; SQL execution succeeded	Roll back this checkout branch and report unavailable stock
+A statement is waiting	The attempt is still unresolved	Wait within the request’s budget, or cancel and establish the attempt’s outcome before repeating work
+Known SQLSTATE 40001 or 40P01	The attempt cannot commit: serialization failure or deadlock rejection	Roll back, then retry the whole transaction with fresh decisions and the same operation identity, within a bounded budget
+The COMMIT reply is lost	The operation may have committed	Recover the same operation key against authoritative state; verify its stored intent
+A recovery lookup is empty while the first attempt may still be active	Absence is not yet established	Reenter the same claim protocol; let uniqueness settle the competing attempt, then read its result
+The authoritative database is unavailable	There is no evidence to settle an uncertain outcome	Keep it pending and reconcile later with the same key
+
+← Isolation and snapshots
+
+Return to the relational collection →
+Continue into performance and application integration when the next question is how much work and waiting one request creates.
+
+Sources and further reading
+
+Working draft, researched 4 October 2026. PostgreSQL 18 is the stated implementation. Single-session checkout claims, guarded reservation, rollback and duplicate recovery were checked with PostgreSQL 18.3 through PGlite 0.5.8. Deadlocks, concurrent claim waits, and lost replies are documented or illustrative schedules; that execution did not reproduce them. Application pseudocode describes control flow rather than a runnable driver implementation.
+
+PostgreSQL 18: Explicit locking — row locks, deadlock cycles, and consistent acquisition order.
+Serialization failure handling — retrying whole transactions and distinguishing error classes that may need retry.
+PostgreSQL error codes — stable SQLSTATE names for classifying a known server failure.
+INSERT and ON CONFLICT — the conflict target and RETURNING behaviour used by the operation claim.
+libpq connection status — a concrete driver example of distinguishing an active, failed, or unknown transaction state.

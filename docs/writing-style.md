@@ -238,3 +238,65 @@ the next query. The psql exercise becomes optional and names its different setti
 This is a change in the explanation's viewpoint, not a rule to add more comments
 to every SQL block. Correct statements and explicit transaction boundaries can
 still leave a reader unable to place the code in a running system.
+
+The supporting conflicts article retained a smaller version of the same problem:
+one block showed a stock update followed by an insert, with a comment saying to
+continue only after success. The repair separates the queries and puts the
+handler's response check between them. A comment can describe a branch, but it
+cannot make that branch visible in the running example. The abridged retry policy
+also needed to preserve the full handler's treatment of an uncertain commit;
+shortening code must not silently narrow its promise.
+
+## Give the reader the facts before asking them to interpret a result
+
+Two independent readers of the querying article met order O14 in a left-join
+result before the main text said it was an empty order belonging to Ada. The
+optional setup contained it, and the paragraph afterwards explained it. Neither
+helped a reader predict the result at the point it appeared. Moving that one fact
+before the query made the result something the reader could derive.
+
+The pagination article had a related problem: after demonstrating an inserted
+order, it used the original five orders for an export. The revised transition
+explicitly restores that starting state. These are small changes to the reader's
+working context, rather than requests for more introductory material. Follow the
+identities and state changes through the actual reading path, including the path
+that leaves optional setup closed.
+
+## Let captions finish the explanation
+
+The collection's structural editor found repeated defensive endings in captions.
+The overview's locking diagram ended by saying that spacing was not a measured
+duration and that the picture was not a benchmark. The revised caption keeps the
+conditions that affect its meaning—locking reads at PostgreSQL Read Committed—and
+ends there. The index caption still explains that totals require table lookups and
+that record locators vary by engine; its additional disclaimer about not showing
+index-search work was unnecessary beside the route already drawn.
+
+This is a judgement about those figures, not a rule to remove qualifications.
+A model comparing counts can invite a false speed claim, and should explain the
+distinction. Ask what inference the reader might actually make from this picture.
+Keep the detail that changes that inference; let the explanation end when its
+work is done.
+
+## Make further depth a reason to continue
+
+The four-reader collection pass exposed a tension between two useful reading
+paths. A main deep dive should make sense on its own, while a reader continuing
+into a supporting article deserves more than the same lesson again. The editor
+found that Constraints took too long to reveal its additional work after Designing
+your data. Its revised opening begins with two successful availability checks that
+cannot both grant ownership of a catalogue code, then gives the brief definition
+and shared-writer context a direct entrant needs.
+
+The JSON revision makes a different choice. The input policy and its outcomes stay
+in the main reading path; the exact nested-CASE conversion and instructions for
+running it move into a disclosure. The reader can finish the representation
+decision before choosing to implement the migration. In the parent, repeated JSON
+setup becomes optional while the reasons for a details row remain visible.
+
+We retained the main articles' type reasoning, transaction mechanisms and worked
+counterexamples. Removing those would weaken the commissioned deep dives merely
+to make the children appear deeper. The useful editorial question is what new
+investigation a supporting article offers and how soon the reader can recognise
+it. The [four-reader record](article-work/collection-reader-passes/commission.md)
+preserves the broader suggestions and the coordinator's more bounded decisions.

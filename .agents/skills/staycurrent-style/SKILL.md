@@ -29,7 +29,11 @@ sentence length or vocabulary list.
 Read headings, decks, captions and controls as part of the writing. Judge how they
 help someone follow the piece, alongside the argument and the relationships between
 its parts. The worked passages in the writing reference offer context for those
-decisions without prescribing how every section should be titled.
+decisions without prescribing how every section should be titled. A caption can
+finish a thought rather than append another defence of it: retain qualifications
+that change a plausible reading of the picture, and question those that merely
+repeat its already clear scope. The caption revisions in the writing reference
+show that distinction in context.
 
 Examples from the site remain revisable. Preserve the user's actual response and
 the reason for a change; agent approval does not turn a passage into a permanent

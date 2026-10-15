@@ -1,0 +1,2558 @@
+DETAILS
+The whole database attempt, including connection cleanup
+
+This JavaScript-shaped teaching function joins the branches we have followed. Its query and pool methods follow node-postgres. The injected isKnownTransactionRejection function is an application adapter with a narrow contract: it returns true only when the error establishes that this transaction did not commit, such as a confirmed serialization failure or deadlock rejection. A PostgreSQL error response is not enough on its own: transaction-resolution-unknown (08007) and statement-completion-unknown (40003) must return false, as must a timeout or disconnected socket. Implementing that adapter, HTTP responses and durable recovery is outside this example.
+
+// Teaching application code using a node-postgres-shaped client.
+// isKnownTransactionRejection must confirm the attempt did not commit (for example 40001/40P01).
+export async function checkoutAttempt(pool, purchase, isKnownTransactionRejection) {
+  const client = await pool.connect();
+  let commitSent = false;
+  let reusable = false;
+  try {
+    await client.query('BEGIN');
+    const reservation = await client.query(
+      `UPDATE stock SET available = available - $1
+       WHERE product_id = $2 AND available >= $1
+       RETURNING available`,
+      [purchase.quantity, purchase.productId]
+    );
+    if (reservation.rows.length === 0) {
+      await client.query('ROLLBACK');
+      reusable = true;
+      return { status: 'unavailable' };
+    }
+    await client.query(
+      `INSERT INTO orders (order_id, customer_id, placed_at)
+       VALUES ($1, $2, $3)`,
+      [purchase.orderId, purchase.customerId, purchase.placedAt]
+    );
+    await client.query(
+      `INSERT INTO order_lines
+         (order_id, line_no, product_id, quantity, unit_price)
+       VALUES ($1, 1, $2, $3, $4)`,
+      [purchase.orderId, purchase.productId,
+       purchase.quantity, purchase.unitPrice]
+    );
+    commitSent = true;
+    await client.query('COMMIT');
+    reusable = true;
+    return { status: 'purchased', orderId: purchase.orderId };
+  } catch (error) {
+    if (commitSent && !isKnownTransactionRejection(error)) {
+      const unknown = new Error('Commit outcome unknown', { cause: error });
+      unknown.outcome = 'unknown';
+      throw unknown;
+    }
+    try {
+      await client.query('ROLLBACK');
+      reusable = true;
+    } catch {
+      // Cleanup failed. Keep reusable false: discard this connection.
+    }
+    throw error;
+  } finally {
+    client.release(!reusable); // true tells the pool to discard it
+  }
+}
+
+finally runs whether the function returns or throws. A connection with confirmed commit or rollback can be reused. Passing true to node-postgres’s release discards a connection whose state we could not clean up. If COMMIT was sent and the error does not establish a known rejection of that attempt, the function throws an outcome-unknown error and discards the connection; it does not silently retry or claim a rollback. The caller must keep that operation unresolved until recovery establishes its outcome.
+Optional: reproduce commit and rollback in psql
+
+In this exercise you take the handler’s place, sending one command at a time from a terminal. Open PostgreSQL using the shared practice setup, load the shop schema into an empty database, then enter this setup once. Each comparison needs a fresh database with three mugs and no O14.
+
+Commands: add the stock record
+CREATE TABLE stock (
+  product_id text PRIMARY KEY REFERENCES products (product_id),
+  available integer NOT NULL CHECK (available >= 0)
+);
+INSERT INTO stock (product_id, available) VALUES ('P7', 3);
+Commands: begin and reserve
+BEGIN;
+UPDATE stock
+SET available = available - 2
+WHERE product_id = 'P7' AND available >= 2
+RETURNING product_id, available;
+
+Expected result: one returned row, P7 with availability 1. This is your cue to continue. If no row returns, enter ROLLBACK; and stop instead.
+
+Commands: complete the successful branch
+-- Continue the transaction opened by BEGIN above.
+-- Same connection; run only if the reservation returned one row.
+INSERT INTO orders (order_id, customer_id, placed_at)
+VALUES ('O14', 'C4', '2026-10-15 11:00:00+00');
+
+INSERT INTO order_lines
+  (order_id, line_no, product_id, quantity, unit_price)
+VALUES ('O14', 1, 'P7', 2, 20.00);
+
+COMMIT;
+
+Expected result: both inserts succeed and COMMIT completes. The purchase now exists.
+
+Alternative attempt: provoke a failure
+
+Start from another fresh setup. Enter these commands to reserve stock and insert an order without committing:
+
+BEGIN;
+UPDATE stock SET available = available - 2
+WHERE product_id = 'P7' AND available >= 2;
+
+INSERT INTO orders (order_id, customer_id, placed_at)
+VALUES ('O14', 'C4', '2026-10-15 11:00:00+00');
+
+Then enter this deliberately invalid line:
+
+INSERT INTO order_lines
+  (order_id, line_no, product_id, quantity, unit_price)
+VALUES ('O14', 1, 'P7', 0, 20.00);
+
+Expected response: a check-constraint error message. Its associated SQLSTATE is 23514; the default psql display may omit that code. This is database output, not another command to type. You now act as the application’s error handler and enter:
+
+ROLLBACK;
+Commands: inspect either completed attempt
+SELECT available FROM stock WHERE product_id = 'P7';
+SELECT count(*) AS orders FROM orders WHERE order_id = 'O14';
+SELECT count(*) AS lines FROM order_lines WHERE order_id = 'O14';
+Expected results after each independent attempt
+Attempt	available	orders	lines
+Purchase committed	1	1	1
+Invalid line, then rollback	3	0	0
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+Optional: reproduce the two report reads in psql
+
+Here you take the place of the reporting and staff handlers in two terminals. To see it, use a fresh practice schema where P7 costs €20 and open two connections. In the report connection, run through the first SELECT and pause:
+
+-- Report connection
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SELECT current_price FROM products WHERE product_id = 'P7';
+-- 20.00. Pause here while another connection changes the price.
+
+SELECT current_price FROM products WHERE product_id = 'P7';
+-- Still 20.00 after the writer below commits.
+COMMIT;
+
+Then run the writer on the other connection, before returning to the report’s second SELECT:
+
+-- Writer connection, between the report's SELECT statements
+BEGIN;
+UPDATE products SET current_price = 22.00
+WHERE product_id = 'P7';
+COMMIT;
+Optional: send the featured-products commands from psql
+
+Add this table once to a fresh practice schema. In two connections, begin the transaction below and let both SELECT statements return two before either update. You are acting as each staff handler: run its SELECT first, read the returned count, and send the UPDATE only if the count exceeds one; otherwise enter ROLLBACK and stop. SQL comments do not perform that check. A hides P7; B hides P8. Both use Serializable. One may receive a serialization failure during its work or at commit, so do not depend on a particular victim or error location.
+
+CREATE TABLE featured_products (
+  product_id text PRIMARY KEY REFERENCES products (product_id),
+  enabled boolean NOT NULL
+);
+INSERT INTO featured_products (product_id, enabled)
+VALUES ('P7', true), ('P8', true);
+-- A hides P7 below. B runs the same count, then hides P8.
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+SELECT count(*) AS enabled_count
+FROM featured_products WHERE enabled;
+-- Application continues only if enabled_count > 1.
+UPDATE featured_products SET enabled = false
+WHERE product_id = 'P7';
+COMMIT;
+-- A serialization failure means retry the whole decision.
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+SELECTS [
+  { id: 'concurrent-method', opts: [ [Object], [Object], [Object] ] },
+  { id: 'concurrent-ending', opts: [ [Object], [Object] ] },
+  { id: 'transaction-recovery-ending', opts: [ [Object], [Object] ] },
+  { id: 'transaction-recovery-key', opts: [ [Object], [Object] ] }
+]
+INPUTS []
+concurrency unsafe commit
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 0 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Transaction begun; no stock read yet.
+
+Request B · O15
+
+Transaction begun; no stock read yet.
+
+One mug is available. Neither request has a reservation.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 1 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Read 1; computed a future stock value of 0.
+
+Request B · O15
+
+Has not reached the stock row yet.
+
+A’s ordinary read has not reserved the mug.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 2 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Still plans to write 0.
+
+Request B · O15
+
+Also read 1; also computed 0.
+
+Two application decisions now depend on the same available mug.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 3 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Has pending stock 0 and purchase O14; holds the row lock.
+
+Request B · O15
+
+Submitted its planned write of 0; now waits for A.
+
+A has completed its local changes but has not ended the transaction. Its purchase is not committed.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 4 of 5
+
+Committed P7 availability
+0
+Committed purchases for this mug
+1
+Request A · O14
+
+Committed O14 and stock 0; released its lock.
+
+Request B · O15
+
+Writes its previously chosen 0; prepares O15.
+
+The write still uses the old decision, regardless of A’s outcome.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 5 of 5
+
+Committed P7 availability
+0
+Committed purchases for this mug
+2
+Request A · O14
+
+O14 committed.
+
+Request B · O15
+
+O15 committed.
+
+Two committed purchases for one mug. Stock is 0, so a non-negative constraint does not reveal the overselling.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+concurrency unsafe rollback
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 0 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Transaction begun; no stock read yet.
+
+Request B · O15
+
+Transaction begun; no stock read yet.
+
+One mug is available. Neither request has a reservation.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 1 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Read 1; computed a future stock value of 0.
+
+Request B · O15
+
+Has not reached the stock row yet.
+
+A’s ordinary read has not reserved the mug.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 2 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Still plans to write 0.
+
+Request B · O15
+
+Also read 1; also computed 0.
+
+Two application decisions now depend on the same available mug.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 3 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Has pending stock 0 and purchase O14; holds the row lock.
+
+Request B · O15
+
+Submitted its planned write of 0; now waits for A.
+
+A has completed its local changes but has not ended the transaction. Its purchase is not committed.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 4 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Rolled back O14 and its stock change; released its lock.
+
+Request B · O15
+
+Writes its previously chosen 0; prepares O15.
+
+The write still uses the old decision, regardless of A’s outcome.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 5 of 5
+
+Committed P7 availability
+0
+Committed purchases for this mug
+1
+Request A · O14
+
+O14 absent: A rolled back.
+
+Request B · O15
+
+O15 committed.
+
+One committed purchase for the one mug. Stock is 0.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+concurrency guard commit
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 0 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Transaction begun; no stock read yet.
+
+Request B · O15
+
+Transaction begun; no stock read yet.
+
+One mug is available. Neither request has a reservation.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 1 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Conditional update changed 1 to 0; holds the row lock.
+
+Request B · O15
+
+Has not reached the stock row yet.
+
+A has an unfinished stock reduction. Other readers still see committed availability 1.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 2 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Holds the stock row lock.
+
+Request B · O15
+
+Conditional update waits for A’s transaction to end.
+
+B has no result yet. Waiting is neither success nor a sold-out answer.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 3 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Has pending stock 0 and purchase O14; holds the row lock.
+
+Request B · O15
+
+Still waiting to evaluate the update against the row it can change.
+
+A has completed its local changes but has not ended the transaction. Its purchase is not committed.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 4 of 5
+
+Committed P7 availability
+0
+Committed purchases for this mug
+1
+Request A · O14
+
+Committed O14 and stock 0; released its lock.
+
+Request B · O15
+
+Rechecked available >= 1 against 0; changed no row.
+
+A’s purchase used the mug. B’s decision now reflects that completed change.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 5 of 5
+
+Committed P7 availability
+0
+Committed purchases for this mug
+1
+Request A · O14
+
+O14 committed.
+
+Request B · O15
+
+No O15: B rolled back without reserving stock.
+
+One committed purchase for the one mug. Stock is 0.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+concurrency guard rollback
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 0 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Transaction begun; no stock read yet.
+
+Request B · O15
+
+Transaction begun; no stock read yet.
+
+One mug is available. Neither request has a reservation.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 1 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Conditional update changed 1 to 0; holds the row lock.
+
+Request B · O15
+
+Has not reached the stock row yet.
+
+A has an unfinished stock reduction. Other readers still see committed availability 1.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 2 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Holds the stock row lock.
+
+Request B · O15
+
+Conditional update waits for A’s transaction to end.
+
+B has no result yet. Waiting is neither success nor a sold-out answer.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 3 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Has pending stock 0 and purchase O14; holds the row lock.
+
+Request B · O15
+
+Still waiting to evaluate the update against the row it can change.
+
+A has completed its local changes but has not ended the transaction. Its purchase is not committed.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 4 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Rolled back O14 and its stock change; released its lock.
+
+Request B · O15
+
+Rechecked available >= 1 against 1; changed it to 0 and prepares O15.
+
+A abandoned its reservation. B can reserve the mug once A’s lock is released.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 5 of 5
+
+Committed P7 availability
+0
+Committed purchases for this mug
+1
+Request A · O14
+
+O14 absent: A rolled back.
+
+Request B · O15
+
+O15 committed.
+
+One committed purchase for the one mug. Stock is 0.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+concurrency lock commit
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 0 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Transaction begun; no stock read yet.
+
+Request B · O15
+
+Transaction begun; no stock read yet.
+
+One mug is available. Neither request has a reservation.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 1 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Locked the row and read 1; holds the row lock.
+
+Request B · O15
+
+Has not reached the stock row yet.
+
+A can now decide while a competing updater waits. The lock itself has not reduced stock.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 2 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Holds the stock row lock.
+
+Request B · O15
+
+Locking read waits; has not returned a stock value.
+
+B has no result yet. Waiting is neither success nor a sold-out answer.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 3 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Has pending stock 0 and purchase O14; holds the row lock.
+
+Request B · O15
+
+Still waiting to lock and read the row.
+
+A has completed its local changes but has not ended the transaction. Its purchase is not committed.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 4 of 5
+
+Committed P7 availability
+0
+Committed purchases for this mug
+1
+Request A · O14
+
+Committed O14 and stock 0; released its lock.
+
+Request B · O15
+
+Locked and read the updated 0; declines the purchase.
+
+A’s purchase used the mug. B’s decision now reflects that completed change.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 5 of 5
+
+Committed P7 availability
+0
+Committed purchases for this mug
+1
+Request A · O14
+
+O14 committed.
+
+Request B · O15
+
+No O15: B rolled back without reserving stock.
+
+One committed purchase for the one mug. Stock is 0.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+concurrency lock rollback
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 0 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Transaction begun; no stock read yet.
+
+Request B · O15
+
+Transaction begun; no stock read yet.
+
+One mug is available. Neither request has a reservation.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 1 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Locked the row and read 1; holds the row lock.
+
+Request B · O15
+
+Has not reached the stock row yet.
+
+A can now decide while a competing updater waits. The lock itself has not reduced stock.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 2 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Holds the stock row lock.
+
+Request B · O15
+
+Locking read waits; has not returned a stock value.
+
+B has no result yet. Waiting is neither success nor a sold-out answer.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 3 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Has pending stock 0 and purchase O14; holds the row lock.
+
+Request B · O15
+
+Still waiting to lock and read the row.
+
+A has completed its local changes but has not ended the transaction. Its purchase is not committed.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 4 of 5
+
+Committed P7 availability
+1
+Committed purchases for this mug
+0
+Request A · O14
+
+Rolled back O14 and its stock change; released its lock.
+
+Request B · O15
+
+Locked and read 1; reserves the mug and prepares O15.
+
+A abandoned its reservation. B can reserve the mug once A’s lock is released.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+INTERACTIVE EXPERIMENT
+Two requests, one available mug
+
+Requests A and B each want one P7 mug. A reaches the stock row first. Compare an ordinary read followed by an application-computed write, a conditional update, and a locking read. All three put stock and order changes inside transactions.
+
+Advance the unsafe attempt to its end, then change the method. Finally let A roll back: a waiting buyer must get a different answer when the first reservation is abandoned.
+
+CONTROLS
+
+Method
+Read, decide, then write
+Conditional update
+Lock, read, then decide
+A’s ending
+Commit its purchase
+Roll back its purchase
+Previous step
+Next step
+Start again
+
+RESULT
+Step 5 of 5
+
+Committed P7 availability
+0
+Committed purchases for this mug
+1
+Request A · O14
+
+O14 absent: A rolled back.
+
+Request B · O15
+
+O15 committed.
+
+One committed purchase for the one mug. Stock is 0.
+
+What this experiment models
+
+This fixed schedule models two one-mug purchases in PostgreSQL Read Committed. The counters show committed records; the request panels describe unfinished changes. A row lock is held until the owning transaction ends. A stock update and its order commit together. The conditional branch and locking branch create an order only after obtaining stock. This is a documentation-based teaching model, not two live database connections or a performance measurement.
+recovery commit same
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 0 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+5 mugs available; no order for K14.
+
+Application’s knowledge and action
+
+Retains K14: Ada wants 2 mugs at €20 each.
+
+This experiment starts with five mugs so an accidental second purchase can also succeed.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 1 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+K14 has a provisional order and stock reduction. Neither is committed.
+
+Application’s knowledge and action
+
+Sent COMMIT; has no result yet.
+
+The application has prepared one order and reserved two mugs inside a transaction.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 2 of 5
+
+Committed mugs available
+3
+Committed orders for this intent
+1
+Database reality
+
+K14 committed: one order for 2 mugs, 3 available.
+
+Application’s knowledge and action
+
+Connection lost. Outcome unknown.
+
+Both database histories produce the same evidence at the application: no commit reply.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 3 of 5
+
+Committed mugs available
+3
+Committed orders for this intent
+1
+Database reality
+
+K14 is still recorded. The application has not learned this.
+
+Application’s knowledge and action
+
+Will attempt the same purchase using K14.
+
+The retry keeps the identity of the customer’s original intent.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 4 of 5
+
+Committed mugs available
+3
+Committed orders for this intent
+1
+Database reality
+
+The unique K14 claim inserts nothing. The following read returns the existing purchase.
+
+Application’s knowledge and action
+
+Verifies the stored customer and complete purchase details before returning that result.
+
+Recovering K14 skips reservation. A unique key coordinates repeated attempts.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 5 of 5
+
+Committed mugs available
+3
+Committed orders for this intent
+1
+Database reality
+
+One completed order consumes 2 mugs. Repeating the original intent has not doubled its effect.
+
+Application’s knowledge and action
+
+Returns the recovered K14 result.
+
+One purchase is recorded. Compare the other hidden history before judging a recovery policy safe.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+recovery commit new
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 0 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+5 mugs available; no order for K14.
+
+Application’s knowledge and action
+
+Retains K14: Ada wants 2 mugs at €20 each.
+
+This experiment starts with five mugs so an accidental second purchase can also succeed.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 1 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+K14 has a provisional order and stock reduction. Neither is committed.
+
+Application’s knowledge and action
+
+Sent COMMIT; has no result yet.
+
+The application has prepared one order and reserved two mugs inside a transaction.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 2 of 5
+
+Committed mugs available
+3
+Committed orders for this intent
+1
+Database reality
+
+K14 committed: one order for 2 mugs, 3 available.
+
+Application’s knowledge and action
+
+Connection lost. Outcome unknown.
+
+Both database histories produce the same evidence at the application: no commit reply.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 3 of 5
+
+Committed mugs available
+3
+Committed orders for this intent
+1
+Database reality
+
+K14 is still recorded. The application has not learned this.
+
+Application’s knowledge and action
+
+Will attempt the same purchase using K15.
+
+A new key tells the database this is another purchase, even though the customer intended only one.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 4 of 5
+
+Committed mugs available
+3
+Committed orders for this intent
+1
+Database reality
+
+The K15 claim inserts a provisional order. It can now reserve 2 mugs.
+
+Application’s knowledge and action
+
+The claim succeeded. Completes the purchase within this transaction.
+
+A successful new claim still needs its guarded stock update, line insert and commit.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 5 of 5
+
+Committed mugs available
+1
+Committed orders for this intent
+2
+Database reality
+
+Two orders now exist: K14 and K15. They consume 4 mugs for one customer intent.
+
+Application’s knowledge and action
+
+Received success for K15; the earlier K14 purchase also exists.
+
+A new key duplicated the purchase. Stock staying non-negative did not protect the customer’s intent.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+recovery rollback same
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 0 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+5 mugs available; no order for K14.
+
+Application’s knowledge and action
+
+Retains K14: Ada wants 2 mugs at €20 each.
+
+This experiment starts with five mugs so an accidental second purchase can also succeed.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 1 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+K14 has a provisional order and stock reduction. Neither is committed.
+
+Application’s knowledge and action
+
+Sent COMMIT; has no result yet.
+
+The application has prepared one order and reserved two mugs inside a transaction.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 2 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+The unfinished K14 transaction rolled back: no order, 5 available.
+
+Application’s knowledge and action
+
+Connection lost. Outcome unknown.
+
+Both database histories produce the same evidence at the application: no commit reply.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 3 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+K14 is still absent. The application has not learned this.
+
+Application’s knowledge and action
+
+Will attempt the same purchase using K14.
+
+The retry keeps the identity of the customer’s original intent.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 4 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+The K14 claim inserts a provisional order. It can now reserve 2 mugs.
+
+Application’s knowledge and action
+
+The claim succeeded. Completes the purchase within this transaction.
+
+A successful new claim still needs its guarded stock update, line insert and commit.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 5 of 5
+
+Committed mugs available
+3
+Committed orders for this intent
+1
+Database reality
+
+One completed order consumes 2 mugs. Repeating the original intent has not doubled its effect.
+
+Application’s knowledge and action
+
+Returns the new completed K14 result.
+
+One purchase is recorded. Compare the other hidden history before judging a recovery policy safe.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+recovery rollback new
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 0 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+5 mugs available; no order for K14.
+
+Application’s knowledge and action
+
+Retains K14: Ada wants 2 mugs at €20 each.
+
+This experiment starts with five mugs so an accidental second purchase can also succeed.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 1 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+K14 has a provisional order and stock reduction. Neither is committed.
+
+Application’s knowledge and action
+
+Sent COMMIT; has no result yet.
+
+The application has prepared one order and reserved two mugs inside a transaction.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 2 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+The unfinished K14 transaction rolled back: no order, 5 available.
+
+Application’s knowledge and action
+
+Connection lost. Outcome unknown.
+
+Both database histories produce the same evidence at the application: no commit reply.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 3 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+K14 is still absent. The application has not learned this.
+
+Application’s knowledge and action
+
+Will attempt the same purchase using K15.
+
+A new key tells the database this is another purchase, even though the customer intended only one.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 4 of 5
+
+Committed mugs available
+5
+Committed orders for this intent
+0
+Database reality
+
+The K15 claim inserts a provisional order. It can now reserve 2 mugs.
+
+Application’s knowledge and action
+
+The claim succeeded. Completes the purchase within this transaction.
+
+A successful new claim still needs its guarded stock update, line insert and commit.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.
+INTERACTIVE EXPERIMENT
+One missing reply, two possible histories
+
+Ada intends to buy two mugs. Five are available, so an accidental second purchase could succeed too. K14 identifies her original intent. Compare what actually happened inside the database with what the application knows.
+
+Step through a committed purchase whose reply is lost. Try recovering with the same key, then with a new key. Finally change the hidden history to a rollback: the application receives the same missing answer.
+
+CONTROLS
+
+What actually happened
+Commit succeeded; reply was lost
+Commit never took effect; transaction rolled back
+Recovery choice
+Keep K14: same intent
+Create K15: mistaken new identity
+Previous step
+Next step
+Start again
+
+RESULT
+Step 5 of 5
+
+Committed mugs available
+3
+Committed orders for this intent
+1
+Database reality
+
+One completed order consumes 2 mugs. Repeating the original intent has not doubled its effect.
+
+Application’s knowledge and action
+
+Returns the new completed K15 result.
+
+One purchase is recorded. Compare the other hidden history before judging a recovery policy safe.
+
+What this experiment models
+
+This is a fixed teaching schedule, not a live database or network. The original transaction ends before recovery begins. Both histories lose the commit answer; only the reader can see the selected hidden outcome. Recovery uses a unique key on the order, verifies matching purchase details, and changes stock only in the successful new-claim branch. Availability and order counters show committed state. Other buyers, key expiry and database state loss are outside the model. If the original transaction is still active, a repeated claim may wait for it instead.

@@ -30,6 +30,12 @@ the subject. The better introduction established tables and relationships, then
 showed what queries, constraints and transactions contribute. Its small examples
 answered local questions; deeper workings had their own destinations.
 
+For a main deep dive with supporting articles, identify what new investigation
+each child offers. A direct entrant needs orientation; a continuing reader needs
+a reason to proceed. Preserve the main article’s promised explanation, but
+question repeated setup and implementation that obscure the child’s distinct job.
+The collection revisions in `docs/writing-style.md` show both choices.
+
 That distinction still leaves room for depth. Saying that a join connects tables
 does little until the reader can see what answer the connection produces. The
 revised introduction follows a product ID to “Blue mug, 2”. Seek the explanatory
@@ -62,11 +68,24 @@ More opening prose alone will not repair gaps later in the argument.
 Consider what the reader needs to interpret an example as well as its main lesson.
 Our constraints examples used valid SQL, but positional INSERT values left readers
 to guess which number belonged to which column. An explicit column list and a short
-explanation could remove that obstacle without becoming a SQL tutorial. Likewise,
+explanation could remove that obstacle without becoming a SQL tutorial. Give the
+reader the records and starting state needed to derive a result before showing it;
+setup hidden in an optional disclosure cannot supply facts the main path needs.
+Make a reset explicit when later examples return to an earlier state. Likewise,
 showing why an attempted design fails is useful, but a practical lesson should give
 the reader a way to finish the decision. Our JSON example explained why its check
 still allowed values that broke its query; it needed a dependable alternative to
 complete that thought. Choose the amount of resolution that fits the article's job.
+
+Place the reader inside the example's running system. Before a sequence of commands,
+establish who sends them, where they run, what state persists between them, and who
+uses each response to decide what happens next. A query returning no rows, a rejected
+statement and a lost reply can require different application branches even when
+all three prevent the happy path. Show the branch that matters to the lesson;
+comments and a later complete script cannot supply an execution setting the reader
+needed earlier. Application code, a query editor and an interactive terminal can all
+be useful viewpoints. Choose one deliberately and explain a switch when it occurs.
+The transaction revision in `docs/writing-style.md` records why this mattered.
 
 Use `staycurrent-research` for the evidence behind consequential claims. Keep the
 difference between a family principle, a particular implementation, and an invented

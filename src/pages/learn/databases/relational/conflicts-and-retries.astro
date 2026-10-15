@@ -35,10 +35,8 @@ RETURNING order_id;`;
 const reserve = `UPDATE stock
 SET available = available - 2
 WHERE product_id = 'P7' AND available >= 2
-RETURNING available;
-
--- After a successful reservation, still in the same transaction:
-INSERT INTO order_lines
+RETURNING available;`;
+const insertLine = `INSERT INTO order_lines
   (order_id, line_no, product_id, quantity, unit_price)
 VALUES ('O14', 1, 'P7', 2, 20.00);`;
 const lookup = `SELECT o.order_id, o.customer_id,
@@ -55,7 +53,7 @@ const protocol = `record_or_find_checkout(request):
   if inserted has no row:
     existing = read_order_and_lines(request.operation_id)
     require existing matches the complete request
-    COMMIT
+    ROLLBACK
     return existing.order_id
 
   reserved = guarded_stock_decrement(request.product_id, request.quantity)
@@ -82,7 +80,7 @@ for attempt in 1..3:
       return "could not complete now"
     wait a small random delay outside the transaction
     # The next attempt starts over: fresh reads and decisions.
-  catch connection_failure_when_commit_may_have_been_sent:
+  catch unconfirmed_outcome_when_commit_may_have_been_sent:
     discard connection
     return recover_same_operation(operation_id, original_request)
   catch other_failure:
@@ -132,7 +130,8 @@ for attempt in 1..3:
       <p>PostgreSQL explicitly calls for <a href="https://www.postgresql.org/docs/18/mvcc-serialization-failure-handling.html">retrying the complete transaction</a>, including the logic that chooses its SQL. After a failed transaction block, finish cleanup with rollback before returning a usable connection to the pool. If the connection is broken, discard it instead. Driver and transaction-helper APIs differ, so their cleanup contract must be understood.</p>
       <p>Use error codes, rather than matching a translated error message. Do not make every error retryable. A quantity rejected by a CHECK, an unauthorised request, or a duplicate stock code usually needs a correction or a deliberate duplicate-handling rule. Sending the same invalid input again does not repair it.</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Application pseudocode for bounded whole-transaction retries"><Code code={retry} lang="python" theme="css-variables" /></div>
-      <p>This is application pseudocode, not a particular driver API. Three attempts is an illustrative bound, not a universal setting. Choose a limit and a total deadline that fit the request. Small, random delays between attempts can keep contenders from repeatedly restarting together; increasing those delays under repeated conflict can reduce pressure. Wait after releasing the failed transaction and its connection.</p>
+      <p>This is application pseudocode, not a particular driver API. The attempt reports whether COMMIT may have been sent and whether the response confirms rejection. Once COMMIT may have been sent, an error that leaves its outcome unconfirmed goes to recovery, including errors other than a broken connection. The <a href="/learn/databases/relational/transaction-boundaries/#failure">complete attempt function</a> shows how that distinction reaches the caller.</p>
+      <p>Three attempts is an illustrative bound, not a universal setting. Choose a limit and a total deadline that fit the request. Small, random delays between attempts can keep contenders from repeatedly restarting together; increasing those delays under repeated conflict can reduce pressure. Wait after releasing the failed transaction and its connection.</p>
       <p>Repeated failures are also evidence to investigate. A hot stock record, transactions that stay open too long, or inconsistent lock ordering can make a retry loop busy without making the application dependable. Record the operation, SQLSTATE, number of attempts, and elapsed time so the conflict can be understood.</p>
     </section>
 
@@ -151,21 +150,26 @@ for attempt in 1..3:
       <p>The identity must survive more than a database retry loop. For example, the caller keeps K14 with its pending checkout and supplies that token on another HTTP request if the first request loses its answer. A service that continues work after a restart retains the same identity in its durable pending-work record. Generating a new key for every incoming request would make those repeated deliveries look like new purchases.</p>
       <p>Only the attempt that creates the order should reserve stock. If K14 already has a completed order, a repeated request should find that order and return it. Even if the new attempt proposes O15, the answer may still be O14.</p>
       <RetryCheckoutTrace />
-      <p>We can enforce this choice by storing K14 in a unique column on the order. The following SQL shows the two branches: create the order and finish its purchase, or find the purchase already recorded for that key.</p>
+      <p>We can enforce this choice by storing K14 in a unique column on the order. We’ll follow the queries sent by one checkout handler on one borrowed database connection. The handler awaits each response before deciding which query to send next. Its first decision is whether it has created a new order or found a key that already belongs to one.</p>
     <p class="example-note">To run the SQL yourself, <a href="/learn/databases/relational/practice/">start the shared practice setup</a>. It explains opening PostgreSQL, loading the files and choosing a fresh database for this article.</p>
       <details id="retry-practice" class="sql-setup"><summary>Practice setup for this one-product checkout</summary><p>Use a fresh PostgreSQL practice database for this article, separate from the stock examples in earlier articles. Load the <a href={practiceSchema} download="designing-data.sql">shop schema and records</a> once; it contains C4, P7, P8, O12, O13 and their lines. Then run the definitions below once. Each retryable new checkout supplies an operation ID; the nullable column allows the historical sample orders to remain unchanged.</p><div class="sql-scroll" role="region" tabindex="0" aria-label="Add stock and a unique operation identity"><Code code={setup} lang="sql" theme="css-variables" /></div></details>
-      <p>Start a new Read Committed transaction on one database connection, then try to insert the proposed order with the unique operation key. Keep that transaction open while choosing and completing the appropriate branch below:</p>
+      <p>The handler opens a Read Committed transaction, then sends the claim query with its proposed order ID and the stable operation key. Here the request values are written out so we can follow them; application code supplies them as bound parameters. The connection and transaction stay open while the handler reads the result and completes one of the branches below:</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Claim K14 with a proposed order"><Code code={claim} lang="sql" theme="css-variables" /></div>
       <p><code>ON CONFLICT (operation_id) DO NOTHING</code> handles only a conflict on that operation key. A returned order ID means this attempt inserted the order and can continue. No returned row means that key already has an order, so this attempt must skip reservation and find the existing result. An unrelated primary-key collision on an order ID is a different error.</p>
-      <p>The new order is provisional. In the inserted branch, the same transaction reserves stock, verifies the reservation succeeded, and inserts its line:</p>
-      <div class="sql-scroll" role="region" tabindex="0" aria-label="Reserve two mugs and add the successful order line"><Code code={reserve} lang="sql" theme="css-variables" /></div>
+      <h3>If the claim creates an order</h3>
+      <p>A returned O14 tells the handler that it created the provisional order. It now sends the stock reservation on the same connection:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Reserve two mugs and return the remaining stock"><Code code={reserve} lang="sql" theme="css-variables" /></div>
       <p>The guarded UPDATE returns the remaining quantity when it reserves the two mugs. If it returns no row, the application rolls back the provisional order and reports insufficient stock. It must not run the line INSERT or commit. With three mugs initially available, the successful fresh branch leaves one and records O14 with two mugs at EUR 20 each.</p>
+      <p>The handler checks that returned row before sending the line INSERT. Once the reservation succeeds, it sends:</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Insert the line after the handler confirms the reservation"><Code code={insertLine} lang="sql" theme="css-variables" /></div>
       <p>Commit makes the order, its unique operation key, the stock reduction, and its line durable together. A rollback removes all four consequences. The application must never commit just the provisional order and call that a completed checkout.</p>
-      <p>After the reservation returned one row and the line INSERT succeeded, finish the new-order branch:</p>
+      <p>After the reservation returned one row and the line INSERT succeeded, the handler sends COMMIT and awaits its acknowledgement:</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Commit the successfully completed checkout"><Code code={commit} lang="sql" theme="css-variables" /></div>
+      <h3>If the key already has an order</h3>
+      <p>An empty claim result takes the handler down the other branch. It skips the stock reservation and line INSERT. On the claim’s still-open connection, it sends a new query for the existing purchase:</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Recover K14's order and requested purchase details"><Code code={lookup} lang="sql" theme="css-variables" /></div>
       <p>The lookup returns O14, C4, P7, quantity 2, and unit price 20 after the fresh branch commits. A repeated attempt at K14 returns this order rather than taking another two mugs. The stored customer and complete line details must match the repeated request before it can be treated as the same operation.</p>
-      <p>In the existing-order branch, skip the reservation and line INSERT, run this lookup in the claim’s still-open transaction, and verify the complete request matches. If it does, enter <code>COMMIT;</code> to end that branch before returning O14. If it does not, enter <code>ROLLBACK;</code> and reject the conflicting request.</p>
+      <p>The handler compares that result with the complete request. This attempt has made no purchase changes, so it sends <code>ROLLBACK;</code> to end its transaction and releases the connection. If the details match, it returns O14; otherwise it rejects the conflicting request. Ending this attempt does not undo the original purchase, which already committed.</p>
       <p>The key is bound to the meaningful intent: authenticated customer, products, quantities, agreed prices and currency. This shop uses EUR throughout. A caller who reuses K14 for three mugs, a different customer, or a different agreed price has sent a conflicting request and must receive a rejection. Larger carts need a comparison or stored canonical representation covering all their lines. A random key alone does not establish this match.</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Complete branching protocol for recording or recovering a checkout"><Code code={protocol} lang="python" theme="css-variables" /></div>
       <p>The pseudocode connects the SQL fragments, including their result checks and rollback branch. Queries in real application code use bound parameters rather than concatenating request values into SQL. Fresh reads should reevaluate current constraints and stock; the retry retains the customer’s agreed intent. If that offer can no longer be honoured, reject or renegotiate it explicitly instead of silently changing K14 into a different purchase.</p>

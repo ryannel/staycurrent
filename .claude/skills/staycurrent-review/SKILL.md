@@ -67,6 +67,19 @@ show gaps in prerequisites, code interpretation, apparent exceptions and unfinis
 examples. Use these as prompts for judgement, not a demand to cover every related
 topic or a claim that agent review reproduces a novice's experience.
 
+For operational examples, ask the reader to locate the code in a running system
+before interpreting its result. Who sends this statement, on which connection or
+process, and who decides what to send next? Trace one successful response and one
+consequential alternative. An expert can understand an isolated fragment while
+silently supplying its caller, transaction or error handler. Record that supplied
+context rather than treating executable syntax as evidence of a complete explanation.
+
+When a main article and its supporting pieces show full and abridged versions of
+an operation, trace the same consequential outcomes through both. Shortening a
+condition or removing a branch can silently weaken the promise even when each
+version looks reasonable in isolation. The repair may be a better helper contract
+or a clearer handoff, rather than another complete implementation.
+
 ## Turn findings into a better explanation
 
 Keep enough of each independent reading to understand what the reviewer actually

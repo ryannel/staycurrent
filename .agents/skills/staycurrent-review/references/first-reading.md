@@ -24,8 +24,13 @@ long sections may need to be split at meaningful subheadings.
 Closed setup notes are optional opened material, and no-JavaScript alternatives are
 fallback inspection. Mark those boundaries before delivering extracted text. If
 extraction flattened them, disclose that limit instead of calling the result a
-default-visible first reading. Do not count them as ordinary visible reading. Scripts can
-change initial result markup: an extracted default is not an observed live state.
+default-visible first reading. Do not count them as ordinary visible reading.
+Exclude script and style nodes before delivering
+extracted chunks, so implementation details do not precede the explanation. Scripts
+can change initial result markup: an extracted default is not an observed live state.
+Before capturing a lazy-loaded illustration, scroll it into view and wait for its
+image to decode. Preserve an incomplete first impression if it happened, but recheck
+loading before diagnosing a missing relationship or label as an illustration defect.
 
 For a collection, establish the reading order from its actual navigation. Include
 substantive supplemental pages with their stated role; do not invent a sequence

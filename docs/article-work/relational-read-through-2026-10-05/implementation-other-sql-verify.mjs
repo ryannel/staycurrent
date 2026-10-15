@@ -27,7 +27,7 @@ const sql = {
   receiptQuery:extract(sources.modelling,'receiptQuery'),
   pageWithLines:extract(sources.pagination,'pageWithLines'),
   paginationSetup:extract(sources.pagination,'setup'),
-  retry:Object.fromEntries(['setup','claim','reserve','lookup','protocol','retry'].map(n=>[n,extract(sources.retry,n)])),
+  retry:Object.fromEntries(['setup','claim','reserve','insertLine','lookup','protocol','retry'].map(n=>[n,extract(sources.retry,n)])),
   download:sources.download, extension:sources.extension
 };
 const runtime = process.env.PGLITE_MODULE || '/private/tmp/staycurrent-design-sql/node_modules/@electric-sql/pglite/dist/index.js';
@@ -117,6 +117,7 @@ await db.exec(sql.retry.setup);
 assert.deepEqual((await db.exec(sql.retry.claim)).flatMap(result=>result.rows),[{order_id:'O14'}]);
 const freshReserve = await db.exec(sql.retry.reserve);
 assert.deepEqual(freshReserve[0].rows,[{available:1}]);
+await db.exec(sql.retry.insertLine);
 await db.exec('COMMIT');
 const freshLookup = (await db.query(sql.retry.lookup)).rows;
 assert.deepEqual(freshLookup,[{order_id:'O14',customer_id:'C4',product_id:'P7',quantity:2,unit_price:'20.00'}]);
