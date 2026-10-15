@@ -31,21 +31,16 @@ INSERT INTO order_lines
 VALUES ('O14', 1, 'P7', 2, 20.00);
 
 COMMIT;`;
-const failure = `BEGIN;
+const failureStart = `BEGIN;
 UPDATE stock SET available = available - 2
 WHERE product_id = 'P7' AND available >= 2;
 
 INSERT INTO orders (order_id, customer_id, placed_at)
-VALUES ('O14', 'C4', '2026-10-04 11:00:00+00');
-
--- Deliberate mistake: a line cannot have quantity zero.
-INSERT INTO order_lines
+VALUES ('O14', 'C4', '2026-10-04 11:00:00+00');`;
+const failureLine = `INSERT INTO order_lines
   (order_id, line_no, product_id, quantity, unit_price)
-VALUES ('O14', 1, 'P7', 0, 20.00);
--- ERROR: the new row violates the quantity CHECK.
-
--- Issue this after the error, on the same connection:
-ROLLBACK;`;
+VALUES ('O14', 1, 'P7', 0, 20.00);`;
+const failureRollback = `ROLLBACK;`;
 const verify = `SELECT available FROM stock WHERE product_id = 'P7';
 SELECT count(*) AS orders FROM orders WHERE order_id = 'O14';
 SELECT count(*) AS lines FROM order_lines WHERE order_id = 'O14';`;
@@ -183,9 +178,18 @@ RETURNING order_id;`;
 
     <section id="failure">
       <h2>A failure after the first change</h2>
-      <p>Now consider a separate attempt from the same initial state: three mugs available and no O14. The stock update succeeds, then the order insert succeeds. A bug sends quantity zero for the line, which the schema refuses.</p>
-      <div class="sql-scroll" role="region" tabindex="0" aria-label="Deliberate line error followed by rollback"><Code code={failure} lang="sql" theme="css-variables" /></div>
-      <p>Run this case against a fresh copy of the setup, and issue the rollback after the error. PostgreSQL puts the explicit transaction into a failed state. The application cannot continue ordinary work as though only that insert had been skipped. Here it rolls back the whole purchase, discarding the order and the stock reduction.</p>
+      <p>Start this example in a fresh copy of the practice schema and stock setup: three mugs available and no O14. It is an alternative to the successful checkout above, not another step after its commit. We’ll deliberately send an invalid order line to see what happens to changes made earlier in the same transaction.</p>
+      <h3>1. Make two changes without committing</h3>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Begin a fresh transaction, reserve stock and create the order"><Code code={failureStart} lang="sql" theme="css-variables" /></div>
+      <p>With the three mugs in this setup, the update reserves two. This transaction now sees one mug available and an order O14, but neither change has committed. The order has no line yet.</p>
+      <h3>2. Send a line that the database rejects</h3>
+      <p>On that same connection, send the next statement. The <code>0</code> occupies the <code>quantity</code> column. Our schema requires <code>quantity &gt; 0</code>, so this is deliberately invalid.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="Attempt an invalid line inside the open transaction"><Code code={failureLine} lang="sql" theme="css-variables" /></div>
+      <p><strong>Database response:</strong> a check-constraint error (SQLSTATE <code>23514</code>). PostgreSQL refuses the line and puts the transaction into a failed state. There is no completed purchase, and the earlier stock reduction and order have not committed. Sending ordinary queries on this transaction now produces an error rather than letting the checkout continue.</p>
+      <h3>3. Handle the error by rolling back</h3>
+      <p>After receiving that error, send this command on the same connection. If you are trying the example in psql, enter it at the prompt; in application code, the error handler performs this step.</p>
+      <div class="sql-scroll" role="region" tabindex="0" aria-label="End the failed transaction with rollback"><Code code={failureRollback} lang="sql" theme="css-variables" /></div>
+      <p><code>ROLLBACK</code> ends the failed transaction with none of its changes kept. There are still three available mugs, no O14 order and no O14 line. We do not need a separate update to add the two mugs back: the reservation never committed.</p>
       <p><strong>Savepoints</strong> can mark a place inside a transaction to return to after an error. They are useful when a portion of the work may legitimately be abandoned. They do not make a required order line optional. Recovering to a savepoint and committing the stock reservation without its purchase would preserve the wrong state. The <a href="https://www.postgresql.org/docs/18/tutorial-transactions.html">transaction tutorial</a> explains error recovery, and the <a href="https://www.postgresql.org/docs/18/sql-savepoint.html">SAVEPOINT reference</a> gives the commands.</p>
       <div class="sql-scroll" role="region" tabindex="0" aria-label="Inspect stock and the two purchase records after an attempt"><Code code={verify} lang="sql" theme="css-variables" /></div>
       <div class="table-scroll"><table><caption>These queries after each independent attempt</caption><thead><tr><th>Attempt</th><th>available</th><th>orders</th><th>lines</th></tr></thead><tbody><tr><td>Successful purchase, committed</td><td>1</td><td>1</td><td>1</td></tr><tr><td>Invalid line, rolled back</td><td>3</td><td>0</td><td>0</td></tr></tbody></table></div>
