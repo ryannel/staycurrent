@@ -11,13 +11,27 @@ records the wider coverage discussion.
 
 The user explicitly commissioned completion and publication of the aligned relational
 collection. All 34 article destinations now contain finished reading, alongside the
-introduction, checkout and local practice guide. The SQL sandbox has 39 linked lessons
+introduction, checkout and local practice guide. The SQL sandbox has 43 linked lessons
 covering design, queries, transactions, performance, operations, capacity, PostgreSQL
 and product choices. The subsequent PostgreSQL commission rebuilt its four short
 chapters into eleven connected articles, with three entrances: server internals,
 distribution across servers, and richer queries and types. The practical work
 includes isolated PostgreSQL, pgvector and PostGIS experiments alongside browser
 lessons. This publication does not change other families’ draft status.
+
+## Object-storage publication, 16 October 2026
+
+The user commissioned the complete object-storage collection, using one leading
+technology, and a practical sandbox. Amazon S3 is the concrete implementation.
+An introduction and thirteen focused articles explain objects, transfers,
+concurrency, publication, application lifecycles, access, delivery, events, recovery,
+cost and S3 resource choices, including Tables and Vectors.
+
+The object-storage sandbox has fourteen lessons and 78 steps. It executes a local
+teaching model without AWS credentials; it does not run the hosted S3 service.
+A separate CLI worksheet supports real-service practice and states its execution
+evidence. The homepage, reading directory, field guide and Playgrounds expose both
+published collections. Other families retain their existing publication status.
 
 ## Where readers enter
 

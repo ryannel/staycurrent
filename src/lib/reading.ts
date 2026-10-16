@@ -1,4 +1,5 @@
 import { relationalCollection, relationalArticleHref } from './relational-collection';
+import { objectArticles, objectHome } from './object-storage-collection';
 
 export const databaseGuide = '/learn/databases/choosing/';
 export const relationalHome = '/learn/databases/relational/';
@@ -20,7 +21,10 @@ export const reading: ReadingEntry[] = [
   { href: '/learn/databases/caching/', title: 'Keeping a copy of the answer', description: 'Cache hits, invalidation, expiry and eviction.', group: 'Other database and storage approaches' },
   { href: '/learn/databases/search/', title: 'Finding the blue mug', description: 'Search indexes, tokenisation, ranking and vector filtering.', group: 'Other database and storage approaches' },
   { href: '/learn/databases/graphs/', title: 'How a graph database follows relationships', description: 'Traversing connections, handling cycles and updating a graph.', group: 'Other database and storage approaches' },
-  { href: '/learn/databases/object-storage/', title: 'What object storage gives you', description: 'Object keys, photographs and publishing a complete export.', group: 'Other database and storage approaches' },
+  { href: objectHome, title: 'Object storage: an introduction', description: 'Objects, keys and requests, with a complete Amazon S3 learning collection.', group: 'Object storage' },
+  ...objectArticles.map(article => ({ href: `${objectHome}${article.slug}/`, title: article.title, description: article.description, group: `Object storage · ${article.group}`, keywords: 'Amazon S3 objects bucket' })),
+  { href: `${objectHome}sandbox/`, title: 'Object-storage sandbox', description: 'Guided local models for requests, uploads, versions and application protocols.', group: 'Practice', keywords: 'S3 objects bucket playground' },
+  { href: `${objectHome}practice/`, title: 'Try the requests against S3', description: 'A real-service worksheet for conditional writes and version recovery.', group: 'Practice', keywords: 'Amazon AWS CLI' },
   { href: '/assessments/postgres-vectors/', title: 'Can Postgres handle vector search for my application?', description: 'A dated assessment of pgvector, retrieval quality and operating costs.', group: 'Assessments', keywords: 'PostgreSQL embeddings' },
 ];
 
@@ -30,6 +34,10 @@ export function breadcrumbs(path: string, title: string) {
   if (path.startsWith('/learn/databases/') || path.startsWith('/assessments/')) {
     trail.push({ href: databaseGuide, title: 'Databases and storage' });
     if (path === databaseGuide) return trail;
+    if (path.startsWith(objectHome)) {
+      trail.push({ href: objectHome, title: 'Object storage' });
+      if (path === objectHome) return trail;
+    }
     if (path.startsWith(relationalHome)) {
       trail.push({ href: relationalHome, title: 'Relational databases' });
       if (path === relationalHome) return trail;
