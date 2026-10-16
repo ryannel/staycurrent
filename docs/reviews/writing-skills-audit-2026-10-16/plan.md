@@ -1,276 +1,316 @@
-# Why the writing skills aren't working, and what to change
+# Writing skills audit and plan
 
-16 October 2026. Draft for review.
+16 October 2026. Revised after two independent reviews and two trial readings,
+summarised at the end.
 
 ## The problem
 
-The drawing-systems collection went through planning review, authoring notes,
-an editorial review, a blind sequential reading and browser checks. Every
-reviewer passed it. The editorial review called its prose strong. Yet the
-whiteboarding article has the faults the skills were written to prevent:
-headings that read like advice slogans, sections that start without telling the
-reader where they are, and a register that sounds machine-made.
+The drawing-systems collection passed planning review, an editorial review, a
+blind sequential reading and browser checks. The editorial review called the
+prose strong. The user finds the whiteboarding article full of the faults the
+skills were meant to prevent: odd headings, sections that begin without telling
+the reader where they are, and a register that sounds machine-made.
 
-That combination matters more than the article. The faults got past five
-skills, about 12,000 words of guidance and a 480-line writing reference, and
-past reviewers who had loaded all of it. More guidance of the same kind won't
-fix that. The plan below changes what kind of guidance it is.
+This has happened before. `docs/writing-style.md` records the Indexes opening
+being rejected twice, and notes that "the guidance existed but was not applied".
+So the question for this audit is why guidance that already exists isn't
+reaching the page, rather than which guidance is missing.
 
-## What the whiteboarding article gets wrong
+## What goes wrong in the whiteboarding article
 
-**It starts three times.** The introduction defines whiteboarding ("a way to
-think with other people") and announces a staged conversation. "The first five
-minutes" then gives a five-step procedure before the example exists, including
-"Write the question and status", where "status" is never explained. "Compose a
-small scene" goes back to how to draw a box. Only at "Hear the account" does the
-conversation begin, with "A coordinator begins:". A reader who has followed
-along so far has been told what to do twice before being shown anything.
+**The example starts three times.** The introduction says whiteboarding is "a
+way to think with other people" and announces a staged conversation. "The first
+five minutes" then gives a five-step method that draws Browser UI, Repair API and
+Repair DB before anyone in the meeting has mentioned them. "Compose a small scene
+with plain shapes" goes back to lettering and spacing and redraws the first
+arrow. The conversation finally begins at "Hear the account", with "A coordinator
+begins:", and the same three boxes go up a third time.
 
-**Headings are instructions, not places.** "Compose a small scene with plain
-shapes", "Hear the account, then choose the view", "Correct an arrow without
-losing the conversation", "Finish with a board someone can read back". Each one
-compresses the section's advice into an imperative. Read as a contents list they
-tell you what you'll be told to do, not what you'll find. Elsewhere in the
-collection: "Choose a question before a zoom", "Discover the work before routing
-every case", "Review meaning before appearance".
+**The headings summarise advice.** "Compose a small scene with plain shapes",
+"Hear the account, then choose the view", "Correct an arrow without losing the
+conversation", "Finish with a board someone can read back". Each compresses its
+section into an instruction, and several don't match what the section contains.
+"Use colour to distinguish evidence and proposals" contains no evidence;
+"Finish with a board someone can read back" also holds the advice on remote
+boards. Other articles in the collection use the same form: "Choose a question
+before a zoom", "Review meaning before appearance".
 
-**Sections open mid-thought.** "Start with the words." "When you are working
-alone, supply the account before reaching for shapes." "For this collection, we
-use five pens". None says why we've arrived here from the previous section.
-"Drawing from memory" interrupts the meeting the article has been following, and
-remote boards appear as one paragraph inside "Finish with a board".
+**Sections begin cold.** "Start with the words." "When you are working alone,
+supply the account before reaching for shapes." "For this collection, we use five
+pens". "Drawing from memory" leaves the meeting the article has been following,
+and the next section returns to it without saying so.
 
-**The register.** Several habits recur, and their accumulation is what reads as
-machine-written:
+**The register.** One reviewer, reading only the article, counted about 40
+instances of seven habits:
 
-- Aphoristic closers: "A correction is part of the work." "Words are part of
-  the drawing." "Repair the drawing before decorating it."
-- Corrections of misreadings nobody had: "The timing is a way to begin, not a
-  speed test." "These are our conventions, not universal meanings of the
-  colours." "It is not yet a sequence or a complete architecture model."
-- Abstractions doing human things: "Familiar infrastructure icons should not
+- paragraphs ending on a maxim: "A correction is part of the work." "Words are
+  part of the drawing." "Repair the drawing before decorating it.";
+- denials of things nobody claimed: "The timing is a way to begin, not a speed
+  test." "These are our conventions, not universal meanings of the colours.";
+- abstractions given intentions: "Familiar infrastructure icons should not
   invent components on the speaker's behalf." "the layout or label may still be
-  fighting the meaning".
-- Defensive qualifications, many of them review residue: "assuming the group
-  confirms it", "A box can have slightly uneven corners and still do its job."
-- Inventory sentences: the final caption lists "named parts, labelled
-  operations, an explicit external provider, a numbered trace, an unresolved
-  question and a separate proposal".
-- Opaque promises: "By the end they will be visibly different kinds of
-  information."
-- House vocabulary the reader never received: "personality", "an open gesture",
-  "five pens", "current/proposed status", "composed board".
+  fighting the meaning";
+- hedges that change nothing the reader would predict: "assuming the group
+  confirms it", "A box can have slightly uneven corners and still do its job.";
+- lists of things the reader won't use next, as in the final caption's "named
+  parts, labelled operations, an explicit external provider, a numbered trace, an
+  unresolved question and a separate proposal";
+- promises the reader can't decode yet: "By the end they will be visibly
+  different kinds of information.";
+- words the reader was never given: "account" for "what someone told you" (about
+  12 times), "view", "status", "scene", "an open gesture", "five pens".
 
-**It covers a list rather than telling a story.** The collection plan gave the
-article this brief: "beginning with a question, extracting nouns/verbs/events,
-choosing and changing views; drawing from conversation or memory; a staged
-worked meeting; disagreement, uncertainty, facilitation, space, remote boards,
-stopping and capturing. A concrete first-five-minutes method." Nearly every item
-became a section or a paragraph. The article reads like that list because it was
-built from it.
+**The article follows a topic list.** The collection plan's brief for it read:
+"beginning with a question, extracting nouns/verbs/events, choosing and changing
+views; drawing from conversation or memory; a staged worked meeting;
+disagreement, uncertainty, facilitation, space, remote boards, stopping and
+capturing. A concrete first-five-minutes method." Nearly every item became a
+section or a paragraph, in roughly that order.
 
-## Why the skills didn't prevent it
+## Why the skills don't prevent it
 
-### 1. The skills are written in the register they're trying to prevent
+### The user's corrections get rewritten into hedged lessons
 
-A model imitates the voice of its instructions. The style skill says, for
-example: "Judge the cumulative effect in context; none of these is a banned
-construction." "Choose the register and rhythm that fit the subject; there is no
-prose score, prescribed sentence length or vocabulary list." The authoring skill
-opens: "These references give context for your judgement; they are not an
-article template or a sequence to reproduce." Across the five skills and their
-references there are about 90 "not a", "rather than", "does not" and "cannot"
-constructions in 12,000 words. The guidance is abstract, hedged and full of
-corrections of misreadings; so is the article.
+When the user rejects a passage, the agent records the episode in
+`docs/writing-style.md` and generalises it. The record then qualifies the lesson
+until little of it binds: "These revisions are candidates for the user's reading,
+not proof", "It does not make the exact wording a template", "Adding a phrase
+blacklist, a prose score, or another automatic approval would not establish that
+the writing works." The skills summarise those records again, one step further
+from what the user said. This is the main reason existing guidance doesn't get
+applied: by the time it reaches a writer, it has been turned into the same
+register that produced the fault.
 
-### 2. They decline to name the faults
+### The guidance is written in the register it's meant to prevent
 
-The style skill lists some of the right habits ("repeatedly announces a lesson,
-replaces a concrete action with an abstraction, stretches a metaphor, or ends
-each paragraph with a polished verdict") and then says none of them is banned.
-Every check is left to "judgement in context". But the model's judgement is what
-produces the register. Asking it whether its own prose sounds natural gets a yes.
-The skills contain almost no firm rules: "must", "never" and "do not" appear 29
-times in 12,000 words, mostly about review procedure.
+A model picks up the voice of its instructions. The style skill says "Judge the
+cumulative effect in context; none of these is a banned construction" and
+"there is no prose score, prescribed sentence length or vocabulary list". The
+authoring skill opens by saying its references "are not an article template or a
+sequence to reproduce". The five skills and their references contain about 80
+"not a", "rather than", "does not" and "cannot" constructions in 12,200 words.
 
-### 3. The lessons are database case histories
+### The guidance is long and arrives as database case histories
 
-Most guidance arrives as a story about a past article: the Indexes opening, the
-pagination draft, the positional INSERT, the transaction boundary. Each story
-carries a real lesson, but the lesson is buried in database detail and has to be
-re-derived for a new subject. A writer drawing a whiteboard can't easily see what
-"SQL needs someone to send it" asks of them. The case histories also make the
-skills long. The instruction that would have caught the section openings ("give
-a sequence of worked cases a clear purpose and an introduction where the reader
-enters it") is one clause in a 25-line paragraph about headings.
+Most lessons are stories about past database articles: the Indexes opening, the
+pagination draft, the positional INSERT. A writer drawing a whiteboard has to
+work out what "SQL needs someone to send it" asks of them. The instruction that
+covers the drawing articles' section openings ("give a sequence of worked cases a
+clear purpose and an introduction where the reader enters it") is one clause in
+a 25-line paragraph about headings.
 
-### 4. Briefs are topic lists, so articles are topic lists
+### Briefs list topics, so articles list topics
 
-Planning and authoring both ask for coverage: "what explanations this audience
-would reasonably expect", "essential coverage and deliberate boundaries". Review
-then checks coverage against the brief. Nothing asks for the article's line of
-thought: what the reader wonders first, and how each section answers a question
-the previous one raised. A list brief plus a coverage check rewards an article
-that touches every item.
+Planning and authoring ask for coverage: "what explanations this audience would
+reasonably expect", "essential coverage and deliberate boundaries". Review checks
+coverage against the brief. Nothing asks for the line of thought: what the reader
+is wondering at each point, and how the next section answers it. A topic-list
+brief and a coverage check together reward an article that touches every item.
 
-### 5. Review checks everything except how the prose sounds
+### Review asks about everything except how the prose sounds
 
 The review skill is mostly method: blindness, chunked delivery, heading-tree
-extraction, lazy-image timing, practice-file execution. The writing judgement is
-one paragraph. Reviewers do what it asks; the drawing editorial review is
-thorough on figures and coverage and spends a paragraph on prose, which it
-praises. The same model that wrote the prose is judging it, with the same blind
-spot, and no reviewer is given a list of specific habits to hunt for.
+extraction, image loading, practice files. Its writing judgement is one
+paragraph. The drawing editorial review covered figures and coverage thoroughly
+and gave prose one paragraph of praise.
 
-We tested this on the whiteboarding article. Two fresh reviewers read it on
-16 October. One loaded the style and review skills and followed them. The other
-loaded nothing and was told to act as an editor looking for machine-written
-prose, naming each habit and counting it.
+We tried asking the question directly. Two fresh reviewers read the
+whiteboarding article. One loaded the style and review skills; the other loaded
+nothing and was asked to find machine-written prose. Both said it needed repair,
+so a direct question matters a great deal. The skill-guided reviewer was good on
+structure. On register it named five maxim endings and then excused them ("Each
+is fine alone"), echoing the style skill, and it praised the opening sentence the
+user objects to. The unguided reviewer found the 40 instances listed above. This
+is one comparison, and the unguided reviewer was told what to look for, so it
+shows that the skills can make a reviewer tolerant of the register. It doesn't
+measure by how much.
 
-Both said the article needed repair, so a focused question goes a long way. The
-skill-guided reviewer was good on structure. It found the restarted example, the
-misplaced memory section and headings whose scope didn't match. On register it
-named five verdict endings and then excused them: "Each is fine alone." That is
-the style skill's "none of these is a banned construction" coming back. It
-praised the opening sentence the user objects to. The unguided editor quoted
-about 40 instances across seven habits, including the ones the guided reviewer
-missed. It found "account" used about 12 times as house vocabulary for "what
-someone told you", along with the "not X but Y" corrections and abstract nouns
-acting as people. Its three suggested repairs were also the more useful ones.
+Review also feeds the register. Each reviewer's objection tends to come back as
+an appended qualification, and "assuming the group confirms it" reads like one.
 
-So the skills don't stop a reviewer finding structural faults, but they teach
-it to tolerate the register. And the production review never asked the
-question directly.
+### The user sees the work too late
 
-Review also makes the register worse. A technical reviewer finds a possible
-overreading; the author appends a qualification. Five reviewers produce five
-qualifications. The authoring skill warns against this in one paragraph, but
-nothing checks it, and the defensive sentences in the whiteboarding article
-("assuming the group confirms it") look like that residue.
+Nine articles of about 2,000 words were written in one push, one author wrote
+three, and the user's first read came after publication. The point where a
+weird title is cheapest to catch, before drafting, has no human in it.
 
-### 6. There is no step where the writer plans the reading
+### A limit on this evidence
 
-The authoring skill moves from brief to draft to review. Nothing asks the writer
-to decide, before drafting, what the reader is doing at each section boundary and
-what sentence will carry them across. Heading guidance is permissive ("plain
-topic labels, questions and explanatory headings can all work"), so imperative
-slogans pass.
+The latest heading guidance was committed at 02:39 and 02:54 on 16 October, and
+the drawing collection at 03:33. The articles were probably drafted under the
+earlier skills. That weakens the whiteboarding article as evidence against the
+current heading guidance specifically. It doesn't affect the other causes, which
+are older.
 
-### 7. Volume outran feedback
+## What the user asked for before
 
-Nine articles of about 2,000 words each were produced in one push, one author
-wrote three of them, and the user's first read came after publication. The
-writing reference records the user's past corrections, but nothing in the
-process asked for one before the batch was finished.
+`docs/writing-style.md` records the user's earlier direction for the skills:
+"lead with context, goals and good examples, and trust the agent to find an
+approach suited to the writing". The plan keeps that for the writer. The writer
+gets context, the reader's situation and good passages, and no list of banned
+habits; showing a model bad examples tends to make it produce them, and banning a
+form invites a substitute ("instead of" for "not X but Y"). The firm checks go to
+a separate line editor who doesn't write the article. The user should confirm
+that division (decision 1 below).
 
 ## The plan
 
-The aim is guidance that is short, concrete and written the way we want articles
-to read, with the faults named and checked by someone whose only job is to find
-them.
+The plan starts with a small trial and changes the skills only if the trial
+works. Earlier rounds rewrote the skills first and found out afterwards.
 
-### Step 1. Rewrite the style skill as a short, firm guide
+### Stage 1: trial on a new subject
 
-Target about 1,200 words, written in the house voice. Three parts:
+Pick a short article on a subject the site hasn't covered, so no before/after
+pair in the new guidance can serve as its answer key. Write it twice, by two
+fresh authors: one with the current skills, one with the trial kit below. Then
+run the comparison in stage 2.
 
-1. **What a reader needs.** Situate them before teaching them: who is in the
-   scene, what problem they're facing, why the next section follows. Each section
-   opens by connecting to where the reader is. One example carries the article
-   unless there's a reason to change it, and a change is announced.
-2. **Headings.** A heading names the subject a reader will find, as a noun
-   phrase or a question, in words they already have. No imperatives that
-   summarise the section's advice. The heading list, read alone, should work as
-   a contents page. Before/after pairs from the drawing collection.
-3. **Habits to remove.** The named list above, each with one before/after pair
-   from our own pages. These are rules, not suggestions. The writer may keep an
-   instance with a stated reason; the reviewer checks the reason.
+The trial kit has three parts, kept outside the live skills until they prove
+themselves.
 
-Move the database case histories out of the skill into `docs/writing-style.md`,
-where they stay as background for anyone who wants them. Keep the pointer to Sam
-Who, Ciechanowski and Julia Evans, and add a few passages of their prose
-(quoted short enough for fair use) so the writer has the voice in front of them
-instead of a link.
+**A short positive style guide**, about 1,000 words, written the way we want
+articles to read. It describes what good pages here do, drawn from the
+column-store essay and checked against it:
 
-### Step 2. Add a register check the writer and reviewer both run
+- one example runs through the piece, with a marked case the reader can follow
+  through every change;
+- a term is named after the reader has seen the thing it names;
+- each section opens from where the previous one left the reader, often in one
+  clause, and ends on the question or limit the next section takes up;
+- each benefit is followed by its limit, shown with a concrete case;
+- a mechanism is stated as something the reader can check ("A block whose keys
+  run from C to D can't contain B");
+- people and the system do the acting.
 
-A new reference, `staycurrent-style/references/register-check.md`: the list of
-habits, how to spot each, and how to fix it. The fix is always to rewrite the
-passage, usually shorter, never to add a sentence. The writer runs it on their
-draft paragraph by paragraph and records hits they chose to keep. The check is a
-list of quoted hits, not a score.
+It also says what a heading is for: naming the subject a reader will find, in
+words they already have. A short passage each from Sam Who, Ciechanowski and
+Julia Evans goes in alongside, quoted briefly, so the writer has the voice to
+hand.
 
-### Step 3. Make the brief a line of thought
+**A spine in the brief.** Four to seven plain sentences, one per section, that
+read in order as a story: what the reader is wondering at that point and what
+the section shows them. The title, the description and the heading list come from
+the spine. Topics that don't fit go to another article or are cut. Each
+section's opening has to carry its spine sentence, and the line editor checks
+that it does.
 
-Change the planning and authoring guidance so a brief contains:
+**A line editor.** A fresh subagent that gets the article, the spine and the
+habit list, and does nothing else. The habit list is the one above, worded
+narrowly enough to leave good prose alone (see "Habit definitions"). The line
+editor quotes each hit and writes the replacement itself, so the author model
+doesn't regenerate the register while repairing it. A second fresh reader checks
+that the replacements haven't brought in new habits. Two rounds at most; anything
+still disputed goes to the user rather than into another round.
 
-- the reader's situation in one or two sentences;
-- the example that will run through the piece;
-- a **spine**: eight to twelve plain sentences, one per section, that read in
-  order as a story. Each sentence says what the reader is wondering at that point
-  and what the section shows them.
+### Stage 2: check the trial honestly
 
-Topics that don't fit the spine go to another article or get cut. The coverage
-check still runs, but against the spine: an expected subject either has a place
-in the line of thought or a stated reason to be elsewhere. Add a word budget per
-article; 2,000 words is a ceiling, not a target.
+1. **False positives first.** Run the line editor over a passage of human prose
+   (Julia Evans or Ciechanowski) and over the column-store essay. If it flags
+   much in either, tighten the habit definitions before going further.
+2. **Blind comparison.** Two fresh readers get the two trial articles,
+   unlabelled, and say which reads more like a person explaining something, and
+   where.
+3. **The user reads both.** Their reaction decides whether stage 3 happens.
+   Their words go into `docs/writing-style.md` verbatim, with the date and the
+   passage, and no agent commentary.
 
-### Step 4. Give one reviewer the register as their only job
+If the user still rejects the trial output, the next step is to remove guidance,
+not add another case history.
 
-Add a **line editor** to the review skill: a fresh subagent that gets the
-article, the register check and the style skill, and nothing else. No coverage,
-no technical accuracy, no figures. Its output is a list of quoted hits with a
-rewrite for each, plus a judgement of every heading and section opening. An
-article isn't ready while the line editor has unresolved hits, except those the
-author kept with a reason the line editor accepts.
+### Stage 3: adopt what worked
 
-Other reviewers' repairs go through the line editor too. The rule for repairs
-becomes: fix the passage, don't append to it; a repair round should not make the
-article longer without a stated reason.
+Only after the user accepts a trial article:
 
-Cut the review skill to the decisions a coordinator makes and move the blindness
-and extraction method into `references/protocol.md`, which already holds most of
-it.
+- Replace the style skill with the trial style guide. Move the database case
+  histories into `docs/writing-style.md` as background.
+- Add the spine to the planning and authoring skills, and the line editor to the
+  review skill. Move the review method (blindness, chunking, extraction) into
+  `references/protocol.md`, so the skill itself holds only the coordinator's
+  decisions.
+- Add a user checkpoint before drafting each batch: the title, description,
+  heading list and spine for its first article. That takes a couple of minutes
+  and catches the faults where they start. It changes the line in `CLAUDE.md`
+  that "agent review can complete a draft without routine human editing", so it
+  needs the user's agreement (decision 2).
+- Add a rule for recording feedback: the user's words go in unedited and
+  ungeneralised. A lesson drawn from them is labelled as the agent's reading.
+- Repairs replace text instead of adding to it, and a repair round that makes
+  the article longer needs a stated reason.
 
-### Step 5. Put a human read early in every batch
+### Stage 4: the drawing collection and tidying
 
-Before a batch goes beyond its first article, the user reads that article's
-opening and one middle section. Their reaction goes into `docs/writing-style.md`
-as a dated before/after pair. This contradicts the current line in `CLAUDE.md`
-that "agent review can complete a draft without routine human editing", so it
-needs the user's agreement. It's one short read per batch, not routine editing.
+Rewrite the whiteboarding article with the adopted skills and give it to the
+user. If it works, take the rest of the drawing collection one article at a
+time. Separately, make `.agents/skills/` a generated copy of `.claude/skills/`
+with a check that they match, since today it is a full duplicate that can drift.
 
-### Step 6. Tidy the rest
+## Habit definitions
 
-- `staycurrent-authoring` and `staycurrent-review` get the same treatment as the
-  style skill: rules up front, case histories moved to references, each under
-  about 1,500 words.
-- `docs/writing-style.md` gets reorganised by habit, with the user's own
-  corrections kept intact and dated.
-- `.agents/skills/` is a full copy of `.claude/skills/`. Either make it a
-  generated copy with a sync check, or a symlink, so the two can't drift.
-- `staycurrent-research` and `staycurrent-planning` need little beyond step 3
-  and a pass with the register check on their own text.
+Narrowed after the false-positive test, which ran the first version over the
+column-store essay and found that most hits there were doing legitimate work.
 
-## How we'll know it worked
-
-1. **Rewrite the whiteboarding article** with the new skills, using a fresh
-   author who hasn't seen this audit.
-2. **Blind comparison.** Give the old and new versions, unlabelled, to two
-   fresh readers. Ask which reads more like a person explaining something and
-   why, and have the line editor run the register check on both.
-3. **The user reads the new version.** This is the real test. If it still reads
-   wrong, the user's comments become before/after pairs and we look at which
-   step failed before changing anything else.
-4. **Regression check.** Run the new line editor over an article the user
-   already approved, such as the column-store essay or the relational
-   introduction. If it flags much there, the habit list is too broad.
-5. Only then revise the rest of the drawing collection, one article first,
-   checked by the user, then the rest.
+- **Maxim ending.** A final sentence that restates its paragraph as a general
+  truth and adds no number, mechanism, condition or consequence. Judge by how
+  many accumulate across the page.
+- **Denial of an unheld view.** "Not X" where nothing on the page or in common
+  belief would lead the reader to X. Keep it when you can point to what would
+  mislead them: the article's own figure, an earlier model, a common
+  misconception.
+- **Abstraction with intentions.** An object given judgement, desire or social
+  action: invents, fights, should, on behalf of. Mechanical verbs for software
+  and data ("rearranges", "rules out") are fine.
+- **Protective hedge.** A qualification that changes no prediction the reader
+  would make, such as a note on what isn't covered, or reassurance. Keep
+  conditions that change what the reader expects.
+- **Idle list.** A list of things the reader won't use next. Lists that define
+  the example's data or show a mechanism are fine.
+- **Undecodable promise.** A forward reference the reader can't understand until
+  later. A concrete question, or a promise kept in the next sentence, is fine.
+- **Ungiven word.** Any term not defined where it first appears, including house
+  vocabulary, vendor terms and renamings of an idea already introduced.
+- **Advice heading.** A heading that compresses its section's advice into an
+  instruction. Verb phrases that name a scenario ("Looking at one shop") are
+  fine. Page titles and descriptions follow the same test.
+- **Cold opening.** A section whose first sentences don't connect it to where
+  the reader is. One clause is often enough.
 
 ## Decisions for the user
 
-- Whether to accept a human read early in each batch (step 5).
-- Whether firm rules are acceptable in the style skill, given the current
-  guidance deliberately avoids them.
-- Whether to repair the drawing collection now or after the trial in "How we'll
-  know it worked".
+1. **Firm checks with a separate line editor.** You earlier asked the skills to
+   lead with context and good examples and to trust the agent. The plan keeps
+   that for the writer and adds a line editor who checks a list of habits and
+   rewrites the hits. Is that acceptable?
+2. **A two-minute review before drafting.** You'd read the title, heading list
+   and spine before a batch is written. Is that acceptable?
+3. **The trial subject.** Choose a short new article (a candidate from planned
+   coverage), or let the trial author pick one.
+4. **The drawing collection.** It can stay published as it is until stage 4, or
+   be withdrawn until it's rewritten.
+
+## Review record
+
+- **Skill-guided editorial reading of whiteboarding.md.** It followed the current
+  style and review skills, reached "repair required", and was strong on
+  structure. It excused the maxim endings and praised the opening.
+- **Unguided editor reading of whiteboarding.md.** It reached "would not
+  publish" and counted about 40 register hits across seven habits. Its counts
+  are used above.
+- **False-positive test.** It ran the first habit list over the column-store
+  essay's opening sections. Most hits were legitimate, which led to the narrower
+  definitions above and to the list of what good pages here do.
+- **Sceptical review of the first draft.** It confirmed most of the diagnosis
+  and corrected the construction count to about 80. It identified the
+  rewritten-feedback cause, the timing confound and the user's earlier
+  direction. It argued for the following changes, all adopted:
+  - trial first, on a new subject;
+  - the habit list goes to the line editor only;
+  - the line editor writes its own rewrites, which are rechecked, with two
+    rounds at most;
+  - four to seven spine sentences, tied to section openings;
+  - a user checkpoint before drafting;
+  - a false-positive baseline on human prose;
+  - a stop rule;
+  - page titles and descriptions brought into scope.
+
+  It also quoted the first draft committing several of the habits. This
+  revision removes them.
