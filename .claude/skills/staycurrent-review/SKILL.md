@@ -56,6 +56,13 @@ section transitions in sequence: repeated framing or conclusions
 may be conspicuous across a page while seeming harmless in isolation. Prior review
 approval and technical completeness do not establish that the prose reads well.
 
+Before seeing the outline, have the informed reviewer state the coverage they would
+expect from the subject, audience, title and opening promise. Compare this with the
+commission's scope; challenge a mismatch rather than letting a narrow brief excuse
+an overbroad article. Preserve these initial expectations before the existing draft
+can define what counts as complete. Share any resulting suspected gaps with an
+uncued reader only after that reader has returned their own observations.
+
 Before the detailed reading, extract the assembled article's heading tree, preserving
 levels and order. Read it as a map: what subjects can this audience recognise, how
 do they develop, and where would someone return to find a particular explanation?
@@ -66,6 +73,29 @@ comparison, vague directions that conceal the subject, and headings whose scope
 does not contain their children. Familiar technical names can make useful landmarks.
 If the map does not give a useful overview or support navigation, record a structural
 repair before judging the article ready; correct examples do not compensate for it.
+
+Use the tree to assess technical completeness as well as navigation: given this
+article's subject and promise, what important explanation would you expect to find
+that has no apparent place? Test the expectation against the actual body and, where
+relevant, technical sources. Heading presence is not evidence of depth, and heading
+absence is not evidence that the teaching is missing. Distinguish an explanation
+that is complete but hard to find, a named topic without enough reasoning, an absent
+essential explanation, and a deliberate boundary with adequate orientation and
+onward reading. Look especially for omissions that leave a recommendation,
+mechanism or practical outcome unsupported; a correct happy path can still leave
+the promised task unfinished.
+
+For each consequential coverage finding, record the expected understanding, why
+this article owes it to the reader, the passage or verified destination checked,
+and the smallest sufficient repair. This might be a paragraph, a clearer heading,
+a new section, a substantive linked article or an honestly narrower promise.
+If the commission requires that coverage, complete it; narrowing the title must not
+quietly reduce the requested work. Verify a linked article's relevant explanation
+rather than accepting its title; a planned page cannot discharge a current teaching obligation. Resolve essential
+gaps before readiness and record useful extensions separately. Do not turn the
+check into a topic inventory, section quota or requirement to cover the whole field.
+Keep coverage findings distinct from factual correctness and heading usability in
+the review record so success in one cannot stand in for the others.
 
 Then read the transitions and sections against that map. A new parent heading can
 group examples, but its opening must explain what they investigate and how they

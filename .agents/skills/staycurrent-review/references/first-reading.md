@@ -5,14 +5,20 @@ histories or intended answers. The purpose is to follow the reader's understandi
 effort and curiosity as the article develops. Missing explanations are one finding;
 opportunities for better support or further reading matter too.
 
-For an outline review, inspect the article's heading tree before its body, retaining
-heading levels and reading order. Record the overview it gives and where you would
+For an outline review, first use the audience, title and opening promise to record
+what you expect this article to help you understand. Then inspect its heading tree
+before the rest of its body, retaining heading levels and reading order. Record the overview it gives and where you would
 look for the explanations you need. Distinguish main sections from figure labels
 and headings inside closed optional exercises. Then read the section openings and
 transitions to see whether the apparent groups and changes of subject are explained.
 Label this as an outline-first reading: seeing the later headings is different from
 encountering every section without advance knowledge. A contents list may help, but
-compare it with the headings actually present on the page.
+compare it with the headings actually present on the page. Note expected explanations
+that have no apparent home, then check the body before calling them missing. Separate
+what the article must teach to fulfil its promise from an interesting further topic.
+A heading alone cannot establish that its subject is explained, and a subject can be
+taught adequately without a heading of its own. Preserve the initial expectation
+alongside what the reading actually supplies.
 
 Start with the audience and their reasonable starting knowledge. Read the assembled
 article from top to bottom, including headings, examples, illustrations, captions

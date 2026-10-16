@@ -119,3 +119,31 @@ untracked Serena memories. They are outside this change and remain untouched.
 The two independent readings support this bounded revision; they do not establish
 that every heading elsewhere on the site has been reviewed or that the user has
 endorsed the new wording.
+
+## Coverage guidance follow-up
+
+The user subsequently asked for the heading review to assess technical completeness
+as well as organisation. Authoring now establishes expected understanding before
+settling on an outline; review independently derives expectations from the subject,
+audience and promise, then checks the tree and actual explanation. Findings distinguish
+missing, shallow, buried and deliberately deferred teaching. Narrowing a title must
+not reduce coverage required by the commission.
+
+A bounded independent trial used two temporary HTML extractions. One retained the
+transaction article's promise but removed the uncertain-commit section. The other
+contained only commit/rollback and boundary choice under an explicitly short
+introductory promise. The reviewer received the revised skill and artifacts without
+the alterations or intended findings. They saved expectations before reading each
+outline and body.
+
+The reviewer found the first draft's missing recovery explanation despite its useful
+remaining heading structure. They accepted the second draft's narrower technical
+scope and caught an inherited forward reference to concurrency that no longer
+followed. They also questioned the first extraction's retry-helper contract; that
+finding would need comparison with the excluded setup before diagnosing the source
+article. The trial excluded navigation, optional disclosures and scripts and did not
+verify sources or linked destinations. It supports the intended coverage judgment,
+not a fresh technical verdict on the published article or proof of general reliability.
+
+The three revised skills pass quick validation, their Claude mirrors match, and
+`pnpm build` completes all 77 pages. Article content was not changed in this follow-up.

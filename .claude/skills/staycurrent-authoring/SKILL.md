@@ -57,6 +57,15 @@ or a familiar term is not that learning. Work backwards from the decisions the
 reader should be able to make, and supply the understanding those decisions need;
 this often calls for a small bridge rather than another article.
 
+Before drafting, ask what explanations this audience would reasonably expect from
+the subject, title and promised outcome. Derive those expectations before adapting
+them to the proposed outline; otherwise the outline can make its own omissions
+invisible. Consider the mechanisms, decisions and consequential limits the reader
+needs, including failure and recovery where those affect the article's promise.
+These are questions about this subject, not mandatory sections for every article.
+Keep a concise account of essential coverage and deliberate boundaries in the brief.
+A narrow brief does not excuse a title or introduction that promises more.
+
 ## Develop the argument and its support
 
 Use `staycurrent-style` and read the original writing references alongside the
@@ -71,6 +80,14 @@ and compare it with the article's actual argument and contents navigation. Group
 related examples where that makes their purpose clear, and introduce the change
 from explaining a concept to following its worked cases. A list of locally accurate
 headings can still leave the reader without a useful map of the article.
+Compare that map with the expected coverage from the brief: given the subject,
+are there explanations a reader would expect that have no clear home? Check the
+body before diagnosing a gap. A topic may be well taught under a broader heading,
+buried where readers cannot find it, merely named, or genuinely absent. Repair the
+appropriate problem: the label or grouping, the explanation, or an overbroad promise.
+Necessary understanding belongs in this article; a substantial further investigation
+may belong in a linked article. Verify that any such destination exists and answers
+the question, and keep planned coverage visibly distinct from available teaching.
 
 The pagination draft defined its subject, then began teaching ordering without
 explaining why pages need a sequence. The user still felt dropped into the middle

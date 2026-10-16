@@ -50,7 +50,9 @@ Where a section teaches an established technique, its familiar name can orient t
 reader better than an instruction describing part of it. Heading levels should also
 show which explanations belong together. Give a sequence of worked cases a clear
 purpose and an introduction where the reader enters it; isolated scene labels do
-not establish that relationship by themselves.
+not establish that relationship by themselves. Read the title and heading tree as
+a promise of coverage too: clear labels cannot compensate for a missing explanation,
+and a broad title should not imply depth that the article does not supply.
 The worked passages in the writing reference offer context for those
 decisions without prescribing how every section should be titled. A caption can
 finish a thought rather than append another defence of it: retain qualifications

@@ -187,6 +187,21 @@ encounter. These checks can reveal missing structure without requiring additiona
 technical material or making every article follow the same outline. Agent acceptance
 of this revision remains evidence of a bounded check, not the user's endorsement.
 
+The user then asked us to use the same view to assess technical completeness:
+given the subject, are there sections a reader would expect that are missing?
+The authoring and review skills now establish expected understanding from the title,
+audience and promised outcome before the existing outline can anchor that judgment.
+The assembled tree is checked against those expectations, then the body is checked
+before calling something absent. A missing heading, a buried explanation and a named
+but unexplained mechanism need different repairs.
+
+This extends the structural review without making every article encyclopedic.
+A consequential finding must explain why this article owes the reader that teaching
+and identify the smallest sufficient repair. A separate investigation can have its
+own article, but its actual explanation must be verified before a link is treated
+as sufficient support. Planned coverage cannot fulfil a present promise. Technical
+accuracy, completeness within scope and useful navigation remain separate judgments.
+
 ## Depth can be a missing step, rather than a missing subject
 
 The first schema-design article later exposed another limit of our examples.
