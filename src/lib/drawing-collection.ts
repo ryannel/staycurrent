@@ -1,5 +1,5 @@
 export const drawingCollection = [
-  { slug: '', title: 'Drawing systems and processes', description: 'Choose a view that answers the question in front of you.' },
+  { slug: '', title: 'Drawing systems and processes', description: 'Which diagram answers which question.' },
   { slug: 'architecture', title: 'Architecture diagrams', description: 'Context, C4 zoom levels, relationships and deployment.' },
   { slug: 'processes', title: 'Processes and swimlanes', description: 'Activities, responsibility, handoffs and exceptions.' },
   { slug: 'sequences', title: 'Sequence diagrams', description: 'Messages, time, replies and uncertain outcomes.' },
