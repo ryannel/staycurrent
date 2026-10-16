@@ -7,69 +7,91 @@ import type { Scene, Step } from './types';
 
 /* ---------- Checkpoints ---------- */
 
-const TOUCHES = [12, 10, 12, 14, 11, 12, 10, 13, 15, 12, 11, 10, 14, 12, 13, 12, 10, 15, 11, 12, 14, 10, 12, 13, 11, 12, 15, 10, 12, 14, 13, 12, 10, 11, 12, 15, 14, 12, 10, 13];
+/** Forty price changes, each to a product on one of pages 10 to 15. Page 12 holds P7. */
+export const TOUCHES = [12, 10, 12, 14, 11, 12, 10, 13, 15, 12, 11, 10, 14, 12, 13, 12, 10, 15, 11, 12, 14, 10, 12, 13, 11, 12, 15, 10, 12, 14, 13, 12, 10, 11, 12, 15, 14, 12, 10, 13];
 const BUF_PAGES = [10, 11, 12, 13, 14, 15];
 
-type Cell = { kind: 'rec' | 'fpi' | 'ckpt'; page?: number };
-type CkptState = { cells: Cell[]; dirty: number[]; redo: number; writes: number; fpis: number; crashed?: boolean; replay?: boolean; flash?: boolean };
+type Cell = { kind: 'rec' | 'ckpt'; page?: number };
+type CkptState = { cells: Cell[]; dirty: number[]; redo: number; writes: number; crashed?: boolean; replay?: boolean };
 
 const sinceRedo = (state: CkptState) => state.cells.slice(state.redo + 1).filter(cell => cell.kind !== 'ckpt').length;
+
+/** Replay length and page writes for a checkpoint every `interval` records. */
+export function checkpointTotals(interval: number) {
+  let dirty = new Set<number>();
+  let writes = 0;
+  let sinceLast = 0;
+  TOUCHES.forEach((page, i) => {
+    dirty.add(page);
+    sinceLast++;
+    const n = i + 1;
+    if (n % interval === 0 && n < TOUCHES.length) {
+      writes += dirty.size;
+      dirty = new Set();
+      sinceLast = 0;
+    }
+  });
+  return { replay: sinceLast, writes };
+}
 
 export const checkpoints: Scene<CkptState> = {
   id: 'checkpoints',
   onParam: 'end',
   params: [{
-    id: 'every', label: 'Checkpoint', initial: '5',
-    options: [{ value: '5', label: 'every 5 records' }, { value: '10', label: 'every 10' }, { value: '20', label: 'every 20' }, { value: '0', label: 'never' }],
+    id: 'every', label: 'Checkpoint every', initial: '5',
+    options: [{ value: '5', label: '5 records' }, { value: '10', label: '10' }, { value: '20', label: '20' }],
   }],
   steps: ({ every }) => {
     const interval = Number(every);
     const cells: Cell[] = [{ kind: 'ckpt' }];
     const dirty = new Set<number>();
-    const touched = new Set<number>();
     let redo = 0;
     let writes = 0;
-    let fpis = 0;
-    const snap = (extra: Partial<CkptState> = {}): CkptState => ({ cells: [...cells], dirty: [...dirty], redo, writes, fpis, ...extra });
-    const steps: Step<CkptState>[] = [{ text: 'The server starts just after a checkpoint. Nothing is dirty, and the redo point is at the start of the log.', state: snap() }];
+    const snap = (extra: Partial<CkptState> = {}): CkptState => ({ cells: [...cells], dirty: [...dirty], redo, writes, ...extra });
+    const steps: Step<CkptState>[] = [{ text: 'Just after a checkpoint. Nothing is dirty, and the redo point is at the start of the log.', state: snap() }];
     TOUCHES.forEach((page, i) => {
       const n = i + 1;
-      const first = !touched.has(page);
-      touched.add(page);
       dirty.add(page);
-      if (first) fpis++;
-      cells.push({ kind: first ? 'fpi' : 'rec', page });
-      let line = first
-        ? `Record ${n} changes page ${page}, its first change since the checkpoint, so the record carries a full-page image.`
-        : `Record ${n} changes page ${page}.`;
-      let flash = false;
-      if (interval && n % interval === 0 && n < TOUCHES.length) {
-        line += ` Checkpoint: the ${dirty.size} dirty pages are written to the table files, and the redo point moves here.`;
-        writes += dirty.size;
+      cells.push({ kind: 'rec', page });
+      steps.push({ text: `Record ${n} changes page ${page}.`, state: snap(), fast: true });
+      if (n % interval === 0 && n < TOUCHES.length) {
+        const count = dirty.size;
+        writes += count;
         dirty.clear();
-        touched.clear();
         cells.push({ kind: 'ckpt' });
         redo = cells.length - 1;
-        flash = true;
+        steps.push({ text: `Checkpoint: ${count} dirty pages written. The redo point moves here.`, state: snap(), hold: 1600 });
       }
-      steps.push({ text: line, state: snap({ flash }) });
     });
     steps.push({ text: `The power fails. The ${dirty.size} dirty pages in memory are lost.`, state: snap({ crashed: true }) });
     const last = snap({ crashed: true, replay: true });
     steps.push({ text: `Recovery starts at the last redo point and replays the ${sinceRedo(last)} records after it.`, state: last });
     return steps;
   },
-  interval: () => 420,
+  interval: () => 380,
+  outline: ({ every }) => {
+    const interval = Number(every);
+    const lines = ['Each price change is one WAL record and dirties its page.'];
+    for (let start = 0; start < TOUCHES.length; start += interval) {
+      const chunk = TOUCHES.slice(start, start + interval);
+      const pages = [...new Set(chunk)].sort((a, b) => a - b);
+      const end = start + chunk.length;
+      const tail = end < TOUCHES.length ? `; a checkpoint writes ${pages.length} pages and moves the redo point` : '';
+      lines.push(`Records ${start + 1}–${end} change pages ${pages.join(', ')}${tail}.`);
+    }
+    const totals = checkpointTotals(interval);
+    lines.push(`The power fails. Recovery replays ${totals.replay} records; the checkpoints wrote ${totals.writes} pages.`);
+    return lines;
+  },
   stats: state => [
     { label: state.replay ? 'Records replayed' : 'Records to replay after a crash now', value: String(sinceRedo(state)) },
-    { label: 'Page writes by checkpoints', value: String(state.writes) },
-    { label: 'Full-page images in the WAL', value: String(state.fpis) },
+    { label: 'Pages written by checkpoints', value: String(state.writes) },
   ],
   render: (state, W) => {
     const items: Item[] = [];
     const pad = W < 420 ? 10 : 14;
     const narrow = W < 420;
-    items.push(text('buf-t', pad, 14, 'SHARED BUFFERS', 'sf-t sf-lane'));
+    items.push(text('buf-t', pad, 14, 'SHARED BUFFERS · pages 10–15', 'sf-t sf-lane'));
     const gap = narrow ? 6 : 10;
     const pw = Math.min(56, (W - pad * 2 - gap * 5) / 6);
     BUF_PAGES.forEach((page, i) => {
@@ -94,7 +116,7 @@ export const checkpoints: Scene<CkptState> = {
       const x = pad + (i % cols) * cs;
       const y = top + 10 + Math.floor(i / cols) * rowH;
       const replay = state.replay && i > state.redo ? ' sf-replay' : '';
-      const cls = cell.kind === 'ckpt' ? 'sf-cell-ckpt' : cell.kind === 'fpi' ? 'sf-cell-fpi' : 'sf-cell-rec';
+      const cls = cell.kind === 'ckpt' ? 'sf-cell-ckpt' : 'sf-cell-rec';
       items.push(rect(`c-${i}`, x, y, cs - 4, cs - 4, cls + replay, { from: { x: x + 8, y } }));
       const label = cell.kind === 'ckpt' ? 'C' : String(cell.page);
       items.push(text(`c-${i}-t`, x + (cs - 4) / 2, y + cs / 2 + 2, label, `sf-t sf-xs sf-mid sf-mono ${cell.kind === 'rec' ? '' : 'sf-cell-ink'}`, { from: { x: x + 8 + (cs - 4) / 2, y: y + cs / 2 + 2 } }));
@@ -102,14 +124,13 @@ export const checkpoints: Scene<CkptState> = {
     });
     const rows = Math.ceil((TOUCHES.length + 1 + 8) / cols);
     const legendY = top + 10 + rows * rowH + 8;
-    const legend: [string, string][] = [['sf-cell-rec', 'change record'], ['sf-cell-fpi', 'with full-page image'], ['sf-cell-ckpt', 'checkpoint']];
+    const legend: [string, string][] = [['sf-cell-rec', 'change record, with its page'], ['sf-cell-ckpt', 'checkpoint']];
     legend.forEach(([cls, label], i) => {
-      const lx = narrow ? pad : pad + i * 170;
-      const ly = narrow ? legendY + i * 18 : legendY;
-      items.push(rect(`lg-${i}`, lx, ly, 12, 12, `${cls} sf-swatch`));
-      items.push(text(`lg-t-${i}`, lx + 17, ly + 10, label, 'sf-t sf-xs'));
+      const lx = pad + i * 210;
+      items.push(rect(`lg-${i}`, lx, legendY, 12, 12, `${cls} sf-swatch`));
+      items.push(text(`lg-t-${i}`, lx + 17, legendY + 10, label, 'sf-t sf-xs'));
     });
-    return { items, height: legendY + (narrow ? 56 : 22) };
+    return { items, height: legendY + 22 };
   },
 };
 
@@ -126,16 +147,16 @@ export const tornPage: Scene<TornState> = {
   steps: ({ fpw }) => {
     const on = fpw === 'on';
     const steps: Step<TornState>[] = [
-      { text: on ? 'Page 12 changed in memory: its first change since the last checkpoint. With full_page_writes on, that change’s WAL record carries a copy of the whole page. The record is already on disk.' : 'Page 12 changed in memory. With full_page_writes off, its WAL record describes only the change. The record is already on disk.', state: { mem: true, disk: sectors(0), status: 'old' } },
-      { text: 'The checkpointer writes page 12 to the table file. The drive stores those 8 kB as sixteen 512-byte sectors, one after another.', state: { mem: true, disk: sectors(6), status: 'being written' } },
-      { text: 'The power fails after 6 of the 16 sectors. The page in the table file is now torn: part new, part old.', state: { mem: false, disk: sectors(6), crashed: true, status: 'torn' } },
+      { text: on ? 'Page 12 changed for the first time since the last checkpoint, so its WAL record, already on disk, carries a copy of the whole page.' : 'Page 12 changed. With full_page_writes off, its WAL record, already on disk, holds only the change.', state: { mem: true, disk: sectors(0), status: 'old' } },
+      { text: 'The checkpoint writes page 12 to the table file: sixteen 512-byte sectors, one after another.', state: { mem: true, disk: sectors(6), status: 'being written' } },
+      { text: 'The power fails after 6 of the 16 sectors. Page 12 on disk is torn: part new, part old.', state: { mem: false, disk: sectors(6), crashed: true, status: 'torn' } },
     ];
     if (on) {
-      steps.push({ text: 'Recovery reaches the record with the full-page image and copies all 8 kB over the torn page.', state: { mem: false, disk: sectors(16), hot: true, status: 'whole' } });
-      steps.push({ text: 'Page 12 is whole again. Any later records for it are replayed on top of this copy.', state: { mem: false, disk: sectors(16), status: 'whole', result: { text: 'Page 12 restored from the WAL.', kind: 'ok' } } });
+      steps.push({ text: 'Recovery reaches the record with the full-page image and copies it over the torn page.', state: { mem: false, disk: sectors(16), hot: true, status: 'whole' } });
+      steps.push({ text: 'Page 12 is whole again. Later records for it apply on top of this copy.', state: { mem: false, disk: sectors(16), status: 'whole', result: { text: 'Page 12 restored from the WAL.', kind: 'ok' } } });
     } else {
-      steps.push({ text: 'Recovery has only the change record, and it skips it. Sector 0 holds the page header, which arrived with the new LSN, so the page looks up to date. Even replayed, the record couldn’t rebuild sectors that never arrived.', state: { mem: false, disk: sectors(6), hot: true, status: 'torn' } });
-      steps.push({ text: 'With data checksums, on by default in PostgreSQL 18, the damage is caught when the page is read. Without them it can go unnoticed.', state: { mem: false, disk: sectors(6), status: 'torn', result: { text: 'Page 12 is still torn.', kind: 'bad' } } });
+      steps.push({ text: 'Recovery reaches the change record and reads page 12 to check it. The torn page fails its data checksum, on by default in PostgreSQL 18, so recovery stops with an invalid-page error.', state: { mem: false, disk: sectors(6), hot: true, status: 'torn' } });
+      steps.push({ text: 'Without checksums, the new LSN in sector 0 makes the page look up to date. Recovery skips the record, and nobody notices the tear.', state: { mem: false, disk: sectors(6), status: 'torn', result: { text: 'Page 12 can’t be repaired from the WAL.', kind: 'bad' } } });
     }
     return steps;
   },
@@ -178,7 +199,7 @@ export const tornPage: Scene<TornState> = {
     const recW = cw * 2 + gap;
     const fpwOn = fpw === 'on';
     items.push(rect('wal-rec', left, walY + 8, recW, fpwOn ? 34 : 22, `sf-rec sf-rec-rec${state.hot ? ' sf-hot' : ''}`));
-    items.push(text('wal-rec-t', left + 8, walY + 23, fpwOn ? 'update P7 + full image of page 12 (8 kB)' : 'update P7 (the change only)', 'sf-t sf-xs sf-rec-text-rec'));
+    items.push(text('wal-rec-t', left + 8, walY + 23, fpwOn ? 'update P7 + full image of page 12 (up to 8 kB)' : 'update P7 (the change only)', 'sf-t sf-xs sf-rec-text-rec'));
     const legY = walY + 64;
     items.push(rect('lg-new', left, legY - 10, 12, 12, 'sf-sec-new sf-swatch'));
     items.push(text('lg-new-t', left + 17, legY, 'new sector', 'sf-t sf-xs'));
@@ -208,12 +229,12 @@ export const flushPath: Scene<FlushState> = {
     const honest = drive === 'honest';
     const steps: Step<FlushState>[] = [
       { text: 'The commit record for transaction 812 sits in PostgreSQL’s WAL buffers.', state: { at: 0 } },
-      { text: 'write() copies it into the operating system’s page cache. That is still memory.', state: { at: 1 } },
-      { text: 'fdatasync() asks the operating system to send it to the drive. It lands in the drive’s write cache first.', state: { at: 2 } },
+      { text: 'PostgreSQL hands it to the operating system, which keeps it in its page cache. That is still memory.', state: { at: 1 } },
+      { text: 'fdatasync asks the operating system to send it to the drive. It lands in the drive’s write cache first.', state: { at: 2 } },
       honest
         ? { text: 'This drive copies the cached data to its flash cells before it reports success.', state: { at: 3 } }
         : { text: 'This drive reports success as soon as the data is in its cache. The flash cells don’t have it yet.', state: { at: 2, returned: true } },
-      { text: 'fdatasync() returns, and PostgreSQL replies COMMIT.', state: { at: honest ? 3 : 2, returned: true, reply: true } },
+      { text: 'fdatasync returns, and PostgreSQL replies COMMIT.', state: { at: honest ? 3 : 2, returned: true, reply: true } },
       honest
         ? { text: 'The power fails. Every volatile layer is wiped, but the commit record is in flash.', state: { at: 3, returned: true, reply: true, crashed: true } }
         : { text: 'The power fails before the drive writes its cache to flash. The commit record is gone.', state: { at: null, returned: true, reply: true, crashed: true } },
@@ -225,7 +246,7 @@ export const flushPath: Scene<FlushState> = {
   },
   stats: state => [
     { label: 'Commit record is in', value: PLACE[state.at ?? 4] },
-    { label: 'fdatasync() returned', value: state.returned ? 'yes' : 'not yet' },
+    { label: 'fdatasync returned', value: state.returned ? 'yes' : 'not yet' },
     { label: 'Application heard', value: state.reply ? 'COMMIT' : '—' },
   ],
   render: (state, W) => {

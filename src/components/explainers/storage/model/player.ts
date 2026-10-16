@@ -1,11 +1,15 @@
 /*
  * <storage-figure data-scene="…"> drives one animated figure: it builds the
- * scene's steps, draws the current step, and wires play/pause, back/next,
- * reset, the step scrubber and any scene parameters.
+ * scene's steps, draws the current step, and wires play/pause, back/next, the
+ * step scrubber, reset and any scene parameters.
+ *
+ * With motion allowed, a figure plays once when half of it scrolls into view,
+ * and holds each step long enough to read. With reduced motion it rests on
+ * the last step and never plays by itself. It pauses when it leaves the view.
  */
 import { scenes } from './index';
 import { reconcile } from './draw';
-import { defaults, type Params, type Scene, type Step } from './types';
+import { defaults, holdFor, type Params, type Scene, type Step } from './types';
 
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -17,6 +21,8 @@ class StorageFigure extends HTMLElement {
   private playing = false;
   private timer = 0;
   private width = 0;
+  private autoplayed = false;
+  private resumeOnReturn = false;
   private svg!: SVGSVGElement;
   private layer!: SVGGElement;
   private stage!: HTMLElement;
@@ -42,10 +48,11 @@ class StorageFigure extends HTMLElement {
     this.range = this.querySelector('input.sf-scrub')!;
     this.playButton = this.querySelector('button[data-act="play"]')!;
 
-    this.querySelector('.sf-controls')!.addEventListener('click', event => {
+    this.querySelector('.sf-transport')!.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-act]');
       if (!button) return;
       const act = button.dataset.act;
+      this.resumeOnReturn = false;
       if (act === 'play') return this.playing ? this.pause() : this.play();
       this.pause();
       if (act === 'reset') this.go(0, false);
@@ -53,6 +60,7 @@ class StorageFigure extends HTMLElement {
       if (act === 'next') this.go(this.index + 1, true);
     });
     this.range.addEventListener('input', () => {
+      this.resumeOnReturn = false;
       this.pause();
       this.go(Number(this.range.value), true);
     });
@@ -68,28 +76,47 @@ class StorageFigure extends HTMLElement {
       }
     }).observe(this.stage);
     new IntersectionObserver(entries => {
-      if (entries.some(entry => !entry.isIntersecting)) this.pause();
-    }).observe(this);
+      for (const entry of entries) {
+        if (!entry.isIntersecting) {
+          if (this.playing) {
+            this.pause();
+            this.resumeOnReturn = true;
+          }
+        } else if (entry.intersectionRatio >= 0.5 && !reducedMotion()) {
+          if (!this.autoplayed) {
+            this.autoplayed = true;
+            this.go(0, false);
+            this.play();
+          } else if (this.resumeOnReturn) {
+            this.resumeOnReturn = false;
+            this.play();
+          }
+        }
+      }
+    }, { threshold: [0, 0.5] }).observe(this.stage);
 
     this.dataset.ready = '1';
     this.width = Math.round(this.stage.clientWidth) || 320;
     this.range.max = String(this.steps.length - 1);
+    this.index = reducedMotion() ? this.steps.length - 1 : 0;
     this.draw(false);
   }
 
   private setParam(id: string, value: string) {
     this.pause();
+    this.resumeOnReturn = false;
+    this.autoplayed = true;
     this.params = { ...this.params, [id]: value };
     this.querySelectorAll<HTMLButtonElement>(`button[data-param="${id}"]`).forEach(button => {
       button.setAttribute('aria-pressed', String(button.dataset.value === value));
     });
     this.steps = this.scene.steps(this.params);
     this.range.max = String(this.steps.length - 1);
-    if (this.scene.onParam === 'end') {
+    if (this.scene.onParam === 'end' || reducedMotion()) {
       this.go(this.steps.length - 1, false);
     } else {
       this.go(0, false);
-      if (!reducedMotion()) this.play();
+      this.play();
     }
   }
 
@@ -115,7 +142,7 @@ class StorageFigure extends HTMLElement {
   }
 
   private schedule() {
-    const delay = this.scene.interval?.(this.params) ?? 1900;
+    const delay = holdFor(this.steps[this.index], this.scene.interval?.(this.params) ?? 420);
     this.timer = window.setTimeout(() => {
       if (!this.playing) return;
       if (this.index < this.steps.length - 1) {
@@ -127,7 +154,6 @@ class StorageFigure extends HTMLElement {
   }
 
   private updatePlayButton() {
-    this.playButton.setAttribute('aria-label', this.playing ? 'Pause' : 'Play');
     this.playButton.dataset.state = this.playing ? 'playing' : 'paused';
     const label = this.playButton.querySelector('.sf-btn-label');
     if (label) label.textContent = this.playing ? 'Pause' : 'Play';
