@@ -48,7 +48,7 @@ A **UML activity diagram** with partitions draws much the same thing and suits t
 
 Use a sequence diagram when the question is about order: which message comes first, who waits, and what happens if a reply never arrives. Each participant has a vertical **lifeline**, time runs downwards, and each arrow is a request, reply or event. Framed **fragments** mark alternatives (`alt`), optional steps (`opt`), repetition (`loop`) and parallel work (`par`).
 
-An architecture diagram can't answer questions like these. For example, does the browser receive its receipt before the notification job runs? What does the worker know if the email provider never replies? The [sequence article](/learn/drawing-systems/sequences/) writes each example in Mermaid, including a lost reply that leaves two possible histories.
+An architecture diagram can't answer questions like these. For example, does the browser receive its receipt before the notification job runs? What does the worker know if the email provider never replies? The [sequence article](/learn/drawing-systems/sequences/) writes each example in Mermaid, including a timeout that looks the same whether the request was lost, the reply was lost or the provider was slow.
 
 ## Domain models and ER diagrams
 
