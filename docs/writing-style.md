@@ -159,6 +159,34 @@ rollback” needs no expanded claim, and a well-grounded question or instruction
 also introduce a section. Judge what the reader can understand at that point and
 whether the heading identifies the thought being developed.
 
+## The heading tree must explain the article's organisation
+
+The user then pointed out that the transaction article's problem extended beyond
+one label. “The application handles a checkout,” “The query throws an error” and
+“Two requests reach the same record” introduced scenes at the same level as the
+conceptual sections, without establishing the worked sequence they belonged to.
+They also rejected “Put the condition beside the change” and “Lock before making
+a longer decision.” These directions concealed useful subjects: conditional updates
+and locking reads. The user proposed reviewing the heading tree as an overview and
+navigation aid, and stressed that nearly every heading needed scrutiny.
+
+The revision groups the checkout handler, recording the purchase and rollback under
+“A checkout transaction in practice.” Its introduction connects the chosen boundary
+to the successful and rejected attempts. “Concurrent purchases” contains reading
+and updating separately, conditional updates and locking reads. Later sections name
+snapshots and isolation, cross-row coordination, deadlocks and retries, uncertain
+commits and external payments. The detailed [structure review](article-work/transactions-concurrency-deep-dive/structure-review.md)
+preserves the resulting tree and its independent readings.
+
+The lesson is larger than replacing a vague phrase with a technical term. Locally
+defensible headings can collectively hide the argument. Inspect their actual levels,
+grouping and reading order, including component-generated headings, then read the
+transitions between them. A parent title needs an opening that explains the purpose
+of its examples. A contents list should lead into the organisation readers actually
+encounter. These checks can reveal missing structure without requiring additional
+technical material or making every article follow the same outline. Agent acceptance
+of this revision remains evidence of a bounded check, not the user's endorsement.
+
 ## Depth can be a missing step, rather than a missing subject
 
 The first schema-design article later exposed another limit of our examples.

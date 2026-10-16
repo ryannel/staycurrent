@@ -51,13 +51,32 @@ in practice and how to preserve an uncued interpretation of teaching aids.
 Give the editorial reviewer an explicit writing judgement alongside the
 comprehension judgement. A reader can understand every sentence and still find
 the piece laboured. Ask for passages that work and passages that strain, with their
-surrounding context and a concrete account of the difference. Read headings together,
-then paragraphs and section transitions in sequence: repeated framing or conclusions
+surrounding context and a concrete account of the difference. Read paragraphs and
+section transitions in sequence: repeated framing or conclusions
 may be conspicuous across a page while seeming harmless in isolation. Prior review
 approval and technical completeness do not establish that the prose reads well.
 
-Review the relationship between each heading and its section as well as the list
-of headings. Before reading a section, state what its heading leads this audience
+Before the detailed reading, extract the assembled article's heading tree, preserving
+levels and order. Read it as a map: what subjects can this audience recognise, how
+do they develop, and where would someone return to find a particular explanation?
+Compare that tree with the contents navigation. Include component-generated headings,
+but identify figure labels and closed optional exercises so they are not mistaken
+for the main argument. Look for a flat sequence that hides a worked example or
+comparison, vague directions that conceal the subject, and headings whose scope
+does not contain their children. Familiar technical names can make useful landmarks.
+If the map does not give a useful overview or support navigation, record a structural
+repair before judging the article ready; correct examples do not compensate for it.
+
+Then read the transitions and sections against that map. A new parent heading can
+group examples, but its opening must explain what they investigate and how they
+connect to what came before. Check when the reader moves from explanation into a
+worked case, from one outcome to another, or into a new example. Do not automatically
+add a preface to every section or impose a fixed hierarchy: repair the relationships
+the actual argument needs. Preserve a concise heading tree and any consequential
+navigation or transition findings in the review record.
+
+Review the relationship between each heading and its section. Before reading a
+section, state what its heading leads this audience
 to expect, using only the preceding context. Afterwards, compare that expectation
 with what the section actually explains. Check whether the opening establishes the
 named subject and whether the section develops it. Being able to invent a connection

@@ -66,6 +66,11 @@ copy. A polished summary of a mechanism is not necessarily an explanation of it.
 Revisit working headings against the finished sections: drafting prompts can survive
 after the argument changes. Use the style skill's heading guidance to name what the
 reader is about to learn, then read the heading into its opening paragraph.
+Build the heading tree from the assembled draft, including supporting components,
+and compare it with the article's actual argument and contents navigation. Group
+related examples where that makes their purpose clear, and introduce the change
+from explaining a concept to following its worked cases. A list of locally accurate
+headings can still leave the reader without a useful map of the article.
 
 The pagination draft defined its subject, then began teaching ordering without
 explaining why pages need a sequence. The user still felt dropped into the middle
