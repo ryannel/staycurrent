@@ -8,7 +8,9 @@ Consistency describes what a reader can observe as writes happen. It matters whe
 
 For S3 general-purpose buckets, a successful object write is visible to subsequent origin reads; another write or delete can change what those reads return. Replacing one object does not expose a mixture of its old and new bytes. That gives an application a useful boundary, but it does not decide which writer should win or make a group of objects change together.
 
-## One key, one visible replacement
+<div id="one-key-one-visible-replacement" aria-hidden="true"></div>
+
+## Atomic replacement of one object
 
 Our application stores a small configuration object at `settings.json`. Its initial content says `{"limit":10}`. Writer A replaces it with `{"limit":20}`. A read that overlaps the write can observe the earlier or later object; after the write has successfully completed, a new origin read observes the replacement, provided nobody has replaced it again. The reader does not receive half of each JSON document.
 
@@ -44,7 +46,9 @@ B must reconsider its operation after the conflict. Replacing the header with th
 
 For a key that must be created only once, `If-None-Match: *` checks absence during the write. A separate HEAD followed by an unconditional PUT leaves a race between the two requests. In a versioned bucket the condition concerns the current object; older versions behind a delete marker do not reserve the name forever. These checks and their errors are described in the [conditional-write guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
 
-## A token is not the application's history
+<div id="a-token-is-not-the-applications-history" aria-hidden="true"></div>
+
+## ETags and application revisions
 
 Treat an ETag as the token the API accepts, not as a universal MD5 checksum or a monotonic revision number. Upload method and encryption affect its interpretation. A change from content A to B and back to identical A may also produce a token that does not reveal the intervening history.
 
@@ -58,7 +62,9 @@ A can read the current object and compare its revision ID with r2. If r2 is curr
 
 This distinction changes error handling. A confirmed precondition failure means this attempt did not replace the object. A lost response means the attempt's outcome is unknown. Neither is a reason to remove the condition and blindly overwrite the latest state.
 
-Concurrent deletion adds other outcomes. If the current object is absent or a delete marker, `If-Match` fails with 404 rather than matching a previous version. A concurrent operation can also produce 409 Conflict. After a PUT conflict, reconsider the current state before retrying with the appropriate condition. Multipart completion has a different recovery cost: after a 409, S3 requires initiating and uploading again. Keep these branches distinct from the 412 caused by B's stale ETag. The [conditional-write contract](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html#conditional-write-behavior) describes the operation-specific responses.
+## Deletion races and conflicts
+
+A writer can receive a definite error because the key changed while its request was running. Concurrent deletion adds outcomes beyond the stale ETag conflict above. If the current object is absent or a delete marker, `If-Match` fails with 404 rather than matching a previous version. A concurrent operation can also produce 409 Conflict. After a PUT conflict, reconsider the current state before retrying with the appropriate condition. Multipart completion has a different recovery cost: after a 409, S3 requires initiating and uploading again. Keep these branches distinct from the 412 caused by B's stale ETag. The [conditional-write contract](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html#conditional-write-behavior) describes the operation-specific responses.
 
 The [conditional-write lesson](/learn/databases/object-storage/sandbox/?lesson=conditions) lets you keep the old ETag, accept one writer and reject the other. Its separate lost-reply lesson applies the write but hides its response, so you must inspect the revision before deciding what happened. The model serialises requests to make the order visible; it is not a network concurrency test.
 

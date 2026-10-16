@@ -8,7 +8,9 @@ A database row can name a photograph in object storage, but the database cannot 
 
 A reliable design makes unfinished work a state the application understands. It gives each upload an identity, publishes only validated bytes, and leaves enough durable information to resume or clean up after a crash. We will follow one profile photograph through that lifecycle.
 
-## Define what ready means
+<div id="define-what-ready-means" aria-hidden="true"></div>
+
+## Pending and ready images
 
 Our application has an `images` table with an image ID, owner ID, object key and state. It also records a source version or digest once validation completes. An `accounts` row points to the currently published image ID. The application serves only images marked ready and authorised for the requesting account.
 
@@ -28,7 +30,9 @@ There is a subtle race if the uploader can overwrite the object after validation
 
 This is an application protocol, not an S3 transaction feature. Its database transition should be idempotent: repeated completion for the same upload must not accidentally replace a newer account choice. A compare-and-set on the expected account revision, or an explicit user-selected image operation ID, can establish which update is still eligible.
 
-## Follow the failures
+<div id="follow-the-failures" aria-hidden="true"></div>
+
+## Recovering interrupted uploads
 
 A pending row without bytes can expire after an agreed upload window. The cleanup worker first changes pending to abandoned in the database, but only if the row is still pending. The validation worker's ready transition has the same pending precondition, and its transaction also checks that the account update remains eligible. If cleanup wins, validation cannot revive the row. If publication wins, cleanup's transition fails and it must leave the ready object's bytes alone.
 
@@ -47,7 +51,9 @@ If the ready transition commits but its response is lost, a retry reads the oper
 
 The last case should be unusual if only the application controls deletion. It still deserves monitoring because administrative actions, policy changes or an incorrect cleanup job can violate the protocol.
 
-## Deletion needs a durable obligation
+<div id="deletion-needs-a-durable-obligation" aria-hidden="true"></div>
+
+## Durable deletion jobs
 
 Deleting an account reference and deleting its object are also separate operations. If the application commits the row deletion and then crashes before calling S3, it can leak the object indefinitely unless it recorded the work.
 

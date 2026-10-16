@@ -53,7 +53,9 @@ The delivery key should be writable only by the promotion service. The original 
 
 Publish the delivery reference only after establishing that the copy completed. If the copy fails, leave the new photo pending and keep serving the previous one. If its reply is lost, inspect the intended destination and verify it against the recorded source before deciding whether to retry. If the copy succeeded but the database update failed, resume that same operation rather than validate whatever is now current at the staging key. Once the validated identity is published, retire staging data under an explicit cleanup policy. The [database-record article](/learn/databases/object-storage/database-records/) follows the pending, ready and retired states through crashes.
 
-## Encryption adds a dependency
+<div id="encryption-adds-a-dependency" aria-hidden="true"></div>
+
+## Encryption and KMS permissions
 
 S3 encrypts new uploads at rest by default using SSE-S3 unless another supported configuration applies. Encryption at rest does not mean that all authenticated callers may read the object, and it does not replace TLS for transport. Bucket defaults guide new uploads; changing a default does not retroactively rewrite all existing objects. See [default encryption](https://docs.aws.amazon.com/AmazonS3/latest/userguide/default-bucket-encryption.html).
 

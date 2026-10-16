@@ -34,7 +34,9 @@ S3 can return `503 Slow Down` while scaling to a changed request pattern. Its [p
 
 Also inspect dependencies. SSE-KMS requests can be constrained by KMS quotas; a client can saturate its network interface; a worker can spend more time decoding images than reading them. A storage benchmark that omits the application's expensive step cannot establish end-to-end capacity.
 
-## A bill has several terms
+<div id="a-bill-has-several-terms" aria-hidden="true"></div>
+
+## Estimating storage and request costs
 
 A useful estimate separates storage, requests, retrieval, transfer and supporting services. For example, suppose an invented workload holds 100 GB throughout one month. During that month it makes 2,000,000 GETs, retrieves 20 GB from a charged retrieval tier and transfers 30 GB through a charged route. With deliberately illustrative unit prices:
 
@@ -53,6 +55,8 @@ Versioning changes stored bytes. Thirty retained versions of a 100 MB object con
 ## Storage classes encode access assumptions
 
 Frequently read objects usually need immediate access. Infrequent-access classes trade lower storage charges against retrieval charges and other conditions. Some classes have minimum billable sizes and minimum storage durations, so repeatedly storing and quickly deleting small objects may not produce the savings the headline storage rate suggests.
+
+Placement changes the failure tradeoff too. S3 Standard-IA stores data across multiple Availability Zones, separate locations within a Region. S3 One Zone-IA costs less by using one zone, but it does not protect against that zone's physical loss. Use it for data you can recreate or recover from another copy, rather than as the sole copy needed after that failure. The [storage-class comparison](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html#sc-infreq-data-access) explains this distinction.
 
 Archive classes differ in retrieval behaviour. Glacier Instant Retrieval supports immediate access; Glacier Flexible Retrieval and Deep Archive require a restore workflow before ordinary reads of archived data. A restore request is not an immediate download. Wait for completion, then read during the temporary restored copy's lifetime. The original archived object remains, and the restored copy can add charges. See [storage classes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html) and [restoring archived objects](https://docs.aws.amazon.com/AmazonS3/latest/userguide/restoring-objects.html).
 

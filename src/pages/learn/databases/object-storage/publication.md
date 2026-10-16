@@ -14,7 +14,9 @@ Generation A contains a mug price of 20 and stock of four. Generation B should c
 
 Even changing the upload order does not solve this. It merely changes which mixture can appear. A reader that fetches the two files at different times can straddle the update in either order. The unit of publication must be something that identifies both files together.
 
-## Give each generation its own names
+<div id="give-each-generation-its-own-names" aria-hidden="true"></div>
+
+## Immutable generations and the manifest
 
 Upload B to new keys: `exports/B/prices.json` and `exports/B/stock.json`. Do not modify A. Only after both B uploads have succeeded and their content has been checked should the publisher replace `current.json` with:
 
@@ -53,13 +55,21 @@ A conflict is a decision point. If the exports are independent snapshots and a s
 
 Put a unique publication ID in each manifest body. This helps distinguish a logical publication from a repeated byte representation and helps resolve a lost reply. Retain the conditional request: the ID does not make the check-and-replace operation atomic by itself.
 
-## When can A be deleted?
+<div id="when-can-a-be-deleted" aria-hidden="true"></div>
+
+## Retaining and collecting generations
+
+A collector has to account for readers still using published generations and writers that might still publish unfinished ones. Absence from the current manifest is not enough to decide either case.
+
+### Readers still using a generation
 
 Publishing B does not prove that nobody still needs A. A reader may have fetched A one second earlier and be slowly downloading its files. A cached manifest may also continue to name A after origin publication changes.
 
 A bounded retention scheme can work when the application defines a maximum age for a cached manifest and maximum reader duration. Suppose B is published at 12:00, a cache may still hand out A for five minutes, and a reader may take ten minutes after receiving its manifest. A reader starting just before 12:05 can still need A until almost 12:15. Retaining A for ten minutes after publication would be too short: the two windows add together. Include any permitted stale-cache serving, retries and operational margin in the bound. An offline client allowed to resume a month later needs a different promise. Keeping the last three generations is not an equivalent time bound when publishing can happen rapidly.
 
 For unbounded readers, consider explicit leases or pins that the collector honours, or retain generations until an external workflow confirms they are no longer needed. Those mechanisms have their own failure handling: a crashed reader's pin needs an expiry or administrative recovery policy. The useful question is what evidence makes deletion safe for this application.
+
+### Abandoned generations and active publishers
 
 The collector must also distinguish unpublished work from newly uploading work. A file absent from the current manifest may belong to an active publisher or an older pinned generation. Suppose a collector checks that B is unpublished, then B's writer publishes it just before the collector deletes its stock file. Rechecking without coordinating with the publisher leaves that race open.
 

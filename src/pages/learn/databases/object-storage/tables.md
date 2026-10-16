@@ -60,6 +60,8 @@ A table bucket contains table resources, not merely an ordinary prefix labelled 
 
 Managed compaction combines small files and incorporates deletes, improving the layout later readers encounter. Snapshot management limits retained history. Unreferenced-file removal cleans up files no longer needed by the table. These jobs reduce operational work, but they still act on policies that affect readers, writers and recovery.
 
+### Snapshot retention and file cleanup
+
 A snapshot expiring and a physical file disappearing are different events. A file shared by retained snapshots can remain necessary. Conversely, an uncommitted file left around too long can become eligible for cleanup before a delayed writer commits metadata referring to it. The [maintenance considerations](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables-considerations.html) explicitly discuss maintenance conflicts and delayed commits. The unreferenced-file age threshold must exceed the longest supported write-to-commit interval, including retries.
 
 In a different run, suppose the threshold is three days and a stalled job tries to commit a four-day-old F3. If cleanup has already marked F3 noncurrent, publishing its path does not make it readable again: a query selecting it can fail. Here, noncurrent is a stage in S3 Tables’ managed cleanup. It is not the ordinary version history from which this application can issue a version-specific GET. AWS says viewing or recovering a file in this stage requires contacting Support; after permanent deletion it cannot be recovered. The [table-bucket maintenance guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-table-buckets-maintenance.html) describes that boundary.
@@ -74,7 +76,9 @@ S3 Tables supports Iceberg V3 features, but service support does not imply that 
 
 For a stable workload, record the table format version and every required engine's supported operations. Test representative reads, writes, deletes and schema changes together. A successful SELECT from one engine is not evidence that another can safely commit its intended update.
 
-## When this is the useful abstraction
+<div id="when-this-is-the-useful-abstraction" aria-hidden="true"></div>
+
+## Choosing objects or tables
 
 Choose ordinary objects when the application needs named assets or a small explicit export protocol. Choose a table format when analytical readers and writers need shared schema, snapshots and file-selection rules. Managed S3 Tables can remove much of the maintenance work when its integrations and controls fit the workload.
 

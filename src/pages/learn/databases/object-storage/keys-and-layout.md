@@ -37,7 +37,9 @@ A listing is also a paginated operation. One `ListObjectsV2` response contains a
 
 Strong consistency does not freeze a whole multi-request walk. A writer can add or remove objects between pages. If an export requires a fixed inventory, publish a manifest containing the exact keys and read that manifest once. A listing answers what names are visible to each request; a manifest defines which objects belong to a particular dataset.
 
-## Metadata has different jobs
+<div id="metadata-has-different-jobs" aria-hidden="true"></div>
+
+## Metadata, tags and content types
 
 An object has bytes and descriptive fields. `Content-Type` tells a client how to interpret the bytes. `Cache-Control` influences caching. Application metadata might record a source image ID or the software version that produced a thumbnail. These values help when handling an object already identified by key.
 

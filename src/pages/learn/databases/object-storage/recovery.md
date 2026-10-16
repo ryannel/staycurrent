@@ -8,7 +8,9 @@ A durable object can still be the wrong object. An authorised application may ov
 
 S3 versioning can retain earlier object versions. Retention rules determine how long those versions remain, and permissions determine whether they can be removed. We will follow a mistaken change through recovery, then ask what replication adds and what it leaves to the application.
 
-## A key can have a history
+<div id="a-key-can-have-a-history" aria-hidden="true"></div>
+
+## Object version history
 
 In a versioning-enabled bucket, two successful writes to `report.csv` create distinct stored versions. An ordinary GET selects the current version. A GET with a particular version ID can select an earlier one, provided it still exists and the caller has permission.
 
@@ -18,7 +20,9 @@ For this simple recovery, pause the normal writer while inspecting and copying. 
 
 The labels v1, v2 and v3 are shorthand for this example. Do not confuse an S3 version ID with an application's revision name. Both can identify a version, but they are allocated by different systems. A recovery record should retain the exact bucket, key and service version needed to reproduce the read.
 
-## Deleting can hide rather than remove
+<div id="deleting-can-hide-rather-than-remove" aria-hidden="true"></div>
+
+## Delete markers and permanent deletion
 
 With versioning enabled, a DELETE without a version ID normally adds a delete marker. A subsequent ordinary GET returns not found, even though earlier data versions remain. The marker changes the current view; it is not an empty replacement file.
 
@@ -48,7 +52,9 @@ A lock protects a version, not the ordinary key's current appearance. Another ve
 
 Protection also does not guarantee a usable decrypting key or read permission. Test recovery with the role and keys that will exist during an incident. Object Lock has lasting bucket-level consequences, so the introductory practice worksheet uses ordinary versioning rather than enabling a retention configuration as an incidental experiment. [Operational considerations](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock-managing.html) explain those consequences.
 
-## Replication is another copy with its own progress
+<div id="replication-is-another-copy-with-its-own-progress" aria-hidden="true"></div>
+
+## Replication and failover
 
 S3 replication copies eligible objects asynchronously to another bucket. A successful source write does not prove that the destination already has the required version. Existing objects and failed replications may need Batch Replication rather than waiting for a live rule to revisit them. See the [replication overview](https://docs.aws.amazon.com/AmazonS3/latest/userguide/replication.html).
 

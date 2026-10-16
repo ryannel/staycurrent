@@ -18,7 +18,9 @@ Store enough identity for the intended operation. A useful thumbnail job key is 
 
 The event's object key is encoded, and the event schema contains details that a parser must handle correctly. In S3 event records, a plus sign can represent a space in the encoded key. Decode using the documented form-encoding rules rather than fetch the literal event string. The [message structure reference](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html) also describes version IDs and sequencers.
 
-## Make repeating the effect harmless
+<div id="make-repeating-the-effect-harmless" aria-hidden="true"></div>
+
+## Idempotent processing
 
 For this example, notifications feed a queue and a worker acknowledges a message after completing its work. Imagine the output key is `thumbs/i-83/v1/resize-3.jpg`. The worker fetches source v1, produces the thumbnail and stores it. It then crashes before acknowledging the queue message. The same event is delivered again.
 
@@ -32,7 +34,9 @@ A separate “processed” marker requires care. Writing the marker before the t
 
 If processing includes a non-idempotent external effect, such as charging an account, use that destination's idempotency mechanism or a durable workflow that can reconcile uncertain outcomes. A thumbnail convention does not establish exactly-once behaviour for arbitrary services. The [relational outbox discussion](/learn/databases/relational/adding-another-system/) follows the durable-work boundary in more detail.
 
-## Do not let old work replace new results
+<div id="do-not-let-old-work-replace-new-results" aria-hidden="true"></div>
+
+## Out-of-order completion
 
 Now v2's thumbnail finishes before v1's. Keeping their outputs at separate keys preserves both. A mutable “current thumbnail” pointer needs another rule, otherwise the late v1 job can make the interface show the older image.
 
@@ -44,7 +48,9 @@ For workflows that use S3 event sequencers to maintain a latest-per-key view, co
 
 The [events lesson](/learn/databases/object-storage/sandbox/?lesson=events) uses explicit application sequence numbers to make this policy inspectable. Deliver revision two before revision one, then deliver two again. Observe the separate derivative outputs, completed-job ledger and latest pointer. Its numbers are teaching inputs, not real S3 sequencers.
 
-## Failures need somewhere to go
+<div id="failures-need-somewhere-to-go" aria-hidden="true"></div>
+
+## Retries and failed jobs
 
 A corrupted image can fail every time. Retrying it without a bound consumes workers without making progress. Separate transient failures from persistent input failures, record the cause and move exhausted work to a repair path. A queue's visibility timeout and redrive policy are part of the actual worker deployment; they are not object-storage settings.
 

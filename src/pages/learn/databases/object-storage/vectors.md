@@ -16,7 +16,9 @@ The index fixes properties including vector dimension and distance metric at cre
 
 Changing the embedding model is therefore a migration. Create and populate a compatible index, evaluate it, then switch queries and source references deliberately. Mixing old and new spaces can return plausible-looking but meaningless neighbours. The [index guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors-indexes.html) describes the service's index configuration.
 
-## Derive a small result
+<div id="derive-a-small-result" aria-hidden="true"></div>
+
+## Ranking and filtering
 
 Our sandbox uses invented two-dimensional coordinates and squared Euclidean distance so you can inspect every calculation. It does not use a real embedding model or reproduce S3's managed search algorithm. The query is `[1,0]`:
 
@@ -31,13 +33,17 @@ For B, subtract each coordinate from the query: 0.2 and −0.2. Squaring and add
 
 Fetching the global top two and then discarding non-storage results returns only B. That is a different operation. The [vector lesson](/learn/databases/object-storage/sandbox/?lesson=vectors) makes the candidate set visible before ranking so you can change the filter and predict the result.
 
-Distance does not establish relevance by itself. A nearby passage may mention the right words while failing to answer the question.
+## Measuring retrieval quality
+
+The four-vector calculation gives an exact ranking for its chosen metric. Distance does not establish relevance by itself. A nearby passage may mention the right words while failing to answer the question.
 
 At larger scales, an approximate index can speed retrieval by avoiding a comparison with every stored vector, but it may miss some exact nearest neighbours.
 
 For an exact baseline on a manageable real dataset, compute distances to every vector that meets the same filter and keep the nearest K. Compare the service's returned IDs with that set: returning eight of the exact top ten gives recall@10 of 0.8. Evaluate answer usefulness separately with representative questions. High recall can faithfully retrieve the embedding model's nearest neighbours while those passages still fail to answer a user. The small coordinates teach ranking and filtering; they cannot establish real-model recall or answer quality.
 
-## The real query contract
+<div id="the-real-query-contract" aria-hidden="true"></div>
+
+## S3 Vectors queries and index modes
 
 An S3 Vectors query identifies an index, supplies a query vector, requests a number of neighbours and may include a metadata filter. It returns record keys, with optional distances and metadata. The application uses those identities to fetch the original passages or other content. The [QueryVectors API](https://docs.aws.amazon.com/AmazonS3/latest/API/API_S3VectorBuckets_QueryVectors.html) defines the request and response fields.
 

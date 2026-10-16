@@ -24,6 +24,24 @@ Instead of replacing `photo.jpg`, publish the new photograph at `photos/i-83/r2.
 
 The changing reference still needs a freshness policy. An HTML page, API response or manifest that selects r2 cannot remain cached forever if readers need new revisions promptly. Give stable assets and changing references different policies. A long-lived asset cache does not help when the page selecting the asset is stale.
 
+For a public photograph whose revision URL will never change, the origin response might include:
+
+```http
+Cache-Control: public, max-age=31536000, immutable
+```
+
+`max-age` sets a freshness lifetime of one year in seconds. `public` permits shared caching, and [`immutable`](https://www.rfc-editor.org/rfc/rfc8246.html) tells clients that the representation will not change during that lifetime, avoiding unnecessary validation while it is fresh. The header does not prevent a writer from overwriting the object; the revision-naming rule must keep that promise.
+
+For a public manifest that selects the current photograph, use a policy such as:
+
+```http
+Cache-Control: no-cache, stale-if-error=0
+```
+
+Despite its name, `no-cache` allows storage but requires successful validation before reusing the response. `no-store` instead tells caches not to retain it. These [response directives](https://www.rfc-editor.org/rfc/rfc9111.html#section-5.2.2) let the manifest be checked on each use while unchanged image bytes remain reusable.
+
+For CloudFront, set the minimum TTL to zero for the manifest's cache behaviour. The `stale-if-error=0` directive addresses a separate failure case: CloudFront can otherwise serve a previously cached object when the origin is unreachable. Here we choose an error over a manifest whose current state cannot be checked. The [CloudFront expiration rules](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Expiration.html) explain how these settings interact. Private delivery needs the access rules discussed below as well.
+
 A digest or revision in the filename makes identity visible and avoids depending on how a CDN includes query parameters in its cache key. Query-string versioning can also work, but only if the cache policy actually distinguishes the parameter. The [CloudFront versioning guidance](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/UpdatingExistingObjects.html) explains versioned names and invalidation as different update mechanisms.
 
 Removing r1 immediately would still break a reader whose cached page points to it but whose image cache does not contain it. Retain old assets for the supported lifetime of pages and clients. Naming and caching therefore meet the same reader-lifetime problem as [dataset publication](/learn/databases/object-storage/publication/).

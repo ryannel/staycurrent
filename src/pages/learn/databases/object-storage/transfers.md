@@ -8,7 +8,9 @@ Uploading an object means transferring bytes and deciding when they are safe to 
 
 The distinction is between transfer state and readable object state. A service can hold uploaded parts without yet having an object that an ordinary GET can return. Following those two states separately makes retries, completion and cleanup much easier to understand.
 
-## A transfer in three stages
+<div id="a-transfer-in-three-stages" aria-hidden="true"></div>
+
+## Multipart upload
 
 An uploader wants to store a 13 MiB recording at a new key, `recordings/r-7.bin`. It chooses three parts: 5 MiB, 5 MiB and 3 MiB. The final part may be smaller than the usual minimum. These sizes satisfy S3's multipart constraints; a real uploader chooses part sizes using the expected object size, maximum part count and available concurrency. The maintained [multipart limits](https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html) should drive that choice. In this example, no other writer uses the destination key.
 
@@ -18,7 +20,9 @@ First, `CreateMultipartUpload` establishes the upload and returns an upload ID. 
 
 Part 3 can finish before part 2. Completion still orders the bytes by part number, not arrival time. Sending new bytes for the same part number replaces that part in this upload. Therefore, the uploader must keep its completion list consistent with the accepted parts. The [multipart process](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html) explains the relationship between upload IDs, part ETags and completion.
 
-## Resume the same source
+<div id="resume-the-same-source" aria-hidden="true"></div>
+
+## Retries and completion failures
 
 Suppose part 2's connection breaks. The uploader can retry that part rather than resend parts 1 and 3. But it must retry bytes from the same source revision. If a local file changed between requests, successfully assembling parts would produce a recording that never existed as a complete source file.
 
@@ -56,7 +60,9 @@ Several range requests must still describe one object revision. If the key is ov
 
 A byte range is not a row filter. Asking for a slice in the middle of a compressed stream may leave the client unable to decode it. Formats designed for independent blocks, with metadata locating those blocks, make selective reading practical. This is one reason analytical storage layouts matter even when their files all live in the same object store.
 
-## Finishing abandoned work
+<div id="finishing-abandoned-work" aria-hidden="true"></div>
+
+## Aborting incomplete uploads
 
 An uploader can fail permanently after sending two parts. Ordinary object listing will not make those parts look like a finished recording, but they still consume storage. Abort the unfinished upload when the work is abandoned; configure an incomplete-upload lifecycle rule as a backstop.
 
