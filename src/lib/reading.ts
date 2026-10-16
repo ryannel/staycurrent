@@ -1,8 +1,10 @@
 import { relationalCollection, relationalArticleHref } from './relational-collection';
 import { objectArticles, objectHome } from './object-storage-collection';
+import { drawingCollection, drawingHref } from './drawing-collection';
 
 export const databaseGuide = '/learn/databases/choosing/';
 export const relationalHome = '/learn/databases/relational/';
+export const drawingHome = drawingHref('');
 export interface ReadingEntry { href: string; title: string; description: string; group: string; keywords?: string; }
 export const reading: ReadingEntry[] = [
   { href: databaseGuide, title: 'Databases and storage: a field guide', description: 'The main approaches to storing data, the problems they solve, and when to choose them.', group: 'Start here' },
@@ -25,12 +27,17 @@ export const reading: ReadingEntry[] = [
   ...objectArticles.map(article => ({ href: `${objectHome}${article.slug}/`, title: article.title, description: article.description, group: `Object storage · ${article.group}`, keywords: 'Amazon S3 objects bucket' })),
   { href: `${objectHome}sandbox/`, title: 'Object-storage sandbox', description: 'Guided local models for requests, uploads, versions and application protocols.', group: 'Practice', keywords: 'S3 objects bucket playground' },
   { href: `${objectHome}practice/`, title: 'Try the requests against S3', description: 'A real-service worksheet for conditional writes and version recovery.', group: 'Practice', keywords: 'Amazon AWS CLI' },
+  ...drawingCollection.map(article => ({ href: drawingHref(article.slug), title: article.slug ? article.title : 'Drawing systems and processes: an introduction', description: article.description, group: 'Drawing systems and processes', keywords: 'diagrams whiteboard C4 UML BPMN' })),
   { href: '/assessments/postgres-vectors/', title: 'Can Postgres handle vector search for my application?', description: 'A dated assessment of pgvector, retrieval quality and operating costs.', group: 'Assessments', keywords: 'PostgreSQL embeddings' },
 ];
 
 export function breadcrumbs(path: string, title: string) {
   const trail = [{ href: '/', title: 'Home' }];
   if (path === '/') return [];
+  if (path.startsWith(drawingHome)) {
+    trail.push({ href: drawingHome, title: 'Drawing systems and processes' });
+    if (path === drawingHome) return trail;
+  }
   if (path.startsWith('/learn/databases/') || path.startsWith('/assessments/')) {
     trail.push({ href: databaseGuide, title: 'Databases and storage' });
     if (path === databaseGuide) return trail;

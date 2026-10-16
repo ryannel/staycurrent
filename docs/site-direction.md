@@ -33,16 +33,26 @@ A separate CLI worksheet supports real-service practice and states its execution
 evidence. The homepage, reading directory, field guide and Playgrounds expose both
 published collections. Other families retain their existing publication status.
 
+## Drawing systems publication, 16 October 2026
+
+The user authorised publication of the drawing-systems collection, which had been
+complete as an unlisted draft. Its ten articles, 54 editable SVG illustrations and
+printable shape reference now sit at `/learn/drawing-systems/`. The draft label and
+noindex markers are gone. The collection joins the reading directory, site search,
+breadcrumbs, the header and the footer. The homepage presents it beside Databases
+and storage as a practice that applies in every field, rather than as another
+engineering field.
+
 ## Where readers enter
 
 `/` is the site-wide overview. It introduces the purpose of the publication,
-links to the available database reading, and shows the other planned fields:
+links to the database reading and the drawing-systems collection, and shows the other planned fields:
 APIs and service communication, messaging and event-driven systems, observability,
 and AI application engineering. Planned fields are plain descriptions, not empty
 article destinations. There is no invented news or updates section to fill.
 
-The shared navigation offers the overview, All articles, Databases and storage,
-Playgrounds and Search. Search opens over the current page, with Cmd/Ctrl+K access,
+The shared navigation offers the overview, All articles, Playgrounds, Databases and
+storage, Drawing systems and Search. Search opens over the current page, with Cmd/Ctrl+K access,
 keyboard navigation, recent searches and filters for articles, guides and playgrounds.
 `/search/` provides the same full-text search with shareable URLs, excerpts and
 links into matching sections. Its static index
