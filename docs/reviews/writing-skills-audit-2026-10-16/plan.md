@@ -172,7 +172,7 @@ gets context, the reader's situation and good passages, and no list of banned
 habits; showing a model bad examples tends to make it produce them, and banning a
 form invites a substitute ("instead of" for "not X but Y"). The firm checks go to
 a separate line editor who doesn't write the article. The user should confirm
-that division (decision 1 below).
+that division. They did (see "Decisions").
 
 ## The plan
 
@@ -282,11 +282,10 @@ Only after the user accepts a trial article:
   review skill. Move the review method (blindness, chunking, extraction) into
   `references/protocol.md`, so the skill itself holds only the coordinator's
   decisions.
-- Add a user checkpoint before drafting each batch: the title, description,
-  heading list and term map for its first article. That takes a couple of minutes
-  and catches the faults where they start. It changes the line in `CLAUDE.md`
-  that "agent review can complete a draft without routine human editing", so it
-  needs the user's agreement (decision 2).
+- Check the title, description, heading list and term map before any prose is
+  written. The user chose to keep production unattended, so the line editor does
+  this check, applying the advice-heading and ungiven-word definitions. `CLAUDE.md`
+  stays as it is.
 - Add a rule for recording feedback: the user's words go in unedited and
   ungeneralised. A lesson drawn from them is labelled as the agent's reading.
 - Repairs replace text instead of adding to it, and a repair round that makes
@@ -387,18 +386,18 @@ would make useful additions. Their sites are blocked by this environment's
 network policy (`samwho.dev`, `ciechanow.ski`, `jvns.ca`). They can join the
 benchmark if those domains are allowed in the environment's network settings.
 
-## Decisions for the user
+## Decisions
 
-1. **Firm checks with a separate line editor.** You earlier asked the skills to
-   lead with context and good examples and to trust the agent. The plan keeps
-   that for the writer and adds a line editor who checks a list of habits and
-   rewrites the hits. Is that acceptable?
-2. **A two-minute review before drafting.** You'd read the title, heading list
-   and term map before a batch is written. Is that acceptable?
-3. **The trial subject.** Choose a short new article (a candidate from planned
-   coverage), or let the trial author pick one.
-4. **The drawing collection.** It can stay published as it is until stage 4, or
-   be withdrawn until it's rewritten.
+The user answered these on 16 October 2026.
+
+1. **A separate line editor:** yes. Writers work from the positive style guide;
+   the line editor enforces the habit list and writes the rewrites.
+2. **A user review before drafting:** no, production stays unattended. The line
+   editor checks the title, headings and term map before drafting instead.
+3. **The trial subject:** file systems, under databases and storage. The site
+   doesn't cover them yet.
+4. **The drawing collection:** it stays published and is rewritten article by
+   article once the trial succeeds.
 
 ## Review record
 
