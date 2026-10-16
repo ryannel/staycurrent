@@ -258,7 +258,7 @@ export const scenarios: Record<string, ScenarioDef> = {
           },
         });
         b.status('ui', 'done', 'has R17');
-        return b.finish('The API stores the request, then calls the email provider and waits for its reply. The provider takes 2.5 seconds, so the browser waits more than 2.5 seconds for its receipt.');
+        return b.finish('The API stores the request, then calls the email provider and waits for its reply. The provider takes 2.5 seconds, so the browser waits more than 2.5 seconds for 201 Created.');
       }
       const reqT = b.T;
       const post = b.msg('ui', 'api', 'POST /repairs', 'sync', { ms: 30 });
@@ -336,13 +336,13 @@ export const scenarios: Record<string, ScenarioDef> = {
       b.status('worker', 'gave up', 'no reply');
       if (p.history === 'slow') {
         b.pause(1.2, 4000);
-        const rep = b.msg('provider', 'worker', '202 Accepted, at 14 s', 'lost', { ms: 20, lostAt: 0.85 });
+        const rep = b.msg('provider', 'worker', '202 Accepted, at 14 s', 'reply', { ms: 20 });
         b.bar('provider', 'busy', req.row, rep.row, req.occ[0].t1, rep.occ[0].t0);
         b.pause(0.2, 200);
         b.msg('provider', 'inbox', 'Deliver email', 'async', { ms: 600 });
         b.status('inbox', 'delivered', '1 email');
       }
-      const said = { 'request-lost': 'The request never reaches the provider, so no email is sent.', 'reply-lost': 'The provider accepts the request and delivers the email, but its reply is lost on the way back.', slow: 'The provider takes 14 seconds; its reply arrives after the worker has stopped listening, and the email is delivered.' }[p.history];
+      const said = { 'request-lost': 'The request never reaches the provider, so no email is sent.', 'reply-lost': 'The provider accepts the request and delivers the email, but its reply is lost on the way back.', slow: 'The provider takes 14 seconds. Its reply reaches the worker after the worker has stopped waiting, and the email is delivered.' }[p.history];
       return b.finish(`The worker sends POST /emails and waits. ${said} In every case the worker sees the same thing: no reply after 10 seconds.`);
     },
   },
@@ -436,7 +436,7 @@ export const scenarios: Record<string, ScenarioDef> = {
       const n = Number(p.passes);
       const b = new Builder([P.ui, P.api, P.db], { clock: true });
       b.pause(0.2);
-      b.loop('[until status is scheduled]', 'ui', 'db', n, k => {
+      b.loop('[status not scheduled]', 'ui', 'db', n, k => {
         const last = k === n - 1;
         b.msg('ui', 'api', 'GET /repairs/R17', 'sync', { ms: 30, T: 0.6 }); b.pause(0.1, 1);
         b.msg('api', 'db', 'SELECT status', 'sync', { ms: 1, T: 0.5 }); b.pause(0.1, 2);
