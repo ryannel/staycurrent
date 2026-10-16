@@ -19,7 +19,7 @@ export const checkpoints: Scene<CkptState> = {
   id: 'checkpoints',
   onParam: 'end',
   params: [{
-    id: 'every', label: 'Checkpoint', initial: '10',
+    id: 'every', label: 'Checkpoint', initial: '5',
     options: [{ value: '5', label: 'every 5 records' }, { value: '10', label: 'every 10' }, { value: '20', label: 'every 20' }, { value: '0', label: 'never' }],
   }],
   steps: ({ every }) => {
@@ -134,7 +134,7 @@ export const tornPage: Scene<TornState> = {
       steps.push({ text: 'Recovery reaches the record with the full-page image and copies all 8 kB over the torn page.', state: { mem: false, disk: sectors(16), hot: true, status: 'whole' } });
       steps.push({ text: 'Page 12 is whole again. Any later records for it are replayed on top of this copy.', state: { mem: false, disk: sectors(16), status: 'whole', result: { text: 'Page 12 restored from the WAL.', kind: 'ok' } } });
     } else {
-      steps.push({ text: 'Recovery has only the change record. Replaying it fixes the few bytes it describes, but not the sectors that never arrived.', state: { mem: false, disk: sectors(6), hot: true, status: 'torn' } });
+      steps.push({ text: 'Recovery has only the change record, and it skips it. Sector 0 holds the page header, which arrived with the new LSN, so the page looks up to date. Even replayed, the record couldn’t rebuild sectors that never arrived.', state: { mem: false, disk: sectors(6), hot: true, status: 'torn' } });
       steps.push({ text: 'With data checksums, on by default in PostgreSQL 18, the damage is caught when the page is read. Without them it can go unnoticed.', state: { mem: false, disk: sectors(6), status: 'torn', result: { text: 'Page 12 is still torn.', kind: 'bad' } } });
     }
     return steps;

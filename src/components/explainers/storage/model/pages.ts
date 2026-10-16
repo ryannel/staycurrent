@@ -113,7 +113,7 @@ type BufState = {
 };
 
 const FILE_PAGES = [10, 11, 12, 13, 31];
-const PAGE_ROWS: Record<number, string[]> = { 12: ['P3', 'P9', 'P7'], 31: ['P38', 'P40', 'P41'] };
+const PAGE_ROWS: Record<number, string[]> = { 12: ['P3', 'P9', 'P7'], 13: ['P48', 'P50', 'P52'], 31: ['P38', 'P40', 'P41'] };
 
 export const bufferRead: Scene<BufState> = {
   id: 'buffer-read',
@@ -127,6 +127,8 @@ export const bufferRead: Scene<BufState> = {
       { text: 'The next query asks for P3, at page 12, item 1. Page 12 is already in memory, so this is a hit. There is no disk access.', state: { slots: [12, null, null, null], hits: 1, reads: 1, query: 'P3 → (12,1)', row: '12-P3', outcome: { text: 'hit', kind: 'hit' } } },
       { text: 'P40 lives on page 31. That is another miss and another read.', state: { slots: [12, 31, null, null], hits: 1, reads: 2, query: 'P40 → (31,2)', focus: 31, from: 31, row: '31-P40', outcome: { text: 'read', kind: 'miss' } } },
       { text: 'Ask for P7 again and it is a hit.', state: { slots: [12, 31, null, null], hits: 2, reads: 2, query: 'P7 → (12,3)', row: '12-P7', outcome: { text: 'hit', kind: 'hit' } } },
+      { text: 'Other queries read pages 10 and 11. All four slots are now in use.', state: { slots: [12, 31, 10, 11], hits: 2, reads: 4 } },
+      { text: 'P50 lives on page 13, and there is no free slot. PostgreSQL sweeps the slots like a clock hand, lowering each page’s usage count, and evicts the first page it finds at zero. Page 12 was used three times, so it outlasts the sweep. Page 31 is evicted, and page 13 takes its slot.', state: { slots: [12, 13, 10, 11], hits: 2, reads: 5, query: 'P50 → (13,2)', focus: 13, from: 13, row: '13-P50', outcome: { text: 'read', kind: 'miss' } } },
     ];
   },
   stats: state => [
