@@ -1,0 +1,214 @@
+---
+import { scenarios, defaults, layout, renderSVG, events, stops } from './sequence-model';
+import './sequences.css';
+
+interface Props { scenario: string; n: number }
+const { scenario, n } = Astro.props;
+const def = scenarios[scenario];
+if (!def) throw new Error(`Unknown sequence scenario: ${scenario}`);
+const params = defaults(def);
+const s = def.build(params);
+const uid = `seq-${scenario}`;
+const titleId = `${uid}-summary`;
+// The server renders the finished diagram so the figure reads without JavaScript.
+const svg = renderSVG(s, layout(s, 640), s.duration, uid, titleId);
+const ev = events(s);
+const ticks = stops(s);
+---
+<seq-player data-scenario={scenario} data-uid={uid}>
+  <figure class="seq-fig" aria-labelledby={`${uid}-title`}>
+    <div class="seq-top">
+      <p class="seq-heading" id={`${uid}-title`}><span class="seq-kicker">Animation {n}</span> {def.title}</p>
+      <p class="seq-clock" data-clock hidden={!s.clock}></p>
+    </div>
+    {def.params.length > 0 && (
+      <div class="seq-params">
+        {def.params.map(p => p.type === 'toggle' ? (
+          <label class="seq-toggle"><input type="checkbox" data-param={p.id} checked={p.default === 'on'} /> {p.label}</label>
+        ) : (
+          <label class="seq-choice">{p.label} <select data-param={p.id}>{p.options!.map(o => <option value={o.value} selected={o.value === p.default}>{o.label}</option>)}</select></label>
+        ))}
+      </div>
+    )}
+    <div class="seq-stage" data-stage set:html={svg} />
+    <p class="seq-summary" id={titleId} data-summary>{s.summary}</p>
+    <div class="seq-controls" data-controls hidden>
+      <button type="button" class="seq-btn seq-play" data-act="play" aria-label="Play"><svg viewBox="0 0 16 16" aria-hidden="true"><path data-icon d="M4 2.5v11l9-5.5z" /></svg><span data-play-text>Play</span></button>
+      <button type="button" class="seq-btn" data-act="back" aria-label="Step back"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h2v10H3zM13 3v10L6 8z" /></svg></button>
+      <button type="button" class="seq-btn" data-act="fwd" aria-label="Step forward"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11 3h2v10h-2zM3 3v10l7-5z" /></svg></button>
+      <div class="seq-scrub">
+        <input type="range" data-scrub min="0" max={s.duration} step="0.01" value={s.duration} aria-label="Position in the animation" />
+        <div class="seq-ticks" data-ticks aria-hidden="true">{ticks.map(t => <span style={`left:${(t / s.duration) * 100}%`} />)}</div>
+      </div>
+      <button type="button" class="seq-btn" data-act="reset">Reset</button>
+    </div>
+    <p class="seq-now" data-now aria-live="polite"></p>
+    <details class="seq-transcript">
+      <summary>Messages in order, as text</summary>
+      <ol data-transcript>{ev.map(e => <li>{e.text}</li>)}</ol>
+    </details>
+    <noscript><p class="seq-noscript">With JavaScript off, this shows the finished diagram for the default settings.</p></noscript>
+  </figure>
+</seq-player>
+
+<script>
+  import { scenarios, defaults, layout, renderSVG, updateSVG, events, stops, clockAt, formatMs } from './sequence-model';
+  import type { Scenario, Layout, Event } from './sequence-model';
+
+  class SeqPlayer extends HTMLElement {
+    connectedCallback() {
+      const def = scenarios[this.dataset.scenario!];
+      const uid = this.dataset.uid!;
+      const titleId = `${uid}-summary`;
+      const q = <T extends Element>(sel: string) => this.querySelector(sel) as T;
+      const stage = q<HTMLElement>('[data-stage]');
+      const scrub = q<HTMLInputElement>('[data-scrub]');
+      const ticks = q<HTMLElement>('[data-ticks]');
+      const now = q<HTMLElement>('[data-now]');
+      const clock = q<HTMLElement>('[data-clock]');
+      const playBtn = q<HTMLButtonElement>('[data-act="play"]');
+      const playText = q<HTMLElement>('[data-play-text]');
+      const playIcon = q<SVGPathElement>('[data-icon]');
+      const transcript = q<HTMLOListElement>('[data-transcript]');
+      const summary = q<HTMLElement>('[data-summary]');
+      const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+      q<HTMLElement>('[data-controls]').hidden = false;
+
+      let params = defaults(def);
+      let s: Scenario, L: Layout, ev: Event[], st: number[];
+      let svg: SVGSVGElement | null = null;
+      let T = 0, width = 0, raf = 0, timer = 0, lastFrame = 0;
+      let lastText = '';
+      let playing = false, target: number | null = null, touched = false;
+
+      const build = () => {
+        s = def.build(params);
+        ev = events(s);
+        st = stops(s);
+        scrub.max = String(s.duration);
+        ticks.innerHTML = st.map(t => `<span style="left:${(t / s.duration) * 100}%"></span>`).join('');
+        transcript.innerHTML = '';
+        for (const e of ev) { const li = document.createElement('li'); li.textContent = e.text; transcript.append(li); }
+        summary.textContent = s.summary;
+        clock.hidden = !s.clock;
+      };
+      const render = () => {
+        width = stage.clientWidth;
+        L = layout(s, width);
+        stage.innerHTML = renderSVG(s, L, T, uid, titleId);
+        svg = stage.querySelector('svg');
+      };
+      const setPlayLabel = () => {
+        const atEnd = T >= s.duration - 1e-3;
+        const label = playing ? 'Pause' : atEnd ? 'Replay' : 'Play';
+        playText.textContent = label;
+        playBtn.setAttribute('aria-label', label);
+        playIcon.setAttribute('d', playing ? 'M4 3h3v10H4zM9 3h3v10H9z' : atEnd ? 'M8 3a5 5 0 1 1-4.6 3H1.5L4.5 2.5 7.5 6H5.6A3 3 0 1 0 8 5z' : 'M4 2.5v11l9-5.5z');
+      };
+      const draw = () => {
+        if (!svg) return;
+        updateSVG(svg, s, L, T);
+        scrub.value = String(T);
+        if (s.clock) clock.textContent = `Clock ${formatMs(clockAt(s, T))}`;
+        let step = -1;
+        ev.forEach((e, i) => { if (e.t0 <= T + 1e-6) step = i; });
+        const text = step >= 0 ? `Step ${step + 1} of ${ev.length} · ${ev[step].text}` : `Ready · ${ev.length} steps`;
+        scrub.setAttribute('aria-valuetext', step >= 0 ? `Step ${step + 1} of ${ev.length}` : 'Start');
+        if (text !== lastText) { lastText = text; now.textContent = text; }
+        setPlayLabel();
+      };
+      const stop = () => {
+        playing = false; target = null;
+        cancelAnimationFrame(raf); clearInterval(timer);
+        now.setAttribute('aria-live', 'polite');
+        setPlayLabel();
+      };
+      const tick = (time: number) => {
+        const dt = Math.min(0.1, (time - lastFrame) / 1000);
+        lastFrame = time;
+        const end = target ?? s.duration;
+        T = Math.min(end, T + dt);
+        draw();
+        if (T >= end - 1e-6) { stop(); draw(); return; }
+        raf = requestAnimationFrame(tick);
+      };
+      const nextStop = () => st.find(t => t > T + 1e-3) ?? s.duration;
+      const prevStop = () => [...st].reverse().find(t => t < T - 1e-3) ?? 0;
+      const play = (until: number | null = null) => {
+        stop();
+        if (T >= s.duration - 1e-3) T = 0;
+        playing = true;
+        target = until;
+        now.setAttribute('aria-live', until === null ? 'off' : 'polite');
+        if (motion.matches) {
+          // Reduced motion: jump between steps instead of animating.
+          const jump = () => { T = nextStop(); draw(); if (T >= (target ?? s.duration) - 1e-3) { stop(); draw(); } };
+          jump();
+          if (playing && until === null) timer = window.setInterval(jump, 1100);
+          else stop();
+          draw();
+          return;
+        }
+        lastFrame = performance.now();
+        raf = requestAnimationFrame(tick);
+        setPlayLabel();
+      };
+
+      this.addEventListener('click', e => {
+        const btn = (e.target as Element).closest<HTMLButtonElement>('button[data-act]');
+        if (!btn) return;
+        touched = true;
+        const act = btn.dataset.act;
+        if (act === 'play') { if (playing) stop(); else play(); }
+        if (act === 'fwd') play(nextStop());
+        if (act === 'back') { stop(); T = prevStop(); draw(); }
+        if (act === 'reset') {
+          stop();
+          params = defaults(def);
+          this.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-param]').forEach(el => {
+            const v = params[el.dataset.param!];
+            if (el instanceof HTMLInputElement) el.checked = v === 'on'; else el.value = v;
+          });
+          build(); T = 0; render(); draw();
+        }
+      });
+      scrub.addEventListener('input', () => { touched = true; stop(); T = Number(scrub.value); if (T > s.duration - 0.02) T = s.duration; draw(); });
+      scrub.addEventListener('keydown', e => {
+        if (!['ArrowRight', 'ArrowUp', 'ArrowLeft', 'ArrowDown'].includes(e.key)) return;
+        e.preventDefault(); touched = true; stop();
+        T = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? nextStop() : prevStop();
+        draw();
+      });
+      this.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-param]').forEach(el => {
+        el.addEventListener('change', () => {
+          touched = true;
+          stop();
+          params = { ...params, [el.dataset.param!]: el instanceof HTMLInputElement ? (el.checked ? 'on' : 'off') : el.value };
+          build();
+          T = motion.matches ? s.duration : 0;
+          render(); draw();
+          if (!motion.matches) play();
+        });
+      });
+
+      build();
+      T = motion.matches ? s.duration : 0;
+      render(); draw();
+
+      new ResizeObserver(() => {
+        if (Math.abs(stage.clientWidth - width) > 4) { render(); draw(); }
+      }).observe(stage);
+
+      if (!motion.matches) {
+        const io = new IntersectionObserver(entries => {
+          if (entries.some(en => en.isIntersecting)) {
+            io.disconnect();
+            if (!touched) play();
+          }
+        }, { threshold: 0.5 });
+        io.observe(stage);
+      }
+    }
+  }
+  if (!customElements.get('seq-player')) customElements.define('seq-player', SeqPlayer);
+</script>
