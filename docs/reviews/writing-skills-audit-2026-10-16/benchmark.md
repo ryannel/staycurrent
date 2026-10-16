@@ -1,40 +1,51 @@
 # Writing benchmark
 
-Human prose we measure our writing and our checks against. The texts aren't
-copied here: both books' prose is licensed CC BY-NC-ND 4.0, so read them from a
-clone at the pinned commits and quote briefly with attribution.
+Human prose we measure our writing and our checks against. The site's reader is
+a working engineer skimming for terms they might know, so the benchmark is a
+reference book written for that reader. The user named *Designing
+Data-Intensive Applications* as the model. It isn't freely available, so we use
+the closest book that is.
 
 | Chapter | Book | Repository and commit | File |
 | --- | --- | --- | --- |
-| A Map of the Territory | Robert Nystrom, *Crafting Interpreters* | `munificent/craftinginterpreters` at `4a840f70f69c6ddd17cfef4f6964f8e1bcd8c3d4` | `book/a-map-of-the-territory.md` |
-| State | Robert Nystrom, *Game Programming Patterns* | `munificent/game-programming-patterns` at `898b1f2e1818c80d7eed5eba98e9903ec13b7771` | `book/state.markdown` |
+| Building Blocks of TCP | Ilya Grigorik, *High Performance Browser Networking* (O'Reilly, 2013) | `igrigorik/hpbn.co` at `0cc06d75b5e9de091d20f68951e39115082d0177` | `building-blocks-of-tcp/index.html` |
+| HTTP/2 | Ilya Grigorik, *High Performance Browser Networking* (O'Reilly, 2013) | same | `http2/index.html` |
 
-Published versions: <https://craftinginterpreters.com/a-map-of-the-territory.html>
-and <https://gameprogrammingpatterns.com/state.html>.
+Published versions: <https://hpbn.co/building-blocks-of-tcp/> and
+<https://hpbn.co/http2/>.
+
+The text is licensed CC BY-NC-ND 4.0. Read it from a clone and quote briefly
+with attribution; don't copy chapters into this repository.
 
 ```bash
 dir="${TMPDIR:-/tmp}/staycurrent-benchmark"
-git clone https://github.com/munificent/craftinginterpreters "$dir/ci"
-git -C "$dir/ci" checkout 4a840f70f69c6ddd17cfef4f6964f8e1bcd8c3d4
-git clone https://github.com/munificent/game-programming-patterns "$dir/gpp"
-git -C "$dir/gpp" checkout 898b1f2e1818c80d7eed5eba98e9903ec13b7771
+git clone https://github.com/igrigorik/hpbn.co "$dir/hpbn"
+git -C "$dir/hpbn" checkout 0cc06d75b5e9de091d20f68951e39115082d0177
 ```
 
-The source is Markdown with a few extensions. `<aside>` blocks are margin notes
-on the published page. `^code name` marks where a code sample appears; *Game
-Programming Patterns* keeps its samples in separate C++ files, so read the
-published chapter when the code matters.
+The chapters are the published HTML. `<aside>` elements are sidebars, and
+level-four headings mark them. Extracting plain text drops the equations, so
+read the HTML or the published page when a calculation matters. The files are
+only read, never served or run.
 
-The texts are only read, never built or run.
+## Why this book
 
-## Why these two
+Its headings are the terms an engineer would skim for, and the first sentence
+of each section usually defines the term or sets it against something familiar.
+Sections vary in length with the material and follow no template. The book
+predates language models.
 
-*A Map of the Territory* walks one line of code through every stage of a
-language implementation. It's an overview whose headings are the stages
-themselves, the closest match to our collection introductions. *State* teaches
-an idea by growing one example, the heroine's jump, until the idea is the
-obvious fix. It's the closest match to the drawing-systems articles.
+It isn't perfect. Some terms arrive late in their sections, the HTTP/2 chapter
+spends about 200 lines on history before its first defined term, and there's
+some promotional tone. Some of its HTTP/2 content, such as stream priorities and
+server push, has since been deprecated. That matters for content but not for
+the writing comparison.
 
-Sam Who's *Load Balancing*, Bartosz Ciechanowski's *Gears* and Julia Evans's
-posts, which `docs/writing-style.md` already names, should join when the
-environment's network policy allows `samwho.dev`, `ciechanow.ski` and `jvns.ca`.
+## Additions
+
+- *Designing Data-Intensive Applications* (Kleppmann): the user's model. If
+  chapters are supplied, they become the primary benchmark, read locally and
+  never committed.
+- Sam Who, Bartosz Ciechanowski and Julia Evans, the explainers
+  `docs/writing-style.md` names, aren't reachable from this environment and are
+  written for a different reader: someone following an explanation from the top.
