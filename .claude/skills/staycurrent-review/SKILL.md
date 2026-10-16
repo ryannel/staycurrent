@@ -74,6 +74,18 @@ does not contain their children. Familiar technical names can make useful landma
 If the map does not give a useful overview or support navigation, record a structural
 repair before judging the article ready; correct examples do not compensate for it.
 
+Also compare the addition with equivalent sections and collection entrances on
+the surrounding site. A page can read well in isolation while introducing an
+inconsistent name or reading path. Check whether headings, section roles and onward
+links give equivalent destinations equivalent treatment, and whether choice labels
+answer the page's framing question. Verify what the linked pages actually offer:
+similar wording must not conceal different roles or imply that planned reading is
+available. The style skill's object-storage and relational link example illustrates
+this comparison. Record a mismatch with its neighbouring example and the reader
+expectation it disrupts; repair incidental drift while retaining differences that
+serve the subject. For an uncued reader, preserve the first reading before supplying
+these comparisons or prior editorial findings.
+
 Use the tree to assess technical completeness as well as navigation: given this
 article's subject and promise, what important explanation would you expect to find
 that has no apparent place? Test the expectation against the actual body and, where

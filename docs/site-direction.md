@@ -41,8 +41,12 @@ APIs and service communication, messaging and event-driven systems, observabilit
 and AI application engineering. Planned fields are plain descriptions, not empty
 article destinations. There is no invented news or updates section to fill.
 
-The shared navigation offers the overview, All articles, Databases and storage, and
-Playgrounds. `/playgrounds/` lists actual available tools, starting with the SQL
+The shared navigation offers the overview, All articles, Databases and storage,
+Playgrounds and Search. Search opens over the current page, with Cmd/Ctrl+K access,
+keyboard navigation, recent searches and filters for articles, guides and playgrounds.
+`/search/` provides the same full-text search with shareable URLs, excerpts and
+links into matching sections. Its static index
+is rebuilt with the site and follows the reading directory's available routes. `/playgrounds/` lists actual available tools, starting with the SQL
 sandbox; future technologies can join this entrance when useful experiments exist.
 `/articles/` lists available reading with a subject filter. Breadcrumbs expose the hierarchy on reading pages,
 and a compact collection switcher connects relational articles without requiring

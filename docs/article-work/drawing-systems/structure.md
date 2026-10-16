@@ -1,0 +1,30 @@
+# Drawing systems and processes
+
+Audience: engineers and collaborators who need to explain a system, discover a process, or draw while other people talk. No modelling notation or drawing training assumed.
+
+Proposed collection at /learn/drawing-systems/, with ten complete articles including its introduction. Each has worked drawings, questions a reader can answer, limitations and practical exercises with discussed answers. A repair service supplies a shared example where useful; separate examples are permitted when they teach more clearly.
+
+1. **Drawing systems and processes** — what a drawing commits us to; choosing by question (structure, responsibility, interaction, information, lifecycle); same situation in several views; fast routes for a meeting, architecture review and process discovery. Distinguish diagram family, notation, tool and visual style. Broader map includes service blueprints, data flows, decision tables, causal loops and timelines with honest boundaries.
+2. **Architecture diagrams** — C4 context, container, component and code; selecting a zoom; logical structure versus deployment; relationship labels and boundaries; worked context-to-container-to-component progression and deployment contrast. C4 is the intended interpretation of the requested C3.
+3. **Processes and swimlanes** — discovery, activities, decisions, ownership, handoffs, exceptions, parallel work, joins and waiting; Blueworks-style milestones and lanes; BPMN pools versus lanes, sequence versus message flow; before/after process with explicit assumptions. Bounded BPMN subset, not automation certification.
+4. **Sequence diagrams** — participants, lifelines, calls, replies and async messages; Mermaid source beside rendered interpretation; alternatives, loops and concurrency; ambiguous timeout and retry; when one scenario becomes too dense.
+5. **Domains and data relationships** — shared terms and concepts, identities, cardinality and optionality; domain model versus database schema; data-flow view and trust boundary; when event discovery or a service blueprint answers a different question.
+6. **States and lifecycles** — state versus activity; events, guards and effects; allowed and forbidden transitions; cancellation and races; hierarchical states and when to split; state table plus worked lifecycle.
+7. **Drawing at the whiteboard** — beginning with a question, extracting nouns/verbs/events, choosing and changing views; drawing from conversation or memory; a staged worked meeting; disagreement, uncertainty, facilitation, space, remote boards, stopping and capturing. A concrete first-five-minutes method.
+8. **A whiteboard shape vocabulary** — stroke-by-stroke, repeatable users, teams, browser, mobile app, service, database, files, queue, topic, worker, external service and boundaries; three coherent personality options; connectors and labels; practice with a timed drawing and critique. Distinctive yet quick, with a printable visual reference.
+9. **Layout, labels and five colours** — hierarchy, alignment, whitespace, crossings, splitting dense drawings, colour roles with black/blue/green/red/purple pens; monochrome fallback and accessibility; annotated before/after; mapping hand drawing into a professional visual style without decorative overhead.
+10. **Keeping diagrams useful** — choose tools by editing and collaboration needs, handoff from board to durable document, Mermaid versus manual layout versus modelling tools, views linked to decisions and owners, review for omissions and false guarantees, explicit current/proposed status, upkeep triggers, final worked repair and reusable capture template.
+
+Reading paths: first meeting → 1, 7, 8, 9; system design → 1, 2, 4, 5, 6; process discovery → 1, 3, 7; durable team documentation → relevant views then 10. Each article must also orient a direct entrant. The collection is cross-cutting top-level learning, separate from database coverage and the parked distributed-systems programme.
+
+Visual intent: exact editable SVGs with house theme tokens; diagrams are the subject so readers need relationships and stroke construction, not decorative artwork. Mobile-sized panels instead of shrinking a whole wall. Every figure has a meaningful text equivalent. Whiteboard shapes offer spare, rounded and lightly expressive variants while preserving the same semantics. A printable sheet and copyable source support practice.
+
+## Decisions after independent review
+
+16 October 2026. Both reviewers retained ten articles. The blind review was supplied only this proposal and the context-free voice reference; the adversarial reviewer recorded expected coverage before opening the proposal. Their original records remain beside this file.
+
+Accepted repairs: the introduction offers an immediate meeting route; each view tests a concrete case and consequential alternative; the final article tests cross-view disagreement. Domains is centred on conceptual modelling, with a bounded data-flow contrast. Architecture develops useful zoom choices without equal-depth coverage of every C4 level. Processes explicitly moves from discovery map to activities/roles and then process logic. Whiteboarding, vocabulary and layout share a composed repair-system example, with composition before symbol decoration. Informal arrows and boundaries carry local keys; formal semantics are taught where used. Five colours retain consistent roles with labels and marks, including on monochrome copies.
+
+The repair software teaching design has browser UI, Repair API, Repair DB, notification worker reading stored jobs, and external notification provider. This is an invented design used to expose diagram choices. Queue/topic symbols belong in the reusable vocabulary and explicitly separate variations. A cancellation process and lifecycle are compared for contradictions in the last article.
+
+All ten articles are commissioned now by the user's request. Their status is drafting, then independently reviewed locally. Publication is not authorised. New routes remain unlisted in public reading/navigation and carry noindex while this is a draft; no commit or deployment is part of the task.

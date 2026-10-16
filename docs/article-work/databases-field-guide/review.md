@@ -90,3 +90,68 @@ enlargement opened, took keyboard focus, and scrolled horizontally with ArrowRig
 Existing graph/cache artwork also received the fresh reader's rendered review.
 No new simulation or executable example was introduced. The local filesystem
 deep dive remains future coverage; the external reference is labelled honestly.
+
+## Choosing guidance revision · 16 October 2026
+
+The user found that the job map answered “What do you need to do?” with further
+questions. After those entries became direct descriptions of tasks, they identified
+the same problem in the sections: the object-storage opening began with a vague
+comparison between the size of a collection and its application, before explaining
+why the reader should consider this technology.
+
+This revision keeps the guide's orientation scope. Each of the nine family sections
+now establishes the work it suits before developing its example. Object storage
+connects named content retrieval to capacity independent of application disks,
+then explains access costs and the filesystem alternative for editing file parts.
+The other openings make their suitability explicit while retaining the mechanisms,
+trade-offs, overlapping capabilities and onward reading. No new media or experiments
+were needed. The introduction and concluding argument retain their existing scope.
+
+The rendered heading map remains: H1 Databases and storage; H2 What do you need to
+do?; the nine H2 family sections in map order; H2 How these choices fit together;
+H2 Further reading. Each family contains one H3 illustration title. These are
+subordinate teaching aids, not additional technology choices. The editorial
+reviewer's initial source report missed seven generated H3 titles; the assembled
+browser inspection established the complete hierarchy.
+
+The independent editor found that the original sections were comprehensible but
+repeatedly started an illustrative scene before establishing its purpose for a
+chooser. Their continuous rereading judged the revised viewpoint coherent and
+identified two remaining repetitions: the filesystem paragraph restated its opening
+criterion, and the relational section repeated its recommendation. Both were removed.
+The editor found no lost technical condition in the revised paragraphs.
+
+A separate reader received the article, audience and context-free reading guidance.
+They found no blocking comprehension gap and particularly valued the device/time
+example and the final explanation of overlapping approaches. They judged the prose
+concrete and the qualifications relevant to the choices. Their sequence observations
+were retrospective: they received the full source at once, then read component
+labels and captions. This is independent source-reading evidence, not a preserved
+blind first encounter with the rendered page. They noted that the graph caption
+supplies traversal direction; that existing explanation remains alongside the figure.
+
+Primary documentation rechecked for the changed explanations:
+
+- [S3 overview](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html)
+  and [storage classes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html):
+  named objects, capacity and access-cost choices.
+- [EFS overview](https://docs.aws.amazon.com/efs/latest/ug/whatisefs.html):
+  shared filesystem access.
+- [PostgreSQL concepts](https://www.postgresql.org/docs/current/tutorial-concepts.html),
+  [MongoDB modelling](https://www.mongodb.com/docs/manual/data-modeling/) and
+  [Cassandra modelling](https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/intro.html):
+  tables, nested documents and query-driven arrangements.
+- [ClickHouse introduction](https://clickhouse.com/docs/get-started/about/intro) and
+  [Neo4j graph concepts](https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/):
+  analytical column layout and traversing relationships.
+
+Suitability remains editorial judgement about the described work, not a measured
+product comparison. Existing evidence above supports the retained explanations.
+
+`pnpm build` passed with 77 pages. Browser inspection verified the revised text and
+map jump, and checked the object-storage passage at desktop and 390px phone widths
+in both themes. Light previews used the built page with dark media rules disabled
+by a temporary local server; dark previews used the development page. The phone
+page width matched its 390px viewport. No layout or component behaviour changed.
+
+Ready as a local draft revision. Review is not user approval or publication.

@@ -23,6 +23,16 @@ can help another agent without deciding the explanation for it. Keep a concise
 record in `docs/article-work/<slug>/` or an existing equivalent; expand it where
 the work warrants it.
 
+When extending an existing guide or collection, inspect comparable published
+sections and the pages that link into them. Carry forward useful conventions for
+section roles, heading hierarchy, collection names and onward-link wording so the
+addition fits the surrounding site. The style skill's field-guide example shows
+why a newly completed collection should not acquire a different kind of entrance
+label merely because it now includes more material. Let differences in reader
+purpose or actual content justify departures, and make consequential departures
+clear in the brief. This comparison should inform the new work, not expand it into
+an unrelated site-wide rewrite.
+
 The brief gives the author a reader to write for: what brought this person here,
 what they already understand, and what understanding would make the article useful.
 This matters at the opening as much as at the end. A supporting article may be

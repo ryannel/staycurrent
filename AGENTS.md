@@ -21,6 +21,12 @@ scope of one article, and keep the shared distributed-systems idea parked.
 Agent review can complete a draft without routine human editing; it does not
 authorise publication.
 
+## Delivery
+
+Commit and push authorised work to `origin/main` at relevant delivery points.
+A push to `main` deploys the site. Keep draft status and publication boundaries
+intact when saving article work.
+
 ## Checks
 
 ```bash

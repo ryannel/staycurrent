@@ -23,7 +23,8 @@ Every push to `main` builds and deploys to GitHub Pages through
 | Route | Purpose |
 | --- | --- |
 | `/` | Site overview, available reading and planned fields |
-| `/articles/` | Searchable directory of available reading |
+| `/articles/` | Directory of available reading, with a title and subject filter |
+| `/search/` | Full-text search across available articles, guides and playgrounds |
 | `/playgrounds/` | Guided, editable engineering experiments, with SQL and object-storage sandboxes |
 | `/learn/databases/choosing/` | Databases and storage field guide |
 | `/learn/databases/relational/` | Relational introduction and collection |
@@ -39,6 +40,18 @@ Every push to `main` builds and deploys to GitHub Pages through
 `src/lib/reading.ts` indexes available reading for the directory and supplies
 breadcrumbs. The shared layout provides breadcrumbs and collection article
 switchers. Keep new reading discoverable here as it becomes available.
+
+Full-text search uses Pagefind through `astro-pagefind`. Each `pnpm build` indexes
+only the routes listed in `reading.ts`; navigation, directory pages, route aliases
+and planned articles stay out of the index. Titles and subjects come from the same
+reading entries. The header opens search in a dialog, with Cmd/Ctrl+K access, arrow-key navigation,
+recent searches stored in the reader's browser, and article, guide and playground
+filters. `/search/` provides the same interface with shareable query URLs. Search
+loads index fragments and eight result excerpts at a time. No search service is needed.
+
+Run `pnpm build` before trying search in `pnpm dev`: development serves the last
+built index, so rebuild after content changes. `pnpm preview` serves the complete
+built site and its matching index.
 
 `src/lib/relational-collection.ts` holds the relational reading order and publication
 status. The 15 October 2026 commission explicitly authorised publication of its

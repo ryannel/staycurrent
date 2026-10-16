@@ -60,6 +60,22 @@ that change a plausible reading of the picture, and question those that merely
 repeat its already clear scope. The caption revisions in the writing reference
 show that distinction in context.
 
+Consistency across the site helps readers recognise what kind of reading or action
+comes next. Compare equivalent sections, collection entrances and onward links
+with their neighbours. Use consistent names, heading levels and structural roles
+where they serve the same purpose. A guide's choices should answer its framing
+question, and each section should develop the choice the reader came to understand.
+Different subjects can need different explanations without changing those roles.
+
+The field guide exposed this when the relational link said “An introduction to
+relational databases” while the equivalent object-storage link advertised “the
+complete collection and sandbox”. The latter described the latest production work
+rather than matching the reader's next step. “An introduction to object storage”
+restores that relationship. Use the destination's actual role to choose its label;
+an introduction, practical exercise and product comparison should remain
+distinguishable. Keep useful uniformity without forcing identical paragraphs or
+copying an existing pattern that misrepresents the content.
+
 Read connected paragraphs as writing, even when their meaning is clear. Notice
 when the prose repeatedly announces a lesson, replaces a concrete action with an
 abstraction, stretches a metaphor, or ends each paragraph with a polished verdict.
