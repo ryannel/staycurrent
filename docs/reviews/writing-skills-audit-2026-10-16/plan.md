@@ -16,6 +16,27 @@ being rejected twice, and notes that "the guidance existed but was not applied".
 So the question for this audit is why guidance that already exists isn't
 reaching the page, rather than which guidance is missing.
 
+## The reader
+
+The user's words, 16 October 2026:
+
+> We want to cater to a technical ordience who is skimming for terms they might
+> know.
+
+Asked how articles should use worked examples, they chose "Terms first, short
+examples": each section names and defines its term up front, and a short example
+follows to show it. There's no long running story to follow from the top.
+Offered fixed page templates, they replied:
+
+> This feels too rigid. We need flexibility to write in the best way possible. A
+> cookie cutter template isn't how we should do this.
+
+None of this is in `docs/product-brief.md` or `docs/site-direction.md` yet. It
+changes what the whiteboarding article should have been. It was written as a
+staged meeting to follow from the start, where this reader wants to find
+"sequence diagram" or "swimlane" in a heading and get the point in the first
+sentence.
+
 ## What goes wrong in the whiteboarding article
 
 **The example starts three times.** The introduction says whiteboarding is "a
@@ -198,12 +219,15 @@ The writer reads the two benchmark chapters before drafting. The current skills
 tell the writer not to adopt an author's identity; the guide should instead say
 plainly that a first-person voice with opinions is wanted.
 
-**A spine in the brief.** Four to seven plain sentences, one per section, that
-read in order as a story: what the reader is wondering at that point and what
-the section shows them. The title, the description and the heading list come from
-the spine. Topics that don't fit go to another article or are cut. Each
-section's opening has to carry its spine sentence, and the line editor checks
-that it does.
+**A term map in the brief.** Before drafting, the brief lists the terms this
+reader might skim for, the ones the article will cover, in the order they build
+on each other, with one plain sentence each saying what the section tells the
+reader about that term. The title, the description and the heading list come from
+it, so headings use the names people already search for (C4, sequence diagram,
+swimlane, BPMN gateway) rather than advice. Topics that don't belong to a listed
+term go to another article or are cut. Each section's first sentence has to do
+what its map sentence says, and the line editor checks that it does. Section
+length follows the term: a paragraph for some, pages for others.
 
 **A line editor.** A fresh subagent that gets the article, the spine and the
 habit list, and does nothing else. The habit list is the one above, worded
