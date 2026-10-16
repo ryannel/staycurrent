@@ -1,28 +1,45 @@
-// Keep the download identical to the article's displayed commands.
+// Writes experiment.sql from the commands the Indexes article displays,
+// so the download always matches the page. Run from the repository root:
+//   node docs/article-work/indexes/build-experiment.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
-const page=readFileSync(new URL('../../../src/pages/learn/databases/relational/indexes.astro',import.meta.url),'utf8');
-const snippets=Object.fromEntries([...page.matchAll(/const (\w+) = `([\s\S]*?)`;/g)].map(m=>[m[1],m[2]]));
-const plan=sql=>'EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)\n'+sql;
-const size=`SELECT pg_relation_size('index_orders') AS table_bytes,
-       pg_relation_size('index_orders_cover') AS covering_index_bytes;`;
-const checks=`DO $$
-BEGIN
-  IF (SELECT count(*) FROM index_orders) <> 60900 THEN
-    RAISE EXCEPTION 'Unexpected final order count';
-  END IF;
-  IF (SELECT count(*) FROM index_orders WHERE total = 26.00 AND order_id BETWEEN 60001 AND 60200) <> 200 THEN
-    RAISE EXCEPTION 'Amount changes did not persist';
-  END IF;
-END $$;`;
-writeFileSync(new URL('./experiment.sql',import.meta.url),[
-'-- Indexes: complete isolated experiment. PostgreSQL 18.\n-- Run in a fresh session. All writes affect a temporary table.\n-- Use psql -f against your practice database, or run statements individually\n-- in a query editor with autocommit enabled. VACUUM cannot run in a transaction.\n-- EXPLAIN ANALYZE executes its statement. No production benchmark is claimed.',
-readFileSync(new URL('./setup.sql',import.meta.url),'utf8'),
-'-- Baseline: only the primary-key index exists.',plan(snippets.history),snippets.history,
-snippets.customerIndex,plan(snippets.history),
-snippets.compositeIndex,plan(snippets.history),
-'-- The paid-only query adds a remaining filter.',plan(snippets.residual),
-snippets.coveringIndex,plan(snippets.history),
-'VACUUM (ANALYZE) index_orders;',plan(snippets.history),plan(snippets.broad),size,
-'-- Exercise the maintained index as data changes.',snippets.writes,checks,size,plan(snippets.history),
-'-- End the session to remove the temporary table.\n',
-].join('\n\n'));
+
+const here = (file) => new URL(file, import.meta.url);
+const page = readFileSync(here('../../../src/pages/learn/databases/relational/indexes.astro'), 'utf8');
+const s = Object.fromEntries([...page.matchAll(/const (\w+) = `([\s\S]*?)`;/g)].map((m) => [m[1], m[2]]));
+const plan = (sql) => 'EXPLAIN (ANALYZE, BUFFERS)\n' + sql;
+
+writeFileSync(here('./experiment.sql'), [
+  `-- Indexes: the complete experiment from the article. PostgreSQL 18.
+-- Run in a fresh session. Every write affects a temporary table that
+-- disappears when the session ends. Use psql -f, or run the statements one
+-- at a time in a query editor with autocommit on: VACUUM cannot run inside
+-- a transaction block. EXPLAIN ANALYZE executes its statement.`,
+  readFileSync(here('./setup.sql'), 'utf8').trim(),
+  '-- Sequential scan: no index on customer_id yet.',
+  plan(s.lookup),
+  plan(s.history),
+  '-- Index entries: an index on customer_id.',
+  s.customerIndex,
+  plan(s.lookup),
+  plan(s.history),
+  '-- Range scans.',
+  plan(s.range),
+  '-- Selectivity: try other bounds, such as 550.',
+  plan(s.wideRange),
+  '-- Composite indexes.',
+  s.compositeIndex,
+  plan(s.history),
+  plan(s.newest),
+  '-- Covering indexes and index-only scans.',
+  s.coveringIndex,
+  plan(s.history),
+  'VACUUM (ANALYZE) index_orders;',
+  plan(s.history),
+  `SELECT pg_relation_size('index_orders') AS table_bytes,
+       pg_relation_size('index_orders_cover') AS covering_index_bytes;`,
+  '-- Index maintenance: scans per index so far in this session.',
+  s.usage,
+  '-- Checking an index: a condition the index cannot use.',
+  plan(s.residual),
+  '-- End the session to remove the temporary table.',
+].join('\n\n') + '\n');

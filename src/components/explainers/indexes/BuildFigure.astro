@@ -1,0 +1,91 @@
+---
+import IndexFigure from './IndexFigure.astro';
+const { number = 2 } = Astro.props;
+---
+<IndexFigure tag="ix-build-figure" number={number} title="An index is a sorted copy of one column">
+ <pre slot="query"><code>CREATE INDEX orders_customer ON orders (customer_id);
+SELECT * FROM orders WHERE customer_id = 42;</code></pre>
+ Each index entry holds a <code>customer_id</code> and the row’s location as (page, row). Sorting puts customer 42’s four entries next to each other, even though their rows sit on four different pages.
+ <span slot="fallback">The index copies each row’s customer ID and location, then sorts the entries. Customer 42’s four entries end up together and point to rows on pages 0, 1, 3 and 5.</span>
+</IndexFigure>
+
+<script>
+ import { IndexFigure, canvas, type Frame, type Layout } from './player';
+ import { orders, customerIndex, ctid } from './model';
+ import { heapPanel, indexPanel, heapWidth, gridWidth, panelHeight, setCell, moveCell, centre, pointer, G, cellX, cellY, type HeapPanel, type IndexPanel } from './scene';
+
+ type Phase = 'table' | 'copy' | 'sort' | 'find' | 'fetch';
+ interface BuildFrame extends Frame { phase: Phase; fetched: number }
+ const run = customerIndex.filter((o) => o.customer === 42);
+
+ class BuildFigure extends IndexFigure<BuildFrame> {
+  heap!: HeapPanel;
+  index!: IndexPanel;
+  vertical = false;
+  overlay!: SVGGElement;
+  wideAt = 560;
+  build(): BuildFrame[] {
+   const frames: BuildFrame[] = [
+    { phase: 'table', fetched: 0, hold: 1300, note: 'The same 36 orders. Building the index starts by reading every row once.' },
+    { phase: 'copy', fetched: 0, hold: 1800, note: 'Each row contributes one entry: its customer_id, plus its location as (page, row). The entries are still in table order.' },
+    { phase: 'sort', fetched: 0, hold: 2000, note: 'The entries are sorted by customer_id. Equal IDs sit together, with ties broken by location.' },
+    { phase: 'find', fetched: 0, hold: 1500, note: 'Now customer 42 is one short run of four entries. Nothing outside that run can be a match.' },
+   ];
+   run.forEach((o, i) => frames.push({ phase: 'fetch', fetched: i + 1, hold: 1000,
+    note: i === run.length - 1
+     ? 'All four rows fetched. The lookup read 4 index entries and visited 4 table pages, instead of checking 36 rows.'
+     : `Entry ${i + 1} points to ${ctid(o)}: page ${o.page}, row ${o.slot}. The database reads that page to get the whole row.` }));
+   return frames;
+  }
+  draw(layout: Layout) {
+   this.vertical = layout === 'narrow';
+   const w = this.vertical ? heapWidth + 8 : gridWidth + 44 + heapWidth + 8;
+   const h = this.vertical ? panelHeight * 2 + 36 : panelHeight + 6;
+   const root = canvas(this.stage, w, h, 'The orders table and an index built from it. Index entries are copied from the rows, sorted by customer ID, then used to find customer 42’s rows.', this.vertical ? 1.2 : 1.15);
+   const indexOrigin: [number, number] = this.vertical ? [4 + G.pageLabel, 2] : [4, 2];
+   const heapOrigin: [number, number] = this.vertical ? [4, panelHeight + 34] : [4 + gridWidth + 40, 2];
+   this.index = indexPanel(root, indexOrigin[0], indexOrigin[1], customerIndex, { title: 'Index on customer_id' });
+   this.heap = heapPanel(root, heapOrigin[0], heapOrigin[1]);
+   this.overlay = root.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'g')) as SVGGElement;
+  }
+  render(frame: BuildFrame) {
+   const { phase } = frame;
+   const tableOrder = new Map(orders.map((o, i) => [o.id, i]));
+   const sortedOrder = new Map(customerIndex.map((o, i) => [o.id, i]));
+   const [hx, hy] = [this.heap.origin[0] - this.index.origin[0], this.heap.origin[1] - this.index.origin[1]];
+   orders.forEach((o) => {
+    const c = this.index.cells.get(o.id)!;
+    const delay = phase === 'copy' ? tableOrder.get(o.id)! * 18 : phase === 'sort' ? sortedOrder.get(o.id)! * 14 : 0;
+    c.g.style.transitionDelay = `${delay}ms`;
+    if (phase === 'table') {
+     moveCell(c, hx + G.pageLabel + cellX(o.slot - 1), hy + cellY(o.page));
+     setCell(c, 'hidden');
+    } else {
+     const i = phase === 'copy' ? tableOrder.get(o.id)! : sortedOrder.get(o.id)!;
+     const [x, y] = this.index.position(i);
+     moveCell(c, x, y);
+     const inRun = o.customer === 42;
+     const k = run.findIndex((r) => r.id === o.id);
+     setCell(c, phase === 'find' || phase === 'fetch' ? (inRun ? (phase === 'fetch' && k === frame.fetched - 1 && frame.fetched < run.length ? 'reading' : 'found') : 'dim') : '');
+    }
+    const row = this.heap.cells.get(o.id);
+    const k = run.findIndex((r) => r.id === o.id);
+    setCell(row, phase === 'table' ? 'reading' : phase === 'fetch' && k >= 0 && k < frame.fetched ? 'fetch' : phase === 'fetch' ? 'dim' : '');
+   });
+   this.heap.pages.forEach((label, p) => label.setAttribute('data-state', phase === 'fetch' && run.slice(0, frame.fetched).some((o) => o.page === p) ? 'read' : ''));
+   this.overlay.replaceChildren();
+   if (phase === 'fetch') {
+    run.slice(0, frame.fetched).forEach((o) => {
+     const from = centre(this.index.origin, this.index.cells.get(o.id)!);
+     const to = centre(this.heap.origin, this.heap.cells.get(o.id)!);
+     pointer(this.overlay, from, to, this.vertical);
+    });
+   }
+   const entries = phase === 'find' ? 4 : phase === 'fetch' ? 4 : 0;
+   this.counters(phase === 'find' || phase === 'fetch'
+    ? [['index entries read', entries], ['table pages visited', frame.fetched], ['rows checked', frame.fetched, true]]
+    : [['index entries', phase === 'table' ? 0 : 36], ['order', phase === 'sort' ? 'sorted by customer_id' : phase === 'copy' ? 'table order' : '—']]);
+  }
+ }
+ if (!customElements.get('ix-build-figure')) customElements.define('ix-build-figure', BuildFigure);
+</script>

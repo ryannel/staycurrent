@@ -1,24 +1,46 @@
 ---
 import Base from '../../../../layouts/Base.astro';
 import Sql from '../../../../components/explainers/querying/Sql.astro';
-import IndexRoute from '../../../../components/explainers/indexes/IndexRoute.astro';
-import CompositeOrder from '../../../../components/explainers/indexes/CompositeOrder.astro';
+import ScanFigure from '../../../../components/explainers/indexes/ScanFigure.astro';
+import BuildFigure from '../../../../components/explainers/indexes/BuildFigure.astro';
+import DescentFigure from '../../../../components/explainers/indexes/DescentFigure.astro';
+import RangeFigure from '../../../../components/explainers/indexes/RangeFigure.astro';
+import SelectivityFigure from '../../../../components/explainers/indexes/SelectivityFigure.astro';
+import CompositeFigure from '../../../../components/explainers/indexes/CompositeFigure.astro';
+import CoveringFigure from '../../../../components/explainers/indexes/CoveringFigure.astro';
+import WriteFigure from '../../../../components/explainers/indexes/WriteFigure.astro';
 import setupText from '../../../../../docs/article-work/indexes/setup.sql?raw';
 import experimentUrl from '../../../../../docs/article-work/indexes/experiment.sql?url&no-inline';
 import '../../../../styles/explorables.css';
 import '../../../../styles/relational-design.css';
-import '../../../../components/explainers/design/schema-sketch.css';
+
+const explain = (sql: string) => 'EXPLAIN (ANALYZE, BUFFERS)\n' + sql;
+const lookup = `SELECT *
+FROM index_orders
+WHERE customer_id = 42;`;
+const customerIndex = `CREATE INDEX index_orders_customer
+ON index_orders (customer_id);`;
+const range = `SELECT order_id, customer_id
+FROM index_orders
+WHERE customer_id BETWEEN 40 AND 45
+ORDER BY customer_id;`;
+const wideRange = `SELECT order_id, total
+FROM index_orders
+WHERE customer_id <= 500;`;
 const history = `SELECT order_id, placed_at, total
 FROM index_orders
 WHERE customer_id = 42
   AND placed_at >= timestamptz '2026-02-01 00:00:00+00'
 ORDER BY placed_at DESC, order_id DESC
 LIMIT 10;`;
-const customerIndex = `CREATE INDEX index_orders_customer
-ON index_orders (customer_id);`;
 const compositeIndex = `DROP INDEX index_orders_customer;
 CREATE INDEX index_orders_history
 ON index_orders (customer_id, placed_at DESC, order_id DESC);`;
+const newest = `SELECT order_id, placed_at
+FROM index_orders
+WHERE placed_at >= timestamptz '2026-02-11 00:00:00+00'
+ORDER BY placed_at DESC
+LIMIT 10;`;
 const coveringIndex = `DROP INDEX index_orders_history;
 CREATE INDEX index_orders_cover
 ON index_orders (customer_id, placed_at DESC, order_id DESC)
@@ -30,132 +52,181 @@ WHERE customer_id = 42
   AND status = 'paid'
 ORDER BY placed_at DESC, order_id DESC
 LIMIT 10;`;
-const broad = `SELECT sum(total)
-FROM index_orders
-WHERE customer_id BETWEEN 1 AND 900;`;
-const check = `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)
-${history}`;
-const narrowPlan = `Limit (actual rows=10 loops=1)
+const usage = `SELECT indexrelname, idx_scan
+FROM pg_stat_user_indexes
+WHERE relname = 'index_orders';`;
+const plan = `Limit (actual rows=10 loops=1)
   -> Index Scan using index_orders_history on index_orders
        (actual rows=10 loops=1)
        Index Cond: ((customer_id = 42) AND
          (placed_at >= '2026-02-01 00:00:00+00'))`;
-const writes = `-- Continue after the covering-index experiment.
-INSERT INTO index_orders
-  (order_id, customer_id, placed_at, status, total, note)
-SELECT n, 1 + n % 1000,
-       timestamptz '2026-01-01 00:00:00+00' + n * interval '1 minute',
-       'pending', 25.00, repeat('delivery note ', 12)
-FROM generate_series(60001, 61000) AS series(n);
-
-UPDATE index_orders
-SET total = total + 1.00
-WHERE order_id BETWEEN 60001 AND 60200;
-
-DELETE FROM index_orders
-WHERE order_id BETWEEN 60901 AND 61000;`;
 ---
-<Base title="Indexes" description="Follow an ordered index from its search tree to table rows, then choose and check an index for filtering, ordering and the cost of keeping it current.">
- <article class="visual-essay relational-design schema-sketches">
+<Base title="Indexes" description="How a database index finds rows: sorted entries, B-tree searches, range scans, composite and covering indexes, when an index stops paying, and what each index costs every write.">
+ <article class="visual-essay relational-design">
   <header class="essay-header">
    <p class="eyebrow">Databases and storage</p>
    <h1>Indexes</h1>
    <div class="essay-meta"><span>Relational deep dive</span><a href="/learn/databases/relational/">Relational introduction ↗</a><a href="/learn/databases/relational/query-execution/">Next: How a query runs →</a></div>
   </header>
-  <p>An <strong>index</strong> helps a database find rows without searching the whole table. It stores values from selected columns in a structure that supports fast lookups. In PostgreSQL, it also stores references to the table rows those values came from.</p>
-  <p>Consider finding one customer’s orders in a table containing orders for thousands of customers. Without a suitable index, the database may have to check every row to find the ones belonging to that customer. An index ordered by customer ID groups the customer’s entries together and points to their orders, even when those orders are scattered through the table. Once it finds the first matching entry, the database can read the following matching entries.</p>
-  <p>The index’s arrangement determines what else it can do. An index on customer ID finds a customer’s orders, but it does not put them in date order. Adding the date to the index can also help a query return the newest orders first. These improvements have a cost: indexes take up storage, and the database must keep them up to date as orders are added or changed.</p>
 
-  <nav class="index-contents" aria-label="In this article"><ol><li><a href="#route">B-tree indexes</a></li><li><a href="#history">Composite indexes</a></li><li><a href="#remaining">Filtering</a></li><li><a href="#covering">Covering indexes</a></li><li><a href="#cost">Storage and maintenance</a></li><li><a href="#check">Testing an index</a></li></ol></nav>
+  <p>An <strong>index</strong> is a separate, sorted copy of one or more columns of a table. Each entry holds a value from those columns and the location of the row it came from. Because the entries are sorted, every entry with the same value sits together in the index, even when the rows themselves are scattered through the table.</p>
+  <p>That arrangement is what makes a lookup fast. Finding one customer’s 60 orders in a table of 60,000 means reading all 1,725 of the table’s pages when there is no index. With an index on the customer column, PostgreSQL read 2 index pages to find the 60 entries, then the 60 table pages they point to.</p>
+  <p>The same arrangement sets the limits. An index helps most when a query constrains its first column. It hands rows back in its own order, which may or may not be the order the query wants. And every insert and update has to keep it sorted.</p>
+  <p class="example-note">The figures use an invented table of 36 orders, six to a page, so every row stays visible. The measurements use a generated table of 60,000 orders, built by SQL you can run yourself.</p>
 
-  <section id="route">
-   <h2>B-tree indexes</h2>
-   <p>PostgreSQL 18 uses a <strong>B-tree</strong> by default when you create an index. In an index on customer ID, the customer IDs are its <strong>keys</strong>, the values it organises for searching. A B-tree keeps these keys in order and uses a hierarchy of pages to locate the first matching entry.</p>
-   <p>The database stores information in fixed-size chunks called <strong>pages</strong>. At the top of the <a href="https://www.postgresql.org/docs/18/btree.html#BTREE-STRUCTURE">tree</a>, the root page divides keys into ranges and points towards smaller parts of the index. Each step excludes ranges that cannot contain the requested key. Eventually the search reaches a <strong>leaf page</strong>, where the entries point to table rows.</p>
-   <IndexRoute />
-   <p>The root and other branching pages can each point to many child pages, so the tree can hold many more orders without becoming much deeper. A search reads the pages leading to the first match, then follows the matching leaf entries. To find a range of values, PostgreSQL starts at one boundary and reads along the leaves until it reaches the other.</p>
-   <p>Finding an entry is only part of retrieving an order. In PostgreSQL, an ordinary index scan follows its reference into the table’s main storage, called the <strong>heap</strong>. That is where it can get fields the index does not contain and check that the row version belongs in this query’s view of the database. Nearby index entries can point to distant table pages, so finding several entries together does not mean PostgreSQL can fetch all their rows from one page.</p>
-   <p>The visibility check matters when requests overlap. PostgreSQL can retain an earlier row version for a reader whose view predates an update, while newer requests see the changed version. An index entry locates a candidate; the engine must still check whether that version belongs in this query’s view. The <a href="/learn/databases/relational/storage/">storage article</a> follows how those versions are created and eventually removed.</p>
+  <nav class="index-contents" aria-label="In this article"><ol><li><a href="#scan">Sequential scan</a></li><li><a href="#entries">Index entries</a></li><li><a href="#btree">B-tree</a></li><li><a href="#range">Range scans</a></li><li><a href="#selectivity">Selectivity</a></li><li><a href="#composite">Composite indexes</a></li><li><a href="#covering">Covering indexes and index-only scans</a></li><li><a href="#writes">Index maintenance</a></li><li><a href="#check">Checking an index with EXPLAIN</a></li></ol></nav>
+
+  <section id="scan">
+   <h2>Sequential scan</h2>
+   <p>A <strong>sequential scan</strong> reads every page of a table in order and tests each row against the query’s conditions. It is what PostgreSQL does when no index fits the question.</p>
+   <p>PostgreSQL stores a table in fixed-size <strong>pages</strong>, 8 kB each by default. The table’s main storage is called the <strong>heap</strong>, because rows sit in no particular order: a new row goes wherever there is room. Figure 1 scans the invented table for customer 42. Watch the counters: only four rows match, but the scan reads every page to be sure there are no others.</p>
+   <ScanFigure number={1} />
+   <p>The scan read 6 pages and checked 36 rows to return 4. Its cost follows the size of the table, not the size of the answer.</p>
+   <p>The generated table shows the same thing at scale. Run the setup in a fresh PostgreSQL 18 session. It creates a temporary table of 60,000 invented orders for 1,000 customers, 60 orders each. Every row carries a long delivery note, so rows are wide and the table fills 1,725 pages.</p>
+   <Sql code={setupText} label="Create and fill a temporary table of 60,000 generated orders" />
+   <p>Now look for customer 42. <code>EXPLAIN (ANALYZE, BUFFERS)</code> runs the query and reports what each step did and how many pages it touched. The <a href="#check">last section</a> reads these reports in detail.</p>
+   <Sql code={explain(lookup)} label="Find customer 42’s orders and report the work" />
+   <p>The plan is a <code>Seq Scan</code>. It read all 1,725 pages and discarded 59,940 rows to return 60.</p>
   </section>
 
-  <section id="history">
+  <section id="entries">
+   <h2>Index entries</h2>
+   <p>An <strong>index entry</strong> pairs a key with a row location. The <strong>key</strong> is the indexed column’s value. The location is the row’s physical address, which PostgreSQL calls a <strong>TID</strong> (tuple identifier): a page number and a position on that page. Order 3 in the invented table has TID (0,3), the third row on page 0.</p>
+   <p>Figure 2 builds an index on <code>customer_id</code>. Watch the entries leave the table in table order and then sort. Customer 42’s rows are on four different pages, but their entries end up side by side.</p>
+   <BuildFigure number={2} />
+   <p>Once the entries are sorted, finding customer 42 means finding the first 42 and reading forward until the key changes. The table itself is not reordered. The index holds the order, and the TIDs lead back to the rows.</p>
+   <p>Create the same index on the generated table and run the lookup again.</p>
+   <Sql code={customerIndex} label="Create an index on customer_id" />
+   <p>The plan now reads 2 index pages and 60 table pages instead of 1,725. Those 60 table pages are the remaining cost. Customer 42’s orders sit on 60 different pages, and each one needs a visit.</p>
+   <p>PostgreSQL also avoids storing the same key 60 times. Since version 13, a B-tree index can store a repeated key once with a list of TIDs, called a <strong>posting list</strong>. In the generated index, customer 42 is one key with 60 TIDs. The figures draw one entry per row so that every pointer stays visible.</p>
+  </section>
+
+  <section id="btree">
+   <h2>B-tree</h2>
+   <p>A <strong>B-tree</strong> is a tree of index pages that lets a search jump to the right place in a sorted index instead of reading it from the start. It is PostgreSQL’s default index type, and what <code>CREATE INDEX</code> builds unless told otherwise.</p>
+   <p>The sorted entries live on <strong>leaf pages</strong>. Above them, <strong>internal pages</strong> hold one key for each child page, marking where that child’s range begins. The single page at the top is the <strong>root</strong>. A search reads the root, follows the child whose range holds the key, and repeats until it reaches a leaf.</p>
+   <p>Figure 3 draws the invented index as a B-tree lying on its side, with the root on the left. Pick a customer and watch the search read one page at each level.</p>
+   <DescentFigure number={3} />
+   <p>Every search in this tree reads three index pages, whatever the key: root, branch and leaf. That count is the tree’s <strong>depth</strong>, and it grows very slowly. A real page holds hundreds of entries, so each extra level multiplies the number of rows the tree can reach by hundreds.</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-labelledby="depth-caption"><table><caption id="depth-caption">B-tree depth for an index on one integer column, measured in PostgreSQL 18</caption><thead><tr><th>Rows</th><th>Levels</th><th>Index pages</th></tr></thead><tbody><tr><td>100,000</td><td>2</td><td>276</td></tr><tr><td>1,000,000</td><td>3</td><td>2,745</td></tr><tr><td>10,000,000</td><td>3</td><td>27,422</td></tr></tbody></table></div>
+   <p>A freshly built leaf page held 367 integer entries. Going from 1 million rows to 10 million added no level at all. A lookup for one key among the 10 million read 4 pages: 3 in the index and 1 in the table.</p>
+   <p>The pages at each level are also linked to their neighbours on both sides. According to the <a href="https://www.postgresql.org/docs/18/btree.html#BTREE-STRUCTURE">PostgreSQL documentation</a>, more than 99% of a typical B-tree’s pages are leaves, so those links mostly connect leaf to leaf. The next section uses them.</p>
+  </section>
+
+  <section id="range">
+   <h2>Range scans</h2>
+   <p>A <strong>range scan</strong> descends to the first entry at or above a lower bound, then reads entries in order until it passes the upper bound. B-trees handle <code>&lt;</code>, <code>&lt;=</code>, <code>=</code>, <code>&gt;=</code>, <code>&gt;</code> and <code>BETWEEN</code> this way. They can also serve <code>IN</code>, <code>IS NULL</code>, and <code>LIKE</code> patterns anchored at the start, such as <code>'abc%'</code>, though that last one depends on the column’s collation.</p>
+   <p>Figure 4 runs a range scan for customers 20 to 34 on the invented index. Watch how many times the search descends, and what it does when it reaches the end of a leaf page.</p>
+   <RangeFigure number={4} />
+   <p>The search descended once, to the first 20. At the end of each leaf page it followed the link to the next leaf instead of going back to the root. It stopped at 42, the first key past the range. The entries came out in key order, so the <code>ORDER BY</code> needed no extra work.</p>
+   <p>On the generated table, customers 40 to 45 have 360 orders between them.</p>
+   <Sql code={range} label="Read the orders for customers 40 to 45 in customer order" />
+   <p>The index part of the plan read 3 pages, the root and two leaves, to collect all 360 entries. The table part read 70 pages. The index holds the entries in order, but the plan still sorted the rows.</p>
+   <p>The sort comes from how PostgreSQL chose to visit the table. It used a <strong>bitmap heap scan</strong>: collect every matching TID first, sort the TIDs by page, then read each table page once. Several of the 360 rows share a page, so this saves repeat visits. The price is the index order, which the page-by-page read discards. The next section shows when that choice wins.</p>
+  </section>
+
+  <section id="selectivity">
+   <h2>Selectivity</h2>
+   <p><strong>Selectivity</strong> is the fraction of a table’s rows that a condition matches. A condition matching 60 rows out of 60,000 is very selective; one matching half the table is not. The planner estimates it from statistics that the <code>ANALYZE</code> command collects, then picks the cheapest of three ways to fetch the rows:</p>
+   <ul>
+    <li>An <strong>index scan</strong> follows each entry to its row, in index order.</li>
+    <li>A <strong>bitmap heap scan</strong> collects the TIDs, then reads each table page once, in page order.</li>
+    <li>A <strong>sequential scan</strong> ignores the index and reads every page in order.</li>
+   </ul>
+   <p>Figure 5 widens a range one customer at a time. Watch how quickly the matching rows spread across the pages, and what that does to the three bars.</p>
+   <SelectivityFigure number={5} />
+   <p>By the third step, with 8 rows or 22% of the table matched, every page held a match. From there the index can only add work. A bitmap heap scan reads all six pages anyway, and an index scan reads some of them more than once. The turning point is page coverage, not a percentage: once every page holds a match, the index cannot save a read.</p>
+   <p>The order of reads matters too. A sequential scan reads pages one after another, which storage and the operating system serve quickly. Index lookups jump around. PostgreSQL’s default cost settings charge a jumping read, <code>random_page_cost</code>, four times a sequential one, <code>seq_page_cost</code>. The <a href="https://www.postgresql.org/docs/18/runtime-config-query.html#GUC-RANDOM-PAGE-COST">documentation</a> suggests lowering the first on SSDs or when the data is mostly in memory.</p>
+   <p>On the generated table, with only the customer index, the planner kept using it until half the table matched.</p>
+   <Sql code={wideRange} label="Fetch every order for customers up to 500" />
+   <p>PostgreSQL used a bitmap heap scan up to <code>customer_id &lt;= 500</code>, which is half the table. From 550 it switched to a sequential scan. The reason is the generator: it hands out customer IDs in a repeating cycle, so each table page holds a run of about 35 consecutive customers. Customers 1 to 500 therefore sit on 922 of the 1,725 pages. If each customer’s orders were scattered evenly, the switch would come much sooner.</p>
+  </section>
+
+  <section id="composite">
    <h2>Composite indexes</h2>
-   <p>Let’s put the order-history request into a running database. You are the developer, sending SQL from a query editor or <code>psql</code> to a PostgreSQL 18 session. Run the setup below once in a fresh session, then keep that session open as we change the indexes. It creates a temporary table that disappears on disconnect. All the commands in this article act on that table. The <a href="/learn/databases/relational/practice/">practice guide</a> explains how to open a PostgreSQL database; use the separate setup here for this investigation.</p>
-   <p>We generate 60,000 invented orders for 1,000 customers. Each customer has 60 orders, spread through time. Order IDs increase by one each minute from 1 January; customers repeat in a cycle. Customer 42 has 15 orders on or after 1 February. Each row also has a long delivery note, making it much larger than an index entry containing just a customer ID and a row location. We use regular, invented data so we can check the counts as we go.</p>
-   <Sql code={setupText} label="Create and populate the isolated temporary orders table" />
-   <p><code>generate_series</code> supplies one row for each integer <code>n</code> from 1 to 60,000. The remainder operator <code>%</code> cycles through customer IDs, multiplying the one-minute interval advances the time, and <code>CASE</code> chooses a status. These expressions manufacture a repeatable dataset; they are not part of the history query we want to improve.</p>
-   <p><code>ANALYZE</code> collects statistics that help PostgreSQL estimate how many rows a condition will match. The primary key already creates an index on <code>order_id</code>. That index is useful when we know an order ID. Our history request knows a customer and a date instead:</p>
+   <p>A <strong>composite index</strong> has more than one key column. Its entries sort by the first column, then by the second among entries that tie on the first, and so on. The column order decides which entries sit together, and so which queries the index can answer by reading one stretch of entries.</p>
+   <p>The query in figure 6 asks for customer 42’s two newest orders since 10 January. Switch between the three indexes and count the entries each one reads.</p>
+   <CompositeFigure number={6} />
+   <p>With <code>customer_id</code> alone, the index found all four of customer 42’s orders but knew nothing about their dates. Every row had to be fetched, checked and sorted. With <code>(customer_id, placed_at DESC)</code>, customer 42’s entries were already newest first. The answer was the first two entries of the run, and the scan stopped there. With the date first, every customer’s entries were interleaved by date, and the scan read 16 to find two.</p>
+   <p>The <a href="https://www.postgresql.org/docs/18/indexes-multicolumn.html">PostgreSQL documentation</a> states the rule. Equality conditions on the leading columns, plus a range condition on the next column, limit how much of the index is read. Conditions on later columns are still checked inside the index, but they usually do not shorten the scan. So put the columns compared with <code>=</code> first, then the column used for the range or the sort.</p>
+   <p>Here is the same history query for the generated table, asking for customer 42’s ten newest orders since 1 February:</p>
    <Sql code={history} label="Ask for customer 42’s ten newest orders since 1 February" />
-   <p><code>WHERE</code> specifies the customer and earliest date. <code>ORDER BY</code> asks for newest first, with descending order ID breaking any timestamp ties. <code>LIMIT 10</code> keeps the first ten of that ordered result. The query returns order IDs 59041, 58041, 57041, 56041, 55041, 54041, 53041, 52041, 51041 and 50041. Each index we try should return those same ten orders.</p>
-   <p>Start by giving the database the customer lookup we just pictured:</p>
-   <Sql code={customerIndex} label="Create an index with customer ID as its key" />
-   <p>Now the engine can identify the customer’s 60 orders without inspecting every other customer. But the index has no date key. It still has to fetch those orders, reject the 45 before February, and sort the remaining 15 to find the newest ten. An index on the date as well would let us skip those older orders.</p>
-   <p>A <strong>composite index</strong> has more than one key column. Its column order defines how entries are arranged: compare the first column, use the next to order entries tied on the first, and continue if those values tie too. For this screen, put the customer first and dates newest first within each customer:</p>
-   <Sql code={compositeIndex} label="Replace the customer index with an ordered composite index" />
-   <CompositeOrder />
-   <p>The equality condition selects customer 42’s run. Within that run the dates are ordered, so the February boundary cuts off the older entries. Starting from the newest end also produces exactly the requested order. Once ten qualifying rows have been returned, the executor can stop. It does not need to collect and sort all 15.</p>
-   <p>The final <code>order_id DESC</code> makes the index order agree with the complete SQL order, including ties. These examples contain no tied timestamps, but actual order histories can. An index on just customer and date does not itself supply the requested ordering between orders placed at the same instant. Keep <code>ORDER BY</code> in the query even when an index can provide it: SQL does not promise result order without it.</p>
-   <p>Would putting the date first do the same thing? It would group all customers’ newest orders together. That could help a screen showing the newest orders across the shop, but finding ten for one customer could require passing many other customers’ entries. Choose the column order for the query: which entries should be together, which should come first, and when can the scan stop?</p>
-   <p>PostgreSQL can scan a B-tree backwards as well as forwards. An all-ascending index on these same three keys could serve this query by scanning customer 42’s run backwards. Mixed ordering needs more care: scanning backwards reverses every key direction together. The <a href="https://www.postgresql.org/docs/18/indexes-ordering.html">ordering documentation</a> develops that distinction.</p>
-  </section>
-
-  <section id="remaining">
-   <h2>Filtering</h2>
-   <p>Suppose the history screen now asks for paid orders only. Add one condition to the same request:</p>
-   <Sql code={residual} label="Return the newest paid orders for customer 42" />
-   <p>PostgreSQL can still find customer 42’s recent orders in the index. It then has to fetch them from the table to check <code>status</code>, which the index does not contain. In our data, the scan encounters two pending orders before finding ten paid ones. It returns ten rows after examining twelve candidates. With a customer whose recent orders were mostly pending, it could inspect much more of the run.</p>
-   <p>The status check is a <strong>filter</strong> applied after finding the rows through the index. In PostgreSQL’s execution plan, <code>Index Cond</code> shows conditions checked by the index scan, while <code>Filter</code> shows a separate check. Even an <code>Index Cond</code> does not always reduce how much of the index is scanned: a condition on a later key column may reject entries along the way.</p>
-   <p>If the shop often needs paid-only histories, we could try <code>(customer_id, status, placed_at DESC, order_id DESC)</code>. The two equality conditions select one customer’s paid run before the date range. For the original history screen, however, a customer’s orders are now grouped by status, so dates across all statuses no longer form one uninterrupted sequence.</p>
-   <p>Adding <code>status</code> helps one query and changes what the index can do for another. The column order matters as much as which columns are present. A missing leading condition does not make a PostgreSQL index unusable, either: PostgreSQL 18 can sometimes make repeated searches over distinct leading values, called a <strong>skip scan</strong>. It is most useful when there are few such values. The <a href="https://www.postgresql.org/docs/18/indexes-multicolumn.html">multicolumn documentation</a> explains when these searches can help. Check the execution plan to see what PostgreSQL chooses for your data.</p>
-   <p>There is another way to specialise a frequent query. A <a href="https://www.postgresql.org/docs/18/indexes-partial.html"><strong>partial index</strong></a> contains only rows satisfying its own condition. An index of pending orders could be small if almost every order is already complete. PostgreSQL can use that index when it knows the query asks only for pending orders. If status comes from a parameter, PostgreSQL may build a plan to reuse with different parameter values. That plan must also work for other statuses, which the pending-only index cannot supply. For our general history screen, we will keep the full index.</p>
+   <p>Replace the customer index with a composite one and run it again.</p>
+   <Sql code={compositeIndex} label="Replace the customer index with a composite index" />
+   <div class="table-scroll" role="region" tabindex="0" aria-labelledby="history-caption"><table><caption id="history-caption">The history query on the generated table with each index in place</caption><thead><tr><th>Index</th><th>Plan</th><th>Pages read</th></tr></thead><tbody>
+    <tr><td>None</td><td>Sequential scan, then sort</td><td>1,725</td></tr>
+    <tr><td><code>(customer_id)</code></td><td>Bitmap heap scan: 60 rows fetched, 45 rejected, then sort</td><td>62</td></tr>
+    <tr><td><code>(customer_id, placed_at DESC, order_id DESC)</code></td><td>Index scan, stops after 10 rows, no sort</td><td>13</td></tr>
+    <tr><td><code>(placed_at DESC, customer_id)</code></td><td>Index scan through about 11,000 entries, then a partial sort</td><td>57</td></tr>
+   </tbody></table></div>
+   <p>The composite index read 13 pages: three to descend the tree and ten table pages, one per returned row. The reversed index found the right ten rows too, but only after reading every customer’s orders since 1 February, newest first.</p>
+   <p>The <code>order_id DESC</code> column is a tiebreaker. Two orders placed in the same instant would otherwise have no defined order, and the query’s <code>ORDER BY</code> asks for one. Keep the <code>ORDER BY</code> in the query even when an index supplies the order, because SQL guarantees no order without it.</p>
+   <p>B-trees can be read backwards, so an all-ascending index on <code>(customer_id, placed_at, order_id)</code> serves this query equally well. Mixed directions are different. A query sorting by <code>placed_at DESC, order_id ASC</code> needs an index declared that way, or its mirror image <code>(placed_at ASC, order_id DESC)</code>, because a backward scan reverses every column at once.</p>
+   <p>A query with no condition on the leading column gets much less help. Here is the newest ten orders across all customers:</p>
+   <Sql code={newest} label="Ask for the ten newest orders across all customers" />
+   <p>The composite index offers no starting point for this query, because its entries are grouped by customer first. The newest orders are spread across 1,000 separate runs. PostgreSQL read all 1,725 table pages instead, then sorted the 961 matching rows to find the newest ten. PostgreSQL 18 added <strong>skip scan</strong>, which runs one index search for each distinct value of the leading column. It pays when that column has few distinct values, and 1,000 customers is not few.</p>
   </section>
 
   <section id="covering">
-   <h2>Covering indexes</h2>
-   <p>Return to the original history query, which includes pending and paid orders. Our composite index contains customer ID, timestamp and order ID. The result also asks for <code>total</code>. Each of its ten rows therefore needs a table fetch to obtain that amount.</p>
-   <p>We can add <code>total</code> to the index with PostgreSQL’s <code>INCLUDE</code> clause. It stores the value alongside each entry without making it part of the sort key.</p>
-   <Sql code={coveringIndex} label="Replace the composite index with one that also carries the amount" />
-   <p>This index <strong>covers</strong> the query: all the values it needs are available there. An <a href="https://www.postgresql.org/docs/18/indexes-index-only-scans.html"><strong>index-only scan</strong></a> can return those values. PostgreSQL still has to establish that each row is visible to the transaction. It keeps a small visibility map recording table pages whose rows are visible to all transactions. When a page has that mark, the scan can avoid fetching it; otherwise it must visit the heap to check.</p>
-   <p>Before vacuuming, our covering plan reported <code>Heap Fetches: 10</code>: it still fetched all ten rows from the table. Run this command on its own, with autocommit enabled:</p>
-   <Sql code="VACUUM (ANALYZE) index_orders;" label="Reclaim eligible versions and update page visibility information" />
-   <p>Vacuum marked eligible pages as visible to all transactions. The same history query then reported <code>Heap Fetches: 0</code>. Vacuum changed the table’s visibility information, so PostgreSQL could now get the same answer without visiting the table. The final section shows how to collect these plan counters at each step. A busy table with recent changes may offer fewer opportunities to avoid those visits.</p>
-   <p>The covering index can also help with a query that reads many more rows. Consider summing the amounts for 900 of our 1,000 customers:</p>
-   <Sql code={broad} label="Sum order totals for most of the customers" />
-   <p>That condition matches 54,000 orders. With an index that requires table fetches, visiting nearly the whole table through individual references can be more work than simply scanning it. With our vacuumed covering index, PostgreSQL chose an index-only scan instead: the smaller index supplied all the amounts.</p>
-   <p><strong>Selectivity</strong> describes the fraction of rows a condition selects. A condition matching very few rows is usually called selective. The planner also considers how wide the rows are, how they are spread over pages, expected caching, and whether the query can stop early. Depending on those factors, it may choose a table scan or read much of a smaller covering index. The fraction of matching rows is useful information, but cannot by itself tell us which will do less work.</p>
+   <h2>Covering indexes and index-only scans</h2>
+   <p>An <strong>index-only scan</strong> answers a query from the index without visiting the table. It is possible when every column the query uses is in the index. It skips the table only for pages known to be visible to all transactions.</p>
+   <p>The first condition is about columns. The history query returns <code>total</code>, which the composite index lacks, so each of its ten rows needs a table visit. <code>INCLUDE</code> adds columns to every entry as stored values that are not part of the sort. An index holding every column a query needs is a <strong>covering index</strong> for that query.</p>
+   <p>The second condition comes from how PostgreSQL handles concurrent changes. An update writes a new version of the row and keeps the old one for transactions that started earlier. The <a href="/learn/databases/relational/storage/">storage article</a> follows those versions. Index entries carry no visibility information, so an entry alone cannot say whether this transaction should see its row. PostgreSQL therefore keeps a <strong>visibility map</strong>: one bit per table page, set when every row on the page is visible to all transactions. <code>VACUUM</code> sets the bits, and any change to a page clears its bit.</p>
+   <p>Figure 7 shows one leaf page of the composite index beside the table. Try all four combinations of the two switches, and watch the heap-fetches counter and the visibility box beside each page.</p>
+   <CoveringFigure number={7} />
+   <p>Only one combination left the table alone: <code>total</code> included and the table vacuumed. Without the visibility bits, an index-only scan still visits each row’s page to check it.</p>
+   <p>The generated table behaves the same way. Replace the composite index with a covering one.</p>
+   <Sql code={coveringIndex} label="Replace the composite index with one that includes total" />
+   <p>The plan becomes an <code>Index Only Scan</code>, but it reports <code>Heap Fetches: 10</code> and 13 pages read, as before. The table was just loaded, so no page is marked all-visible yet. Run <code>VACUUM</code> on its own, outside a transaction block:</p>
+   <Sql code="VACUUM (ANALYZE) index_orders;" label="Vacuum the table to set its visibility bits" />
+   <p>Run the history query again. It now reports <code>Heap Fetches: 0</code> and reads 4 pages.</p>
+   <p>Covering has costs. The covering index is 2.9 MiB beside a 13.5 MiB table. <code>total</code> adds only a few bytes per entry, but a wide column would copy a lot of data into the index. The <a href="https://www.postgresql.org/docs/18/indexes-index-only-scans.html">documentation</a> warns against wide included columns.</p>
+   <p>It also notes that a table changing quickly gains little, because its pages keep losing their visibility bits. And an included column is still part of the index, so changing <code>total</code> now means changing the index too.</p>
   </section>
 
-  <section id="cost">
-   <h2>Storage and maintenance</h2>
-   <p>Every insert or update may also require changes to the indexes. Inserting an order adds a table row and entries in its indexes. If a B-tree leaf page has no room, PostgreSQL can <a href="https://www.postgresql.org/docs/18/btree.html#BTREE-IMPLEMENTATION">split it</a> and change the parent page to point to the new pages. Changing a key value requires an entry at its new position. Updating an included value such as <code>total</code> also requires index maintenance, even though it is not a search key.</p>
-   <p>Deleted rows and superseded versions can leave entries that become removable later. PostgreSQL removes these entries through mechanisms including <a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">vacuum</a>. These changes and the later cleanup use CPU, memory and I/O in addition to the index’s storage space.</p>
-   <p>In our generated example, the table occupied about 13.5 MiB and the covering index about 2.9 MiB in the test runtime, excluding the separate primary-key index. The extra amount column is only a few bytes per entry here. Including a long delivery note would be a different decision: it would copy much more data into an index used to answer a small history screen. Index pages also compete with useful table pages for cache space.</p>
-   <p>A primary key or unique constraint has a second reason to keep its supporting index: enforcing the rule. Check that purpose before treating an infrequently read index as redundant. Likewise, a new composite index beginning with <code>customer_id</code> may make a separate customer-only index unnecessary for this workload, but its smaller size can still matter for other queries. Check the other queries that use an index before removing it.</p>
-   <p>Creating the index is work too. It must read existing data and build the structure. Our ordinary <code>CREATE INDEX</code> commands are appropriate for an isolated temporary table. On a live PostgreSQL table, an ordinary build blocks writes while it runs. A concurrent build changes that behaviour and adds its own costs and failure handling; the <a href="https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY">concurrent-build documentation</a> is the next step before planning that operation.</p>
+  <section id="writes">
+   <h2>Index maintenance</h2>
+   <p><strong>Index maintenance</strong> is the work of keeping every index in step with its table. Each index is another copy of some of the table’s data, so a write to the table is also a write to its indexes.</p>
+   <p>Figure 8 follows one insert and one update through a table with up to four indexes. Change the number of indexes and count the pages each statement changes.</p>
+   <WriteFigure number={8} />
+   <p>With four indexes, the insert changed 7 pages, three of them for the split; with only the primary key, it changed 2. The update changed 1 page until an index held <code>total</code>, then 5.</p>
+   <p>An insert adds an entry to every index. When the leaf page where an entry belongs is full, PostgreSQL first tries to make room by removing dead entries or merging duplicates. If that fails, the page <strong>splits</strong>: some of its entries move to a new page, and the parent page gains a pointer to it. A split can travel upwards when the parent is full too, and a split of the root adds a level to the tree.</p>
+   <p>The update can be much cheaper. PostgreSQL writes a new row version for every update. If no indexed column changed and the new version fits on the same page, the update is a <strong>heap-only tuple</strong> (HOT) update. The existing index entries still lead to the row, and no B-tree index is touched. Change any column that any index holds, including an <code>INCLUDE</code> column, and every index on the table needs a new entry. In the <a href="https://www.postgresql.org/docs/18/btree.html#BTREE-DELETION">B-tree documentation</a>’s words, such a change “always necessitates a new set of index tuples”.</p>
+   <p>Both effects showed up on ordinary tables in PGlite, a WebAssembly build of PostgreSQL 18:</p>
+   <ul>
+    <li>Inserting 10,000 orders wrote 3.3 MB of write-ahead log, the record PostgreSQL keeps for crash recovery, with just the primary key. With four more indexes, the same insert wrote 7.7 MB.</li>
+    <li>Updating <code>total</code> on 600 rows gave 600 HOT updates when no index held <code>total</code>, and none once the covering index included it. That table was created with <code>fillfactor = 90</code>, which leaves a tenth of each page free for new row versions.</li>
+   </ul>
+   <p>Free space on the page mattered too. With the default fillfactor of 100, the freshly loaded pages had no room for a new version, and none of the 600 updates was HOT even with <code>total</code> unindexed.</p>
+   <p>Creating an index costs something too. A plain <code>CREATE INDEX</code> blocks writes to the table until it finishes. <a href="https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY"><code>CREATE INDEX CONCURRENTLY</code></a> allows writes during the build but takes longer, and a failed build leaves an invalid index behind, to be dropped or rebuilt with <code>REINDEX INDEX CONCURRENTLY</code>.</p>
+   <p>An index that no query reads still costs every write. The <code>pg_stat_user_indexes</code> view counts the scans of each index:</p>
+   <Sql code={usage} label="Count how often each index on a table has been scanned" />
+   <p>An index whose <code>idx_scan</code> stays at zero over a representative period is a candidate for removal. First check whether it enforces a primary key or unique constraint, which needs the index whatever the count says. A <a href="https://www.postgresql.org/docs/18/indexes-partial.html"><strong>partial index</strong></a> cuts the cost from the other side. It indexes only rows matching its own <code>WHERE</code> clause, such as pending orders, so it stays small and inserts of other rows skip it.</p>
   </section>
 
   <section id="check">
-   <h2>Testing an index</h2>
-   <p class="example-note">The <a href="/learn/databases/relational/sandbox/?tutorial=index-order">index-order lesson</a> runs this article’s customer history experiment. Replace the customer-only index, compare the same ten results, then put status before time and remove the status filter to see what changes. For a shorter introduction, try the <a href="/learn/databases/relational/sandbox/?tutorial=index-selectivity">index-selectivity lesson</a> with 20,000 generated orders. Compare the same customer lookup before and after creating an index, then widen the filter and inspect the planner’s choice. The browser exercise measures no production workload.</p>
-   <p>We expect the customer index to skip other customers’ orders. The composite index should also remove the sort and let the scan stop after ten matches. The covering index may avoid table fetches. To check, run the history query with <code>EXPLAIN</code>:</p>
-   <Sql code={check} label="Execute the history query and inspect its work" />
-   <p><code>EXPLAIN ANALYZE</code> executes the query and reports what its plan nodes actually did. <code>BUFFERS</code> adds page-access counters; <code>TIMING OFF</code> avoids measuring each node’s elapsed time while retaining row counts and total execution time. The word <code>ANALYZE</code> here means “run and observe”; the standalone <code>ANALYZE index_orders</code> command earlier collects planner statistics.</p>
-   <p>The <a href={experimentUrl} download="index-experiment.sql">complete experiment</a> runs the setup and each replacement in order, with a plan after each step. It also exercises inserts, amount changes and deletes. Run the file with <code>psql -f index-experiment.sql</code> against your practice database, or execute its statements individually in a query editor with autocommit enabled. <code>VACUUM</code> cannot run inside a transaction block. Use a fresh session; running the setup twice in the same session will find the temporary table already there. Our verification used PGlite 0.5.8, an embedded WebAssembly build reporting PostgreSQL 18.3. These are observed row counts in that setting, not server latency measurements:</p>
-   <div class="table-scroll" role="region" tabindex="0" aria-label="Observed work for the same history query"><table><thead><tr><th>Available history index</th><th>Observed work</th><th>Separate sort?</th></tr></thead><tbody><tr><td>None</td><td>Table scan: 15 rows passed, 59,985 rejected</td><td>Yes</td></tr><tr><td>Customer only</td><td>60 candidates; 45 rejected by the date filter</td><td>Yes</td></tr><tr><td>Customer, date, order</td><td>Index scan returned 10 rows, then stopped</td><td>No</td></tr><tr><td>Same keys, including total</td><td>10 rows; heap fetches fell from 10 to 0 after vacuum</td><td>No</td></tr></tbody></table></div>
-   <p>For the customer-only case, PostgreSQL chose a <strong>bitmap scan</strong>: collect matching row locations, then visit the table pages holding them. That improves the organisation of table access, but does not preserve the index’s ordering. It still needed the date filter and sort. PostgreSQL can also combine results from multiple indexes this way; two single-column indexes do not automatically supply the ordered run of one composite index. See <a href="https://www.postgresql.org/docs/18/indexes-bitmap-scans.html">combining indexes</a>.</p>
-   <p>The essential part of the composite plan looked like this, with costs, buffer counts and PostgreSQL’s explicit type casts omitted:</p>
-   <pre class="plan"><code>{narrowPlan}</code></pre>
-   <p>Read it from the indented scan towards its parent. The scan supplies rows in order; <code>Limit</code> stops requesting them after ten. <code>actual rows=10</code> means ten rows emitted by that node, not ten total operations inside the tree. It does not count all key comparisons or page visits. Here each node ran once. In more complex plans, row counts are per loop and need to be read with <code>loops</code>.</p>
-   <p>So far we have read from a fixed set of orders. The downloadable experiment also inserts 1,000 orders, changes 200 amounts and deletes 100 orders:</p>
-   <Sql code={writes} label="Exercise inserts, included-column updates and deletes in the temporary table" />
-   <p>The script checks that the table contains 60,900 rows and that all 200 corrected orders have a total of 26.00. It then reports table and index sizes and shows the history query’s plan again. To measure the cost of maintaining the index, we need a different test: temporary tables have different storage and logging behaviour, and PGlite does not reproduce a networked server’s workload.</p>
-   <p>Before choosing an index for the application, repeat the comparison on a disposable test database with ordinary durable tables. Use realistic row sizes, customers with different numbers of orders, and the application’s prepared queries. Run the same read and write mix against the current indexes and each candidate. Compare query latency and throughput, including slower requests, alongside changed plans, buffer work, index size and write latency. Let the run include sustained updates and maintenance; a freshly built index on an otherwise idle database misses part of the cost.</p>
-   <p>For this history screen, the composite index lets PostgreSQL find one customer’s recent orders and stop after ten, without a separate sort. Including <code>total</code> can save the remaining table fetches, but makes the index larger and adds work when totals change. The read and write measurements will help us decide whether that saving is worth it.</p>
+   <h2>Checking an index with EXPLAIN</h2>
+   <p><code>EXPLAIN</code> shows the plan PostgreSQL chose for a query. <code>EXPLAIN ANALYZE</code> also runs the query and reports what each step actually did. Since PostgreSQL 18 it reports the pages each step touched as well; on older versions, add <code>BUFFERS</code>. Here <code>ANALYZE</code> means run and measure. The separate <code>ANALYZE</code> command collects the statistics the planner uses.</p>
+   <Sql code={explain(history)} label="Run the history query and report its plan" />
+   <p>With the composite index in place, the important part of the plan looks like this, simplified: costs, page counts, type casts and PostgreSQL 18’s extra detail lines are left out.</p>
+   <pre class="plan"><code>{plan}</code></pre>
+   <p>Read it from the most indented line outwards. The index scan produces rows in order, and <code>Limit</code> stops asking for more after ten. Three parts of a plan tell you what an index did:</p>
+   <ul>
+    <li><strong>The node type.</strong> <code>Seq Scan</code>, <code>Index Scan</code>, <code>Index Only Scan</code> or <code>Bitmap Heap Scan</code> names the route.</li>
+    <li><strong><code>Index Cond</code> against <code>Filter</code>.</strong> Conditions under <code>Index Cond</code> were used in the index search. Conditions under <code>Filter</code> were checked on rows after fetching them, and <code>Rows Removed by Filter</code> counts the wasted fetches.</li>
+    <li><strong>Buffers.</strong> <code>shared hit</code> and <code>read</code> count pages. A temporary table reports them as <code>local</code>. Compare them across indexes, as the tables above do.</li>
+   </ul>
+   <p>A paid-only version of the history query produces a <code>Filter</code>:</p>
+   <Sql code={residual} label="Ask for customer 42’s ten newest paid orders" />
+   <p>The index has no <code>status</code>, so PostgreSQL fetched 12 rows and discarded 2 pending ones to return 10. Two wasted fetches is cheap. For a customer whose recent orders were mostly pending, the scan would read much further. If that filter matters, an index on <code>(customer_id, status, placed_at DESC)</code> moves it into the <code>Index Cond</code>, at the cost of splitting each customer’s history by status.</p>
+   <p>The <a href={experimentUrl} download="index-experiment.sql">complete experiment</a> runs every step in this article in order, with a plan after each. Run it in a fresh session with <code>psql -f index-experiment.sql</code>, or statement by statement in a query editor with autocommit on. The numbers here come from PGlite 0.5.8, which reports PostgreSQL 18.3. A server may report slightly different page counts, and none of the numbers are timings.</p>
+   <p>Before relying on an index, test it with realistic data, the application’s real queries, and its real mix of reads and writes.</p>
+   <p class="example-note">The <a href="/learn/databases/relational/sandbox/?tutorial=index-order">index-order lesson</a> runs the history experiment in your browser, and the <a href="/learn/databases/relational/sandbox/?tutorial=index-selectivity">index-selectivity lesson</a> widens a filter until the planner gives up on the index.</p>
   </section>
 
   <section class="series-reading" aria-labelledby="continue-title"><h2 id="continue-title">Further reading</h2>
    <p><a href="/learn/databases/relational/query-execution/">How a query runs →</a><span>See how PostgreSQL combines scans, joins and sorting to run a query.</span></p>
-   <p><a href="/learn/databases/relational/storage/">Storage and durability →</a><span>See how PostgreSQL stores rows and recovers committed changes after a crash.</span></p>
+   <p><a href="/learn/databases/relational/storage/">Storage and durability →</a><span>See how PostgreSQL stores row versions and recovers committed changes after a crash.</span></p>
    <p><a href="/learn/databases/relational/postgresql/indexes/">Choosing PostgreSQL access paths →</a><span>Compare B-tree, GIN and BRIN, then see why an index-only scan can still visit table pages.</span></p>
    <p><a href="https://www.postgresql.org/docs/18/using-explain.html">PostgreSQL 18: Using EXPLAIN ↗</a><span>Read more about estimated and actual row counts, repeated operations and buffer counters.</span></p>
   </section>
