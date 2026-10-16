@@ -31,22 +31,28 @@ export const pageFill: Scene<FillState> = {
     const tb = tupleBytes(d);
     const total = per * 2 + Math.ceil(per / 2);
     const steps: Step<FillState>[] = [{
-      text: `An empty table file. Each page is 8,192 bytes, starting with a 24-byte header. Each row here is ${fmt(d)} bytes of data plus a 23-byte row header, padded to ${fmt(tb)} bytes.`,
+      text: `An empty table file. Each row here takes ${fmt(tb)} bytes on the page, plus a 4-byte line pointer.`,
       state: { data: d, n: 0 },
     }];
     for (let n = 1; n <= total; n++) {
       const page = Math.floor((n - 1) / per);
       const item = ((n - 1) % per) + 1;
-      let line = `Row ${n} goes on page ${page} as item ${item}. A 4-byte line pointer is added after the header, and the ${fmt(tb)}-byte row is placed at the end of the free space.`;
       if (item === 1 && page > 0) {
         const free = PAGE - HEADER - per * (tb + POINTER);
-        line = `Page ${page - 1} has ${fmt(free)} bytes left, too few for another ${fmt(tb + POINTER)}-byte row and pointer. Row ${n} starts page ${page}.`;
+        steps.push({ text: `Page ${page - 1} has ${fmt(free)} bytes left, too few for another row and pointer. Row ${n} starts page ${page}.`, state: { data: d, n } });
+      } else {
+        steps.push({ text: `Row ${n}: page ${page}, item ${item}.`, state: { data: d, n }, fast: true });
       }
-      steps.push({ text: line, state: { data: d, n } });
     }
     return steps;
   },
   interval: ({ data }) => Math.max(30, Math.min(900, 3200 / rowsPerPage(Number(data)))),
+  outline: () => [
+    'Three empty 8 kB pages. Each starts with a 24-byte header.',
+    'Each inserted row adds a 4-byte line pointer after the header and puts the row at the end of the free space, so the two grow towards each other.',
+    'With 100 bytes of data a row takes 128 bytes, so 61 rows and their pointers fit before page 0 is full and row 62 starts page 1.',
+    'With 40-byte rows, 120 fit on a page; with 250-byte rows, 28; with 1,000-byte rows, 7; with 2,000-byte rows, 4.',
+  ],
   stats: ({ data, n }) => {
     const per = rowsPerPage(data);
     const onPage = n === 0 ? 0 : ((n - 1) % per) + 1;
@@ -120,15 +126,15 @@ export const bufferRead: Scene<BufState> = {
   steps: () => {
     const empty = [null, null, null, null];
     return [
-      { text: 'Shared buffers start empty. A real server has 16,384 slots of 8 kB by default; this drawing has four.', state: { slots: empty, hits: 0, reads: 0 } },
-      { text: 'A query asks for P7. The index says P7 is at page 12, item 3.', state: { slots: empty, hits: 0, reads: 0, query: "P7 → (12,3)", focus: 12 } },
-      { text: 'Page 12 isn’t in shared buffers, so PostgreSQL reads all 8 kB of it from the table file into a free slot. That is one read.', state: { slots: [12, null, null, null], hits: 0, reads: 1, query: 'P7 → (12,3)', focus: 12, from: 12, outcome: { text: 'read', kind: 'miss' } } },
+      { text: 'Shared buffers start empty. This drawing has four slots.', state: { slots: empty, hits: 0, reads: 0 } },
+      { text: 'A query asks for P7. The index says it is at page 12, item 3.', state: { slots: empty, hits: 0, reads: 0, query: "P7 → (12,3)", focus: 12 } },
+      { text: 'Page 12 isn’t in memory, so PostgreSQL reads all 8 kB of it from the table file into a free slot. That is one read.', state: { slots: [12, null, null, null], hits: 0, reads: 1, query: 'P7 → (12,3)', focus: 12, from: 12, outcome: { text: 'read', kind: 'miss' } } },
       { text: 'It finds item 3 on the page in memory and returns 20.00.', state: { slots: [12, null, null, null], hits: 0, reads: 1, query: 'P7 → (12,3)', row: '12-P7' } },
-      { text: 'The next query asks for P3, at page 12, item 1. Page 12 is already in memory, so this is a hit. There is no disk access.', state: { slots: [12, null, null, null], hits: 1, reads: 1, query: 'P3 → (12,1)', row: '12-P3', outcome: { text: 'hit', kind: 'hit' } } },
-      { text: 'P40 lives on page 31. That is another miss and another read.', state: { slots: [12, 31, null, null], hits: 1, reads: 2, query: 'P40 → (31,2)', focus: 31, from: 31, row: '31-P40', outcome: { text: 'read', kind: 'miss' } } },
-      { text: 'Ask for P7 again and it is a hit.', state: { slots: [12, 31, null, null], hits: 2, reads: 2, query: 'P7 → (12,3)', row: '12-P7', outcome: { text: 'hit', kind: 'hit' } } },
+      { text: 'The next query asks for P3, also on page 12. The page is already in memory, so this is a hit.', state: { slots: [12, null, null, null], hits: 1, reads: 1, query: 'P3 → (12,1)', row: '12-P3', outcome: { text: 'hit', kind: 'hit' } } },
+      { text: 'P40 lives on page 31, which isn’t in memory either. That is another read.', state: { slots: [12, 31, null, null], hits: 1, reads: 2, query: 'P40 → (31,2)', focus: 31, from: 31, row: '31-P40', outcome: { text: 'read', kind: 'miss' } } },
+      { text: 'P7 again: a hit.', state: { slots: [12, 31, null, null], hits: 2, reads: 2, query: 'P7 → (12,3)', row: '12-P7', outcome: { text: 'hit', kind: 'hit' } } },
       { text: 'Other queries read pages 10 and 11. All four slots are now in use.', state: { slots: [12, 31, 10, 11], hits: 2, reads: 4 } },
-      { text: 'P50 lives on page 13, and there is no free slot. PostgreSQL sweeps the slots like a clock hand, lowering each page’s usage count, and evicts the first page it finds at zero. Page 12 was used three times, so it outlasts the sweep. Page 31 is evicted, and page 13 takes its slot.', state: { slots: [12, 13, 10, 11], hits: 2, reads: 5, query: 'P50 → (13,2)', focus: 13, from: 13, row: '13-P50', outcome: { text: 'read', kind: 'miss' } } },
+      { text: 'P50 is on page 13, and no slot is free. A clock hand sweeps the slots, lowering each page’s use count, and evicts the first page it finds at zero. Page 12 was used three times and survives. Pages 31, 10 and 11 were used once; the hand reaches page 31 first, so page 13 takes its slot.', state: { slots: [12, 13, 10, 11], hits: 2, reads: 5, query: 'P50 → (13,2)', focus: 13, from: 13, row: '13-P50', outcome: { text: 'read', kind: 'miss' } } },
     ];
   },
   stats: state => [
@@ -216,12 +222,12 @@ const base3 = (xmax7 = '—'): VRow[] => [r(1, 'P3', '18.00', '790', '—', 'liv
 export const rowVersions: Scene<VerState> = {
   id: 'row-versions',
   steps: () => [
-    { text: 'Page 12 holds three rows. Each row records xmin, the transaction that created it, and xmax, the transaction that replaced or deleted it. Nothing has replaced these rows yet.', state: { rows: base3(), readers: [{ id: 'Q', letter: 'Q', item: 3 }] } },
-    { text: 'A report starts and takes a snapshot: a note of which transactions had committed at that moment. It reads P7 at 20.00.', state: { rows: base3(), readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 3 }] } },
-    { text: 'Transaction 812 updates P7. PostgreSQL doesn’t overwrite item 3. It sets item 3’s xmax to 812 and adds item 4, a new version with xmin 812 and price 22.00.', state: { rows: [...base3('812'), r(4, 'P7', '22.00', '812', '—', 'uncommitted')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 3 }, { id: 'T', letter: 'T', item: 4 }] } },
-    { text: 'Until 812 commits, other queries skip item 4 because its creator hasn’t committed. They still read 20.00. Transaction 812 reads its own 22.00.', state: { rows: [...base3('812'), r(4, 'P7', '22.00', '812', '—', 'uncommitted')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 3 }, { id: 'T', letter: 'T', item: 4 }] } },
+    { text: 'Page 12 holds three rows, each with its xmin and xmax. Nothing has replaced them yet.', state: { rows: base3(), readers: [{ id: 'Q', letter: 'Q', item: 3 }] } },
+    { text: 'A report starts and takes its snapshot. It reads P7 at 20.00.', state: { rows: base3(), readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 3 }] } },
+    { text: 'Transaction 812 updates P7. Instead of overwriting item 3, it sets item 3’s xmax to 812 and adds item 4: P7 at 22.00, xmin 812.', state: { rows: [...base3('812'), r(4, 'P7', '22.00', '812', '—', 'uncommitted')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 3 }, { id: 'T', letter: 'T', item: 4 }] } },
+    { text: 'Until 812 commits, other queries skip item 4 and still read 20.00. Transaction 812 reads its own 22.00.', state: { rows: [...base3('812'), r(4, 'P7', '22.00', '812', '—', 'uncommitted')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 3 }, { id: 'T', letter: 'T', item: 4 }] } },
     { text: '812 commits. A new query now reads item 4 at 22.00. Item 3 is an old version.', state: { rows: [r(1, 'P3', '18.00', '790', '—', 'live'), r(2, 'P9', '9.50', '790', '—', 'live'), r(3, 'P7', '20.00', '790', '812', 'old'), r(4, 'P7', '22.00', '812', '—', 'live')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 4 }] } },
-    { text: 'The report’s snapshot was taken before 812 committed, so it keeps reading item 3 at 20.00 until it finishes.', state: { rows: [r(1, 'P3', '18.00', '790', '—', 'live'), r(2, 'P9', '9.50', '790', '—', 'live'), r(3, 'P7', '20.00', '790', '812', 'old'), r(4, 'P7', '22.00', '812', '—', 'live')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 4 }], note: 'R' } },
+    { text: 'The report’s snapshot predates the commit, so it keeps reading item 3 at 20.00 until it finishes.', state: { rows: [r(1, 'P3', '18.00', '790', '—', 'live'), r(2, 'P9', '9.50', '790', '—', 'live'), r(3, 'P7', '20.00', '790', '812', 'old'), r(4, 'P7', '22.00', '812', '—', 'live')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 4 }], note: 'R' } },
   ],
   stats: state => {
     const sees = (id: string) => {
@@ -294,7 +300,7 @@ export const vacuum: Scene<VacState> = {
   id: 'vacuum',
   params: [{
     id: 'snapshot', label: 'Meanwhile', initial: 'none',
-    options: [{ value: 'none', label: 'no long-running report' }, { value: 'held', label: 'a report holds an old snapshot' }],
+    options: [{ value: 'none', label: 'no long report' }, { value: 'held', label: 'a report holds a snapshot' }],
   }],
   steps: ({ snapshot }) => {
     const held = snapshot === 'held';
@@ -306,25 +312,25 @@ export const vacuum: Scene<VacState> = {
     const chain = (upto: number) => prices.slice(0, upto + 1).map((price, i) => v(price, i === upto ? 'live' : deadKind));
     const steps: Step<VacState>[] = [];
     const idx1 = ['P7 → (12,3)'];
-    steps.push({ text: held ? 'Page 12 has room for six row versions in this drawing. A report started before any of the updates below, and it is still running.' : 'Page 12 has room for six row versions in this drawing. P3, P9 and P7 use three of them.', state: { p12: pad6([P3, P9, ...chain(0)]), p13: pad6(p13base), index: idx1, report: held } });
+    steps.push({ text: held ? 'Page 12 has room for six row versions. A report started before any of these updates and is still running.' : 'Page 12 has room for six row versions. P3, P9 and P7 use three.', state: { p12: pad6([P3, P9, ...chain(0)]), p13: pad6(p13base), index: idx1, report: held } });
     [1, 2, 3].forEach(i => {
       const tail = i === 3 ? ' Page 12 is now full.' : '';
       const lead = i === 1
-        ? `P7 changes to ${prices[i]}. The 20.00 version is now ${held ? 'old, but the report still reads it.' : 'dead: no transaction can see it any more.'}`
+        ? `P7 changes to ${prices[i]}. The 20.00 version is now ${held ? 'old, but the report can still see it.' : 'dead.'}`
         : `P7 changes to ${prices[i]}. Another new version, another old one.`;
       steps.push({ text: lead + tail, state: { p12: pad6([P3, P9, ...chain(i)]), p13: pad6(p13base), index: idx1, report: held } });
     });
     if (!held) {
-      steps.push({ text: 'The next update needs space. PostgreSQL first prunes page 12: the 20.00, 22.00 and 23.00 versions are invisible to every transaction, so their space is reclaimed.', state: { p12: pad6([P3, P9, v('24.00', 'live')]), p13: pad6(p13base), index: idx1, report: false, pruned: true } });
-      steps.push({ text: 'P7 changes to 25.00, and the new version fits on page 12. This is a HOT update: the index entry still leads to the right place, so no new one is needed.', state: { p12: pad6([P3, P9, v('24.00', 'dead'), v('25.00', 'live')]), p13: pad6(p13base), index: idx1, report: false } });
-      steps.push({ text: 'P7 changes to 26.00. Still on page 12, still one index entry. The table has not grown.', state: { p12: pad6([P3, P9, v('24.00', 'dead'), v('25.00', 'dead'), v('26.00', 'live')]), p13: pad6(p13base), index: idx1, report: false } });
+      steps.push({ text: 'The next update needs space. First, the dead 20.00, 22.00 and 23.00 versions are cleared from page 12.', state: { p12: pad6([P3, P9, v('24.00', 'live')]), p13: pad6(p13base), index: idx1, report: false, pruned: true } });
+      steps.push({ text: 'P7 changes to 25.00, and the new version fits on page 12. The index entry doesn’t change.', state: { p12: pad6([P3, P9, v('24.00', 'dead'), v('25.00', 'live')]), p13: pad6(p13base), index: idx1, report: false } });
+      steps.push({ text: 'P7 changes to 26.00. Still page 12, still one index entry, and the table hasn’t grown.', state: { p12: pad6([P3, P9, v('24.00', 'dead'), v('25.00', 'dead'), v('26.00', 'live')]), p13: pad6(p13base), index: idx1, report: false } });
     } else {
       const full = pad6([P3, P9, ...prices.map(price => v(price, 'needed'))]);
       const idx2 = ['P7 → (12,3)', 'P7 → (13,3)'];
-      steps.push({ text: 'The next update needs space, and pruning can’t help. The report’s snapshot is older than all these updates, so none of the old versions can be removed yet. P7 at 25.00 goes to page 13, and the index gains a second entry for P7.', state: { p12: full, p13: pad6([...p13base, v('25.00', 'live')]), index: idx2, report: true } });
-      steps.push({ text: 'P7 changes to 26.00, on page 13 this time. Old versions now fill page 12 and part of page 13.', state: { p12: full, p13: pad6([...p13base, v('25.00', 'needed'), v('26.00', 'live')]), index: idx2, report: true } });
+      steps.push({ text: 'The next update needs space, but the report might still need every old version, so none can be cleared. P7 at 25.00 goes to page 13, and the index gains a second entry.', state: { p12: full, p13: pad6([...p13base, v('25.00', 'live')]), index: idx2, report: true } });
+      steps.push({ text: 'P7 changes to 26.00, on page 13 this time.', state: { p12: full, p13: pad6([...p13base, v('25.00', 'needed'), v('26.00', 'live')]), index: idx2, report: true } });
       steps.push({ text: 'The report finishes. Every old version of P7 is now dead.', state: { p12: pad6([P3, P9, ...prices.map(price => v(price, 'dead'))]), p13: pad6([...p13base, v('25.00', 'dead'), v('26.00', 'live')]), index: idx2, report: false } });
-      steps.push({ text: 'VACUUM removes the dead versions and the index entry that led to them. Page 12 has free space again, but the table file stays two pages long.', state: { p12: pad6([P3, P9]), p13: pad6([...p13base, null, v('26.00', 'live')]), index: ['P7 → (13,3)'], report: false, pruned: true } });
+      steps.push({ text: 'VACUUM removes the dead versions and the index entry for (12,3). Page 12 has free space again, but the table stays two pages long.', state: { p12: pad6([P3, P9]), p13: pad6([...p13base, null, v('26.00', 'live')]), index: ['P7 → (13,3)'], report: false, pruned: true } });
     }
     return steps;
   },
