@@ -169,23 +169,34 @@ The trial kit has three parts, kept outside the live skills until they prove
 themselves.
 
 **A short positive style guide**, about 1,000 words, written the way we want
-articles to read. It describes what good pages here do, drawn from the
-column-store essay and checked against it:
+articles to read. It describes what the benchmark chapters (see "The
+benchmark") do:
 
-- one example runs through the piece, with a marked case the reader can follow
-  through every change;
-- a term is named after the reader has seen the thing it names;
-- each section opens from where the previous one left the reader, often in one
-  clause, and ends on the question or limit the next section takes up;
-- each benefit is followed by its limit, shown with a concrete case;
-- a mechanism is stated as something the reader can check ("A block whose keys
-  run from C to D can't contain B");
-- people and the system do the acting.
+- the example comes before the idea. *State* has the reader write the
+  heroine's jump code, find the bug, add a flag, find the next bug, and only then
+  names a finite state machine: "Congratulations, you've just created a *finite
+  state machine*";
+- the example grows one change at a time, and each change breaks something or
+  costs something, which is why the next section exists;
+- each section opens from where the last one left the reader: "The next step
+  is **parsing**." "We have finally hammered the user's program into a form that
+  we can execute.";
+- a term arrives in bold, defined in the same sentence, with its synonyms and
+  the one the author will use;
+- the author is a person in the text: "Confession time: I went a little
+  overboard", "I like 'lexing' because it sounds like something an evil
+  supervillain would do, but I'll use 'scanning'";
+- the reader is given things to do and questions they'd actually ask: "Spot the
+  bug?", "Are they local variables? Global?";
+- tangents, etymology and history go into asides, so the main line stays on
+  the example;
+- headings are either the plain names of the parts ("Scanning", "Parsing") or
+  spoken beats of the story ("We've All Been There", "What's the Catch?").
+  Neither kind states the section's advice.
 
-It also says what a heading is for: naming the subject a reader will find, in
-words they already have. A short passage each from Sam Who, Ciechanowski and
-Julia Evans goes in alongside, quoted briefly, so the writer has the voice to
-hand.
+The writer reads the two benchmark chapters before drafting. The current skills
+tell the writer not to adopt an author's identity; the guide should instead say
+plainly that a first-person voice with opinions is wanted.
 
 **A spine in the brief.** Four to seven plain sentences, one per section, that
 read in order as a story: what the reader is wondering at that point and what
@@ -204,12 +215,13 @@ still disputed goes to the user rather than into another round.
 
 ### Stage 2: check the trial honestly
 
-1. **False positives first.** Run the line editor over a passage of human prose
-   (Julia Evans or Ciechanowski) and over the column-store essay. If it flags
-   much in either, tighten the habit definitions before going further.
+1. **False positives first.** Run the line editor over both benchmark chapters.
+   If it flags anything an editor wouldn't act on, tighten the definition before
+   going further.
 2. **Blind comparison.** Two fresh readers get the two trial articles,
-   unlabelled, and say which reads more like a person explaining something, and
-   where.
+   unlabelled, and the benchmark chapters. They say which trial article reads
+   more like a person explaining something, and where each falls short of the
+   benchmark.
 3. **The user reads both.** Their reaction decides whether stage 3 happens.
    Their words go into `docs/writing-style.md` verbatim, with the date and the
    passage, and no agent commentary.
@@ -246,33 +258,81 @@ with a check that they match, since today it is a full duplicate that can drift.
 
 ## Habit definitions
 
-Narrowed after the false-positive test, which ran the first version over the
-column-store essay and found that most hits there were doing legitimate work.
+These are tuned against the benchmark. The second version flagged about 20
+passages in *State* and several in *A Map of the Territory*, and an editor would
+have cut at most one clause. The wording below narrows each habit to the line
+where Nystrom's prose stays clear of it and the whiteboarding article doesn't.
+The whiteboarding examples in "What goes wrong" are still caught.
 
-- **Maxim ending.** A final sentence that restates its paragraph as a general
-  truth and adds no number, mechanism, condition or consequence. Judge by how
-  many accumulate across the page.
-- **Denial of an unheld view.** "Not X" where nothing on the page or in common
-  belief would lead the reader to X. Keep it when you can point to what would
-  mislead them: the article's own figure, an earlier model, a common
-  misconception.
-- **Abstraction with intentions.** An object given judgement, desire or social
-  action: invents, fights, should, on behalf of. Mechanical verbs for software
-  and data ("rearranges", "rules out") are fine.
-- **Protective hedge.** A qualification that changes no prediction the reader
-  would make, such as a note on what isn't covered, or reassurance. Keep
-  conditions that change what the reader expects.
-- **Idle list.** A list of things the reader won't use next. Lists that define
-  the example's data or show a mechanism are fine.
-- **Undecodable promise.** A forward reference the reader can't understand until
-  later. A concrete question, or a promise kept in the next sentence, is fine.
-- **Ungiven word.** Any term not defined where it first appears, including house
-  vocabulary, vendor terms and renamings of an idea already introduced.
-- **Advice heading.** A heading that compresses its section's advice into an
-  instruction. Verb phrases that name a scenario ("Looking at one shop") are
-  fine. Page titles and descriptions follow the same test.
+- **Maxim ending.** A paragraph's last sentence restates it as a general truth
+  and adds no number, mechanism, condition or consequence. It's fine when the
+  next sentence or paragraph applies it to the example, or when it's a
+  heuristic of the form "when you see X, do Y". Judge by how many accumulate
+  across the page.
+- **Denial of an unheld view.** "Not X" where nothing on the page, in a paired
+  term or in common belief would lead the reader to X. Answering the reader's
+  likely reaction is fine: "This seems trivial, but it's a real improvement".
+- **Abstraction with intentions.** An object is given judgement, desire or
+  social action, so the reader can't tell who decides or what happens: "icons
+  should not invent components". Field idioms (a parser "reports", a chip
+  "speaks" an instruction set) are fine, and so is "should" for a requirement
+  or invariant.
+- **Protective hedge.** A qualification that changes nothing the reader would
+  predict or do. A note on what's left out is fine when it gives a reason or a
+  pointer, or when the reader would otherwise act on the gap (report a bug that
+  isn't one). One line setting the reader's assumed level is fine.
+- **Idle list.** A list in the main argument that the reader is asked to hold
+  and won't use next. Fine: a preview whose items become this page's headings,
+  search terms in an aside, and a few familiar instances anchoring a category.
+- **Undecodable promise.** A forward reference the reader can't decode until
+  after unrelated material has come in between. A promise kept by the next
+  sentence, section or heading is fine.
+- **Ungiven word.** A term the argument depends on, or a house coinage, used
+  before it's defined. Fine: names given only for orientation or colour, terms
+  the stated audience already uses, a synonym placed beside the term it renames,
+  and a link to the term's own page.
+- **Advice heading.** A heading that states the section's advice or judgement
+  ("Review meaning before appearance", "Compose a small scene with plain
+  shapes"). Fine: the plain name of a part, a spoken story beat or question,
+  and an imperative naming the next step of a running build ("Delegate to the
+  state"). Page titles and descriptions take the same test.
 - **Cold opening.** A section whose first sentences don't connect it to where
-  the reader is. One clause is often enough.
+  the reader is. One clause is often enough. The first section may open straight
+  into the running example without naming the topic, because that scene is
+  where the reader is.
+
+## The benchmark
+
+The benchmark is human prose that has been widely praised over many years, not
+the site's own approved articles. Two chapters by Bob Nystrom:
+
+- *Crafting Interpreters*, "A Map of the Territory". An overview that walks one
+  line of code through every stage of a language implementation. It's the
+  closest match to our collection introductions and explanations.
+- *Game Programming Patterns*, "State". It teaches a modelling idea by growing
+  one example until the idea is unavoidable. It's the closest match to the
+  drawing-systems articles, and especially to the one on lifecycles.
+
+Both books' source is public on GitHub. The prose is licensed CC BY-NC-ND 4.0,
+so we read it from a pinned clone and quote it briefly, without copying the
+chapters into this repository. `benchmark.md` beside this plan gives the
+commits, files and commands.
+
+The benchmark has three uses:
+
+1. **False-positive baseline.** Before every change to the habit list, the line
+   editor runs over both chapters. Any flag an editor wouldn't act on means the
+   definition is too broad.
+2. **Source for the style guide.** The positive guide describes what these
+   chapters do, quoted briefly.
+3. **Anchor for comparisons.** Readers judging a trial article say where it
+   falls short of the benchmark, and how, as well as comparing it with its
+   rival.
+
+Sam Who, Ciechanowski and Julia Evans, the references the site already names,
+would make useful additions. Their sites are blocked by this environment's
+network policy (`samwho.dev`, `ciechanow.ski`, `jvns.ca`). They can join the
+benchmark if those domains are allowed in the environment's network settings.
 
 ## Decisions for the user
 
@@ -295,9 +355,16 @@ column-store essay and found that most hits there were doing legitimate work.
 - **Unguided editor reading of whiteboarding.md.** It reached "would not
   publish" and counted about 40 register hits across seven habits. Its counts
   are used above.
-- **False-positive test.** It ran the first habit list over the column-store
-  essay's opening sections. Most hits were legitimate, which led to the narrower
-  definitions above and to the list of what good pages here do.
+- **False-positive test against the site's own writing.** It ran the first
+  habit list over the column-store essay and found most hits were legitimate.
+  The user then asked for a benchmark of best-in-class human writing instead of
+  approved site articles, so this test has been replaced.
+- **Benchmark tests, one per Nystrom chapter.** Each ran the second habit list
+  over a chapter and treated every hit as presumed false. *A Map of the
+  Territory* produced only false positives. *State* produced about 20, with
+  one borderline clause. Their rewordings are folded into the habit definitions
+  above. Their accounts of what the chapters do became the style guide's
+  contents.
 - **Sceptical review of the first draft.** It confirmed most of the diagnosis
   and corrected the construction count to about 80. It identified the
   rewritten-feedback cause, the timing confound and the user's earlier
