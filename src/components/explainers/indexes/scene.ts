@@ -20,7 +20,7 @@ export function cell(parent: SVGElement, key: string, sub: string, extraClass = 
   g.append(svg('rect', { x: 0, y: 0, width: G.cw, height: G.ch, rx: 2 }));
   const keyText = svg('text', { x: G.cw / 2, y: 14, class: 'ix-key', 'text-anchor': 'middle' }, key) as SVGTextElement;
   const subText = svg('text', { x: G.cw / 2, y: 26.5, class: 'ix-sub', 'text-anchor': 'middle' }, sub) as SVGTextElement;
-  const mark = svg('text', { x: G.cw - 3.5, y: 9, class: 'ix-mark', 'text-anchor': 'end' }, '') as SVGTextElement;
+  const mark = svg('text', { x: G.cw - 2.5, y: 8.5, class: 'ix-mark', 'text-anchor': 'end' }, '') as SVGTextElement;
   g.append(keyText, subText, mark);
   parent.append(g);
   return { g, mark, key: keyText, sub: subText, x: 0, y: 0 };
@@ -169,7 +169,25 @@ export function centre(panelOrigin: [number, number], c: Cell): [number, number]
   return [panelOrigin[0] + c.x + G.cw / 2, panelOrigin[1] + c.y + G.ch / 2];
 }
 
-/** A pointer from an index entry to a table row. */
+/** A gold frame that travels from cell to cell, marking what is being read. */
+export function readHead(parent: SVGElement) {
+  const head = svg('rect', { class: 'ix-read-head', x: -2, y: -2, width: G.cw + 4, height: G.ch + 4, rx: 3, 'data-state': 'hidden' }) as SVGRectElement;
+  parent.append(head);
+  return head;
+}
+
+/** Move the read head over a cell (in the coordinates of the head's parent), or hide it. */
+export function moveHead(head: SVGRectElement, at: [number, number] | null) {
+  if (!at) { head.setAttribute('data-state', 'hidden'); return; }
+  const jump = head.getAttribute('data-state') === 'hidden';
+  if (jump) head.style.transition = 'none';
+  head.style.transform = `translate(${at[0]}px, ${at[1]}px)`;
+  if (jump) { void head.getBoundingClientRect(); head.style.transition = ''; }
+  head.setAttribute('data-state', '');
+}
+
+/** A pointer from an index entry to a table row. Draw pointers into a layer
+ *  beneath the panels, so the cells cover them and they show only in the gaps. */
 export function pointer(parent: SVGElement, from: [number, number], to: [number, number], vertical: boolean) {
   const [x1, y1] = from;
   const [x2, y2] = to;

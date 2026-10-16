@@ -25,20 +25,22 @@ const open = async (extensions = {}) => {
   const db = new PGlite({ extensions });
   const q = async (sql) => (await db.query(sql)).rows;
   const plan = async (sql) => (await q('EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, FORMAT JSON) ' + sql))[0]['QUERY PLAN'][0];
-  return { db, q, plan };
+  const estimate = async (sql) => (await q('EXPLAIN (FORMAT JSON) ' + sql))[0]['QUERY PLAN'][0].Plan;
+  const size = async (rel) => Number((await q(`SELECT pg_relation_size('${rel}') / 8192 AS n`))[0].n);
+  return { db, q, plan, estimate, size };
 };
 const expectedIds = [59041, 58041, 57041, 56041, 55041, 54041, 53041, 52041, 51041, 50041];
 
-// The article's sequence, in one session.
-const { db, q, plan } = await open({ pageinspect });
+// The article's sequence, in one session, in the order of experiment.sql.
+const { db, q, plan, estimate, size } = await open({ pageinspect });
 await db.exec('CREATE EXTENSION pageinspect');
 await db.exec(setup);
 const historyIds = async () => (await q(s.history)).map((r) => r.order_id);
 observed.version = (await q('SELECT version()'))[0].version;
-observed.tablePages = Number((await q("SELECT pg_relation_size('index_orders') / 8192 AS n"))[0].n);
+observed.tablePages = await size('index_orders');
 assert.equal(observed.tablePages, 1725);
 
-// Sequential scan.
+// Sequential scan, and the history query with no index.
 let p = await plan(s.lookup);
 assert.equal(p.Plan['Node Type'], 'Seq Scan');
 assert.equal(p.Plan['Rows Removed by Filter'], 59940);
@@ -47,32 +49,25 @@ assert.equal(pages(p.Plan), 1725);
 observed.lookupNoIndex = { node: 'Seq Scan', pages: 1725, removed: 59940, rows: 60 };
 p = await plan(s.history);
 assert.deepEqual(await historyIds(), expectedIds);
-assert.equal(find(p, 'Seq Scan')['Rows Removed by Filter'], 59985);
-assert(has(p, 'Sort'));
-observed.history = { none: { node: 'Seq Scan', pages: pages(p.Plan), sort: true } };
+assert(has(p, 'Seq Scan') && has(p, 'Sort'));
+assert.equal(pages(p.Plan), 1725);
+observed.history = { none: { node: 'Seq Scan', pages: 1725, sort: true } };
 
-// Index entries.
+// Index entries and TIDs; B-tree.
 await db.exec(s.customerIndex);
-await db.exec('ANALYZE index_orders');
 p = await plan(s.lookup);
 assert.equal(pages(find(p, 'Bitmap Index Scan')), 2);
 assert.equal(find(p, 'Bitmap Heap Scan')['Exact Heap Blocks'], 60);
 assert.equal(pages(p.Plan), 62);
-observed.lookupCustomerIndex = { node: 'Bitmap Heap Scan', indexPages: 2, tablePages: 60 };
+observed.lookupCustomerIndex = { node: 'Bitmap Heap Scan', indexPages: 2, tablePages: 60, pages: 62 };
 observed.customerIndex = {
   levels: (await q("SELECT level FROM bt_metap('index_orders_customer')"))[0].level + 1,
-  pages: Number((await q("SELECT pg_relation_size('index_orders_customer') / 8192 AS n"))[0].n),
+  pages: await size('index_orders_customer'),
 };
+assert.equal(observed.customerIndex.levels, 2);
 const tids = (await q("SELECT array_length(tids, 1) AS n FROM bt_page_items('index_orders_customer', 1) WHERE tids IS NOT NULL LIMIT 1"))[0].n;
 assert.equal(tids, 60);
 observed.postingListTids = tids;
-p = await plan(s.history);
-assert.deepEqual(await historyIds(), expectedIds);
-assert.equal(find(p, 'Bitmap Index Scan')['Actual Rows'], 60);
-assert.equal(find(p, 'Bitmap Heap Scan')['Rows Removed by Filter'], 45);
-assert(has(p, 'Sort'));
-assert.equal(pages(p.Plan), 62);
-observed.history.customer = { node: 'Bitmap Heap Scan', fetched: 60, removed: 45, pages: 62, sort: true };
 
 // Range scans.
 p = await plan(s.range);
@@ -82,33 +77,77 @@ assert.equal(find(p, 'Bitmap Heap Scan')['Exact Heap Blocks'], 70);
 assert(has(p, 'Sort'));
 observed.range = { node: 'Bitmap Heap Scan', entries: 360, indexPages: 3, tablePages: 70, sort: true };
 
-// Selectivity.
+// Selectivity: the plan chosen at each bound, and the planner's estimates.
+const bound = (k) => s.wideRange.replace('500', String(k));
 observed.selectivity = {};
 for (const k of [1, 100, 300, 500, 550, 900]) {
-  const sp = await plan(s.wideRange.replace('500', String(k)));
+  const sp = await plan(bound(k));
   observed.selectivity[k] = { node: sp.Plan['Node Type'], pages: pages(sp.Plan), tablePages: find(sp, 'Bitmap Heap Scan')?.['Exact Heap Blocks'] ?? null };
 }
 assert.equal(observed.selectivity[500].node, 'Bitmap Heap Scan');
+assert.equal(observed.selectivity[500].tablePages, 922);
 assert.equal(observed.selectivity[550].node, 'Seq Scan');
+observed.estimates = {};
+for (const k of [500, 550]) {
+  await db.exec('SET enable_seqscan = off; SET enable_indexscan = off');
+  const bitmap = await estimate(bound(k));
+  await db.exec('RESET enable_seqscan; SET enable_bitmapscan = off');
+  const seq = await estimate(bound(k));
+  await db.exec('RESET enable_bitmapscan; RESET enable_indexscan');
+  observed.estimates[k] = { bitmap: bitmap['Total Cost'], seq: seq['Total Cost'], rows: bitmap['Plan Rows'] };
+}
+// ANALYZE samples rows, so the estimates move slightly between runs. The
+// article quotes only their order: the bitmap estimate rises with the
+// matching rows and crosses the flat sequential-scan estimate between 500 and 550.
+assert(observed.estimates[500].bitmap < observed.estimates[500].seq);
+assert(observed.estimates[550].bitmap > observed.estimates[550].seq);
+assert.equal(Math.round(observed.estimates[500].seq), Math.round(observed.estimates[550].seq));
+observed.correlation = Number((await q("SELECT correlation FROM pg_stats WHERE tablename = 'index_orders' AND attname = 'customer_id'"))[0].correlation);
+assert(Math.abs(observed.correlation) < 0.1);
 observed.costSettings = { random_page_cost: (await q('SHOW random_page_cost'))[0].random_page_cost, seq_page_cost: (await q('SHOW seq_page_cost'))[0].seq_page_cost };
 assert.equal(observed.costSettings.random_page_cost, '4');
+assert.equal(observed.costSettings.seq_page_cost, '1');
 
-// Composite indexes.
+// Composite indexes: customer index, reversed index, composite index.
+p = await plan(s.history);
+assert.deepEqual(await historyIds(), expectedIds);
+assert.equal(find(p, 'Bitmap Index Scan')['Actual Rows'], 60);
+assert.equal(find(p, 'Bitmap Heap Scan')['Rows Removed by Filter'], 45);
+assert(has(p, 'Sort'));
+assert.equal(pages(p.Plan), 62);
+observed.history.customer = { node: 'Bitmap Heap Scan', fetched: 60, removed: 45, pages: 62, sort: true };
+
+await db.exec(s.reversedIndex);
+p = await plan(s.history);
+assert.deepEqual(await historyIds(), expectedIds);
+assert.equal(find(p, 'Index Scan')['Index Name'], 'index_orders_reversed');
+assert(has(p, 'Incremental Sort'));
+// The scan reads entries newest first and checks customer_id inside the
+// index, so the plan reports only the rows it returned: customer 42's ten,
+// plus the eleventh that ends the incremental sort's last group. The entries
+// it passed are every order from that eleventh one to the newest.
+const reversedRows = find(p, 'Index Scan')['Actual Rows'];
+const eleventh = (await q("SELECT order_id FROM index_orders WHERE customer_id = 42 AND placed_at >= timestamptz '2026-02-01 00:00:00+00' ORDER BY placed_at DESC OFFSET 10 LIMIT 1"))[0]?.order_id;
+const reversedRead = Number((await q(`SELECT count(*) AS n FROM index_orders WHERE placed_at >= (SELECT placed_at FROM index_orders WHERE order_id = ${eleventh ?? 0})`))[0].n);
+observed.history.reversed = { node: 'Index Scan', pages: pages(p.Plan), incrementalSort: true, rowsReturned: reversedRows, entriesRead: reversedRead };
+assert.equal(observed.history.reversed.pages, 57);
+assert(reversedRead > 10500 && reversedRead < 11500, String(reversedRead));
+
 await db.exec(s.compositeIndex);
-await db.exec('ANALYZE index_orders');
 p = await plan(s.history);
 assert.deepEqual(await historyIds(), expectedIds);
 assert.equal(find(p, 'Index Scan')['Actual Rows'], 10);
 assert(!has(p, 'Sort'));
 assert.equal(pages(p.Plan), 13);
-observed.history.composite = { node: 'Index Scan', pages: 13, sort: false, indexLevels: (await q("SELECT level FROM bt_metap('index_orders_history')"))[0].level + 1 };
-p = await plan(s.newest);
-const newestScan = nodes(p.Plan).find((n) => /Scan/.test(n['Node Type']));
-observed.newest = { node: newestScan['Node Type'], index: newestScan['Index Name'] ?? null, searches: newestScan['Index Searches'] ?? null, rows: newestScan['Actual Rows'], pages: pages(p.Plan), sort: has(p, 'Sort'), indexPages: Number((await q("SELECT pg_relation_size('index_orders_history') / 8192 AS n"))[0].n) };
+observed.history.composite = {
+  node: 'Index Scan', pages: 13, sort: false,
+  indexLevels: (await q("SELECT level FROM bt_metap('index_orders_history')"))[0].level + 1,
+  indexBytes: Number((await q("SELECT pg_relation_size('index_orders_history') AS b"))[0].b),
+};
+assert.equal(observed.history.composite.indexLevels, 3);
 
 // Covering indexes and index-only scans.
 await db.exec(s.coveringIndex);
-await db.exec('ANALYZE index_orders');
 p = await plan(s.history);
 assert.deepEqual(await historyIds(), expectedIds);
 assert.equal(find(p, 'Index Only Scan')['Heap Fetches'], 10);
@@ -120,25 +159,67 @@ assert.deepEqual(await historyIds(), expectedIds);
 assert.equal(find(p, 'Index Only Scan')['Heap Fetches'], 0);
 assert.equal(pages(p.Plan), 4);
 observed.history.coverAfterVacuum = { node: 'Index Only Scan', heapFetches: 0, pages: 4 };
+// The plan the article prints for this point.
+const text = (await q('EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF) ' + s.history)).map((r) => r['QUERY PLAN']).join('\n');
+observed.historyPlanText = text;
+for (const line of ['Limit (actual rows=10.00 loops=1)', 'Index Only Scan using index_orders_cover on index_orders (actual rows=10.00 loops=1)', "Index Cond: ((customer_id = 42) AND (placed_at >= '2026-02-01 00:00:00+00'", 'Heap Fetches: 0', 'Buffers: local hit=4']) assert(text.includes(line), line);
 observed.sizes = (await q("SELECT pg_relation_size('index_orders') AS table_bytes, pg_relation_size('index_orders_cover') AS covering_index_bytes"))[0];
 
-// Checking an index: the paid-only query and the usage view.
+// Checking an index with EXPLAIN: the paid-only query.
 p = await plan(s.residual);
 assert.equal(find(p, 'Index Scan')['Rows Removed by Filter'], 2);
 assert.equal(find(p, 'Index Scan')['Actual Rows'], 10);
 observed.residual = { fetched: 12, removed: 2, returned: 10 };
-await q(s.usage); // runs; PGlite does not flush index scan counts, so the result is not recorded
+
+// Partial, expression and unique indexes.
+await db.exec(s.partialIndex);
+const pendingRows = Number((await q("SELECT count(*) AS n FROM index_orders WHERE status = 'pending'"))[0].n);
+p = await plan(s.pending);
+const pendingScan = nodes(p.Plan).find((n) => n['Index Name'] === 'index_orders_pending');
+assert(pendingScan && pendingScan['Scan Direction'] === 'Backward');
+observed.partial = { pendingRows, pages: await size('index_orders_pending'), queryPages: pages(p.Plan) };
+assert.equal(pendingRows, 12000);
+assert.equal(observed.partial.pages, 35);
+assert.equal(observed.partial.queryPages, 4);
+await db.exec('CREATE INDEX index_orders_placed ON index_orders (placed_at)');
+observed.partial.fullIndexPages = await size('index_orders_placed');
+await db.exec('DROP INDEX index_orders_placed');
+
+await db.exec(s.dayIndex);
+p = await plan(s.day);
+const dayScan = nodes(p.Plan).find((n) => n['Index Name'] === 'index_orders_day');
+assert(dayScan);
+const dayCount = Number((await q(s.day))[0].count);
+assert.equal(dayCount, 1440);
+observed.expression = { node: dayScan['Node Type'], rows: dayCount, pages: pages(p.Plan) };
+assert.equal(observed.expression.pages, 47);
+p = await plan(s.dayCast);
+assert(has(p, 'Seq Scan'));
+assert.equal(Number((await q(s.dayCast))[0].count), 1440);
+observed.expression.castPlan = { node: 'Seq Scan', pages: pages(p.Plan) };
+assert.equal(observed.expression.castPlan.pages, 1725);
+await assert.rejects(db.exec("CREATE INDEX index_orders_cast ON index_orders ((placed_at::date))"), /IMMUTABLE/);
+
+await db.exec(s.uniqueIndex);
+observed.unique = { pages: await size('index_orders_customer_time') };
+await assert.rejects(db.exec("INSERT INTO index_orders SELECT 60001, customer_id, placed_at, status, total, note FROM index_orders WHERE order_id = 42"), /duplicate key/);
+
+// Finding unused indexes. PGlite does not flush index scan counts, so the
+// result is not recorded.
+await q(s.usage);
 await db.close();
 
-// The reversed composite index, in its own session.
+// The same selectivity test with the rows shuffled across the pages.
 {
   const r = await open();
-  await r.db.exec(setup);
-  await r.db.exec('CREATE INDEX index_orders_reversed ON index_orders (placed_at DESC, customer_id); ANALYZE index_orders');
-  const rp = await r.plan(s.history);
-  assert.deepEqual((await r.q(s.history)).map((x) => x.order_id), expectedIds);
-  observed.history.reversed = { node: 'Index Scan', pages: pages(rp.Plan), incrementalSort: has(rp, 'Incremental Sort'), entriesReadEstimate: 60000 - 49041 + 1 };
-  assert(has(rp, 'Index Scan') && observed.history.reversed.pages > 40);
+  await r.db.exec(setup.replace('1 + n % 1000', '1 + ((n::bigint * 7919) % 60000) % 1000').replace('FROM generate_series(1, 60000) AS series(n);', 'FROM generate_series(1, 60000) AS series(n) ORDER BY random();'));
+  await r.db.exec(s.customerIndex + ' ANALYZE index_orders;');
+  const at = async (k) => { const sp = await r.plan(bound(k)); return { node: sp.Plan['Node Type'], tablePages: find(sp, 'Bitmap Heap Scan')?.['Exact Heap Blocks'] ?? null }; };
+  observed.shuffled = { 500: await at(500), 550: await at(550) };
+  observed.shuffled.correlation = Number((await r.q("SELECT correlation FROM pg_stats WHERE tablename = 'index_orders' AND attname = 'customer_id'"))[0].correlation);
+  assert.equal(observed.shuffled[500].node, 'Bitmap Heap Scan');
+  assert.equal(observed.shuffled[550].node, 'Seq Scan');
+  assert(observed.shuffled[500].tablePages > 1700);
   await r.db.close();
 }
 
@@ -158,6 +239,7 @@ COMMIT;`);
 }
 assert.equal(Number(observed.hot['fillfactor 90, total not indexed'].hot), 600);
 assert.equal(Number(observed.hot['fillfactor 90, INCLUDE (total)'].hot), 0);
+assert.equal(Number(observed.hot['default fillfactor, total not indexed'].hot), 0);
 
 // Write-ahead log written by 10,000 inserts as indexes are added.
 {
