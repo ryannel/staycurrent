@@ -5,7 +5,7 @@ description: Follow requests, replies and independent work through a system, and
 
 A sequence diagram follows an interaction between participants. Each participant has a vertical line, called a **lifeline**. Messages cross between those lines, with later events drawn lower down. This lets us ask who sends a request, who can answer it, and what the sender knows when a reply arrives—or fails to arrive.
 
-The drawing is especially useful when a box-and-arrow architecture view leaves behaviour ambiguous. An arrow from a browser to an API tells us that they communicate. A sequence can show the browser submitting a repair request, the API storing it, and the browser receiving a receipt before any notification is attempted.
+The drawing is especially useful when a box-and-arrow architecture view leaves behaviour ambiguous. An arrow from a browser to an API tells us that they communicate. A sequence can show the browser submitting a repair request, the API storing it, and the browser receiving a receipt that does not wait for a notification.
 
 We will use an invented repair service with a browser UI, a Repair API and a Repair DB. The API stores repair requests and notification jobs. A separate notification worker reads jobs from the database and calls an external notification provider. The database is the store here; the design does not contain a separate message broker.
 
@@ -28,7 +28,7 @@ sequenceDiagram
     API-->>UI: Request received: R17
 ```
 
-<figure><img src="/images/drawing-systems/sequences-request.svg" alt="Browser UI submits a repair request to Repair API. The API asks Repair DB to store the request and notification job. The database returns commit succeeded before the API returns request received R17 to the browser." width="520" height="440"/><figcaption>Read down the lifelines. The receipt follows the successful store. Email delivery is outside this interaction.</figcaption></figure>
+<figure><img src="/images/drawing-systems/sequences-request.svg" alt="Browser UI submits a repair request to Repair API. The API asks Repair DB to store the request and notification job. The database returns commit succeeded before the API returns request received R17 to the browser." width="520" height="460"/><figcaption>Read down the lifelines. The receipt follows the successful store. Email delivery is outside this interaction.</figcaption></figure>
 
 The solid filled-arrow messages are calls in this example; dashed arrows are replies. Put the operation or result on the line. “Data” would conceal whether the database is being asked to read, write or acknowledge something. “Request received: R17” says what the browser learns without claiming that a technician has accepted the job.
 
@@ -38,7 +38,7 @@ Vertical distance is not elapsed time. The long space before a reply might exist
 
 ## Draw the worker's interaction separately
 
-The receipt does not wait for the notification provider. Later, the worker reads an eligible job and asks the provider to send a message. This second panel starts with a job available in Repair DB. It omits how workers claim jobs and avoid conflicting work; those would be separate implementation questions.
+The receipt does not wait for the notification provider. Once the job is committed, the worker can read it and ask the provider to send a message. That can happen before or after the browser receives its receipt; the store is the dependency, not the browser response. This second panel starts with a job available in Repair DB. It omits how workers claim jobs and avoid conflicting work; those would be separate implementation questions.
 
 ```mermaid
 sequenceDiagram
@@ -55,7 +55,7 @@ sequenceDiagram
 
 <figure><img src="/images/drawing-systems/sequences-notification.svg" alt="The notification worker reads job J9 from Repair DB, requests an email from the notification provider, receives request accepted, then records that acceptance in Repair DB." width="520" height="570"/><figcaption>The worker initiates the database read. Provider acceptance is recorded; this trace contains no evidence that the customer opened or received an email.</figcaption></figure>
 
-Notice how several facts disappeared when we split the pictures. The first panel does not say how quickly the worker will run. The second starts after the job exists. Together they explain the intended relationship, but they do not supply a bound on delivery time.
+Notice how several facts disappeared when we split the pictures. The first panel does not say how quickly the worker will run or order its call relative to the browser receipt. The second starts after the job exists. Together they explain the intended relationship, but they do not supply a bound on delivery time.
 
 Asynchronous work does not require drawing every call with an asynchronous arrow. The worker runs independently of the browser's request, yet it can still make an ordinary request and wait for the provider's answer. Mermaid's `-)` arrow can mark a one-way asynchronous message when that is what the interaction means. Choose the form from the message's behaviour, not from the fact that a worker exists.
 
@@ -89,6 +89,22 @@ Keep alternate paths at a useful scale. A deeply nested diagram containing every
 ## A missing reply leaves more than one possible history
 
 Suppose the worker calls the provider and times out. It knows that no reply arrived before its deadline. It does not yet know whether the provider accepted the request. Two possible histories fit that observation: the request never reached the provider, or the provider accepted it and the response was lost.
+
+The following source compares possible histories from our viewpoint as authors. Its `alt` labels are not conditions the worker can evaluate after a timeout. A crossed arrow explicitly selects a lost-message scenario; the worker's actual observation remains the note at the bottom.
+
+```mermaid
+sequenceDiagram
+    participant Worker as Notification worker
+    participant Provider as Notification provider
+    alt Possible history A: request never arrives
+        Worker-xProvider: Request email is lost
+    else Possible history B: reply is lost
+        Worker->>Provider: Request email
+        Note over Provider: Request accepted
+        Provider--xWorker: Acceptance reply is lost
+    end
+    Note over Worker: Deadline expires, outcome unknown
+```
 
 <figure><img src="/images/drawing-systems/sequences-uncertainty.svg" alt="Two possible histories share the observation no reply. In the first, a worker request fails to reach the provider. In the second, the provider accepts the request but its reply is lost. A note asks whether retrying could send a second email." width="520" height="580"/><figcaption>“No reply” describes the worker's evidence. It does not identify which provider history occurred.</figcaption></figure>
 
@@ -132,7 +148,7 @@ sequenceDiagram
     end
 ```
 
-<figure><img src="/images/drawing-systems/sequences-parallel.svg" alt="A parallel frame contains two branches: read repair status and receive current status; read repair help and receive help content. The branch labels say the responses may arrive in either order." width="520" height="420"/><figcaption>Each branch retains its own request-before-reply order. Their placement in the drawing does not require the status reply to precede the help request.</figcaption></figure>
+<figure><img src="/images/drawing-systems/sequences-parallel.svg" alt="A parallel frame contains two branches: read repair status and receive current status; read repair help and receive help content. The branch labels say the responses may arrive in either order." width="520" height="435"/><figcaption>Each branch retains its own request-before-reply order. Their placement in the drawing does not require the status reply to precede the help request.</figcaption></figure>
 
 The frame permits interleaving; it does not guarantee simultaneous execution or that the API uses two threads. If the UI needs both results before enabling an action, state that dependency after the frame. If one branch must use a value returned by the other, they are not independent at that point and should be drawn in order.
 

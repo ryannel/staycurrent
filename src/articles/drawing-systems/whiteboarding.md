@@ -85,7 +85,7 @@ These are our conventions, not universal meanings of the colours. Explain them w
 
 For the current trace, number the relationships in blue: 1 submits request, 2 stores request and job, 3 reads job, 4 requests email. The number 3 sits beside the upward worker-to-database arrow. The number identifies the part of this example we are discussing; the arrow still identifies who initiates the read.
 
-Someone asks whether the provider could send two emails after a retry. We have not checked its contract, so add a purple “? Can provider requests duplicate?” Do not turn it into a red assertion that duplicate email is a known defect. Those annotations would make different claims.
+Someone asks whether the provider could send two emails after a retry. We have not checked its contract, so add a purple “? Can retries send two emails?” Do not turn it into a red assertion that duplicate email is a known defect. Those annotations would make different claims.
 
 Another person suggests displaying notification status in the browser. Write “NEW: show notification status” in green in a separate proposal area. It has not become part of the current software just because it was discussed beside that software. If approved later, the group can draw the additional reads and UI behaviour in a proposed view.
 
@@ -99,11 +99,21 @@ When there is disagreement, preserve the competing statements precisely. “API 
 
 The question margin is useful here. A topic may deserve investigation while remaining outside this meeting's task. Record the question and its next action, then return to the agreed scope.
 
+## Drawing from memory
+
+When you are working alone, supply the account before reaching for shapes. Write the question and one case, then make a short list of remembered things and actions. For the repair service, that might be “browser submits”, “API stores”, “worker reads” and “provider accepts”. Keep the list small enough to inspect as a whole.
+
+Separate what you recall from what you are inferring. You may remember that a notification job lives in the database but be unsure which component reads it. Write that as a question beside the store. Drawing the most familiar design would turn a gap in memory into an apparently established relationship.
+
+Place the known parts, connect the known actions, then read the drawing aloud as if a colleague were listening. Where did you have to insert an unrecorded step? What would change if the provider were unavailable? This often reveals a missing participant, a word that conceals several operations, or a boundary you cannot yet justify.
+
+Leave the unresolved marks visible when sharing the sketch. “I remember a worker reading jobs; I have not checked its retry behaviour” gives the next reader something specific to verify. Once you consult the implementation or its owner, revise the picture and its status. The drawing can organise an investigation before it becomes documentation.
+
 ## Finish with a board someone can read back
 
 Here is the composed board after the correction. The first three parts form the submission path. The worker reads the stored jobs and calls the external provider. Its read points towards the database even though the job's data comes back in the response. Replies are omitted from this structure view.
 
-<figure><img src="/images/drawing-systems/whiteboarding-agreed-board.svg" alt="Agreed current-design board. Step 1 Browser UI submits to Repair API. Step 2 Repair API stores the request and notification job in Repair DB. Step 3 Notification worker reads jobs from Repair DB. Step 4 worker requests email from the external Notification provider. A question asks whether provider requests can duplicate. A separate NEW note proposes showing notification status." width="520" height="900"/><figcaption>This board can be read without the conversation: named parts, labelled operations, an explicit external provider, a numbered trace, an unresolved question and a separate proposal.</figcaption></figure>
+<figure><img src="/images/drawing-systems/whiteboarding-agreed-board.svg" alt="Agreed current-design board. Step 1 Browser UI submits to Repair API. Step 2 Repair API stores the request and notification job in Repair DB. Step 3 Notification worker reads jobs from Repair DB. Step 4 worker requests email from the external Notification provider. A question asks whether retries can send two emails. A separate NEW note proposes showing notification status." width="520" height="900"/><figcaption>This board can be read without the conversation: named parts, labelled operations, an explicit external provider, a numbered trace, an unresolved question and a separate proposal.</figcaption></figure>
 
 Ask someone other than the person holding the pen to explain it. Let them point with a finger or cursor. If they read DB → Worker despite the arrowhead, the layout or label may still be fighting the meaning. Repair the drawing before decorating it.
 

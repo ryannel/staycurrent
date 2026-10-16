@@ -55,7 +55,7 @@ Different views can omit different things. A domain model need not contain the n
 
 A contradiction is different: two drawings make incompatible claims about the same case. Consider this deliberately incomplete lifecycle beside the agreed process.
 
-<figure><img src="/images/drawing-systems/maintaining-mismatch.svg" alt="The process permits an approved repair to be cancelled before work starts. An incomplete lifecycle has only an Approved-to-Repairing transition and no cancellation route, so the views disagree about the same case." width="520" height="600" loading="lazy"/><figcaption>The missing lifecycle transition matters because the process permits this case. The right repair depends on which account matches the agreed policy and actual implementation.</figcaption></figure>
+<figure><img src="/images/drawing-systems/maintaining-mismatch.svg" alt="After quote approval, a process fragment receives a cancellation and closes the request before repair begins. An incomplete lifecycle has only an Approved-to-In repair transition and no cancellation route, so the views disagree about the same case." width="520" height="600" loading="lazy"/><figcaption>The missing lifecycle transition matters because the process permits this case. The right repair depends on which account matches the agreed policy and actual implementation.</figcaption></figure>
 
 The process owner confirms that a customer can cancel after approving a quote, provided repair work has not begun. Add the corresponding cancellation transition to the lifecycle and record the condition. If the implementation currently refuses every cancellation after approval, preserve that as a discrepancy between policy and behaviour. Do not silently change the policy drawing to make the documents agree.
 

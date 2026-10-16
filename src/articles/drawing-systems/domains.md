@@ -62,7 +62,7 @@ This is where a practical model often improves: the line exposes a question, and
 
 Lay out four cards for R42: submitted, appointment booked, quote issued, quote approved. These are observations at different times, not four requests. At submission, R42 links to Mina and has no appointment or quote. After booking, it links to A7. After rescheduling it also links to A8, with A7 marked superseded. After diagnosis, it links to Q9.
 
-Now cancel A8 before the visit. Does R42 disappear? Our definitions say it need not: a visit was cancelled, while the problem may still need attention. If the team intends every cancelled appointment to close its request, that is an additional business rule. The relationship alone does not require it.
+Return to the moment just after rescheduling, before the visit and diagnosis. Now cancel A8. Does R42 disappear? Our definitions say it need not: a visit was cancelled, while the problem may still need attention. If the team intends every cancelled appointment to close its request, that is an additional business rule. The relationship alone does not require it.
 
 Then try a different cancellation: Mina cancels R42 before repair work starts. We keep the historical appointments and quote associated with it, but no longer treat them as permission to proceed. This raises a lifecycle question about which operations remain allowed. The [states article](/learn/drawing-systems/states/) gives that question its own drawing. The domain model has done its job by making clear which object is changing.
 

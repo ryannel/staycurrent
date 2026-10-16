@@ -33,3 +33,9 @@ Used Chromium through the bundled Playwright runtime to render the printable ref
 Printed the HTML with browser print CSS, print backgrounds enabled and preferred CSS page size. pypdf confirmed two A4 pages. Temporary screenshots and PDF were inspection output under `/tmp/`, not deliverables. The printable HTML is the durable deliverable.
 
 Root coordinates the required whole-site `pnpm build` and independent assembled-page review. This note does not claim those checks have passed or that the article has been published.
+
+## Terminology repair after collection review
+
+Changed the saved object from booking to request throughout the article, all relevant SVG text and titles, alt descriptions and printable sheet. The composed headings now say “request a repair”. “Booking site” remains the UI's name; saving a RepairRequest does not establish that an Appointment has been booked. The queue exercise stores a request and sends its receipt notification. This keeps the vocabulary consistent with the domain and lifecycle articles.
+
+The independent reader also prompted a stronger connector comparison. The final `vocabulary-connectors.svg` keeps Email worker on the left and Email jobs on the right in both panels. The structural arrow points toward the queue (“takes job from”); the data-flow arrow points toward the worker (“confirmation job”). Updated article alt and caption preserve this reading. Rechecked the printable reference: all images load, no phone-width overflow, and the output remains two A4 pages; this figure is not embedded in the print reference.

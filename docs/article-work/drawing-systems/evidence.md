@@ -21,4 +21,4 @@ All instructional diagrams are original code-native SVG drawings. Exact arrows, 
 
 ## Scope and publication
 
-Ten complete articles including introduction. No new external services, paid tools or hosted experiments are required. The section has local routes and a draft/noindex label, is not added to the public reading index, and is not committed, pushed or deployed. Existing user changes were present at the start and are outside this commission.
+Ten complete articles including introduction. No new external services, paid tools or hosted experiments are required. The section has local routes and a draft/noindex label and is not added to the public reading index. This agent has not committed, pushed or deployed it. During production, another operation in the shared checkout captured initial draft files in commits 6e6cd1b and badb1c7; local origin/main subsequently pointed to badb1c7. Those commits are preserved. They precede the completed review and repairs here. Existing user changes were present at the start and are outside this commission.

@@ -3,13 +3,13 @@ title: A whiteboard shape vocabulary
 description: Draw recognisable people, apps, services and messages with a few repeatable strokes, then give the whole board a consistent personality.
 ---
 
-A useful whiteboard symbol is something you can draw again while listening. It should leave room for a name, survive an awkward pen stroke, and look enough like its neighbours that the board feels like one explanation. A browser window needs only a frame and a top bar. Drawing its tabs, address field and page contents rarely helps someone follow a booking request.
+A useful whiteboard symbol is something you can draw again while listening. It should leave room for a name, survive an awkward pen stroke, and look enough like its neighbours that the board feels like one explanation. A browser window needs only a frame and a top bar. Drawing its tabs, address field and page contents rarely helps someone follow a repair request.
 
-This vocabulary gives you a small set of shapes to practise. The shapes are suggested shorthand, not a formal notation. Write “Repair API” beside a service, “Repair DB” beside a database, and “stores booking” beside the arrow between them. Those words let someone check your account of the system. The shapes help them find their way around it.
+This vocabulary gives you a small set of shapes to practise. The shapes are suggested shorthand, not a formal notation. Write “Repair API” beside a service, “Repair DB” beside a database, and “stores request” beside the arrow between them. Those words let someone check your account of the system. The shapes help them find their way around it.
 
-Here is the vocabulary doing a small job: a customer uses a booking site, the site submits a repair to the Repair API, and the API stores a booking in Repair DB. This view stops at saving the booking. Each shape has a name, and each arrow has a phrase you can read from its source to its destination.
+Here is the vocabulary doing a small job: a customer uses a booking site, the site submits a repair to the Repair API, and the API stores a request in Repair DB. This view stops at saving the request. Each shape has a name, and each arrow has a phrase you can read from its source to its destination.
 
-<figure><img src='/images/drawing-systems/vocabulary-system-spare.svg' alt='In spare style, Customer uses Booking site, which submits repair to Repair API, which stores booking in Repair DB.' width='500' height='790' loading='lazy'/><figcaption>The spare board carries the complete relationship model.</figcaption></figure>
+<figure><img src='/images/drawing-systems/vocabulary-system-spare.svg' alt='In spare style, Customer uses Booking site, which submits repair to Repair API, which stores request in Repair DB.' width='500' height='790' loading='lazy'/><figcaption>The spare board carries the complete relationship model.</figcaption></figure>
 
 [Open the printable reference sheet](/images/drawing-systems/whiteboard-reference.html) for the drawing steps and a five-minute exercise. Each illustration below is also an editable SVG: save the image to reuse or adapt it.
 
@@ -103,7 +103,7 @@ Choose a treatment you can repeat at conversation speed. **Spare** uses clean co
 
 <figure><img src='/images/drawing-systems/vocabulary-style-expressive.svg' alt='Expressive versions of the same four objects add a small hairstyle and restrained hatch marks.' width='500' height='390' loading='lazy'/><figcaption>Expressive: a few repeatable touches give character without adding parts to the system.</figcaption></figure>
 
-Here are soft and expressive versions of the spare system at the beginning. A customer uses the Booking site; the site submits a repair to the Repair API; the API stores a booking in Repair DB. The names, connections and arrow meanings stay the same. The style changes how the explanation feels, not what it asserts.
+Here are soft and expressive versions of the spare system at the beginning. A customer uses the Booking site; the site submits a repair to the Repair API; the API stores a request in Repair DB. The names, connections and arrow meanings stay the same. The style changes how the explanation feels, not what it asserts.
 
 <figure><img src='/images/drawing-systems/vocabulary-system-soft.svg' alt='The soft version preserves the same Customer to Booking site to Repair API to Repair DB relationships.' width='500' height='790' loading='lazy'/><figcaption>Rounded corners and pale washes change the treatment while preserving every endpoint.</figcaption></figure>
 
@@ -113,11 +113,11 @@ Practise one whole row of the same symbol rather than perfecting a single specim
 
 ## Connectors carry the explanation
 
-Put the objects down before joining them. Stop each line at its destination’s boundary and add an arrowhead where direction has meaning. Leave space for a short verb phrase. “API → Repair DB” leaves the relationship open; “stores booking” lets someone ask whether that operation happens before the API reports success.
+Put the objects down before joining them. Stop each line at its destination’s boundary and add an arrowhead where direction has meaning. Leave space for a short verb phrase. “API → Repair DB” leaves the relationship open; “stores request” lets someone ask whether that operation happens before the API reports success.
 
 A structural arrow can mean “uses”. A message-flow arrow can mean “information travels this way”. Those are different conventions: a worker uses a queue, but a job travels from the queue to the worker. State which view you are drawing. Use the [sequence diagram article](/learn/drawing-systems/sequences/) when the order of interactions becomes the question.
 
-<figure><img src='/images/drawing-systems/vocabulary-connectors.svg' alt='The Repair API stores booking in Repair DB and enqueues confirmation in Email jobs; both arrows name the specific relationship.' width='500' height='440' loading='lazy'/><figcaption>Write the relationship as a phrase you can read aloud from source to destination.</figcaption></figure>
+<figure><img src='/images/drawing-systems/vocabulary-connectors.svg' alt='Both panels put Email worker left and Email jobs right. The structural arrow points from worker to queue, labelled takes job from. The data-flow arrow points from queue to worker, labelled confirmation job.' width='500' height='440' loading='lazy'/><figcaption>The same pair has opposite arrow directions: the worker uses the queue, while the job moves from the queue to the worker.</figcaption></figure>
 
 A dashed line does not universally mean “optional”, “asynchronous” or “uncertain”. Choose a meaning, write it in a small key, and use it consistently. For uncertainty, a nearby question such as “Queue owned by repair team?” is often more precise. Do not borrow a formal notation’s marks casually inside a diagram that claims to follow that notation.
 
@@ -125,17 +125,17 @@ Keep about five pens available: graphite or black for the structure, blue for th
 
 ## Five minutes of practice
 
-For this exercise, consider a variation that adds a separate email queue. Draw this situation without copying the finished pictures: a customer uses a booking site. The site submits a repair to the Repair API. The API stores the booking and puts a confirmation job on Email jobs. An Email worker takes jobs and asks an outside Mail provider to send them. The repair team owns the API, database, queue and worker.
+For this exercise, consider a variation that adds a separate email queue. Draw this situation without copying the finished pictures: a customer uses a booking site. The site submits a repair to the Repair API. The API stores the request and puts a confirmation job on Email jobs. An Email worker takes jobs and asks an outside Mail provider to send them. The repair team owns the API, database, queue and worker.
 
 Spend one minute placing the names, two minutes adding shapes and connections, one minute reading the arrows aloud, and one minute removing unnecessary marks. Choose one personality. Use colour only after the drawing works in one pen.
 
-A useful structural solution has six labelled relationships: Customer **uses** Booking site; Booking site **submits repair to** Repair API; Repair API **stores booking in** Repair DB; Repair API **enqueues confirmation in** Email jobs; Email worker **takes job from** Email jobs; Email worker **requests email delivery from** Mail provider. The worker-to-queue arrow describes use. For a message-flow version, reverse that arrow and label it “confirmation job”.
+A useful structural solution has six labelled relationships: Customer **uses** Booking site; Booking site **submits repair to** Repair API; Repair API **stores request in** Repair DB; Repair API **enqueues confirmation in** Email jobs; Email worker **takes job from** Email jobs; Email worker **requests email delivery from** Mail provider. The worker-to-queue arrow describes use. For a message-flow version, reverse that arrow and label it “confirmation job”.
 
-<figure><img src='/images/drawing-systems/vocabulary-practice.svg' alt='Repair API stores booking in Repair DB and enqueues a job in Email jobs. Email worker takes a job from Email jobs and requests email delivery from the external Mail provider. The four internal elements belong to Repair team.' width='500' height='780' loading='lazy'/><figcaption>The exercise adds a separate queue. This continuation uses plain named boxes so the ownership and relationships receive the attention.</figcaption></figure>
+<figure><img src='/images/drawing-systems/vocabulary-practice.svg' alt='Repair API stores request in Repair DB and enqueues a job in Email jobs. Email worker takes a job from Email jobs and requests email delivery from the external Mail provider. The four internal elements belong to Repair team.' width='500' height='780' loading='lazy'/><figcaption>The exercise adds a separate queue. This continuation uses plain named boxes so the ownership and relationships receive the attention.</figcaption></figure>
 
 Enclose the API, Repair DB, Email jobs and Email worker in “Repair team”. Keep Mail provider outside. Check that no line accidentally ends on the enclosing boundary when it should reach a member. Your drawing need not match these silhouettes to express the same account.
 
-The sketch leaves consequential questions open: can the booking be saved while the job is lost? Can a retried job send two emails? Add those questions beside the relevant relationship if the meeting needs them. A queue icon cannot answer them.
+The sketch leaves consequential questions open: can the request be saved while the job is lost? Can a retried job send two emails? Add those questions beside the relevant relationship if the meeting needs them. A queue icon cannot answer them.
 
 If you run out of time, replace a difficult shape with a named rectangle. Preserve the names, group membership and labelled relationships. That gives the next person something they can understand and revise.
 
