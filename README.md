@@ -80,6 +80,15 @@ The homepage remains a site-wide overview. The column-store essay was
 retained and moved into the database tree. The database collection is the first of several planned fields; the [older direction](docs/history/site-direction-2026-10-02.md) is
 historical context.
 
+## Appearance
+
+The header offers System, Dark and Light themes. System follows changes to the
+reader's device preference; an explicit choice is saved in browser storage and
+applied in the head before the page is painted. `src/scripts/theme.js` also switches
+picture sources so article artwork follows the selected theme. Theme-specific CSS
+uses the resolved `data-theme` on the root; media queries retain system colours
+when JavaScript is unavailable.
+
 ## Writing and teaching
 
 The [editorial guide](docs/editorial-guide.md), [writing references](docs/writing-style.md)
