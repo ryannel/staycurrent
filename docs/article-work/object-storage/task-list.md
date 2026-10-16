@@ -11,7 +11,7 @@ a practical sandbox, and milestone pushes to origin main.
 - [x] Build guided sandbox lessons and a real-service practice path.
 - [x] Review the whole learning sequence, facts, prose, diagrams and lessons.
 - [x] Repair findings and inspect desktop/phone, light/dark and keyboard use.
-- [ ] Build, publish to origin main and verify the deployed routes.
+- [x] Build, publish to origin main and verify the deployed routes.
 
 The PostgreSQL rebuild is a depth reference, not a template for this tree. Existing
 untracked .serena/memories files are unrelated and will remain outside commits.

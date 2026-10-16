@@ -68,3 +68,29 @@ thirteen articles, all sandbox steps and the worksheet. Repairs addressed the
 specific remaining burdens: first-use terminology, approximate-search motivation,
 managed table-cleanup terminology, visible seeded lessons and rounded numerical
 results. Its targeted repaired-build judgment remains in `first-reading.md`.
+
+## Publication and live verification
+
+Publication commit `f54f9ee` was pushed to `origin/main`.
+[GitHub Actions run 38829382895](https://github.com/ryannel/staycurrent/actions/runs/38829382895)
+completed its build and Pages deployment successfully.
+
+The public site returned HTTP 200 for all sixteen object-storage destinations and
+four discovery pages. Their HTML hashes exactly matched the final local build.
+All object-storage pages are indexable. The database field guide retains its
+existing noindex status; this commission does not publish the other draft families.
+The live checker initially applied its noindex condition to that existing guide,
+then narrowed the publication assertion to the commissioned object-storage routes.
+The recorded raw observations are unchanged.
+
+A real Chrome run against `https://staycurrent.dev` completed seventeen guided
+steps across lost replies, multipart completion, cost and vector retrieval, with
+all expected statuses and no browser exceptions. Local testing had already covered
+all 78 steps. `live-verification.json` records the public checks, and
+`verify-live.mjs` preserves the procedure. The scripts use the local Playwright
+installation stated in their imports; they are evidence tooling, not application
+dependencies or additional required repository checks.
+
+The independent reader accepted the repaired build and found no new blocking
+comprehension issue. All commissioned work is complete. The remaining verification
+limit is deliberate: no real AWS account request or cloud resource was used.
