@@ -478,3 +478,42 @@ writing. The revisions therefore describe the reader's situation and the desired
 understanding, with this passage as a reference. They leave the composition to the
 author. Independent reading remains useful evidence of where that composition
 helps or loses the reader; it is not a prose metric or a formula for an opening.
+
+## Voice references, 16 October 2026
+
+The user's words, unedited, in the order they were given. Candidate passages
+from Sam Who, Bartosz Ciechanowski and Julia Evans were shown first.
+
+> Ok same who is amazing. I love the animated explanations we need to do that.
+> Bartosz is good too but not his introductions.
+>
+> Julia evans I don't like.
+
+> I think you should probably read more of their writing than just those short
+> snippets.
+
+> Ok, but let's think about this now, you learnt by reading the whole article.
+> isn't that what agents who are writing should do? Maybe not as many as you
+> just read but maybe one from each author in full. We should maybe find a 3rd
+> author? Not sure.
+
+> Grigorik's sentenses seem to run forever, he's not easy to read.
+
+> Can we not just bake the text from the site into the skills?
+
+> Hmm, ok. I think what we should do is get 3 of our articles up to the right
+> standard and then use those as the reference. Can we do this, let's get a
+> writer to read the reference articles, etc. Then ask them to re-write 3 of our
+> existing articles but following the reference style and structure. They should
+> have freedom to completely re-write and re-build the piece, they don't need to
+> stick to what's there today.
+>
+> We should also encourage them to build these interactive animations in a
+> compelling and attractive style to help illustrate their points and use them
+> as a real teaching tool. So they should be frequent and anchoring the text.
+
+Asked which three articles to rewrite, the user chose Sequence diagrams,
+Indexes, and Storage and durability. Asked which model should write them, they
+answered:
+
+> Opus on high reasoning.
