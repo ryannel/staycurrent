@@ -131,6 +131,34 @@ the operator and is now a useful working reference. That does not make every
 sentence final, or mean every section needs a matching example or transition phrase.
 
 
+## A heading that only makes sense after an explanation
+
+On 16 October 2026, the user identified “Start with the rule” in
+[Transactions and concurrency](../src/pages/learn/databases/relational/transaction-boundaries.astro)
+as a heading the reviews should have caught. They contrasted it with “Commit and
+rollback,” which accurately names the preceding section's explanation.
+
+The disputed section follows a purchase through its order, order line and stock
+reduction, then explains why the three changes belong in one transaction. An expert
+can interpret the shop's requirement as a business rule. That retrospective
+interpretation does not make “Start with the rule” a useful introduction to the
+section: it leaves the reader to discover both which rule and why that is the label
+for the explanation. The user found no meaningful connection to rules in the
+section. The repair is “Choosing the transaction boundary,” naming the decision
+the paragraphs develop. This replacement remains subject to the user's judgment.
+
+Our guidance already asked reviewers to read headings together and in context.
+The missed distinction was between anticipating the section and rationalising its
+title afterwards. Reviews should preserve the expectation a heading creates, then
+compare it with the actual explanation. Technical completeness and an understandable
+body do not settle that question. Changing the prose merely to repeat “rule” would
+not repair the original heading's lack of useful orientation.
+
+This is not a ban on “rule,” imperative headings or implied connections. “Commit and
+rollback” needs no expanded claim, and a well-grounded question or instruction can
+also introduce a section. Judge what the reader can understand at that point and
+whether the heading identifies the thought being developed.
+
 ## Depth can be a missing step, rather than a missing subject
 
 The first schema-design article later exposed another limit of our examples.

@@ -14,6 +14,16 @@ better than receiving the whole article and retrospectively describing a first
 impression. Keep enough nearby text to read a thought rather than judging isolated
 sentences.
 
+Before entering a section, record what its heading lets you expect from the context
+so far. After reading, compare that expectation with the section's actual subject
+and development. Preserve a vague or misleading first impression even if you can
+later infer why the author chose the heading. Understanding the body does not by
+itself show that its label helped you navigate or anticipate it.
+To test that anticipation without hindsight, receive or extract the heading before
+its body and save the observation before opening the next chunk. If both arrived
+together, describe the judgment as retrospective rather than a preserved first
+expectation.
+
 An observation made at the end of the opening is especially useful: what can you
 now explain about the subject, and which passage gave you that understanding?
 That is different from wanting to know more or recognising something from expertise.

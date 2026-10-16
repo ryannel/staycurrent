@@ -63,6 +63,9 @@ Use `staycurrent-style` and read the original writing references alongside the
 draft. `docs/writing-style.md` records passages and revisions worth considering.
 Give the thought room to develop, including in headings, captions and supporting
 copy. A polished summary of a mechanism is not necessarily an explanation of it.
+Revisit working headings against the finished sections: drafting prompts can survive
+after the argument changes. Use the style skill's heading guidance to name what the
+reader is about to learn, then read the heading into its opening paragraph.
 
 The pagination draft defined its subject, then began teaching ordering without
 explaining why pages need a sequence. The user still felt dropped into the middle

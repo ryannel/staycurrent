@@ -56,6 +56,20 @@ then paragraphs and section transitions in sequence: repeated framing or conclus
 may be conspicuous across a page while seeming harmless in isolation. Prior review
 approval and technical completeness do not establish that the prose reads well.
 
+Review the relationship between each heading and its section as well as the list
+of headings. Before reading a section, state what its heading leads this audience
+to expect, using only the preceding context. Afterwards, compare that expectation
+with what the section actually explains. Check whether the opening establishes the
+named subject and whether the section develops it. Being able to invent a connection
+after reading is not evidence that the heading helped the reader find or anticipate
+the explanation. An unclear referent or a misleading label is an editorial finding
+even when the body is understandable. Record the mismatch and a concrete alternative;
+retain headings that already work. This is a semantic judgment, not a word-matching
+test or a requirement that every heading use the same grammatical form. After body
+repairs, revisit affected headings and contents labels; after heading repairs, reread
+their openings. The transaction example in `docs/writing-style.md` records the
+specific failure behind this guidance.
+
 The opening deserves attention in its own right. A reader's account of what they
 understand at that point can reveal a gap that disappears when an expert considers
 the finished article. Useful evidence distinguishes what the passage has explained

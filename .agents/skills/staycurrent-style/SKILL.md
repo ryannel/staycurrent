@@ -39,7 +39,14 @@ need a different beginning.
 
 Read headings, decks, captions and controls as part of the writing. Judge how they
 help someone follow the piece, alongside the argument and the relationships between
-its parts. The worked passages in the writing reference offer context for those
+its parts. A heading should help the reader anticipate the section's subject,
+question or development from what they know at that point. Name the thought the
+section actually develops; an instruction to the writer such as “start with” can
+conceal that subject. When a heading refers to “the rule” or “the problem,” consider
+whether the reader can identify the referent without reconstructing the author's
+intention after reading. The test is meaning in context, not whether the same word
+appears below. Plain topic labels, questions and explanatory headings can all work.
+The worked passages in the writing reference offer context for those
 decisions without prescribing how every section should be titled. A caption can
 finish a thought rather than append another defence of it: retain qualifications
 that change a plausible reading of the picture, and question those that merely
