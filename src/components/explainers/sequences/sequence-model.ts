@@ -12,7 +12,8 @@ export interface Msg extends Base { type: 'msg'; from: string; to: string; label
 export interface Bar extends Base { type: 'bar'; on: string; mode: 'busy' | 'wait'; row0: number; row1: number; depth: number }
 export interface Note extends Base { type: 'note'; over: string[]; text: string; row: number; rows: number; tone: 'plain' | 'warn' | 'good' }
 export interface Gap extends Base { type: 'gap'; text: string; row: number }
-export interface Frame extends Base { type: 'frame'; op: string; guard: string; from: string; to: string; row0: number; row1: number; sections: { row: number; guard: string }[]; passes: number[] }
+export interface Section { guard: string; skipped: boolean; t: number }
+export interface Frame extends Base { type: 'frame'; op: string; guard: string; from: string; to: string; row0: number; row1: number; sections: { row: number; guard: string }[]; passes: number[]; runs: Section[] }
 export interface Status extends Base { type: 'status'; on: string; text: string; detail?: string }
 export type Item = Msg | Bar | Note | Gap | Frame | Status;
 
@@ -30,9 +31,8 @@ export interface Scenario {
 export interface ParamDef {
   id: string;
   label: string;
-  type: 'toggle' | 'choice';
   default: string;
-  options?: { value: string; label: string }[];
+  options: { value: string; label: string }[];
 }
 
 export interface ScenarioDef {
@@ -129,7 +129,7 @@ class Builder {
   }
 
   frame(op: string, from: string, to: string, sections: { guard: string; ghost?: boolean; offset?: number; body: () => void }[]) {
-    const frame = this.add<Frame>({ type: 'frame', id: 0, op, guard: sections[0].guard, from, to, row0: this.row, row1: 0, sections: [], passes: [], ghost: this.ghost, occ: [{ t0: this.ghost ? this.ghostT : this.T, t1: this.ghost ? this.ghostT : this.T + 0.3 }] });
+    const frame = this.add<Frame>({ type: 'frame', id: 0, op, guard: sections[0].guard, from, to, row0: this.row, row1: 0, sections: [], passes: [], runs: [], ghost: this.ghost, occ: [{ t0: this.ghost ? this.ghostT : this.T, t1: this.ghost ? this.ghostT : this.T + 0.3 }] });
     const outerGhost = this.ghost;
     const T0 = this.T;
     let maxT = this.T;
@@ -141,6 +141,7 @@ class Builder {
         this.row += 0.55;
       }
       if (s.offset !== undefined) this.T = T0 + s.offset;
+      frame.runs.push({ guard: s.guard, skipped: !!s.ghost, t: s.ghost ? T0 : this.T });
       if (s.ghost && !outerGhost) { this.ghost = true; this.ghostT = T0; }
       s.body();
       this.ghost = outerGhost;
@@ -154,7 +155,7 @@ class Builder {
   }
 
   loop(guard: string, from: string, to: string, passes: number, body: (pass: number) => void) {
-    const frame = this.add<Frame>({ type: 'frame', id: 0, op: 'loop', guard, from, to, row0: this.row, row1: 0, sections: [], passes: [], occ: [{ t0: this.T, t1: this.T + 0.3 }] });
+    const frame = this.add<Frame>({ type: 'frame', id: 0, op: 'loop', guard, from, to, row0: this.row, row1: 0, sections: [], passes: [], runs: [], occ: [{ t0: this.T, t1: this.T + 0.3 }] });
     this.row += 0.6;
     const bodyRow = this.row;
     let recorded: Item[] = [];
@@ -229,7 +230,7 @@ export const scenarios: Record<string, ScenarioDef> = {
 
   waiting: {
     title: 'Who is waiting',
-    params: [{ id: 'db', label: 'Repair DB takes', type: 'choice', default: '50', options: dbChoices }],
+    params: [{ id: 'db', label: 'Repair DB takes', default: '50', options: dbChoices }],
     build: p => {
       const dbMs = Number(p.db);
       const b = new Builder([P.ui, P.api, P.db], { bars: true, clock: true, strip: true, darkMs: 1000 });
@@ -245,7 +246,7 @@ export const scenarios: Record<string, ScenarioDef> = {
 
   email: {
     title: 'Sending the email inside the request',
-    params: [{ id: 'mode', label: 'API’s call to the email provider', type: 'choice', default: 'sync', options: [{ value: 'sync', label: 'Waits for the reply' }, { value: 'async', label: 'Doesn’t wait' }] }],
+    params: [{ id: 'mode', label: 'API’s call to the provider', default: 'sync', options: [{ value: 'sync', label: 'Waits for the reply' }, { value: 'async', label: 'Doesn’t wait' }] }],
     build: p => {
       const b = new Builder([P.ui, P.api, P.db, P.provider], { bars: true, clock: true, strip: true, darkMs: 2000 });
       b.pause(0.2);
@@ -284,30 +285,44 @@ export const scenarios: Record<string, ScenarioDef> = {
 
   outbox: {
     title: 'A job in the database',
-    params: [{ id: 'down', label: 'Email provider is down', type: 'toggle', default: 'off' }],
+    params: [{ id: 'case', label: 'What happens', default: 'ok', options: [{ value: 'ok', label: 'Both work' }, { value: 'down', label: 'Provider is down' }, { value: 'crash', label: 'Worker crashes after sending' }] }],
     build: p => {
-      const down = p.down === 'on';
       const b = new Builder([P.ui, P.api, P.db, P.worker, P.provider], { bars: true, clock: true, strip: true, darkMs: 1000 });
+      const send = (n: number) => {
+        b.call('worker', 'db', 'Claim a job for 5 min', 'Job J9', { workMs: 3, workT: 0.15 });
+        b.call('worker', 'provider', 'POST /emails', p.case === 'down' ? '503 Unavailable' : '202 Accepted', { reqMs: 40, repMs: 40, workMs: 300, workT: 0.45, replyKind: p.case === 'down' ? 'error' : 'reply' });
+        if (p.case === 'down') b.status('provider', 'down', 'no email');
+        else b.status('provider', n > 1 ? 'duplicate' : 'sent', `${n} email${n > 1 ? 's' : ''}`);
+      };
       b.pause(0.2);
-      b.call('ui', 'api', 'POST /repairs', '201: R17', {
+      b.call('ui', 'api', 'POST /repairs', '201 Created: R17', {
         reqMs: 30, repMs: 30,
         inner: () => b.call('api', 'db', 'INSERT request + job J9', 'COMMIT ok', { workMs: 5, workT: 0.15 }),
       });
       b.status('ui', 'done', 'has R17');
-      b.gap('The worker polls for jobs about once a second', 0.9, 700);
-      b.call('worker', 'db', 'Claim next job', 'Job J9', { workMs: 3, workT: 0.15 });
-      b.call('worker', 'provider', 'POST /emails', down ? '503 Unavailable' : '202 Accepted', { reqMs: 40, repMs: 40, workMs: 300, workT: 0.45, replyKind: down ? 'error' : 'reply' });
-      b.call('worker', 'db', down ? 'J9: retry in 30 s' : 'Mark J9 sent', 'OK', { workMs: 3, workT: 0.15 });
-      if (down) b.status('worker', 'idle', 'J9 waits');
-      return b.finish(down
-        ? 'The booking is stored with notification job J9 in one transaction and the browser gets R17 within about 70 ms. The worker later claims J9, the provider answers 503 Unavailable, and the worker records that J9 should be retried in 30 seconds. The browser’s part of the diagram is unchanged.'
-        : 'The booking is stored with notification job J9 in one transaction and the browser gets R17 within about 70 ms. Around 0.7 seconds later the worker claims J9, the provider accepts the email, and the worker marks J9 sent.');
+      b.gap('Next poll, 0.7 s later', 0.9, 700);
+      send(1);
+      if (p.case === 'crash') {
+        b.note(['worker'], 'Worker crashes before marking J9 sent', { tone: 'warn' });
+        b.status('worker', 'crashed', '');
+        b.gap('5 min later, the claim on J9 expires', 1.1, 300000);
+        send(2);
+      }
+      b.call('worker', 'db', p.case === 'down' ? 'J9: retry in 30 s' : 'Mark J9 sent', 'OK', { workMs: 3, workT: 0.15 });
+      if (p.case === 'down') b.status('worker', 'idle', 'J9 waits');
+      else b.status('worker', 'done', 'J9 sent');
+      const start = 'The booking is stored with notification job J9 in one transaction and the browser gets R17 within about 70 ms. On its next poll, 0.7 seconds later, the worker claims J9 for 5 minutes.';
+      return b.finish({
+        ok: `${start} The provider accepts the email and the worker marks J9 sent.`,
+        down: `${start} The provider answers 503 Unavailable, and the worker records that J9 should be retried in 30 seconds. The browser’s part of the diagram is unchanged.`,
+        crash: `${start} The provider sends the email, but the worker crashes before marking J9 sent. Five minutes later the claim expires, a worker claims J9 again, and the provider sends a second email.`,
+      }[p.case]!);
     },
   },
 
   timeout: {
     title: 'What the worker sees after a timeout',
-    params: [{ id: 'history', label: 'What actually happens', type: 'choice', default: 'reply-lost', options: [{ value: 'request-lost', label: 'Request is lost' }, { value: 'reply-lost', label: 'Reply is lost' }, { value: 'slow', label: 'Provider is slow' }] }],
+    params: [{ id: 'history', label: 'What actually happens', default: 'reply-lost', options: [{ value: 'request-lost', label: 'Request is lost' }, { value: 'reply-lost', label: 'Reply is lost' }, { value: 'slow', label: 'Provider is slow' }] }],
     build: p => {
       const b = new Builder([P.worker, P.provider, P.inbox], { bars: true, clock: true, strip: true, darkMs: 10000 });
       b.status('inbox', 'empty', 'no email');
@@ -350,8 +365,8 @@ export const scenarios: Record<string, ScenarioDef> = {
   retry: {
     title: 'Retrying after a timeout',
     params: [
-      { id: 'history', label: 'First attempt', type: 'choice', default: 'reply-lost', options: [{ value: 'request-lost', label: 'Request is lost' }, { value: 'reply-lost', label: 'Reply is lost' }] },
-      { id: 'key', label: 'Send an idempotency key', type: 'toggle', default: 'off' },
+      { id: 'history', label: 'First attempt', default: 'reply-lost', options: [{ value: 'request-lost', label: 'Request is lost' }, { value: 'reply-lost', label: 'Reply is lost' }] },
+      { id: 'key', label: 'Idempotency key', default: 'off', options: [{ value: 'off', label: 'Not sent' }, { value: 'on', label: 'Sent' }] },
     ],
     build: p => {
       const key = p.key === 'on';
@@ -359,7 +374,7 @@ export const scenarios: Record<string, ScenarioDef> = {
       let emails = 0;
       b.status('inbox', 'empty', 'no email');
       b.pause(0.2);
-      const label = key ? 'POST /emails, key J9' : 'POST /emails';
+      const label = key ? 'POST /emails + key' : 'POST /emails';
       let req: Msg;
       if (p.history === 'request-lost') {
         req = b.msg('worker', 'provider', label, 'lost', { ms: 20, lostAt: 0.5 });
@@ -380,10 +395,10 @@ export const scenarios: Record<string, ScenarioDef> = {
       b.bar('worker', 'wait', req.row, note.row, req.occ[0].t0, tT);
       b.status('worker', 'retrying', 'in 2 s');
       b.gap('Wait 2 s, then send the same request again', 0.8, 2000);
-      const req2 = b.msg('worker', 'provider', key ? 'POST /emails, key J9 (retry)' : 'POST /emails (retry)', 'sync', { ms: 20 });
+      const req2 = b.msg('worker', 'provider', `${label} (retry)`, 'sync', { ms: 20 });
       const t2 = b.T;
       b.pause(0.4, 300);
-      if (key && p.history === 'reply-lost') b.note(['provider'], 'Key J9 seen before: send nothing, return the saved reply', { tone: 'good', rows: 1.3 });
+      if (key && p.history === 'reply-lost') b.note(['provider'], 'Key repair-email-J9 seen before: send nothing, return the saved reply', { tone: 'good', rows: 1.3 });
       const rep2 = b.msg('provider', 'worker', '202 Accepted', 'reply', { ms: 20 });
       b.bar('provider', 'busy', req2.row, rep2.row, t2, rep2.occ[0].t0);
       b.bar('worker', 'wait', req2.row, rep2.row, req2.occ[0].t0, rep2.occ[0].t1);
@@ -395,25 +410,26 @@ export const scenarios: Record<string, ScenarioDef> = {
         b.status('inbox', emails > 1 ? 'duplicate' : 'delivered', `${emails} email${emails > 1 ? 's' : ''}`);
       }
       const outcome = emails > 1 ? 'Mina receives two copies of the email.' : 'Mina receives one email.';
-      return b.finish(`The first attempt ${p.history === 'request-lost' ? 'is lost before it reaches the provider' : 'reaches the provider, which sends the email, but the reply is lost'}. The worker times out after 10 seconds, waits 2 seconds and retries${key ? ' with the same idempotency key, J9' : ''}. ${outcome}`);
+      return b.finish(`The first attempt ${p.history === 'request-lost' ? 'is lost before it reaches the provider' : 'reaches the provider, which sends the email, but the reply is lost'}. The worker times out after 10 seconds, waits 2 seconds and retries${key ? ' with the same idempotency key, repair-email-J9' : ''}. ${outcome}`);
     },
   },
 
   fragments: {
-    title: 'alt and opt',
+    title: 'Checking Mina’s details',
     params: [
-      { id: 'valid', label: 'Details valid', type: 'toggle', default: 'on' },
-      { id: 'customer', label: 'New customer', type: 'toggle', default: 'off' },
+      { id: 'details', label: 'Details', default: 'valid', options: [{ value: 'valid', label: 'Valid' }, { value: 'invalid', label: 'Invalid' }] },
+      { id: 'customer', label: 'Customer', default: 'returning', options: [{ value: 'returning', label: 'Returning' }, { value: 'new', label: 'New' }] },
     ],
     build: p => {
-      const valid = p.valid === 'on';
-      const fresh = p.customer === 'on';
+      const valid = p.details === 'valid';
+      const fresh = p.customer === 'new';
       const b = new Builder([P.ui, P.api, P.db]);
       b.pause(0.2);
       b.msg('ui', 'api', 'POST /repairs', 'sync');
       b.pause(0.15);
       b.frame('alt', 'ui', 'db', [
         { guard: '[details valid]', ghost: !valid, body: () => {
+          b.note(['api', 'db'], 'One transaction, ending at COMMIT', { T: 0.5 });
           b.frame('opt', 'api', 'db', [{ guard: '[new customer]', ghost: !fresh, body: () => {
             b.msg('api', 'db', 'INSERT customer', 'sync'); b.pause(0.15);
             b.msg('db', 'api', 'OK', 'reply'); b.pause(0.15);
@@ -424,50 +440,69 @@ export const scenarios: Record<string, ScenarioDef> = {
         } },
         { guard: '[details invalid]', ghost: valid, body: () => { b.msg('api', 'ui', '422: postcode missing', 'error'); } },
       ]);
-      const path = valid ? `The details are valid, so the first section of the alt runs${fresh ? ', including the opt fragment that inserts a new customer' : '. Mina is a returning customer, so the opt fragment is skipped'}, and the browser gets R17.` : 'The details are invalid, so the else section runs and the API replies 422 without touching the database.';
+      const path = valid
+        ? `The details are valid, so the first section of the alt runs. ${fresh ? 'Mina is a new customer, so the opt fragment runs and the API inserts her customer record before the repair request, in the same transaction.' : 'Mina is a returning customer, so the opt fragment is skipped and the API inserts only the repair request.'} The browser gets R17.`
+        : 'The details are invalid, so the else section runs and the API replies 422 without touching the database.';
       return b.finish(`After POST /repairs an alt fragment offers two paths. ${path} The path not taken stays drawn, faded.`);
     },
   },
 
   loop: {
     title: 'Polling in a loop',
-    params: [{ id: 'passes', label: 'Technician scheduled on pass', type: 'choice', default: '3', options: [{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }, { value: '4', label: '4' }] }],
+    params: [{ id: 'passes', label: 'Scheduled on pass', default: '3', options: [{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }, { value: 'never', label: 'Never' }] }],
     build: p => {
-      const n = Number(p.passes);
+      const never = p.passes === 'never';
+      const n = never ? 4 : Number(p.passes);
       const b = new Builder([P.ui, P.api, P.db], { clock: true });
       b.pause(0.2);
       b.loop('[status not scheduled]', 'ui', 'db', n, k => {
-        const last = k === n - 1;
+        const last = !never && k === n - 1;
         b.msg('ui', 'api', 'GET /repairs/R17', 'sync', { ms: 30, T: 0.6 }); b.pause(0.1, 1);
         b.msg('api', 'db', 'SELECT status', 'sync', { ms: 1, T: 0.5 }); b.pause(0.1, 2);
         b.msg('db', 'api', last ? 'scheduled' : 'received', 'reply', { ms: 1, T: 0.5 }); b.pause(0.1, 1);
         b.msg('api', 'ui', last ? '200: scheduled' : '200: received', 'reply', { ms: 30, T: 0.6 });
-        if (!last) { b.pause(0.1); b.note(['ui'], 'Wait 2 s', { T: 0.7 }); b.pause(0, 2000); }
+        b.pause(0.1);
+        b.note(['ui'], 'Wait 2 s', { T: 0.7 });
+        b.pause(0, 2000);
       });
-      return b.finish(`A loop fragment drawn once runs ${n} time${n > 1 ? 's' : ''}. Each pass the browser asks for the status of R17, the API reads it from Repair DB, and the browser waits 2 seconds before asking again. On pass ${n} the status is scheduled and the loop ends.`);
+      if (never) {
+        b.gap('…and so on. The status never changes, so the guard never ends the loop.', 0.6, 0);
+        return b.finish('A loop fragment drawn once keeps running. Each pass the browser asks for the status of R17, the API reads it from Repair DB, and the browser waits 2 seconds before asking again. The status is never scheduled, and nothing in the frame stops the loop.');
+      }
+      return b.finish(`A loop fragment drawn once runs ${n} time${n > 1 ? 's' : ''}. Each pass the browser asks for the status of R17, the API reads it from Repair DB, and the browser waits 2 seconds. On pass ${n} the status is scheduled, but the browser still waits 2 seconds before the loop checks its guard and ends.`);
     },
   },
 
   par: {
     title: 'Two requests in parallel',
-    params: [{ id: 'first', label: 'Reply that arrives first', type: 'choice', default: 'slots', options: [{ value: 'slots', label: 'Free slots' }, { value: 'status', label: 'Repair status' }] }],
+    params: [{ id: 'first', label: 'Replies', default: 'slots', options: [{ value: 'slots', label: 'Slots first' }, { value: 'status', label: 'Status first' }, { value: 'never', label: 'Status never arrives' }] }],
     build: p => {
-      const slotsFirst = p.first === 'slots';
+      const order = p.first;
       const b = new Builder([P.ui, P.api]);
       b.pause(0.2);
       b.frame('par', 'ui', 'api', [
         { guard: '[repair status]', offset: 0.2, body: () => {
           b.msg('ui', 'api', 'GET /repairs/R17', 'sync');
-          b.pause(slotsFirst ? 1.6 : 0.3);
+          if (order === 'never') {
+            b.pause(2.1);
+            b.note(['ui', 'api'], 'Still no reply to GET /repairs/R17', { tone: 'warn' });
+            return;
+          }
+          b.pause(order === 'slots' ? 1.6 : 0.3);
           b.msg('api', 'ui', '200: received', 'reply');
         } },
         { guard: '[free slots]', offset: 0.55, body: () => {
           b.msg('ui', 'api', 'GET /slots?repair=R17', 'sync');
-          b.pause(slotsFirst ? 0.2 : 1.6);
+          b.pause(order === 'status' ? 1.6 : 0.2);
           b.msg('api', 'ui', '200: three slots', 'reply');
         } },
       ]);
-      return b.finish(`A par fragment with two sections. The browser asks for the repair status and for free appointment slots without waiting between them. ${slotsFirst ? 'The slots reply arrives first' : 'The status reply arrives first'}. Inside each section the request still comes before its reply.`);
+      const outcome = {
+        slots: 'The slots reply arrives first.',
+        status: 'The status reply arrives first.',
+        never: 'The slots reply arrives, but the status reply never does, so the status section never finishes.',
+      }[order];
+      return b.finish(`A par fragment with two sections. The browser asks for the repair status and for free appointment slots without waiting between them. ${outcome} Inside each section the request still comes before its reply.`);
     },
   },
 };
@@ -544,6 +579,7 @@ export function clockAt(s: Scenario, T: number) {
 
 export function formatMs(ms: number) {
   if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms >= 60000) return `${Math.floor(ms / 60000)} min ${((ms % 60000) / 1000).toFixed(1)} s`;
   return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
 }
 
@@ -680,10 +716,10 @@ function attrs(a: Attrs) {
   return Object.entries(a).map(([k, v]) => `${k}="${esc(String(v))}"`).join(' ');
 }
 
-export function renderSVG(s: Scenario, L: Layout, T: number, uid: string, titleId: string) {
+export function renderSVG(s: Scenario, L: Layout, T: number, uid: string, aria: { labelledby: string; describedby: string }) {
   const mk = marks(s, L);
   const out: string[] = [];
-  out.push(`<svg class="seq-svg" viewBox="0 0 ${L.W} ${L.H}" width="${L.W}" height="${L.H}" role="img" aria-labelledby="${titleId}" style="font-size:${L.font}px">`);
+  out.push(`<svg class="seq-svg" viewBox="0 0 ${L.W} ${L.H}" width="${L.W}" height="${L.H}" role="img" aria-labelledby="${aria.labelledby}" aria-describedby="${aria.describedby}" style="font-size:${L.font}px">`);
   out.push(`<defs><pattern id="${uid}-hatch" patternUnits="userSpaceOnUse" width="5" height="5" patternTransform="rotate(45)"><rect width="5" height="5" class="seq-hatch-bg"/><line x1="0" y1="0" x2="0" y2="5" class="seq-hatch-line"/></pattern></defs>`);
   // participants and lifelines
   for (const p of s.participants) {
@@ -795,23 +831,38 @@ export function updateSVG(svg: SVGSVGElement, s: Scenario, L: Layout, T: number)
 
 // ---------- Text equivalents ----------
 
-export interface Event { t0: number; t1: number; text: string }
+export interface Event { t0: number; t1: number; text: string; short: string; repeat: boolean }
 
 export function events(s: Scenario): Event[] {
   const name = (id: string) => s.participants.find(p => p.id === id)?.label ?? id;
+  const brief = (id: string) => { const p = s.participants.find(q => q.id === id); return p?.short ?? p?.label ?? id; };
   const list: Event[] = [];
+  const add = (t0: number, t1: number, text: string, short = text, repeat = false) => list.push({ t0, t1, text, short, repeat });
   for (const it of s.items) {
     if (it.ghost) continue;
     if (it.type === 'msg') {
       const kind = { sync: 'call', reply: 'reply', async: 'one-way message, sender does not wait', lost: 'lost on the way', error: 'error reply' }[it.kind];
-      it.occ.forEach(o => list.push({ t0: o.t0, t1: o.t1, text: `${name(it.from)} → ${name(it.to)}: ${o.label ?? it.label} (${kind})` }));
+      it.occ.forEach((o, i) => {
+        const label = o.label ?? it.label;
+        add(o.t0, o.t1, `${name(it.from)} → ${name(it.to)}: ${label} (${kind})`, `${brief(it.from)} → ${brief(it.to)}: ${label}${it.kind === 'lost' ? ' (lost)' : ''}`, i > 0);
+      });
     } else if (it.type === 'note') {
-      list.push({ t0: it.occ[0].t0, t1: it.occ[0].t1, text: `Note on ${it.over.map(name).join(' and ')}: ${it.text}` });
+      it.occ.forEach((o, i) => add(o.t0, o.t1, `Note on ${it.over.map(name).join(' and ')}: ${it.text}`, it.text, i > 0));
     } else if (it.type === 'gap') {
-      list.push({ t0: it.occ[0].t0, t1: it.occ[0].t1, text: it.text });
+      add(it.occ[0].t0, it.occ[0].t1, it.text);
     } else if (it.type === 'frame') {
-      list.push({ t0: it.occ[0].t0, t1: it.occ[0].t0, text: `${it.op} fragment begins ${it.guard}` });
-      it.passes.slice(1).forEach((t, i) => list.push({ t0: t, t1: t, text: `Loop pass ${i + 2} begins` }));
+      const t = it.occ[0].t0;
+      if (it.op === 'loop') {
+        add(t, t, `loop fragment ${it.guard} begins, pass 1`, `loop ${it.guard}, pass 1`);
+        it.passes.slice(1).forEach((pt, i) => add(pt, pt, `Loop pass ${i + 2} begins`, `Pass ${i + 2}`));
+        continue;
+      }
+      // One event per section: which one runs, which are skipped, and where each par section starts.
+      it.runs.forEach((r, i) => {
+        const what = i === 0 ? `${it.op} fragment, section ${r.guard}` : `${it.op === 'par' ? 'and' : 'else'} section ${r.guard}`;
+        const verb = it.op === 'par' ? 'begins' : r.skipped ? 'is skipped' : 'runs';
+        add(r.skipped ? t : r.t, r.skipped ? t : r.t, `${what} ${verb}`, `${it.op} ${r.guard} ${verb}`);
+      });
     }
   }
   return list.sort((a, b) => a.t0 - b.t0 || a.t1 - b.t1);

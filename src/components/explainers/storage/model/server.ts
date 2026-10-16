@@ -104,7 +104,7 @@ export function renderServer(state: ServerState, W: number): Frame {
   const cw = state.showWal ? (W - pad * 3) / 2 : Math.min(W - pad * 2, 300);
   const x0 = pad;
   const x1 = pad * 2 + cw;
-  const cardH = 122;
+  const cardH = narrow ? 112 : 122;
 
   // Application row
   items.push(text('app-label', pad, 14, 'APPLICATION', 'sf-t sf-lane'));
@@ -120,8 +120,8 @@ export function renderServer(state: ServerState, W: number): Frame {
   }
 
   const memY = 54;
-  const laneH = 40 + cardH + 10;
-  const diskY = memY + laneH + 12;
+  const laneH = 40 + cardH + (narrow ? 6 : 10);
+  const diskY = memY + laneH + (narrow ? 8 : 12);
 
   // Lanes
   items.push(rect('lane-mem', 3, memY, W - 6, laneH, 'sf-lane-mem'));
@@ -175,7 +175,7 @@ export function renderServer(state: ServerState, W: number): Frame {
     const top = bufY + cardH + 3;
     const bottom = fileY - 3;
     items.push(line('arrow', ax, top, ax, bottom, 'sf-arrow', { attrs: { 'marker-end': 'url(#sf-arrowhead)' } }));
-    const label = state.arrow === 'flush' ? 'fdatasync' : state.arrow === 'walwriter' ? 'WAL writer' : 'write page 12';
+    const label = state.arrow === 'flush' ? 'flush' : state.arrow === 'walwriter' ? 'WAL writer' : 'write page 12';
     items.push(text('arrow-t', ax + 8, (top + bottom) / 2 + 4, label, 'sf-t sf-xs sf-arrow-text'));
   }
 
@@ -210,23 +210,23 @@ const shortResult = (text: string, kind: 'ok' | 'bad' | 'warn') => ({ text, kind
 export const dirtyCrash: Scene<ServerState> = {
   id: 'dirty-crash',
   steps: () => [
-    { text: 'Page 12 is in shared buffers, and the copy in the table file matches it. P7 costs 20.00.', state: S({ showWal: false }) },
-    { text: 'The UPDATE writes a new version of P7 into the page in memory. Memory and the table file now disagree.', state: S({ showWal: false, sent: SENT_UPDATE, buf: updated() }) },
-    { text: 'Suppose COMMIT replied straight away, with nothing written to disk. The application now believes P7 costs 22.00.', state: S({ showWal: false, sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: committed() }) },
+    { text: 'Page 12 is in shared buffers, and the table file holds the same copy. P7 costs 20.00.', state: S({ showWal: false }) },
+    { text: 'The UPDATE adds a new version of P7 to the page in memory. The page is now dirty.', state: S({ showWal: false, sent: SENT_UPDATE, buf: updated() }) },
+    { text: 'Suppose COMMIT replied straight away, with nothing written to disk.', state: S({ showWal: false, sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: committed() }) },
     { text: 'The power fails. Everything in memory is gone, including the only copy of 22.00.', state: S({ showWal: false, sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: null, crashed: true }) },
-    { text: 'After the restart, the database reads page 12 from the table file. P7 costs 20.00 again, although the application was told the change committed.', state: S({ showWal: false, sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: clean('disk'), result: shortResult('After restart: P7 = 20.00. The commit is lost.', 'bad') }) },
+    { text: 'After the restart, page 12 is read from the table file. P7 costs 20.00 again.', state: S({ showWal: false, sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: clean('disk'), result: shortResult('After restart: P7 = 20.00. The commit is lost.', 'bad') }) },
   ],
   render: renderServer,
   stats,
 };
 
 const walSteps = (): Step<ServerState>[] => [
-  { text: 'The same starting point, now with a write-ahead log. WAL buffers are in memory; the WAL files in pg_wal are on disk.', state: S({}) },
-  { text: 'The UPDATE changes page 12 in memory and appends a WAL record describing the change. The page’s LSN now names the end of that record.', state: S({ sent: SENT_UPDATE, buf: updated(), walBuf: [UPD] }) },
+  { text: 'The same starting point, now with a write-ahead log: WAL buffers in memory, WAL files on disk.', state: S({}) },
+  { text: 'The UPDATE changes page 12 in memory and appends a WAL record for the change. The page’s LSN now points past that record.', state: S({ sent: SENT_UPDATE, buf: updated(), walBuf: [UPD] }) },
   { text: 'COMMIT appends a commit record for transaction 812. Nothing has reached the disk yet.', state: S({ sent: 'COMMIT', reply: { text: 'waiting…', kind: 'wait' }, buf: updated(), walBuf: [UPD, COMMIT] }) },
-  { text: 'PostgreSQL writes the WAL buffers to the WAL file and calls fdatasync. It waits until the disk confirms the write.', state: S({ sent: 'COMMIT', reply: { text: 'waiting…', kind: 'wait' }, buf: committed(), walDisk: [EARLIER, UPD, COMMIT], arrow: 'flush' }) },
-  { text: 'Only now does the application hear COMMIT. The table file still says 20.00. The WAL on disk can rebuild 22.00 if it has to.', state: S({ sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: committed(), walDisk: [EARLIER, UPD, COMMIT] }) },
-  { text: 'Later, a checkpoint, PostgreSQL’s periodic write of dirty pages, writes page 12 to the table file. The WAL for its changes is already on disk, so the write is allowed. The page is clean again.', state: S({ sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: committed(false), disk: committed(false, 'buf'), walDisk: [EARLIER, UPD, COMMIT], arrow: 'write' }) },
+  { text: 'PostgreSQL writes the WAL buffers to the WAL file and asks the operating system to flush it to disk. It waits for the disk to confirm.', state: S({ sent: 'COMMIT', reply: { text: 'waiting…', kind: 'wait' }, buf: committed(), walDisk: [EARLIER, UPD, COMMIT], arrow: 'flush' }) },
+  { text: 'Only now does the application hear COMMIT. The table file still says 20.00.', state: S({ sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: committed(), walDisk: [EARLIER, UPD, COMMIT] }) },
+  { text: 'Later, a checkpoint, PostgreSQL’s periodic write of dirty pages, writes page 12 to the table file. The page is clean again.', state: S({ sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: committed(false), disk: committed(false, 'buf'), walDisk: [EARLIER, UPD, COMMIT], arrow: 'write' }) },
 ];
 
 export const walCommit: Scene<ServerState> = {
@@ -239,16 +239,16 @@ export const walCommit: Scene<ServerState> = {
 function recoverySteps(walOnDisk: Rec[], before: ServerState, outcome: { text: string; kind: 'ok' | 'bad' | 'warn' }, outcomeText: string): Step<ServerState>[] {
   const keep = { sent: before.sent, reply: before.reply, walDisk: walOnDisk };
   const steps: Step<ServerState>[] = [
-    { text: 'On restart, PostgreSQL reads pg_control to find the last checkpoint. It will replay WAL from that checkpoint’s redo point.', state: S({ ...keep, buf: null, recovering: true }) },
+    { text: 'On restart, recovery looks up the last checkpoint in a small control file, pg_control, and replays the WAL from there.', state: S({ ...keep, buf: null, recovering: true }) },
   ];
   const hasUpdate = walOnDisk.some(rec => rec.key === UPD.key);
   const hasCommit = walOnDisk.some(rec => rec.key === COMMIT.key);
   if (!hasUpdate) {
-    steps.push({ text: 'The WAL on disk ends before the update, so there is nothing to replay. Page 12 is read from the table file as it was.', state: S({ ...keep, buf: clean('disk'), recovering: true }) });
+    steps.push({ text: 'The WAL on disk ends before the update. Replaying the earlier records rebuilds page 12 with P7 at 20.00.', state: S({ ...keep, buf: clean('disk'), recovering: true, hot: EARLIER.key }) });
   } else {
-    steps.push({ text: `Recovery reads page 12 from the table file. Its LSN, ${OLD_LSN}, is older than the update record, so the page is missing that change.`, state: S({ ...keep, buf: clean('disk'), recovering: true, hot: UPD.key }) });
-    steps.push({ text: `It replays the update record. The 22.00 version goes back into the page, and the page LSN moves up to ${NEW_LSN}.`, state: S({ ...keep, buf: updated('wal'), recovering: true, hot: UPD.key }) });
-    if (hasCommit) steps.push({ text: 'Next comes the commit record for transaction 812, so the 22.00 version counts as committed.', state: S({ ...keep, buf: committed(), recovering: true, hot: COMMIT.key }) });
+    steps.push({ text: `Replaying the earlier records rebuilds page 12 as it was at LSN ${OLD_LSN}. That is older than the update record, so the page is missing the update.`, state: S({ ...keep, buf: clean('disk'), recovering: true, hot: EARLIER.key }) });
+    steps.push({ text: `Recovery applies the update record. The 22.00 version is back, and the page LSN moves to ${NEW_LSN}.`, state: S({ ...keep, buf: updated('wal'), recovering: true, hot: UPD.key }) });
+    if (hasCommit) steps.push({ text: 'The commit record for transaction 812 follows, so the 22.00 version counts as committed.', state: S({ ...keep, buf: committed(), recovering: true, hot: COMMIT.key }) });
   }
   const finalBuf = hasCommit ? committed() : hasUpdate ? updated() : clean();
   steps.push({ text: outcomeText, state: S({ ...keep, buf: finalBuf, result: outcome }) });
@@ -261,27 +261,27 @@ export const crashRecovery: Scene<ServerState> = {
     id: 'crash', label: 'Power fails', initial: 'flush',
     options: [
       { value: 'update', label: 'before COMMIT' },
-      { value: 'commit', label: 'before the flush' },
-      { value: 'flush', label: 'after the flush' },
+      { value: 'commit', label: 'before flush' },
+      { value: 'flush', label: 'after flush' },
     ],
   }],
   steps: ({ crash }) => {
     const w = walSteps();
     const prefix = w.slice(0, crash === 'update' ? 2 : crash === 'commit' ? 3 : 4);
-    prefix[0] = { ...prefix[0], text: 'Page 12 and P7 at 20.00, as before. This time the power will fail partway through.' };
+    prefix[0] = { ...prefix[0], text: 'Page 12 and P7 at 20.00, as before. This time the power fails partway through.' };
     const last = prefix[prefix.length - 1].state;
     const reply = { text: 'connection lost', kind: 'lost' as const };
     const crashed = S({ sent: last.sent, reply, buf: null, walDisk: last.walDisk, crashed: true });
     const crashText = crash === 'update'
-      ? 'The power fails before COMMIT is sent. The update’s WAL record was still in memory, so it is gone too.'
+      ? 'The power fails before COMMIT is sent. The update’s WAL record was still in memory.'
       : crash === 'commit'
-        ? 'The power fails after COMMIT is sent but before the flush. Both WAL records were still in memory. The application sees its connection drop.'
+        ? 'The power fails after COMMIT is sent but before the flush. The application sees its connection drop.'
         : 'The power fails after the flush, a moment before the reply leaves the server. The application sees its connection drop.';
     const outcome = crash === 'update'
-      ? { result: shortResult('P7 = 20.00. The application knows nothing committed.', 'ok'), text: 'Recovery ends with P7 at 20.00. The application lost its connection before COMMIT, so it knows the change didn’t happen.' }
+      ? { result: shortResult('P7 = 20.00. The application knows nothing committed.', 'ok'), text: 'P7 is 20.00. The application never sent COMMIT, so it knows the change didn’t happen.' }
       : crash === 'commit'
-        ? { result: shortResult('P7 = 20.00, and the application never heard.', 'warn'), text: 'Recovery ends with P7 at 20.00. The application saw only a dropped connection, exactly what it would see if the commit had succeeded and the reply was lost.' }
-        : { result: shortResult('P7 = 22.00, but the application never heard.', 'warn'), text: 'Recovery ends with P7 at 22.00. The application saw only a dropped connection, so from its side the outcome is unknown.' };
+        ? { result: shortResult('P7 = 20.00, and the application never heard.', 'warn'), text: 'P7 is 20.00. The application saw only a dropped connection.' }
+        : { result: shortResult('P7 = 22.00, but the application never heard.', 'warn'), text: 'P7 is 22.00. The application saw only a dropped connection, the same as before the flush.' };
     return [...prefix, { text: crashText, state: crashed }, ...recoverySteps(last.walDisk, crashed, outcome.result, outcome.text)];
   },
   render: renderServer,
@@ -293,27 +293,27 @@ export const asyncCommit: Scene<ServerState> = {
   params: [{
     id: 'crash', label: 'Power fails', initial: 'early',
     options: [
-      { value: 'early', label: 'before the WAL writer runs' },
-      { value: 'late', label: 'after the WAL writer runs' },
+      { value: 'early', label: 'before WAL writer' },
+      { value: 'late', label: 'after WAL writer' },
     ],
   }],
   steps: ({ crash }) => {
     const told = { text: '← COMMIT', kind: 'ok' as const };
     const steps: Step<ServerState>[] = [
       { text: 'The same update, with synchronous_commit = off.', state: S({}) },
-      { text: 'The UPDATE changes page 12 and appends its WAL record, exactly as before.', state: S({ sent: SENT_UPDATE, buf: updated(), walBuf: [UPD] }) },
+      { text: 'The UPDATE changes page 12 and appends its WAL record, as before.', state: S({ sent: SENT_UPDATE, buf: updated(), walBuf: [UPD] }) },
       { text: 'COMMIT appends the commit record and replies at once. It does not wait for a flush.', state: S({ sent: 'COMMIT', reply: told, buf: committed(), walBuf: [UPD, COMMIT] }) },
     ];
     let walDisk: Rec[] = [EARLIER];
     if (crash === 'late') {
       walDisk = [EARLIER, UPD, COMMIT];
-      steps.push({ text: 'Within about 600 ms, three times wal_writer_delay, the WAL writer flushes the WAL buffers to disk in the background.', state: S({ sent: 'COMMIT', reply: told, buf: committed(), walDisk, arrow: 'walwriter' }) });
+      steps.push({ text: 'Within about 600 ms, the WAL writer flushes the WAL buffers to disk.', state: S({ sent: 'COMMIT', reply: told, buf: committed(), walDisk, arrow: 'walwriter' }) });
     }
     const crashed = S({ sent: 'COMMIT', reply: told, buf: null, walDisk, crashed: true });
     steps.push({ text: 'The power fails.', state: crashed });
     const outcome = crash === 'early'
-      ? { result: shortResult('P7 = 20.00, though the application heard COMMIT.', 'bad'), text: 'Recovery ends with P7 at 20.00. The database is consistent, but a commit the application heard about is gone.' }
-      : { result: shortResult('P7 = 22.00. The WAL writer got there first.', 'ok'), text: 'Recovery ends with P7 at 22.00. The WAL writer flushed the records before the power failed.' };
+      ? { result: shortResult('P7 = 20.00, though the application heard COMMIT.', 'bad'), text: 'P7 is 20.00. The database is consistent, but a commit the application heard about is gone.' }
+      : { result: shortResult('P7 = 22.00. The WAL writer got there first.', 'ok'), text: 'P7 is 22.00. The WAL writer flushed the records before the power failed.' };
     return [...steps, ...recoverySteps(walDisk, crashed, outcome.result, outcome.text)];
   },
   render: renderServer,
