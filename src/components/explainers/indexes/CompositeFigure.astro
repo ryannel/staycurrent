@@ -1,0 +1,131 @@
+---
+import IndexFigure from './IndexFigure.astro';
+const { number = 5 } = Astro.props;
+---
+<IndexFigure tag="ix-composite-figure" number={number} title="Column order decides which entries sit together">
+ <pre slot="query"><code>SELECT * FROM orders
+WHERE customer_id = 42 AND placed_at &gt;= '10 Jan'
+ORDER BY placed_at DESC
+LIMIT 2;</code></pre>
+ <label slot="params">Index on
+  <select data-param="mode">
+   <option value="c">(customer_id)</option>
+   <option value="cd" selected>(customer_id, placed_at DESC)</option>
+   <option value="dc">(placed_at DESC, customer_id)</option>
+  </select>
+ </label>
+ The same 36 orders indexed three ways. Switch the index to watch the entries re-sort. The query wants customer 42’s two newest orders since 10 January. With customer first and date second, the answer is the first two entries of customer 42’s run.
+ <span slot="fallback">With an index on customer_id alone, the database reads 4 entries, fetches 4 rows to check their dates, rejects one, then sorts the other three. With (customer_id, placed_at DESC) it reads 2 entries and stops. With (placed_at DESC, customer_id) it reads 16 entries, newest first, to find customer 42’s two.</span>
+</IndexFigure>
+
+<script>
+ import { IndexFigure, canvas, type Frame, type Layout } from './player';
+ import { orders, dayLabel, byCustomer, byCustomerDateDesc, byDateDescCustomer, ctid, type Order } from './model';
+ import { heapPanel, indexPanel, heapWidth, gridWidth, panelHeight, setCell, moveCell, centre, pointer, G, type HeapPanel, type IndexPanel, type CellState } from './scene';
+
+ type Mode = 'c' | 'cd' | 'dc';
+ interface CompositeFrame extends Frame {
+  read: number[];      // index entries read so far, by order id
+  current?: number;    // entry being read now
+  fetched: number[];   // rows fetched from the table
+  rejected: number[];  // rows rejected after fetching
+  returned: number[];  // rows in the result
+  sort?: boolean;
+  done?: boolean;
+ }
+ const FROM_DAY = 10;
+ const sorter: Record<Mode, (a: Order, b: Order) => number> = { c: byCustomer, cd: byCustomerDateDesc, dc: byDateDescCustomer };
+
+ class CompositeFigure extends IndexFigure<CompositeFrame> {
+  heap!: HeapPanel;
+  panel!: IndexPanel;
+  overlay!: SVGGElement;
+  vertical = false;
+  keepDrawing = true;
+  wideAt = 560;
+  get mode() { return this.param('mode') as Mode; }
+  build(): CompositeFrame[] {
+   const mode = this.mode;
+   const base = { read: [], fetched: [], rejected: [], returned: [] } as Omit<CompositeFrame, 'note'>;
+   const frames: CompositeFrame[] = [];
+   const push = (f: Partial<CompositeFrame> & { note: string }) => frames.push({ ...base, ...frames.at(-1), current: undefined, hold: 1100, ...f } as CompositeFrame);
+   const run = orders.filter((o) => o.customer === 42);
+   if (mode === 'c') {
+    const entries = [...run].sort(byCustomer);
+    push({ note: 'The index orders entries by customer_id only. Customer 42’s four entries are together, but they say nothing about dates.', hold: 1600 });
+    push({ read: entries.map((o) => o.id), note: 'Read all four entries for customer 42. Any of them could be one of the two newest.' });
+    const fetched: number[] = [], rejected: number[] = [];
+    entries.forEach((o) => {
+     fetched.push(o.id);
+     const old = o.day < FROM_DAY;
+     if (old) rejected.push(o.id);
+     push({ fetched: [...fetched], rejected: [...rejected], note: `Fetch row ${ctid(o)} to learn its date: ${dayLabel(o.day)}. ${old ? 'Before 10 Jan, so it is rejected.' : 'It passes the date filter.'}` });
+    });
+    push({ sort: true, note: 'Three rows pass, in table order. The database must sort them by date before it knows which two are newest.', hold: 1500 });
+    const result = run.filter((o) => o.day >= FROM_DAY).sort((a, b) => b.day - a.day).slice(0, 2);
+    push({ sort: true, returned: result.map((o) => o.id), done: true, note: `Return ${dayLabel(result[0].day)} and ${dayLabel(result[1].day)}. Work: 4 entries read, 4 rows fetched, 1 rejected, 1 sort.`, hold: 2000 });
+   } else if (mode === 'cd') {
+    const entries = [...run].sort(byCustomerDateDesc);
+    push({ note: 'Entries are ordered by customer_id, then by date, newest first, inside each customer. Customer 42’s run starts with its newest order.', hold: 1600 });
+    const read: number[] = [], fetched: number[] = [];
+    for (const o of entries.slice(0, 2)) {
+     read.push(o.id); fetched.push(o.id);
+     push({ read: [...read], current: o.id, fetched: [...fetched], returned: [...fetched], note: `Entry (42, ${dayLabel(o.day)}) is on or after 10 Jan and comes in the order the query wants. Fetch row ${ctid(o)} and return it.` });
+    }
+    push({ done: true, note: 'LIMIT 2 is satisfied, so the scan stops. The 11 Jan and 3 Jan entries are never read, and nothing needs sorting. Work: 2 entries, 2 rows.', hold: 2000 });
+   } else {
+    const entries = [...orders].sort(byDateDescCustomer);
+    push({ note: 'Now entries are ordered by date, newest first. Each customer’s orders are spread across the whole index.', hold: 1600 });
+    const read: number[] = [], fetched: number[] = [];
+    for (const o of entries) {
+     read.push(o.id);
+     const hit = o.customer === 42;
+     if (hit) fetched.push(o.id);
+     push({ read: [...read], current: o.id, fetched: [...fetched], returned: [...fetched], hold: hit ? 1100 : 380,
+      note: hit ? `Entry (${dayLabel(o.day)}, 42): a match. Fetch row ${ctid(o)}.` : `Entry (${dayLabel(o.day)}, ${o.customer}): another customer. Skip it.` });
+     if (fetched.length === 2) break;
+    }
+    push({ done: true, note: `Two matches found after reading ${read.length} entries. The date order matched ORDER BY, but most of the entries read belonged to other customers.`, hold: 2000 });
+   }
+   return frames;
+  }
+  draw(layout: Layout) {
+   this.vertical = layout === 'narrow';
+   const w = this.vertical ? heapWidth + 8 : gridWidth + 44 + heapWidth + 8;
+   const h = this.vertical ? panelHeight * 2 + 36 : panelHeight + 6;
+   const svgRoot = canvas(this.stage, w, h, 'An index on the orders table beside the table itself. Changing the index columns re-sorts the entries, which changes how many entries and rows the query reads.', this.vertical ? 1.2 : 1.15);
+   const indexOrigin: [number, number] = this.vertical ? [4 + G.pageLabel, 2] : [4, 2];
+   this.panel = indexPanel(svgRoot, indexOrigin[0], indexOrigin[1], [...orders].sort(sorter[this.mode]), { title: 'Index entries' });
+   this.heap = heapPanel(svgRoot, this.vertical ? 4 : 4 + gridWidth + 40, this.vertical ? panelHeight + 34 : 2, { sub: (o) => dayLabel(o.day) });
+   this.overlay = svgRoot.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'g')) as SVGGElement;
+  }
+  render(frame: CompositeFrame, i: number) {
+   const mode = this.mode;
+   const sorted = [...orders].sort(sorter[mode]);
+   const title = this.panel.group.querySelector('.ix-title');
+   if (title) title.textContent = mode === 'c' ? 'Index (customer_id)' : mode === 'cd' ? 'Index (customer_id, placed_at DESC)' : 'Index (placed_at DESC, customer_id)';
+   sorted.forEach((o, pos) => {
+    const c = this.panel.cells.get(o.id)!;
+    const [x, y] = this.panel.position(pos);
+    c.g.style.transitionDelay = i === 0 ? `${pos * 12}ms` : '0ms';
+    moveCell(c, x, y);
+    c.g.classList.toggle('ix-date-key', mode === 'dc');
+    const key = mode === 'dc' ? dayLabel(o.day) : String(o.customer);
+    const sub = mode === 'c' ? ctid(o) : mode === 'cd' ? dayLabel(o.day) : String(o.customer);
+    if (c.key.textContent !== key) c.key.textContent = key;
+    if (c.sub.textContent !== sub) c.sub.textContent = sub;
+    let state: CellState = '';
+    if (frame.current === o.id) state = o.customer === 42 ? 'match' : 'reading';
+    else if (frame.read.includes(o.id)) state = o.customer === 42 ? (frame.rejected.includes(o.id) ? 'reject' : 'found') : 'reject';
+    setCell(c, state);
+    const row = this.heap.cells.get(o.id);
+    setCell(row, frame.rejected.includes(o.id) ? 'reject' : frame.returned.includes(o.id) && frame.done ? 'match' : frame.fetched.includes(o.id) ? 'fetch' : '');
+   });
+   this.heap.pages.forEach((label, p) => label.setAttribute('data-state', frame.fetched.some((id) => orders[id - 1].page === p) ? 'read' : ''));
+   this.overlay.replaceChildren();
+   frame.fetched.forEach((id) => pointer(this.overlay, centre(this.panel.origin, this.panel.cells.get(id)!), centre(this.heap.origin, this.heap.cells.get(id)!), this.vertical));
+   this.counters([['index entries read', frame.read.length], ['rows fetched', frame.fetched.length], ['sort', frame.sort ? 'needed' : mode === 'c' ? '…' : 'not needed', !frame.sort && mode !== 'c']]);
+  }
+ }
+ if (!customElements.get('ix-composite-figure')) customElements.define('ix-composite-figure', CompositeFigure);
+</script>

@@ -1,0 +1,137 @@
+---
+import IndexFigure from './IndexFigure.astro';
+const { number = 8 } = Astro.props;
+---
+<IndexFigure tag="ix-write-figure" number={number} title="Every index is one more place a write has to go">
+ <pre slot="query"><code data-sql>INSERT INTO orders (order_id, customer_id, placed_at, total)
+VALUES (37, 42, '6 Feb', 30);</code></pre>
+ <Fragment slot="params">
+  <label>Statement
+   <select data-param="statement"><option value="insert" selected>INSERT order 37</option><option value="update">UPDATE order 21’s total</option></select>
+  </label>
+  <label>Indexes
+   <select data-param="count"><option value="1">1: primary key</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option></select>
+  </label>
+ </Fragment>
+ Each row of boxes is a structure on disk: the table’s pages, then each index’s leaf pages, with the shading showing how full each page is. The fill levels are invented for the example. The page counts follow PostgreSQL’s rules: every index gets an entry for a new row, a full leaf page splits, and an update that changes no indexed column can skip the indexes entirely.
+ <span slot="fallback">Inserting one order with four indexes changes 7 pages: one table page, one leaf page in three of the indexes, and three pages in the customer index, whose full leaf page splits. With only the primary key, the same insert changes 2 pages. Updating a total changes 1 page while no index contains total, and 5 pages once one does.</span>
+</IndexFigure>
+
+<script>
+ import { IndexFigure, canvas, svg, type Frame, type Layout } from './player';
+
+ interface Structure { name: string; detail: string; fills: number[]; cap: number }
+ interface WriteFrame extends Frame { active: number; fills: number[][]; written: number[]; touched: number[][]; split: boolean }
+
+ const BOX_W = 38, BOX_H = 18, GAP = 4, ROW_H = 48, LEFT = 4;
+
+ const structures = (count: number, statement = 'insert'): Structure[] => [
+  { name: 'orders', detail: 'table pages', fills: [8, 8, 8, 7, 8, 6], cap: 8 },
+  { name: 'orders_pkey', detail: '(order_id)', fills: [6, 6, 6, 6, 6, 5], cap: 7 },
+  { name: 'orders_customer', detail: '(customer_id)', fills: [6, 6, 6, statement === 'insert' ? 7 : 6, 6, 6], cap: 7 },
+  { name: 'orders_history', detail: '(customer_id, placed_at DESC)', fills: [6, 6, 6, 6, 6, 6], cap: 7 },
+  { name: 'orders_total', detail: '(total)', fills: [6, 6, 6, 6, 6, 6], cap: 7 },
+ ].slice(0, count + 1);
+
+ class WriteFigure extends IndexFigure<WriteFrame> {
+  rows: { group: SVGGElement; boxes: SVGGElement[] }[] = [];
+  get count() { return Number(this.param('count')); }
+  get statement() { return this.param('statement') as 'insert' | 'update'; }
+  build(): WriteFrame[] {
+   const count = this.count;
+   const list = structures(count, this.statement);
+   const sql = this.querySelector('[data-sql]')!;
+   sql.textContent = this.statement === 'insert'
+    ? 'INSERT INTO orders (order_id, customer_id, placed_at, total)\nVALUES (37, 42, \'6 Feb\', 30);'
+    : 'UPDATE orders SET total = 25\nWHERE order_id = 21;';
+   let fills = list.map((s) => [...s.fills]);
+   const written = list.map(() => 0);
+   const touched: number[][] = list.map(() => []);
+   const frames: WriteFrame[] = [];
+   const snap = (active: number, note: string, split = false, hold = 1500) => frames.push({ active, fills: fills.map((f) => [...f]), written: [...written], touched: touched.map((t) => [...t]), split, note, hold });
+   const total = () => written.reduce((a, b) => a + b, 0);
+   if (this.statement === 'insert') {
+    snap(-1, `A new order arrives. There ${count === 1 ? 'is 1 index' : `are ${count} indexes`} on the table, so the row has ${count + 1} places to go.`, false, 1300);
+    fills[0][5]++; written[0] = 1; touched[0] = [5];
+    snap(0, 'The row goes on table page 5, which has room. One page written.');
+    const notes: Record<string, () => string> = {
+     orders_pkey: () => { fills[1][5]++; written[1] = 1; touched[1] = [5]; return 'orders_pkey: 37 is the largest order_id, so its entry goes at the end of the last leaf page.'; },
+     orders_customer: () => {
+      const f = fills[2];
+      fills[2] = [...f.slice(0, 3), 4, 4, ...f.slice(4)];
+      written[2] = 3;
+      touched[2] = [3, 4];
+      return 'orders_customer: the entry belongs with the other 42s, on a leaf page that is already full. The page splits: some of its entries move to a new page, and the branch page above gets a pointer to it. Three pages written.';
+     },
+     orders_history: () => { fills[3][3]++; written[3] = 1; touched[3] = [3]; return 'orders_history: (42, 6 Feb) goes at the front of customer 42’s run. That leaf page has room.'; },
+     orders_total: () => { fills[4][2]++; written[4] = 1; touched[4] = [2]; return 'orders_total: €30 belongs on the third leaf page, among the other totals near 30.'; },
+    };
+    list.slice(1).forEach((s, i) => snap(i + 1, notes[s.name](), s.name === 'orders_customer', s.name === 'orders_customer' ? 2400 : 1500));
+    snap(-2, `Done: one row, ${count} index ${count === 1 ? 'entry' : 'entries'}, ${total()} pages changed.${count > 1 ? ' With only the primary key, the same insert would change 2.' : ''}`, false, 2200);
+   } else {
+    snap(-1, 'Order 21 is on table page 3. PostgreSQL does not overwrite the row: it writes a new version and marks the old one as replaced.', false, 1600);
+    fills[0][3]++; written[0] = 1; touched[0] = [3];
+    snap(0, 'The new version fits on page 3, next to the old one.');
+    if (count < 4) {
+     snap(-2, 'None of the indexes contains total, and the new version is on the same page. This is a heap-only tuple (HOT) update: the existing index entries still lead to the row, so no index is touched. 1 page changed.', false, 2600);
+    } else {
+     list.slice(1).forEach((s, i) => {
+      const target = [3, 3, 3, 2][i];
+      fills[i + 1] = fills[i + 1].map((f, p) => (p === target ? f + 1 : f));
+      written[i + 1] = 1;
+      touched[i + 1] = [target];
+      snap(i + 1, s.name === 'orders_total'
+       ? 'orders_total: the key changed, so a new entry goes where 25 sorts.'
+       : `${s.name}: its key did not change, but total is indexed elsewhere, so this cannot be a HOT update. This index still gets a new entry pointing at the new version.`, false, 1700);
+     });
+     snap(-2, `Done: ${total()} pages changed for one changed number. Indexing total turned a 1-page update into a ${total()}-page one.`, false, 2400);
+    }
+   }
+   return frames;
+  }
+  draw(_layout: Layout) {
+   const count = this.count;
+   const list = structures(count);
+   const height = list.length * ROW_H + 6;
+   const width = LEFT + 7 * (BOX_W + GAP) + 8;
+   const root = canvas(this.stage, width, height, 'The orders table and its indexes, each drawn as a row of pages. A write adds to one page in the table and at least one page in every index.', 1.45);
+   this.rows = list.map((s, r) => {
+    const group = svg('g', { class: 'ix-mini-row', 'data-state': '' }) as SVGGElement;
+    group.style.transform = `translate(${LEFT}px, ${r * ROW_H + 2}px)`;
+    const name = svg('text', { x: 0, y: 12, class: 'ix-tag' }, s.name);
+    const detail = svg('tspan', { class: 'ix-label-small', dx: 6 }, s.detail);
+    name.append(detail);
+    group.append(name);
+    root.append(group);
+    return { group, boxes: [] };
+   });
+  }
+  render(frame: WriteFrame) {
+   const list = structures(this.count, this.statement);
+   this.rows.forEach((row, r) => {
+    const fills = frame.fills[r];
+    while (row.boxes.length < fills.length) {
+     const g = svg('g', { class: 'ix-mini', 'data-state': '' }) as SVGGElement;
+     g.append(svg('rect', { class: 'ix-mini-page', x: 0, y: 0, width: BOX_W, height: BOX_H, rx: 2 }));
+     const fill = svg('rect', { class: 'ix-mini-fill', x: 2, y: 2, width: BOX_W - 4, height: BOX_H - 4 }) as SVGRectElement;
+     fill.style.transformOrigin = '2px 2px';
+     g.append(fill);
+     g.style.transform = `translate(${(fills.length - 1) * (BOX_W + GAP)}px, 20px)`;
+     row.group.append(g);
+     row.boxes.push(g);
+    }
+    while (row.boxes.length > fills.length) row.boxes.pop()!.remove();
+    row.boxes.forEach((g, p) => {
+     g.style.transform = `translate(${p * (BOX_W + GAP)}px, 20px)`;
+     (g.lastElementChild as SVGRectElement).style.transform = `scaleX(${fills[p] / list[r].cap})`;
+     const hit = frame.touched[r].includes(p);
+     g.setAttribute('data-state', hit ? (r === frame.active ? 'writing' : 'done') : '');
+    });
+    row.group.setAttribute('data-state', frame.active === -1 || frame.active === -2 || r <= frame.active || frame.written[r] > 0 ? '' : 'idle');
+   });
+   const total = frame.written.reduce((a, b) => a + b, 0);
+   this.counters([['indexes', this.count], ['pages written', total, true], ['index pages written', total - frame.written[0]]]);
+  }
+ }
+ if (!customElements.get('ix-write-figure')) customElements.define('ix-write-figure', WriteFigure);
+</script>

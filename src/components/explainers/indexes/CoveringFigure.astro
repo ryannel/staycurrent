@@ -1,0 +1,98 @@
+---
+import IndexFigure from './IndexFigure.astro';
+const { number = 6 } = Astro.props;
+---
+<IndexFigure tag="ix-covering-figure" number={number} title="An index-only scan skips the table when it can">
+ <pre slot="query"><code>SELECT placed_at, total FROM orders
+WHERE customer_id = 42 AND placed_at &gt;= '10 Jan'
+ORDER BY placed_at DESC
+LIMIT 2;</code></pre>
+ <Fragment slot="params">
+  <label><input type="checkbox" data-param="include" /> <code>INCLUDE (total)</code></label>
+  <label><input type="checkbox" data-param="vacuumed" /> Table vacuumed</label>
+ </Fragment>
+ Leaf page 4 of the index on <code>(customer_id, placed_at DESC)</code>, beside the table. The small box by each page number is that page’s bit in the visibility map: ticked when every row on the page is visible to all transactions. Try all four combinations: the table visits stop only when the index holds <code>total</code> and the pages are marked all-visible.
+ <span slot="fallback">Without total in the index, both rows must be fetched from the table. With INCLUDE (total) but before VACUUM, the scan still visits the table, because the visibility map bits are not set. After VACUUM, the scan answers from the index alone, with zero heap fetches.</span>
+</IndexFigure>
+
+<script>
+ import { IndexFigure, canvas, svg, type Frame, type Layout } from './player';
+ import { orders, dayLabel, byCustomerDateDesc, ctid, PAGES } from './model';
+ import { heapPanel, indexPanel, heapWidth, gridWidth, panelHeight, setCell, setVm, centre, pointer, G, cellY, type HeapPanel, type IndexPanel } from './scene';
+
+ const leaf = [...orders].sort(byCustomerDateDesc).slice(18, 24);
+ const wanted = leaf.slice(0, 2);
+ interface CoverFrame extends Frame { entry: number; step: 'start' | 'read' | 'check' | 'fetch' | 'skip' | 'done'; fetches: number[]; skipped: number[] }
+
+ class CoveringFigure extends IndexFigure<CoverFrame> {
+  heap!: HeapPanel;
+  panel!: IndexPanel;
+  tags: SVGGElement[] = [];
+  overlay!: SVGGElement;
+  vertical = false;
+  wideAt = 560;
+  get include() { return this.param('include') === 'true'; }
+  get vacuumed() { return this.param('vacuumed') === 'true'; }
+  build(): CoverFrame[] {
+   const include = this.include, vacuumed = this.vacuumed;
+   const frames: CoverFrame[] = [{ entry: -1, step: 'start', fetches: [], skipped: [], hold: 1300,
+    note: include ? 'The index now carries total in every entry, so it holds every column this query uses.' : 'The index holds customer_id and placed_at. The query also wants total, which only the table has.' }];
+   const fetches: number[] = [], skipped: number[] = [];
+   wanted.forEach((o, i) => {
+    frames.push({ entry: i, step: 'read', fetches: [...fetches], skipped: [...skipped], note: `Entry ${i + 1}: (42, ${dayLabel(o.day)}).${include ? ` Its total, €${o.total}, is right there in the entry.` : ''}` });
+    if (!include) {
+     fetches.push(o.id);
+     frames.push({ entry: i, step: 'fetch', fetches: [...fetches], skipped: [...skipped], note: `The entry has no total, so fetch row ${ctid(o)} from table page ${o.page} to read it: €${o.total}.` });
+     return;
+    }
+    frames.push({ entry: i, step: 'check', fetches: [...fetches], skipped: [...skipped], note: `Before trusting the entry, check page ${o.page}’s bit in the visibility map.` });
+    if (vacuumed) {
+     skipped.push(o.id);
+     frames.push({ entry: i, step: 'skip', fetches: [...fetches], skipped: [...skipped], note: `Page ${o.page} is marked all-visible: every row on it is visible to every transaction. The entry is enough, and the table is not touched.` });
+    } else {
+     fetches.push(o.id);
+     frames.push({ entry: i, step: 'fetch', fetches: [...fetches], skipped: [...skipped], note: `Page ${o.page} is not marked all-visible, so the row might be too new, or already deleted, for this transaction. Visit ${ctid(o)} to check.` });
+    }
+   });
+   frames.push({ entry: -1, step: 'done', fetches, skipped, hold: 2200,
+    note: !include ? 'Plan: Index Scan. Two entries, two table rows fetched.' : vacuumed ? 'Plan: Index Only Scan, Heap Fetches: 0. The answer came from the index alone.' : 'Plan: Index Only Scan, but Heap Fetches: 2. Covering the columns was not enough on its own: the visibility map had no bits set.' });
+   return frames;
+  }
+  draw(layout: Layout) {
+   this.vertical = layout === 'narrow';
+   const leafH = G.head + G.ch + 24;
+   const w = this.vertical ? heapWidth + 8 : gridWidth + 44 + heapWidth + 8;
+   const h = this.vertical ? leafH + 26 + panelHeight + 6 : panelHeight + 6;
+   const svgRoot = canvas(this.stage, w, h, 'One leaf page of a composite index above or beside the orders table, whose pages each have a visibility-map bit.', this.vertical ? 1.2 : 1.15);
+   const indexOrigin: [number, number] = this.vertical ? [4 + G.pageLabel, 2] : [4, 2 + cellY(3) - G.head];
+   this.panel = indexPanel(svgRoot, indexOrigin[0], indexOrigin[1], leaf, { title: 'Leaf page 4', rows: 1, sub: (o) => dayLabel(o.day) });
+   this.tags = leaf.map((o, i) => {
+    const [x, y] = this.panel.position(i);
+    const g = svg('g', { class: 'ix-tag-group' }) as SVGGElement;
+    g.append(svg('rect', { class: 'ix-tag-box', x, y: y + G.ch + 3, width: G.cw, height: 17, rx: 2 }));
+    g.append(svg('text', { class: 'ix-tag', x: x + G.cw / 2, y: y + G.ch + 15, 'text-anchor': 'middle' }, `€${o.total}`));
+    this.panel.group.append(g);
+    return g;
+   });
+   this.heap = heapPanel(svgRoot, this.vertical ? 4 : 4 + gridWidth + 40, this.vertical ? leafH + 26 : 2, { sub: (o) => `€${o.total}`, vm: true });
+   this.overlay = svgRoot.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'g')) as SVGGElement;
+  }
+  render(frame: CoverFrame) {
+   const include = this.include, vacuumed = this.vacuumed;
+   this.tags.forEach((t) => t.setAttribute('opacity', include ? '1' : '0'));
+   this.heap.vm.forEach((bit) => setVm(bit, vacuumed));
+   const current = frame.entry >= 0 ? wanted[frame.entry] : undefined;
+   this.heap.vm.forEach((bit, p) => bit.classList.toggle('ix-checking', Boolean(current) && (frame.step === 'check' || frame.step === 'skip' || (include && frame.step === 'fetch')) && current!.page === p));
+   leaf.forEach((o, i) => {
+    const done = frame.fetches.includes(o.id) || frame.skipped.includes(o.id);
+    setCell(this.panel.cells.get(o.id), current?.id === o.id ? 'reading' : done ? 'found' : frame.step === 'done' && i < 2 ? 'found' : '');
+   });
+   orders.forEach((o) => setCell(this.heap.cells.get(o.id), frame.fetches.includes(o.id) ? 'fetch' : wanted.some((w) => w.id === o.id) && frame.skipped.includes(o.id) ? 'dim' : ''));
+   this.heap.pages.forEach((label, p) => label.setAttribute('data-state', frame.fetches.some((id) => orders[id - 1].page === p) ? 'read' : ''));
+   this.overlay.replaceChildren();
+   frame.fetches.forEach((id) => pointer(this.overlay, centre(this.panel.origin, this.panel.cells.get(id)!), centre(this.heap.origin, this.heap.cells.get(id)!), this.vertical));
+   this.counters([['plan', include ? 'Index Only Scan' : 'Index Scan'], ['heap fetches', frame.fetches.length, true], ['table pages touched', `${new Set(frame.fetches.map((id) => orders[id - 1].page)).size} of ${PAGES}`]]);
+  }
+ }
+ if (!customElements.get('ix-covering-figure')) customElements.define('ix-covering-figure', CoveringFigure);
+</script>
