@@ -25,6 +25,12 @@ authorise publication.
 
 ```bash
 pnpm install
-pnpm build          # the only check: every page must build
+pnpm build          # builds every page, then runs the site check
+pnpm check          # the site check in full: every issue, by rule
+pnpm test           # the site check's own tests
 pnpm dev            # http://localhost:4321
 ```
+
+The site check (`scripts/check-site/`) tests shared structure, not prose: the
+title line, contents placement, sources section, figure labels, links and
+theme-safe CSS. Rules at `error` fail the build and block the deploy.

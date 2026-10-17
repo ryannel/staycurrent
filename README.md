@@ -11,7 +11,9 @@ Use Node.js 24 and pnpm 11.4.0, matching the build workflow.
 ```bash
 pnpm install
 pnpm dev            # http://localhost:4321
-pnpm build          # builds every page
+pnpm build          # builds every page, then runs the site check
+pnpm check          # every site-check issue; see scripts/check-site/README.md
+pnpm test           # the site check's own tests
 pnpm preview
 ```
 
