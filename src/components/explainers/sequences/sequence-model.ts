@@ -133,12 +133,12 @@ class Builder {
     const outerGhost = this.ghost;
     const T0 = this.T;
     let maxT = this.T;
-    this.row += 0.6;
+    this.row += 0.75;
     sections.forEach((s, i) => {
       if (i > 0) {
         this.row += 0.15;
         frame.sections.push({ row: this.row, guard: s.guard });
-        this.row += 0.55;
+        this.row += 0.7;
       }
       if (s.offset !== undefined) this.T = T0 + s.offset;
       frame.runs.push({ guard: s.guard, skipped: !!s.ghost, t: s.ghost ? T0 : this.T });
@@ -156,7 +156,7 @@ class Builder {
 
   loop(guard: string, from: string, to: string, passes: number, body: (pass: number) => void) {
     const frame = this.add<Frame>({ type: 'frame', id: 0, op: 'loop', guard, from, to, row0: this.row, row1: 0, sections: [], passes: [], runs: [], occ: [{ t0: this.T, t1: this.T + 0.3 }] });
-    this.row += 0.6;
+    this.row += 0.75;
     const bodyRow = this.row;
     let recorded: Item[] = [];
     let endRow = bodyRow;
@@ -195,10 +195,10 @@ class Builder {
 
 const P = {
   ui: { id: 'ui', label: 'Browser' },
-  api: { id: 'api', label: 'Repair API' },
-  db: { id: 'db', label: 'Repair DB' },
+  api: { id: 'api', label: 'Repair API', short: 'API' },
+  db: { id: 'db', label: 'Repair DB', short: 'DB' },
   worker: { id: 'worker', label: 'Notification worker', short: 'Worker' },
-  provider: { id: 'provider', label: 'Email provider' },
+  provider: { id: 'provider', label: 'Email provider', short: 'Provider' },
   inbox: { id: 'inbox', label: 'Mina’s inbox' },
 };
 
@@ -285,7 +285,7 @@ export const scenarios: Record<string, ScenarioDef> = {
 
   outbox: {
     title: 'A job in the database',
-    params: [{ id: 'case', label: 'What happens', default: 'ok', options: [{ value: 'ok', label: 'Both work' }, { value: 'down', label: 'Provider is down' }, { value: 'crash', label: 'Worker crashes after sending' }] }],
+    params: [{ id: 'case', label: 'Case', default: 'ok', options: [{ value: 'ok', label: 'Both work' }, { value: 'down', label: 'Provider down' }, { value: 'crash', label: 'Worker crashes' }] }],
     build: p => {
       const b = new Builder([P.ui, P.api, P.db, P.worker, P.provider], { bars: true, clock: true, strip: true, darkMs: 1000 });
       const send = (n: number) => {
@@ -303,7 +303,7 @@ export const scenarios: Record<string, ScenarioDef> = {
       b.gap('Next poll, 0.7 s later', 0.9, 700);
       send(1);
       if (p.case === 'crash') {
-        b.note(['worker'], 'Worker crashes before marking J9 sent', { tone: 'warn' });
+        b.note(['worker'], 'Crashes before marking J9 sent', { tone: 'warn' });
         b.status('worker', 'crashed', '');
         b.gap('5 min later, the claim on J9 expires', 1.1, 300000);
         send(2);
@@ -322,7 +322,7 @@ export const scenarios: Record<string, ScenarioDef> = {
 
   timeout: {
     title: 'What the worker sees after a timeout',
-    params: [{ id: 'history', label: 'What actually happens', default: 'reply-lost', options: [{ value: 'request-lost', label: 'Request is lost' }, { value: 'reply-lost', label: 'Reply is lost' }, { value: 'slow', label: 'Provider is slow' }] }],
+    params: [{ id: 'history', label: 'What happens', default: 'reply-lost', options: [{ value: 'request-lost', label: 'Request is lost' }, { value: 'reply-lost', label: 'Reply is lost' }, { value: 'slow', label: 'Provider is slow' }] }],
     build: p => {
       const b = new Builder([P.worker, P.provider, P.inbox], { bars: true, clock: true, strip: true, darkMs: 10000 });
       b.status('inbox', 'empty', 'no email');
@@ -548,12 +548,14 @@ export function layout(s: Scenario, width: number): Layout {
   const maxChars = Math.max(5, Math.floor((headW - 10) / charW(font)));
   const headLines: Record<string, string[]> = {};
   let maxLines = 1;
-  for (const p of s.participants) { const words = p.label.split(' '); const label = p.short && words.some(w => w.length > maxChars) ? p.short : p.label; headLines[p.id] = wrap(label, maxChars); maxLines = Math.max(maxLines, headLines[p.id].length); }
+  // On a narrow stage a name that would wrap uses its short form, so headers stay one line.
+  for (const p of s.participants) { const label = p.short && (narrow ? wrap(p.label, maxChars).length > 1 : p.label.split(' ').some(w => w.length > maxChars)) ? p.short : p.label; headLines[p.id] = wrap(label, maxChars); maxLines = Math.max(maxLines, headLines[p.id].length); }
   const headH = 14 + maxLines * font * 1.2;
   const stripY = headH + 8;
-  const top = stripY + (s.strip ? small * 2.6 + 6 : 0) + 10;
-  const rowH = narrow ? 40 : 44;
-  const H = Math.round(top + s.rows * rowH + 18);
+  const top = stripY + (s.strip ? small * 2.6 + (narrow ? 2 : 6) : 0) + (narrow ? 8 : 10);
+  // Rows are order, not time, so a phone can pack them tighter without changing the meaning.
+  const rowH = narrow ? 29 : 44;
+  const H = Math.round(top + s.rows * rowH + (narrow ? 8 : 18));
   return { W, H, narrow, font, small, xs, margin, spacing, headW, headH, headLines, stripY, top, rowH };
 }
 
@@ -757,7 +759,7 @@ export function renderSVG(s: Scenario, L: Layout, T: number, uid: string, aria: 
       } else if (it.type === 'note') {
         const xs = it.over.map(id => L.xs[id]);
         const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
-        const maxW = Math.min(L.W - 8, Math.max(L.spacing * 1.6, 150));
+        const maxW = Math.min(L.W - 8, Math.max(L.spacing * 1.6, L.narrow ? 220 : 150));
         const lines = wrap(it.text, Math.floor((maxW - 14) / charW(L.small)));
         const w = Math.min(maxW, Math.max(...lines.map(l => l.length)) * charW(L.small) + 16);
         const h = lines.length * L.small * 1.3 + 9;
@@ -835,7 +837,7 @@ export interface Event { t0: number; t1: number; text: string; short: string; re
 
 export function events(s: Scenario): Event[] {
   const name = (id: string) => s.participants.find(p => p.id === id)?.label ?? id;
-  const brief = (id: string) => { const p = s.participants.find(q => q.id === id); return p?.short ?? p?.label ?? id; };
+  const brief = (id: string) => { const p = s.participants.find(q => q.id === id); return p && p.short && p.label.length > 12 ? p.short : p?.label ?? id; };
   const list: Event[] = [];
   const add = (t0: number, t1: number, text: string, short = text, repeat = false) => list.push({ t0, t1, text, short, repeat });
   for (const it of s.items) {
