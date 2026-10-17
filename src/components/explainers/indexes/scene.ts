@@ -68,8 +68,10 @@ export function heapPanel(parent: SVGElement, ox: number, oy: number, opts: { ti
   for (let p = 0; p < PAGES; p++) {
     const label = svg('g', { class: 'ix-page-label', 'data-state': '' }) as SVGGElement;
     label.append(svg('rect', { x: -2, y: cellY(p) - 2, width: G.pageLabel - 4, height: G.ch + 4, rx: 3 }));
-    label.append(svg('text', { x: 4, y: cellY(p) + G.pageY }, 'page'));
-    label.append(svg('text', { x: 4, y: cellY(p) + G.pageNoY, class: 'ix-page-no' }, String(p)));
+    // On phones the visibility bit leaves no room for the word, so the number stands alone beside it.
+    const bare = opts.vm && compact;
+    if (!bare) label.append(svg('text', { x: 4, y: cellY(p) + G.pageY }, 'page'));
+    label.append(svg('text', { x: 4, y: cellY(p) + (bare ? G.ch - 5.5 : G.pageNoY), class: 'ix-page-no' }, String(p)));
     if (opts.vm) {
       const bit = svg('g', { class: 'ix-vm', 'data-state': '' }) as SVGGElement;
       bit.append(svg('rect', { x: G.pageLabel - 21, y: cellY(p) + G.ch - 15, width: 13, height: 12, rx: 2 }));

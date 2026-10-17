@@ -50,7 +50,7 @@ export const pageFill: Scene<FillState> = {
   outline: () => [
     'Three empty 8 kB pages. Each starts with a 24-byte header.',
     'Each inserted row adds a 4-byte line pointer after the header and puts the row at the end of the free space, so the two grow towards each other.',
-    'With 100 bytes of data a row takes 128 bytes, so 61 rows and their pointers fit before page 0 is full and row 62 starts page 1.',
+    'With 100 bytes of data a row takes 128 bytes, plus a 4-byte pointer: 132 in all. So 61 rows fit before page 0 is full and row 62 starts page 1.',
     'With 40-byte rows, 120 fit on a page; with 250-byte rows, 28; with 1,000-byte rows, 7; with 2,000-byte rows, 4.',
   ],
   stats: ({ data, n }) => {
@@ -134,7 +134,7 @@ export const bufferRead: Scene<BufState> = {
       { text: 'P40 lives on page 31, which isn’t in memory either. That is another read.', state: { slots: [12, 31, null, null], hits: 1, reads: 2, query: 'P40 → (31,2)', focus: 31, from: 31, row: '31-P40', outcome: { text: 'read', kind: 'miss' } } },
       { text: 'P7 again: a hit.', state: { slots: [12, 31, null, null], hits: 2, reads: 2, query: 'P7 → (12,3)', row: '12-P7', outcome: { text: 'hit', kind: 'hit' } } },
       { text: 'Other queries read pages 10 and 11. All four slots are now in use.', state: { slots: [12, 31, 10, 11], hits: 2, reads: 4 } },
-      { text: 'P50 is on page 13, and no slot is free. A clock hand sweeps the slots, lowering each page’s use count, and evicts the first page it finds at zero. Page 12 was used three times and survives. Pages 31, 10 and 11 were used once; the hand reaches page 31 first, so page 13 takes its slot.', state: { slots: [12, 13, 10, 11], hits: 2, reads: 5, query: 'P50 → (13,2)', focus: 13, from: 13, row: '13-P50', outcome: { text: 'read', kind: 'miss' } } },
+      { text: 'P50 is on page 13, and no slot is free. The pool evicts a page that has been used little. Page 12 was used three times and stays; page 31 goes, and page 13 takes its slot.', state: { slots: [12, 13, 10, 11], hits: 2, reads: 5, query: 'P50 → (13,2)', focus: 13, from: 13, row: '13-P50', outcome: { text: 'read', kind: 'miss' } } },
     ];
   },
   stats: state => [
@@ -208,180 +208,5 @@ export const bufferRead: Scene<BufState> = {
       items.push(line(`copy-arrow-${state.from}`, fx, fileY - 3, sx, slotY + ph + 3, 'sf-arrow', { attrs: { 'marker-end': 'url(#sf-arrowhead)' } }));
     }
     return { items, height: diskY + laneH + 8 };
-  },
-};
-
-/* ---------- Row versions ---------- */
-
-type VRow = { item: number; label: string; price: string; xmin: string; xmax: string; kind: 'live' | 'uncommitted' | 'old' };
-type VerState = { rows: VRow[]; readers: { id: string; letter: string; item: number }[]; note?: string };
-
-const r = (item: number, label: string, price: string, xmin: string, xmax: string, kind: VRow['kind']): VRow => ({ item, label, price, xmin, xmax, kind });
-const base3 = (xmax7 = '—'): VRow[] => [r(1, 'P3', '18.00', '790', '—', 'live'), r(2, 'P9', '9.50', '790', '—', 'live'), r(3, 'P7', '20.00', '790', xmax7, xmax7 === '—' ? 'live' : 'live')];
-
-export const rowVersions: Scene<VerState> = {
-  id: 'row-versions',
-  steps: () => [
-    { text: 'Page 12 holds three rows, each with its xmin and xmax. Nothing has replaced them yet.', state: { rows: base3(), readers: [{ id: 'Q', letter: 'Q', item: 3 }] } },
-    { text: 'A report starts and takes its snapshot. It reads P7 at 20.00.', state: { rows: base3(), readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 3 }] } },
-    { text: 'Transaction 812 updates P7. Instead of overwriting item 3, it sets item 3’s xmax to 812 and adds item 4: P7 at 22.00, xmin 812.', state: { rows: [...base3('812'), r(4, 'P7', '22.00', '812', '—', 'uncommitted')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 3 }, { id: 'T', letter: 'T', item: 4 }] } },
-    { text: 'Until 812 commits, other queries skip item 4 and still read 20.00. Transaction 812 reads its own 22.00.', state: { rows: [...base3('812'), r(4, 'P7', '22.00', '812', '—', 'uncommitted')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 3 }, { id: 'T', letter: 'T', item: 4 }] } },
-    { text: '812 commits. A new query now reads item 4 at 22.00. Item 3 is an old version.', state: { rows: [r(1, 'P3', '18.00', '790', '—', 'live'), r(2, 'P9', '9.50', '790', '—', 'live'), r(3, 'P7', '20.00', '790', '812', 'old'), r(4, 'P7', '22.00', '812', '—', 'live')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 4 }] } },
-    { text: 'The report’s snapshot predates the commit, so it keeps reading item 3 at 20.00 until it finishes.', state: { rows: [r(1, 'P3', '18.00', '790', '—', 'live'), r(2, 'P9', '9.50', '790', '—', 'live'), r(3, 'P7', '20.00', '790', '812', 'old'), r(4, 'P7', '22.00', '812', '—', 'live')], readers: [{ id: 'R', letter: 'R', item: 3 }, { id: 'Q', letter: 'Q', item: 4 }], note: 'R' } },
-  ],
-  stats: state => {
-    const sees = (id: string) => {
-      const reader = state.readers.find(rd => rd.id === id);
-      return reader ? state.rows.find(row => row.item === reader.item)!.price : '—';
-    };
-    return [
-      { label: 'Versions of P7 on the page', value: String(state.rows.filter(row => row.label === 'P7').length) },
-      { label: 'Report (R) reads', value: sees('R') },
-      { label: 'New query (Q) reads', value: sees('Q') },
-    ];
-  },
-  render: (state, W) => {
-    const items: Item[] = [];
-    const pad = W < 420 ? 10 : 14;
-    const narrow = W < 420;
-    const cardW = Math.min(W - pad * 2, 520);
-    const x = (W - cardW) / 2;
-    const top = 10;
-    const rowH = 30;
-    const cols = narrow
-      ? { item: x + 10, row: x + 40, xmin: x + 128, xmax: x + 172, readers: x + 214 }
-      : { item: x + 16, row: x + 64, xmin: x + 190, xmax: x + 260, readers: x + 340 };
-    items.push(rect('card', x, top, cardW, 44 + rowH * 4 + 10, 'sf-card'));
-    items.push(text('card-t', x + 10, top + 18, 'page 12 · in shared buffers', 'sf-t sf-strong'));
-    const hy = top + 38;
-    items.push(text('h-item', cols.item, hy, 'item', 'sf-t sf-xs sf-muted'));
-    items.push(text('h-row', cols.row, hy, 'row', 'sf-t sf-xs sf-muted'));
-    items.push(text('h-xmin', cols.xmin, hy, 'xmin', 'sf-t sf-xs sf-muted'));
-    items.push(text('h-xmax', cols.xmax, hy, 'xmax', 'sf-t sf-xs sf-muted'));
-    items.push(text('h-readers', cols.readers, hy, 'who reads it', 'sf-t sf-xs sf-muted'));
-    const rowY = (item: number) => top + 46 + (item - 1) * rowH;
-    for (const row of state.rows) {
-      const y = rowY(row.item);
-      items.push(rect(`v-${row.item}`, x + 6, y, cardW - 12, rowH - 6, `sf-row sf-row-${row.kind === 'live' && row.item === 4 ? 'live-new' : row.kind}`, { from: { x: x + 6, y: y - 10 } }));
-      items.push(text(`v-${row.item}-i`, cols.item + 4, y + 16, String(row.item), 'sf-t sf-mono'));
-      items.push(text(`v-${row.item}-r`, cols.row, y + 16, `${row.label}  ${row.price}`, `sf-t sf-mono sf-row-text-${row.kind}`));
-      items.push(text(`v-${row.item}-xmin`, cols.xmin, y + 16, row.xmin, 'sf-t sf-mono'));
-      items.push(text(`v-${row.item}-xmax`, cols.xmax, y + 16, row.xmax, `sf-t sf-mono${row.xmax !== '—' ? ' sf-strong' : ' sf-muted'}`));
-      if (row.kind === 'old') items.push(line(`v-${row.item}-strike`, cols.row - 2, y + 12, cols.row + 72, y + 12, 'sf-strike'));
-      if (row.kind === 'uncommitted' && !narrow) items.push(text(`v-${row.item}-tag`, cols.xmax + 30, y + 16, 'not committed', 'sf-t sf-xs sf-muted'));
-    }
-    const order = ['R', 'T', 'Q'];
-    for (const reader of state.readers) {
-      const y = rowY(reader.item);
-      const bx = cols.readers + order.indexOf(reader.id) * 28;
-      const emph = state.note === reader.id ? ' sf-reader-emph' : '';
-      items.push(rect(`reader-${reader.id}`, bx, y + 3, 22, 18, `sf-reader sf-reader-${reader.id}${emph}`, { from: { x: bx, y: y - 16 } }));
-      items.push(text(`reader-${reader.id}-t`, bx + 11, y + 16, reader.letter, 'sf-t sf-strong sf-mid sf-reader-text', { from: { x: bx + 11, y: y - 3 } }));
-    }
-    const ly = top + 44 + rowH * 4 + 30;
-    const legend = narrow
-      ? ['R  report, snapshot from before the update', 'T  transaction 812, doing the update', 'Q  a new query']
-      : ['R  report with a snapshot from before the update', 'T  transaction 812, doing the update', 'Q  a new query'];
-    legend.forEach((entry, i) => items.push(text(`legend-${i}`, x + 4, ly + i * 17, entry, 'sf-t sf-xs')));
-    return { items, height: ly + 17 * 3 };
-  },
-};
-
-/* ---------- Vacuum ---------- */
-
-type Slot = { key: string; label: string; price: string; kind: 'live' | 'dead' | 'needed' } | null;
-type VacState = { p12: Slot[]; p13: Slot[]; index: string[]; report: boolean; banner?: string; pruned?: boolean };
-
-const other = (key: string, label: string, price: string): Slot => ({ key, label, price, kind: 'live' });
-const v = (price: string, kind: 'live' | 'dead' | 'needed'): Slot => ({ key: `p7-${price}`, label: 'P7', price, kind });
-const pad6 = (slots: Slot[]) => [...slots, ...Array(6 - slots.length).fill(null)].slice(0, 6);
-
-export const vacuum: Scene<VacState> = {
-  id: 'vacuum',
-  params: [{
-    id: 'snapshot', label: 'Long report', initial: 'none',
-    options: [{ value: 'none', label: 'not running' }, { value: 'held', label: 'running' }],
-  }],
-  steps: ({ snapshot }) => {
-    const held = snapshot === 'held';
-    const deadKind = held ? 'needed' : 'dead';
-    const P3 = other('p3', 'P3', '18.00');
-    const P9 = other('p9', 'P9', '9.50');
-    const p13base = [other('p15', 'P15', '4.00'), other('p16', 'P16', '6.50')];
-    const prices = ['20.00', '22.00', '23.00', '24.00'];
-    const chain = (upto: number) => prices.slice(0, upto + 1).map((price, i) => v(price, i === upto ? 'live' : deadKind));
-    const steps: Step<VacState>[] = [];
-    const idx1 = ['P7 → (12,3)'];
-    steps.push({ text: held ? 'Page 12 has room for six row versions. A report started before any of these updates and is still running.' : 'Page 12 has room for six row versions. P3, P9 and P7 use three.', state: { p12: pad6([P3, P9, ...chain(0)]), p13: pad6(p13base), index: idx1, report: held } });
-    [1, 2, 3].forEach(i => {
-      const tail = i === 3 ? ' Page 12 is now full.' : '';
-      const lead = i === 1
-        ? `P7 changes to ${prices[i]}. The 20.00 version is now ${held ? 'old, but the report can still see it.' : 'dead.'}`
-        : `P7 changes to ${prices[i]}. Another new version, another old one.`;
-      steps.push({ text: lead + tail, state: { p12: pad6([P3, P9, ...chain(i)]), p13: pad6(p13base), index: idx1, report: held } });
-    });
-    if (!held) {
-      steps.push({ text: 'The next update needs space. First, the dead 20.00, 22.00 and 23.00 versions are cleared from page 12.', state: { p12: pad6([P3, P9, v('24.00', 'live')]), p13: pad6(p13base), index: idx1, report: false, pruned: true } });
-      steps.push({ text: 'P7 changes to 25.00, and the new version fits on page 12. The index entry doesn’t change.', state: { p12: pad6([P3, P9, v('24.00', 'dead'), v('25.00', 'live')]), p13: pad6(p13base), index: idx1, report: false } });
-      steps.push({ text: 'P7 changes to 26.00. Still page 12, still one index entry, and the table hasn’t grown.', state: { p12: pad6([P3, P9, v('24.00', 'dead'), v('25.00', 'dead'), v('26.00', 'live')]), p13: pad6(p13base), index: idx1, report: false } });
-    } else {
-      const full = pad6([P3, P9, ...prices.map(price => v(price, 'needed'))]);
-      const idx2 = ['P7 → (12,3)', 'P7 → (13,3)'];
-      steps.push({ text: 'The next update needs space, but the report might still need every old version, so none can be cleared. P7 at 25.00 goes to page 13, and the index gains a second entry.', state: { p12: full, p13: pad6([...p13base, v('25.00', 'live')]), index: idx2, report: true } });
-      steps.push({ text: 'P7 changes to 26.00, on page 13 this time.', state: { p12: full, p13: pad6([...p13base, v('25.00', 'needed'), v('26.00', 'live')]), index: idx2, report: true } });
-      steps.push({ text: 'The report finishes. Every old version of P7 is now dead.', state: { p12: pad6([P3, P9, ...prices.map(price => v(price, 'dead'))]), p13: pad6([...p13base, v('25.00', 'dead'), v('26.00', 'live')]), index: idx2, report: false } });
-      steps.push({ text: 'VACUUM removes the dead versions and the index entry for (12,3). Page 12 has free space again, but the table stays two pages long.', state: { p12: pad6([P3, P9]), p13: pad6([...p13base, null, v('26.00', 'live')]), index: ['P7 → (13,3)'], report: false, pruned: true } });
-    }
-    return steps;
-  },
-  stats: state => {
-    const all = [...state.p12, ...state.p13].filter(Boolean) as Exclude<Slot, null>[];
-    const p7Pages = [state.p12, state.p13].filter(page => page.some(slot => slot?.label === 'P7')).length;
-    return [
-      { label: 'Old versions of P7', value: String(all.filter(slot => slot.label === 'P7' && slot.kind !== 'live').length) },
-      { label: 'Pages holding P7', value: String(p7Pages) },
-      { label: 'Index entries for P7', value: String(state.index.length) },
-    ];
-  },
-  render: (state, W) => {
-    const items: Item[] = [];
-    const pad = W < 420 ? 10 : 14;
-    const gap = W < 420 ? 10 : 24;
-    const cw = Math.min(230, (W - pad * 2 - gap) / 2);
-    const left = (W - (cw * 2 + gap)) / 2;
-    const top = 8;
-    // Index
-    items.push(text('ix-t', left, top + 12, 'INDEX ON product_id', 'sf-t sf-lane'));
-    state.index.forEach((entry, i) => {
-      items.push(rect(`ix-${entry}`, left + i * 118, top + 20, 110, 20, 'sf-rec sf-rec-rec', { from: { x: left + i * 118, y: top + 8 } }));
-      items.push(text(`ix-${entry}-t`, left + i * 118 + 8, top + 34, entry, 'sf-t sf-xs sf-mono sf-rec-text-rec', { from: { x: left + i * 118 + 8, y: top + 22 } }));
-    });
-    if (state.report) {
-      items.push(rect('report', W - pad - 96, top, 96, 18, 'sf-reader sf-reader-R'));
-      items.push(text('report-t', W - pad - 48, top + 13, 'report running', 'sf-t sf-xs sf-mid sf-reader-text'));
-    }
-    const cardY = top + 56;
-    const slotH = 22;
-    const cardH = 26 + slotH * 6 + 8;
-    const draw = (page: number, slots: Slot[], x: number) => {
-      items.push(rect(`pg-${page}`, x, cardY, cw, cardH, 'sf-card'));
-      items.push(text(`pg-${page}-t`, x + 8, cardY + 17, `page ${page}`, 'sf-t sf-strong'));
-      slots.forEach((slot, i) => {
-        const y = cardY + 26 + i * slotH;
-        if (!slot) {
-          items.push(rect(`free-${page}-${i}`, x + 6, y, cw - 12, slotH - 4, 'sf-slot-free'));
-          return;
-        }
-        const k = `${page}-${slot.key}`;
-        items.push(rect(k, x + 6, y, cw - 12, slotH - 4, `sf-row sf-row-${slot.kind === 'live' ? 'live' : slot.kind === 'dead' ? 'dead' : 'old'}`, { from: { x: x + 6, y: y - 10 } }));
-        items.push(text(`${k}-t`, x + 12, y + 13, `${slot.label}  ${slot.price}`, `sf-t sf-mono sf-xs sf-row-text-${slot.kind === 'live' ? 'live' : 'old'}`, { from: { x: x + 12, y: y + 3 } }));
-        const tag = slot.kind === 'dead' ? 'dead' : slot.kind === 'needed' ? 'old, still needed' : '';
-        if (tag && cw > 150) items.push(text(`${k}-tag`, x + cw - 12, y + 13, tag, 'sf-t sf-xs sf-end sf-muted'));
-        else if (tag) items.push(text(`${k}-tag`, x + cw - 12, y + 13, slot.kind === 'dead' ? 'dead' : 'needed', 'sf-t sf-xs sf-end sf-muted'));
-      });
-    };
-    draw(12, state.p12, left);
-    draw(13, state.p13, left + cw + gap);
-    return { items, height: cardY + cardH + 10 };
   },
 };

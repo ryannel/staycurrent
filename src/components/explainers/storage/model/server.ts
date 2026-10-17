@@ -314,7 +314,9 @@ export const asyncCommit: Scene<ServerState> = {
     const outcome = crash === 'early'
       ? { result: shortResult('P7 = 20.00, though the application heard COMMIT.', 'bad'), text: 'P7 is 20.00. The database is consistent, but a commit the application heard about is gone.' }
       : { result: shortResult('P7 = 22.00. The WAL writer got there first.', 'ok'), text: 'P7 is 22.00. The WAL writer flushed the records before the power failed.' };
-    return [...steps, ...recoverySteps(walDisk, crashed, outcome.result, outcome.text)];
+    const recovery = recoverySteps(walDisk, crashed, outcome.result, outcome.text);
+    const done = recovery[recovery.length - 1];
+    return [...steps, { ...done, text: `On restart, recovery replays whatever reached the disk, as before. ${outcome.text}` }];
   },
   render: renderServer,
   stats,

@@ -49,12 +49,15 @@ export const checkpoints: Scene<CkptState> = {
     let writes = 0;
     const snap = (extra: Partial<CkptState> = {}): CkptState => ({ cells: [...cells], dirty: [...dirty], redo, writes, ...extra });
     const steps: Step<CkptState>[] = [{ text: 'Just after a checkpoint. Nothing is dirty, and the redo point is at the start of the log.', state: snap() }];
-    TOUCHES.forEach((page, i) => {
-      const n = i + 1;
-      dirty.add(page);
-      cells.push({ kind: 'rec', page });
-      steps.push({ text: `Record ${n} changes page ${page}.`, state: snap(), fast: true });
-      if (n % interval === 0 && n < TOUCHES.length) {
+    for (let start = 0; start < TOUCHES.length; start += interval) {
+      const chunk = TOUCHES.slice(start, start + interval);
+      chunk.forEach(page => {
+        dirty.add(page);
+        cells.push({ kind: 'rec', page });
+      });
+      const end = start + chunk.length;
+      steps.push({ text: `Records ${start + 1} to ${end} change ${new Set(chunk).size} different pages.`, state: snap(), hold: 900 });
+      if (end < TOUCHES.length) {
         const count = dirty.size;
         writes += count;
         dirty.clear();
@@ -62,7 +65,7 @@ export const checkpoints: Scene<CkptState> = {
         redo = cells.length - 1;
         steps.push({ text: `Checkpoint: ${count} dirty pages written. The redo point moves here.`, state: snap(), hold: 1600 });
       }
-    });
+    }
     steps.push({ text: `The power fails. The ${dirty.size} dirty pages in memory are lost.`, state: snap({ crashed: true }) });
     const last = snap({ crashed: true, replay: true });
     steps.push({ text: `Recovery starts at the last redo point and replays the ${sinceRedo(last)} records after it.`, state: last });
@@ -155,7 +158,7 @@ export const tornPage: Scene<TornState> = {
       steps.push({ text: 'Recovery reaches the record with the full-page image and copies it over the torn page.', state: { mem: false, disk: sectors(16), hot: true, status: 'whole' } });
       steps.push({ text: 'Page 12 is whole again. Later records for it apply on top of this copy.', state: { mem: false, disk: sectors(16), status: 'whole', result: { text: 'Page 12 restored from the WAL.', kind: 'ok' } } });
     } else {
-      steps.push({ text: 'Recovery reaches the change record and reads page 12 to check it. The torn page fails its data checksum, on by default in PostgreSQL 18, so recovery stops with an invalid-page error.', state: { mem: false, disk: sectors(6), hot: true, status: 'torn' } });
+      steps.push({ text: 'Recovery reaches the change record and reads page 12 to check it. The torn page fails its data checksum, on by default for new clusters in PostgreSQL 18, so recovery stops with an invalid-page error.', state: { mem: false, disk: sectors(6), hot: true, status: 'torn' } });
       steps.push({ text: 'Without checksums, the new LSN in sector 0 makes the page look up to date. Recovery skips the record, and nobody notices the tear.', state: { mem: false, disk: sectors(6), status: 'torn', result: { text: 'Page 12 can’t be repaired from the WAL.', kind: 'bad' } } });
     }
     return steps;

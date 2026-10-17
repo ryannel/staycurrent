@@ -138,7 +138,12 @@ a worksheet for a service that cannot run inside this website.
 
 Use `staycurrent-research` for the evidence behind consequential claims. Keep the
 difference between a family principle, a particular implementation, and an invented
-teaching example intelligible. Further reading should offer a useful next step,
+teaching example intelligible. A general article that uses one product as its worked
+example can still teach that product by accident: the relational Storage article
+described PostgreSQL's heap, VACUUM and fsync settings as if they were how
+relational databases store data. Ask which parts of each explanation another
+major engine would do differently, and say so where the difference matters to
+the reader's prediction or decision. `docs/content-structure.md` records that case. Further reading should offer a useful next step,
 with a short explanation of what a source contributes.
 
 Choose media where it reduces work the reader would otherwise do in their head.

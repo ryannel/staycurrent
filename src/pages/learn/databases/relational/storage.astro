@@ -18,198 +18,185 @@ UPDATE products
 SET current_price = 22.00
 WHERE product_id = 'P7';
 COMMIT;`;
-const asyncCommit = `BEGIN;
-SET LOCAL synchronous_commit = off;
-UPDATE page_views SET views = views + 1 WHERE page_id = 42;
-COMMIT;`;
 const docs = 'https://www.postgresql.org/docs/18/';
+const mysql = 'https://dev.mysql.com/doc/refman/8.4/en/';
+const sqlite = 'https://www.sqlite.org/';
 ---
-<Base title="Storage and durability" description="How PostgreSQL stores rows in 8 kB pages, why COMMIT waits for the write-ahead log, and what a crash, a torn page or a drive that answers too early can take away.">
+<Base title="Storage and durability" description="How relational databases store rows in pages, why COMMIT waits for a log, and what a crash, a half-written page or a drive that answers too early can take away, with PostgreSQL as the worked example and InnoDB and SQLite compared.">
   <article class="visual-essay relational-design storage-essay">
     <StorageDefs />
-    <header class="essay-header"><p class="eyebrow">Databases and storage</p><h1>Storage and durability</h1><TitleLine type="Deep dive" version="PostgreSQL 18" /></header>
+    <header class="essay-header"><p class="eyebrow">Databases and storage</p><h1>Storage and durability</h1><TitleLine type="Deep dive" version="PostgreSQL 18, with InnoDB (MySQL 8.4) and SQLite comparisons" /></header>
 <ArticleBody>
 
-    <p><strong>Durability</strong> is the promise that a committed change survives a crash. Once PostgreSQL tells your application that <code>COMMIT</code> succeeded, the change must still be there after a power cut, a kernel panic or a killed server process. PostgreSQL keeps that promise through the way it stores data: how rows sit on disk, how they are copied into memory to be changed, and what it writes to disk before it replies.</p>
-    <p>Most of the time your application can take that promise for granted, but it reaches your code in a few places. If a connection drops just after you send <code>COMMIT</code>, you can’t tell whether the change was kept, so a retry has to be safe either way. A report that runs for hours can make busy tables keep growing, because PostgreSQL can’t clear away old copies of rows the report might still need. And writes you could afford to lose, such as page-view counts, can trade a fraction of a second of safety for faster commits. Come back to this article when you’re deciding how your application retries, chasing a table that won’t stop growing, or choosing a server’s write settings and disks.</p>
-    <p>It starts with how PostgreSQL stores a row, because that stored form is what has to reach the disk. Every example follows one change. A shop’s <code>products</code> table holds P7, a blue mug priced at 20.00, and an <code>UPDATE</code> raises it to 22.00. The examples use PostgreSQL 18’s default settings on one server.</p>
+    <p><strong>Durability</strong> is the promise that a committed change survives a crash. Once the database tells your application that <code>COMMIT</code> succeeded, the change must still be there after a power cut, a kernel panic or a killed server process. Relational databases keep that promise through the way they store data: how rows sit on disk, how they are copied into memory to be changed, and what is written to disk before the reply.</p>
+    <p>Every example follows one change. A shop’s <code>products</code> table holds P7, a blue mug priced at 20.00, and an <code>UPDATE</code> raises it to 22.00. The drawings and numbers describe PostgreSQL 18’s defaults on one server, and the text names MySQL’s InnoDB and SQLite where they work differently.</p>
     <Sql code={update} label="The price change every example follows" />
-    <p>Memory is fast and lost in a power cut. Disk survives, but every write to it is slow. So where does P7 live, and what has to reach the disk before PostgreSQL can say <code>COMMIT</code>?</p>
+    <p>Memory is fast and lost in a power cut. Disk survives, but every write to it is slow. So where does P7 live, and what has to reach the disk before the database can say <code>COMMIT</code>?</p>
 
-    <section aria-labelledby="pages"><h2 id="pages">Pages and the heap</h2>
-      <p>To see what has to reach the disk, start with how a table is laid out there. A <a href={`${docs}storage-page-layout.html`}><strong>page</strong></a> is the 8 kB unit PostgreSQL stores and reads. Every table is a file of pages, and every row lives inside one page. To read one row, PostgreSQL reads the whole page that holds it.</p>
-      <p>Each page starts with a 24-byte header. Next comes an array of <strong>line pointers</strong>, 4 bytes each, one per row. Each pointer says where its row sits on the page, so a row can move within the page without changing its address. Rows fill the page from the other end. Press play to fill an empty table, then try a different row size.</p>
+    <section aria-labelledby="pages"><h2 id="pages">Rows live in pages</h2>
+      <p>Relational engines store a table as a file of fixed-size <strong>pages</strong>, and every row lives inside one page. To read one row, the engine reads the whole page that holds it. The size differs: <a href={`${docs}storage-page-layout.html`}>PostgreSQL</a> uses 8 kB, <a href={`${mysql}innodb-init-startup-configuration.html`}>InnoDB</a> 16 kB by default (fixed when the instance is created), and <a href={`${sqlite}pragma.html#pragma_page_size`}>SQLite</a> 4 kB by default, adjustable from 512 bytes to 64 kB. A row can’t span two pages, so values too wide for a page are stored elsewhere and referenced from the row.</p>
+      <p>How pages form a table also differs. PostgreSQL keeps a <strong>heap</strong>, with each row wherever there is room. InnoDB keeps the table as a B-tree ordered by <a href={`${mysql}innodb-index-types.html`}>primary key</a>, and SQLite as a B-tree <a href={`${sqlite}fileformat2.html`}>keyed by an integer rowid</a>. What matters here is that rows sit in pages, so the drawing below shows one concrete layout, PostgreSQL’s. Press play to fill an empty table, then try a different row size.</p>
       <StepFigure
         scene="page-fill"
         number={1}
-        title="Rows and line pointers filling three pages"
+        title="PostgreSQL rows and line pointers filling three pages"
         alt="Three 8 kB pages drawn as tall columns. Line pointers grow down from each header; rows stack up from the bottom."
-        caption="Drawn to scale, except the 24-byte header, drawn thicker so it stays visible. A 100-byte row takes 132 bytes: a 24-byte row header, the data, 4 bytes of padding so the next row starts on an 8-byte boundary, and its pointer. The rows have no NULL values."
+        caption="PostgreSQL’s layout, drawn to scale except the 24-byte header, drawn thicker so it stays visible. A row holding 100 bytes of data takes 132 bytes: a 24-byte row header, the data, 4 bytes of padding so the next row starts on an 8-byte boundary, and its 4-byte pointer. The rows have no NULL values."
       />
-      <p>The wider the row, the fewer fit on a page. A row can’t span two pages, so PostgreSQL compresses values wider than about 2 kB or moves them to a separate <a href={`${docs}storage-toast.html`}><strong>TOAST</strong></a> table.</p>
-      <p>An ordinary PostgreSQL table is a <strong>heap</strong>: each row goes wherever there is room, in no particular order. A row’s address is its <strong>TID</strong>, a page number and an item number, which is the number of its line pointer. Queries can read it as the hidden <code>ctid</code> column. P7 is at <code>(12,3)</code>, page 12, item 3:</p>
+      <p>In PostgreSQL a row’s address is its page and item number, which you can read as the hidden <code>ctid</code> column. P7 is at <code>(12,3)</code>, page 12, item 3. The page header and line pointers are explained in <a href="/learn/databases/relational/postgresql/architecture/">Inside PostgreSQL</a>.</p>
       <Sql code={ctid} label="Ask PostgreSQL where P7 is stored" />
-      <p>An index on <code>product_id</code> stores that TID, which is how PostgreSQL finds P7 without reading the whole table. <a href="/learn/databases/relational/indexes/">Indexes</a> covers that part.</p>
     </section>
 
-    <section aria-labelledby="buffers"><h2 id="buffers">Shared buffers (the buffer cache)</h2>
-      <p><a href={`${docs}runtime-config-resource.html#GUC-SHARED-BUFFERS`}><strong>Shared buffers</strong></a> are PostgreSQL’s cache of pages: a fixed pool of 8 kB slots in memory, shared by every connection. PostgreSQL works only on pages in shared buffers, so to read P7 it first needs page 12 in a slot. The default pool is 128 MB, or 16,384 pages. Watch a few queries ask for products.</p>
+    <section aria-labelledby="buffers"><h2 id="buffers">A cache of pages in memory</h2>
+      <p>No engine reads or changes a page on disk directly. Each keeps a cache of pages in memory, called the <strong>buffer pool</strong>, and works only on the pages in it. To read P7, the engine first needs page 12 in a slot. PostgreSQL calls its pool <a href={`${docs}runtime-config-resource.html#GUC-SHARED-BUFFERS`}><strong>shared buffers</strong></a>, shared by every connection, and starts it at 128 MB, or 16,384 pages of 8 kB. InnoDB’s <a href={`${mysql}innodb-buffer-pool.html`}>buffer pool</a> also defaults to 128 MB. SQLite has no server, so each connection keeps its own page cache, about 2 MB by default. Watch a few PostgreSQL queries ask for products.</p>
       <StepFigure
         scene="buffer-read"
         number={2}
-        title="Four buffer slots above the table file"
+        title="PostgreSQL: four buffer slots above the table file"
         alt="Four buffer slots in memory above pages of the table file on disk."
-        caption="Four slots stand in for 16,384. Real lookups also read index pages through the same buffers; this drawing counts only table pages."
+        caption="Shared buffers is PostgreSQL’s name for the buffer pool. Four slots stand in for 16,384. Real lookups also read index pages through the same buffers; this drawing counts only table pages."
       />
-      <p>The first query for page 12 paid for a <strong>read</strong>; every later query for it was a <strong>hit</strong> and never left memory. Once every slot was taken, the next read had to <strong>evict</strong> a page to reuse its slot. <a href={`${docs}sql-explain.html`}><code>EXPLAIN (ANALYZE)</code></a> reports these counts on each plan node, in a line such as <code>Buffers: shared hit=3 read=1</code>.</p>
-      <p>A read doesn’t always reach the drive. The operating system keeps its own cache of recently used file data, and PostgreSQL relies on it, which is why the documentation suggests starting shared buffers at 25% of RAM on a dedicated server.</p>
+      <p>The first query for page 12 paid for a <strong>read</strong>; every later query for it was a <strong>hit</strong> and never left memory. Once every slot was taken, the next read had to <strong>evict</strong> a page to reuse its slot. PostgreSQL’s <a href={`${docs}sql-explain.html`}><code>EXPLAIN (ANALYZE)</code></a> reports these counts on each plan node, in a line such as <code>Buffers: shared hit=3 read=1</code>.</p>
+      <p>A read doesn’t always reach the drive, because the operating system keeps its own cache of recently used file data. Engines treat that second cache differently. PostgreSQL relies on it, which is why its documentation suggests starting shared buffers at 25% of RAM on a dedicated server. InnoDB’s default on Linux is to open its data files with <code>O_DIRECT</code>, which bypasses the operating system’s cache for table pages (the log still goes through it), so its documentation says up to 80% of memory is often given to the buffer pool.</p>
     </section>
 
-    <section aria-labelledby="versions"><h2 id="versions">Row versions (MVCC)</h2>
-      <p>An <code>UPDATE</code> doesn’t change P7 in place. It writes a new <a href={`${docs}mvcc-intro.html`}><strong>row version</strong></a>, a second stored copy of the row, and marks the old one as replaced. That new version is the change that has to be made durable. PostgreSQL’s own word for a version is <strong>tuple</strong>. Both versions stay in the table for a while, and each query decides which one it may see.</p>
-      <p>Every version records two transaction IDs. <strong>xmin</strong> is the transaction that created it. <strong>xmax</strong> is the transaction that replaced or deleted it, if any. A query compares them with its <strong>snapshot</strong>, a note of which transactions had committed when it started. A report that needs consistent figures can keep one snapshot for its whole transaction; the <code>REPEATABLE READ</code> isolation level does this. Watch a report and a new query read P7 while transaction 812 changes the price.</p>
-      <StepFigure
-        scene="row-versions"
-        number={3}
-        title="Two readers and an update on page 12"
-        alt="Page 12 as a table of items with their xmin and xmax, and letters marking what each reader reads."
-        caption="A real row header also points from the old version to the new one."
-      />
-      <p>The report kept reading 20.00 after the update committed, the new query read 22.00, and neither waited for the other. This is <strong>multiversion concurrency control</strong>, or MVCC: readers don’t block writers, and writers don’t block readers. <a href="/learn/databases/relational/isolation/">Isolation and snapshots</a> explains which snapshot each isolation level takes. The cost is that old versions pile up. The next section shows how they’re cleared.</p>
-      <p class="example-note">To watch <code>xmin</code> and <code>ctid</code> change on a real table, try the <a href="/learn/databases/relational/sandbox/?tutorial=pg-read-write">read and write lesson</a> in the browser sandbox.</p>
+    <section aria-labelledby="versions"><h2 id="versions">Updating a row without overwriting it</h2>
+      <p>A crash can leave the changes of a transaction that never committed in the table files, and recovery has to make them disappear. How an engine does that depends on how it keeps the old version of a row, which it needs anyway for readers: if an update overwrote P7 in place, a report that had read 20.00 and was still running could no longer repeat its read. Where the old value lives is the largest design difference between the engines.</p>
+      <p>PostgreSQL writes a new <a href={`${docs}mvcc-intro.html`}><strong>row version</strong></a> into the table and marks the old one as replaced, so both sit in the same page for a while. A query decides which one it may see by comparing the transactions that created and replaced each version with the moment its snapshot was taken. The cost is that old versions pile up until <strong>VACUUM</strong> removes the ones no snapshot can see, so a report left running for hours holds back cleanup and busy tables grow. <a href="/learn/databases/relational/postgresql/row-versions/">Row versions, transactions, and vacuum</a> follows that in detail.</p>
+      <p>InnoDB changes the row in place and writes the old value to an <a href={`${mysql}innodb-undo-logs.html`}>undo log</a>. A reader that needs the earlier value rebuilds it from there, and a background <a href={`${mysql}innodb-purge-configuration.html`}>purge</a> discards undo entries once no reader needs them. The tables stay compact; a long transaction instead makes the undo history grow. SQLite’s default mode keeps the old page only for undo: its rollback journal, described below, holds each page’s original contents until the commit, but readers are never given old versions.</p>
     </section>
 
-    <section aria-labelledby="vacuum"><h2 id="vacuum">VACUUM and HOT updates</h2>
-      <p><a href={`${docs}routine-vacuuming.html`}><strong>VACUUM</strong></a> removes <strong>dead</strong> row versions, ones no transaction can see any more, and makes their space reusable. <strong>Autovacuum</strong> runs VACUUM for you as dead versions build up. Watch P7’s price change five times on a page with room for six versions.</p>
-      <StepFigure
-        scene="vacuum"
-        number={4}
-        title="Pruning, with and without an old snapshot"
-        alt="An index on product_id above pages 12 and 13, each with six slots for row versions."
-        caption="Six versions per page keeps the drawing small; a real page holds dozens. Run it once, then again with a long report running."
-      />
-      <p>When page 12 filled, the next update cleared the dead versions on the spot. This is <strong>pruning</strong>, and any query or update that visits a nearly full page can do it. Each new version fit on page 12 and no indexed column changed, so the index needed no new entry. That makes all five <a href={`${docs}storage-hot.html`}><strong>HOT updates</strong></a>, short for heap-only tuple. Pruning keeps item 3’s line pointer as a redirect to the live version, so the index entry still finds P7.</p>
-      <p>The open report blocked all of that. PostgreSQL can remove an old version only after every snapshot that could see it has closed, and the report might still need every one. So the 25.00 version went to page 13 and the index gained an entry. Once the report finished, VACUUM cleared the dead versions and the index entry for the original <code>(12,3)</code>.</p>
-      <p>One report left running for hours holds back cleanup on every table in its database, and busy tables grow while it runs. VACUUM gives space back to the table, not to the operating system: the file keeps its size and new rows fill the gaps. <code>VACUUM FULL</code> rewrites the table to shrink it, but locks the table while it runs.</p>
-      <p>HOT needs free space on the page. A table’s <a href={`${docs}sql-createtable.html#RELOPTION-FILLFACTOR`}><strong>fillfactor</strong></a> keeps some back on purpose: at 90, inserts fill each page only to 90%, and the rest is left for updates. The default is 100.</p>
-    </section>
-
-    <section aria-labelledby="dirty"><h2 id="dirty">Dirty pages</h2>
-      <p>A <strong>dirty page</strong> is a page in shared buffers that has changed since it was last written to disk. After the update, page 12 in memory holds the 22.00 version, while page 12 in the table file still holds only 20.00. A dirty page also has to be written out before its slot can be reused for another page.</p>
-      <p>Suppose a database replied to <code>COMMIT</code> while the only copy of the new price was still in memory. PostgreSQL doesn’t work this way, and the figure shows why.</p>
+    <section aria-labelledby="dirty"><h2 id="dirty">Changed pages wait in memory</h2>
+      <p>A <strong>dirty page</strong> is a page in the buffer pool that has changed since it was last written to disk. After the update, page 12 in memory holds the 22.00 version, while page 12 in the table file still holds only 20.00. A dirty page also has to be written out before its slot can be reused for another page.</p>
+      <p>Suppose a database replied to <code>COMMIT</code> while the only copy of the new price was still in memory. The figure shows what that costs.</p>
       <StepFigure
         scene="dirty-crash"
-        number={5}
+        number={3}
         title="A database without a log"
         alt="Two lanes: memory, holding page 12 in shared buffers, above disk, holding page 12 in the table file."
         caption="A hypothetical design, shown for contrast. A coral outline and the word ‘dirty’ mark a page whose memory copy differs from the file."
       />
-      <p>The application was told the change committed, and the change is gone. The obvious fix is to write page 12 to the table file before replying. That’s slow: one transaction can dirty pages across the table and its indexes, each a separate 8 kB write to a different place on disk. It isn’t safe either, because a page half-written when the power fails is part old and part new. <a href="#torn-pages">Torn pages</a> comes back to that.</p>
+      <p>The application was told the change committed, and the change is gone. The obvious fix is to write page 12 to the table file before replying. For engines that keep a log, as most do, that is a bad trade: one transaction can dirty pages across the table and its indexes, each a separate write to a different place on disk, and a page half-written when the power fails is part old and part new. SQLite’s default mode does write the pages at commit, and a journal, described next, is what makes that safe.</p>
     </section>
 
-    <section aria-labelledby="wal"><h2 id="wal">Write-ahead log (WAL)</h2>
-      <p>The <a href={`${docs}wal-intro.html`}><strong>write-ahead log</strong></a>, or WAL, is a record of every change PostgreSQL makes to a page, precise enough to repeat it. Records go first into <strong>WAL buffers</strong> in memory, then into files in the <code>pg_wal</code> directory. Each record has a <strong>log sequence number</strong>, or LSN: its byte position in the log. Each page remembers the LSN of the last record that changed it. Step through the price change again, this time with the log.</p>
+    <section aria-labelledby="wal"><h2 id="wal">The log is written before the pages</h2>
+      <p>The answer for most engines is a second record of the change that is cheap to write. PostgreSQL’s <a href={`${docs}wal-intro.html`}><strong>write-ahead log</strong></a>, or WAL, is a record of every change to a page, precise enough to repeat it. InnoDB’s <a href={`${mysql}innodb-redo-log.html`}>redo log</a> does the same job. Both append records to the end of a file and number them with a <strong>log sequence number</strong>, or LSN: a position in the log that only grows. In both, each page remembers the LSN of the last record that changed it. Step through the price change again, this time with the log.</p>
       <StepFigure
         scene="wal-commit"
-        number={6}
-        title="The price change with a write-ahead log"
+        number={4}
+        title="PostgreSQL: the price change with a write-ahead log"
         alt="The same lanes, with WAL buffers added to memory and the WAL file added to disk."
         caption="The drawing keeps the update record in memory until COMMIT; a background flush may write it to disk sooner."
       />
-      <p><code>COMMIT</code> waited for one thing: the WAL, up to and including the commit record, had to reach disk. On Linux the flush is the <code>fdatasync</code> system call; <a href="#fsync">fsync and write caches</a> covers what it really promises. The table file still said 20.00 when the application heard <code>COMMIT</code>, and that’s fine, because the log on disk can rebuild 22.00.</p>
-      <p>That order gives the log its name. Before a dirty page goes to the table file, the WAL up to that page’s LSN must already be on disk.</p>
-      <p>Writing the log is cheaper than writing the pages, because every record goes on the end of the same file. One flush can also serve many transactions. When several commit at once, the first to flush writes out all the WAL inserted so far, and the others find their commit records already on disk. This is <strong>group commit</strong>.</p>
+      <p><code>COMMIT</code> waited for one thing: the log, up to and including the commit record, had to reach disk. The table file still said 20.00 when the application heard <code>COMMIT</code>, and that’s fine, because the log on disk can rebuild 22.00.</p>
+      <p>That order gives the log its name. Before a dirty page goes to the table file, the log up to that page’s LSN must already be on disk.</p>
+      <p>Writing the log is cheaper than writing the pages, because every record goes on the end of the same file. One flush can also serve many transactions. When several commit at once, the first to flush writes out everything inserted so far, and the others find their commit records already on disk. This is <strong>group commit</strong>, and InnoDB does the same for its redo log and its binary log. SQLite has nothing to group, because it allows one writer at a time.</p>
+      <p>SQLite’s default mode works the other way round. Before changing a page, it saves the page’s <em>original</em> contents in a rollback journal. It then writes the new pages into the database file, flushes them, and deletes the journal. The deletion is the commit. <a href={`${sqlite}atomiccommit.html`}>After a crash</a>, a journal that is still there means the commit never finished, and SQLite copies the saved pages back. SQLite’s WAL mode works like the logs above instead: commits append page frames to a separate file, a frame marked as the end of a transaction is the commit, and the first connection to open the database after a crash reads the log, ignoring frames whose checksums fail.</p>
     </section>
 
     <section aria-labelledby="recovery"><h2 id="recovery">Crash recovery</h2>
-      <p><a href={`${docs}wal-internals.html`}><strong>Crash recovery</strong></a> replays the WAL after a crash to bring the table files up to date. It doesn’t start at the beginning of the log. It starts at the last checkpoint, a point where PostgreSQL knows the table files held every change logged before it.</p>
-      <p>For each record, recovery compares the record’s LSN with the LSN on the page it changes. If the page is older, the change is missing and recovery applies it. If the page already has it, recovery skips it, so no change is applied twice. Choose when the power fails, then watch recovery.</p>
+      <p><strong>Crash recovery</strong> replays the log after a crash to bring the table files up to date. It doesn’t start at the beginning of the log. It starts at the last checkpoint, a position before which the engine knows every change is already in the table files. Each record is applied only where it is missing: recovery compares the record’s LSN with the LSN on the page it changes. If the page is older, the change is missing and recovery applies it. If the page already has it, recovery skips it, so no change is applied twice. Choose when the power fails, then watch PostgreSQL recover.</p>
       <StepFigure
         scene="crash-recovery"
-        number={7}
-        title="Crash recovery at three moments"
-        alt="The lanes from figure 6, with the power failing at the chosen moment."
+        number={5}
+        title="PostgreSQL: crash recovery at three moments"
+        alt="The lanes from figure 4, with the power failing at the chosen moment."
         caption="Page 12 had already changed once since the last checkpoint, so the earlier records include it. Records still in memory at the crash are gone."
       />
-      <p>Recovery brings back exactly the transactions whose commit records reached disk. A transaction that never committed may have its records replayed too, but its versions stay invisible, as they were before the crash.</p>
-      <h3 id="dropped-connection">When the connection drops after COMMIT</h3>
-      <p>If the connection drops after the application sends <code>COMMIT</code>, two different things could have happened. If the power failed before the flush, the change is gone. If it failed after the flush but before the reply, the change committed. Either way the application sees only a dropped connection. Retrying blindly could apply the change twice, which matters more for a payment than for a price. <a href="/learn/databases/relational/conflicts-and-retries/">Handling conflicts and uncertain outcomes</a> shows how to make a retry safe.</p>
+      <p>Recovery brings back exactly the transactions whose commit records reached disk. The log may also hold records of transactions that never committed, and what happens to those depends on where old versions live. PostgreSQL replays them like any others, and their versions stay invisible: with no commit record in the log, the transaction counts as aborted, so no snapshot is allowed to see its versions.</p>
+      <p>InnoDB <a href={`${mysql}innodb-recovery.html`}>replays the redo log first</a>, which restores the unfinished changes too, and then rolls those transactions back using the undo log. It accepts connections before that rollback finishes, so new connections can briefly meet locks held by transactions that are being undone. SQLite’s recovery is the journal restore or the checksummed log described above.</p>
     </section>
 
-    <section aria-labelledby="checkpoints"><h2 id="checkpoints">Checkpoints</h2>
-      <p>A <a href={`${docs}wal-configuration.html`}><strong>checkpoint</strong></a> picks a <strong>redo point</strong> in the WAL, writes every page dirtied before it to disk, then records that recovery can start there. After a crash, recovery needs only the log from the latest redo point onward.</p>
-      <p>PostgreSQL starts a checkpoint every 5 minutes (<code>checkpoint_timeout</code>), or sooner if WAL approaches <code>max_wal_size</code> (1 GB). It spreads the page writes over 90% of the interval (<code>checkpoint_completion_target</code>) so they don’t arrive in one burst. Below, price changes arrive for products on pages 10 to 15. Play it, then try a checkpoint every 20 records.</p>
+    <section aria-labelledby="checkpoints"><h2 id="checkpoints">Checkpoints bound the replay</h2>
+      <p>A <strong>checkpoint</strong> is a log position before which every change is already in the table files. Recovery starts there, and the log before it can be reused. Without checkpoints, recovery would replay the whole history and the log would grow without limit. What differs is how engines move the position forward.</p>
+      <p>PostgreSQL does it in bursts. Every 5 minutes (<code>checkpoint_timeout</code>), or sooner if the log approaches <code>max_wal_size</code> (1 GB), it picks a position, writes every page dirtied before it, and <a href={`${docs}wal-configuration.html`}>records the position</a>, spreading the writes over most of the interval so they don’t arrive in one burst. The figure uses this model. Price changes arrive for products on pages 10 to 15. Play it, then try a checkpoint every 20 records.</p>
       <StepFigure
         scene="checkpoints"
-        number={8}
-        title="Checkpoint interval"
+        number={6}
+        title="PostgreSQL: checkpoint interval"
         alt="Six pages in shared buffers, marked clean or dirty, above a grid of WAL records labelled with their pages. C marks a checkpoint."
-        caption="Checkpoints here are instant and counted in records; real ones are timed and spread out."
+        caption="PostgreSQL’s burst model. Checkpoints here are instant and counted in records; real ones are timed and spread out."
       />
-      <p>Every 5 records: 5 records to replay after the crash, and 30 pages written. Every 20 records: 20 to replay, and 6 pages written. A page that changes again after a checkpoint has to be written again, so frequent checkpoints write more.</p>
-      <p>Checkpoints aren’t the only writers. The <a href={`${docs}runtime-config-resource.html#RUNTIME-CONFIG-RESOURCE-BACKGROUND-WRITER`}><strong>background writer</strong></a> writes some dirty pages early so that queries find clean slots, and a query that finds none writes one out itself. Neither moves the redo point.</p>
-      <p>If the server log warns that checkpoints are occurring too frequently, raise <code>max_wal_size</code>. Once a checkpoint completes, crash recovery no longer needs the WAL from before its redo point. PostgreSQL recycles those WAL files, unless a backup archive or a replica still needs them.</p>
+      <p>Every 5 records: 5 records to replay after the crash, and 30 pages written. Every 20 records: 20 to replay, and 6 pages written. A page that changes again after a checkpoint has to be written again, so frequent checkpoints write more, and rare ones leave more to replay.</p>
+      <p>InnoDB moves the position continuously instead. Its <a href={`${mysql}innodb-checkpoints.html`}>fuzzy checkpointing</a> flushes dirty pages in small batches in the background, and the checkpoint advances behind the oldest page still dirty, so there is no burst. The consequence is a stall rather than a spike: if writes fill the redo log faster than <a href={`${mysql}innodb-buffer-pool-flushing.html`}>the flushing keeps up</a>, the engine has to stop and flush before it can accept more.</p>
     </section>
 
-    <section aria-labelledby="torn-pages"><h2 id="torn-pages">Torn pages and full_page_writes</h2>
-      <p>A <strong>torn page</strong> is a page that was only partly written when the power failed. PostgreSQL writes 8 kB at a time, but a drive only promises to write each 512-byte sector whole. A page is 16 sectors, and the power can fail between any two of them.</p>
-      <p>PostgreSQL’s defence is <a href={`${docs}runtime-config-wal.html#GUC-FULL-PAGE-WRITES`}><code>full_page_writes</code></a>, on by default. The first time a page changes after a checkpoint, the WAL record for that change carries a <strong>full-page image</strong>, a copy of the whole page. Watch a page write fail partway, with the setting on and then off.</p>
+    <section aria-labelledby="torn-pages"><h2 id="torn-pages">Pages torn by a crash</h2>
+      <p>A <strong>torn page</strong> is a page that was only partly written when the power failed. A database writes a whole page at a time, but a drive only promises to write each sector whole, traditionally 512 bytes. That makes a PostgreSQL page 16 sectors and an InnoDB page 32, and the power can fail between any two of them. Drives with larger sectors tear less often, but a page is still more than one sector. A log record that says “change these bytes” can’t be applied to a page that is half old and half new, so every engine needs a way to get a whole page back.</p>
+      <p>PostgreSQL’s way is <a href={`${docs}runtime-config-wal.html#GUC-FULL-PAGE-WRITES`}><code>full_page_writes</code></a>, on by default. The first time a page changes after a checkpoint, the log record for that change carries a <strong>full-page image</strong>, a copy of the whole page. Watch a page write fail partway, with the setting on and then off.</p>
       <StepFigure
         scene="torn-page"
-        number={9}
-        title="A torn page and its full-page image"
+        number={7}
+        title="PostgreSQL: a torn page and its full-page image"
         alt="Page 12 as sixteen 512-byte sectors, in shared buffers and in the table file, with its WAL record below."
         caption="New sectors are striped; old ones are plain. Drives don’t promise to write sectors in order; the drawing shows them in order for clarity."
       />
-      <p>With the image in the log, recovery doesn’t need the torn page at all. It copies the image over it and replays later changes on top. One image per checkpoint is enough: recovery always starts at the last redo point, so the first record it meets for a page is the one carrying the image.</p>
-      <p>Without the image, the page can’t be repaired. With data checksums, on by default in new PostgreSQL 18 clusters, recovery at least stops and reports it; without them the tear goes unnoticed. Turn <code>full_page_writes</code> off only if your storage guarantees whole-page writes, as ZFS does.</p>
-      <p>Full-page images are the second cost of frequent checkpoints. Each one adds up to 8 kB of WAL, even when the change itself is a few bytes. Over figure 8’s 40 changes, a checkpoint every 5 records logs 35 images; every 20 records, 12.</p>
+      <p>With the image in the log, recovery doesn’t need the torn page at all. It copies the image over it and replays later changes on top. One image per checkpoint is enough: recovery always starts at the last checkpoint, so the first record it meets for a page is the one carrying the image. That makes the images a second cost of frequent checkpoints, because the more often a checkpoint happens, the more often a page’s next change has to carry a copy of the whole page, up to 8 kB, however small the change.</p>
+      <p>InnoDB keeps the copy somewhere else. Before it writes a page to its place in the data file, it writes the page to a <a href={`${mysql}innodb-doublewrite-buffer.html`}>doublewrite buffer</a>, on by default. If the write is torn, recovery finds a good copy there and then applies the redo log. The result is the same, but the extra writes go to a separate area on every flush of a page, not in the log after each checkpoint. SQLite never overwrites a page it can’t restore: the rollback journal holds the original, and in WAL mode the main file changes only at a checkpoint, which doesn’t discard the log until the file has been flushed, so a checkpoint torn by a crash is redone from the log.</p>
     </section>
 
-    <section aria-labelledby="fsync"><h2 id="fsync">fsync and write caches</h2>
-      <p><strong>fsync</strong> is the system call that asks the operating system to put a file’s data on durable storage and report when it has. <code>fdatasync</code> does the same while skipping metadata it doesn’t need. Every guarantee so far rests on that report. If the report is wrong, a committed transaction can vanish.</p>
-      <p>Two caches sit between PostgreSQL and the storage itself. The operating system’s page cache holds data PostgreSQL has handed over but not yet flushed; it is the same cache that serves reads in <a href="#buffers">Shared buffers</a>. The drive has its own write cache, and on many drives that cache is ordinary volatile memory. Follow the commit record down, first with a drive that honours flush requests, then with one that doesn’t.</p>
+    <section aria-labelledby="flush"><h2 id="flush">Whether a flush reaches the disk</h2>
+      <p>Every guarantee so far rests on one report. To make a log record durable, a database writes it to the log file and then calls <code>fsync</code> (<code>fdatasync</code> on Linux, which skips metadata the log doesn’t need), which asks the operating system to put the file’s data on durable storage and to return only when it has. PostgreSQL, InnoDB and SQLite all rely on that return. If it is wrong, a committed transaction can vanish.</p>
+      <p>Two caches sit between the database and the storage itself. The operating system’s page cache holds data the database has handed over but not yet flushed. The drive has its own write cache, and on many drives that cache is ordinary volatile memory. Follow the commit record down, first with a drive that honours flush requests, then with one that doesn’t.</p>
       <StepFigure
         scene="flush-path"
-        number={10}
-        title="The flush path"
+        number={8}
+        title="PostgreSQL: the flush path"
         alt="Four layers, top to bottom: WAL buffers, the operating system page cache, the drive’s write cache and its flash cells."
-        caption="The top three layers are memory. An operating-system crash loses the top two; a PostgreSQL crash loses only the first."
+        caption="The top three layers are memory. An operating-system crash loses the top two; a database process crash loses only the first."
       />
-      <p>PostgreSQL couldn’t notice anything wrong with the second drive: it just answered too early. The <a href={`${docs}wal-reliability.html`}>PostgreSQL documentation</a> warns that consumer SATA drives and many SSDs have volatile write caches, and that many SSDs ignore flush requests by default. It advises avoiding disk controllers whose write cache has no battery, and turning off a drive’s write cache unless the drive guarantees the cache is written out before power is lost. Drives sold with <strong>power-loss protection</strong> make that guarantee: they hold enough stored energy to finish writing their cache.</p>
-      <p>To check your hardware, run <a href={`${docs}pgtestfsync.html`}><code>pg_test_fsync</code></a>, which times each flush method. A disk spinning at 7,200 rpm turns 120 times a second, so it can complete at most about 120 flushes a second. A result in the thousands from such a disk means a cache is answering.</p>
-      <p>On a managed service such as Amazon RDS or Google Cloud SQL, the provider chooses the drives and controllers, so these hardware checks are theirs to make. The settings in the next section, which decide whether <code>COMMIT</code> waits for the flush, are still yours.</p>
+      <p>The database couldn’t notice anything wrong with the second drive, which simply reported the data safe while it sat in volatile memory. The warning appears in every engine’s documentation. <a href={`${docs}wal-reliability.html`}>PostgreSQL’s</a> says many SSDs ignore flush requests by default; <a href={`${mysql}innodb-parameters.html`}>MySQL’s</a> says that in the worst case a power outage can corrupt InnoDB data; <a href={`${sqlite}atomiccommit.html`}>SQLite’s</a> says neither of its two flush interfaces “works as advertised on many systems.” Drives sold with <strong>power-loss protection</strong> hold enough stored energy to finish writing their cache, so their cache is safe to count on.</p>
+      <p>Counting flushes gives a rough test for a spinning disk. At 7,200 rpm it turns 120 times a second, so it can complete at most about 120 flushes a second, and a result in the thousands means a cache is answering. That is arithmetic, not a documented limit, and it fails for SSDs: an honest drive with power-loss protection can flush thousands of times a second, so a high count alone proves nothing. What does is pulling the plug during a write test, which PostgreSQL’s reliability page suggests doing with a tool such as <code>diskchecker.pl</code>, or the drive’s documented power-loss protection. On a managed service such as Amazon RDS or Google Cloud SQL, the provider chooses the drives, so these hardware checks are theirs to make. The settings in the next section, which decide whether <code>COMMIT</code> waits for the flush, are still yours.</p>
     </section>
 
-    <section aria-labelledby="settings"><h2 id="settings">Asynchronous commit, fsync = off and unlogged tables</h2>
-      <p><a href={`${docs}wal-async-commit.html`}><strong>Asynchronous commit</strong></a> lets <code>COMMIT</code> return before the WAL flush. You turn it on with <code>synchronous_commit = off</code>. PostgreSQL then replies as soon as the commit record is in the WAL buffers, and a background process, the <strong>WAL writer</strong>, flushes them soon after. The WAL writer wakes every 200 ms (<code>wal_writer_delay</code>). When the server is busy it prefers to write whole WAL pages, so a commit can wait up to three of those cycles: about 600 ms in the worst case.</p>
-      <p>You can set <code>synchronous_commit = off</code> for a single transaction, for writes you could afford to lose, such as a page-view counter:</p>
-      <Sql code={asyncCommit} label="Turn off synchronous commit for one transaction" />
-      <p>Here is the price change with it off. Choose whether the power fails before or after the WAL writer runs.</p>
+    <section aria-labelledby="settings"><h2 id="settings">Trading durability for speed</h2>
+      <p>Waiting for a flush at every commit is the expensive part of a write, so every engine lets you wait less, for the same trade: a crash can lose the most recent commits, and nothing else. The settings differ in name and in grain.</p>
+      <ul>
+        <li>PostgreSQL: <a href={`${docs}wal-async-commit.html`}><code>synchronous_commit = off</code></a> replies as soon as the commit record is in memory, and a background process flushes it soon after. That process wakes every 200 ms by default (<code>wal_writer_delay</code>), and because it prefers to write whole pages when busy, the documentation puts the longest risk window at three times that delay: about 600 ms at the default. You can set it for a single transaction.</li>
+        <li>InnoDB: <a href={`${mysql}innodb-parameters.html`}><code>innodb_flush_log_at_trx_commit</code></a> is 1 by default, which writes and flushes the redo log at each commit. At 2 it hands the log to the operating system at each commit but flushes it only about once a second. If just the MySQL process dies, the operating system still holds those writes; if the machine loses power or the kernel crashes, about the last second of commits goes. At 0 it writes and flushes once a second. With the binary log on, which is the default in 8.4, a commit also writes the <a href={`${mysql}binary-log.html`}>binary log</a>, the record of changes that replicas and point-in-time recovery read. With <a href={`${mysql}replication-options-binary-log.html`}><code>sync_binlog</code></a> and <code>innodb_flush_log_at_trx_commit</code> both at 1, their defaults, a commit flushes the redo log and the binary log, and after a crash InnoDB completes or rolls back each prepared transaction so that the two logs agree.</li>
+        <li>SQLite: the defaults are the rollback journal (<code>journal_mode = DELETE</code>) and <a href={`${sqlite}pragma.html#pragma_synchronous`}><code>synchronous = FULL</code></a>. A common tuned choice is WAL mode with <code>synchronous = NORMAL</code>, which skips the flush at commit. The database stays consistent, but a transaction that committed can roll back after a power loss or operating-system crash.</li>
+      </ul>
+      <p>In every case recovery still replays what reached the disk, in order, so the database ends consistent. The trade suits writes you could afford to lose, such as a page-view counter, which PostgreSQL lets you mark one transaction at a time. Here is the price change with it off. Choose whether the power fails before or after the background flush.</p>
       <StepFigure
         scene="async-commit"
-        number={11}
-        title="The price change with synchronous_commit off"
-        alt="The lanes from figures 6 and 7, with synchronous_commit off."
-        caption="The same model as figures 6 and 7, with one setting changed."
+        number={9}
+        title="PostgreSQL: the price change with synchronous_commit off"
+        alt="The lanes from figures 4 and 5, with synchronous_commit off."
+        caption="The same model as figures 4 and 5, with one setting changed."
       />
-      <p>With <code>synchronous_commit</code> off, a crash can lose up to the last 600 ms of commits, and no more. Recovery replays commits in order, so the database stays consistent. It just ends slightly behind what the application was told.</p>
-      <p>With a synchronous standby server, <a href={`${docs}runtime-config-wal.html#GUC-SYNCHRONOUS-COMMIT`}><code>synchronous_commit</code></a> also decides how far the standby must get before <code>COMMIT</code> returns, from <code>remote_write</code> (received) to <code>remote_apply</code> (applied, so queries there see it). <a href="/learn/databases/relational/replicas-and-failover/">Replication and failover</a> covers those settings.</p>
-      <p>Two other options look similar and are not. <code>fsync = off</code> stops PostgreSQL from flushing anything, data files included, and after an operating-system crash or power cut the database can be corrupt beyond repair. Use it only for a database you can rebuild from scratch. <a href={`${docs}sql-createtable.html#SQL-CREATETABLE-UNLOGGED`}><strong>Unlogged tables</strong></a>, created with <code>CREATE UNLOGGED TABLE</code>, skip the WAL. They are faster to write, and PostgreSQL empties them after any crash, committed rows included.</p>
+      <p>With a synchronous standby, the commit setting also decides how far the standby must get before <code>COMMIT</code> returns; <a href="/learn/databases/relational/replicas-and-failover/">Replication and failover</a> covers that.</p>
+    </section>
+
+    <section aria-labelledby="loss"><h2 id="loss">What can lose a committed change</h2>
+      <p>A change the application was told about can still be lost in five ways.</p>
+      <ul>
+        <li>A relaxed commit setting, within a window: about 600 ms of commits with PostgreSQL’s <code>synchronous_commit = off</code>; about a second after an operating-system crash or power loss with InnoDB’s setting at 2, or after any crash at 0; the most recent commits after a power loss with SQLite in WAL mode at <code>NORMAL</code>. The database stays consistent.</li>
+        <li>A drive that acknowledges flushes it hasn’t made. Any engine can lose commits this way, and the window has no limit.</li>
+        <li>Switching flushing off entirely, as with PostgreSQL’s <code>fsync = off</code> or SQLite’s <code>synchronous = OFF</code>. This loses more than recent commits: after a crash the database can be corrupt beyond repair, because the order between log and pages is no longer enforced.</li>
+        <li>PostgreSQL’s unlogged tables, which skip the log and are emptied after any crash, committed rows included.</li>
+        <li>Losing the disk, or committing a bad statement such as <code>DELETE FROM products</code>. Crash recovery keeps the delete, and only a backup helps, as the last section explains.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="after-commit"><h2 id="after-commit">What the application knows after COMMIT</h2>
+      <p>The commonest way to lose track of a commit has nothing to do with storage. The application sends <code>COMMIT</code> and the connection drops: a network fault, a timeout, a restarted proxy. The server may be perfectly healthy. It may have received the command, committed, and failed to deliver the reply, or never have received it at all. The application cannot tell which, and the database has no way to make its reply arrive.</p>
+      <p>A server crash adds the case Figure 5 showed: the application sees the same dropped connection whether the power failed before the flush, when the change is gone, or after it, when the change committed. Either way, retrying blindly could apply the change twice, which matters more for a payment than for a price. <a href="/learn/databases/relational/conflicts-and-retries/">Handling conflicts and uncertain outcomes</a> shows how to make a retry safe.</p>
     </section>
 
     <section aria-labelledby="backups"><h2 id="backups">Backups and point-in-time recovery</h2>
-      <p>Durability protects committed changes from a crash. It doesn’t protect them from losing the disk, or from a mistake. If the drive holding the table files and <code>pg_wal</code> dies, there is nothing left to replay. If someone commits <code>DELETE FROM products</code>, crash recovery will faithfully keep the delete.</p>
-      <p>A replica on another server covers a lost disk, but it copies the delete too. Undoing a mistake needs a copy from before it. A <strong>base backup</strong> is a copy of the data directory, and the <strong>WAL archive</strong> holds every WAL file written since. Restore the backup, replay the archive, and stop at a moment you choose, such as just before the delete. This is <a href={`${docs}continuous-archiving.html`}><strong>point-in-time recovery</strong></a>. <a href="/learn/databases/relational/backup-and-restore/">Backups and recovery</a> covers what to keep and how to test a restore.</p>
+      <p>Durability protects committed changes from a crash. It doesn’t protect them from losing the disk, or from a mistake. If the drive holding the table files and the log dies, there is nothing left to replay. If someone commits <code>DELETE FROM products</code>, crash recovery will faithfully keep the delete.</p>
+      <p>A replica on another server covers a lost disk, but it copies the delete too. Undoing a mistake needs a copy from before it. A <strong>base backup</strong> is a copy of the data files, and an archive of the log written since lets you restore the backup, replay the log, and stop at a moment you choose, such as just before the delete. PostgreSQL calls this <a href={`${docs}continuous-archiving.html`}><strong>point-in-time recovery</strong></a> and archives its WAL files. MySQL restores a full backup and then <a href={`${mysql}point-in-time-recovery-binlog.html`}>replays its binary log</a> up to a chosen point. SQLite has no built-in point-in-time recovery. Its <a href={`${sqlite}backup.html`}>online backup API</a>, which the command-line shell exposes as <code>.backup</code>, copies a live database as a consistent snapshot, and <a href={`${sqlite}lang_vacuum.html`}><code>VACUUM INTO</code></a> writes a compacted copy; restoring to a moment in between needs a tool outside SQLite.</p>
     </section>
 
     <section class="essay-sources" aria-labelledby="sources"><h2 id="sources">Sources and further reading</h2>
-      <p>Checked on 16 October 2026. The figures model the documented behaviour; they are not recordings of a server.</p>
+      <p>Checked on 17 October 2026. The figures model PostgreSQL’s documented behaviour; they are not recordings of a server.</p>
       <ul>
-        <li>PostgreSQL 18: <a href={`${docs}storage-page-layout.html`}>Database Page Layout</a>, <a href={`${docs}storage-toast.html`}>TOAST</a>, <a href={`${docs}storage-hot.html`}>Heap-Only Tuples (HOT)</a> and <a href={`${docs}routine-vacuuming.html`}>Routine Vacuuming</a>.</li>
-        <li>PostgreSQL 18: <a href={`${docs}wal-intro.html`}>Write-Ahead Logging (WAL)</a>, <a href={`${docs}wal-reliability.html`}>Reliability</a>, <a href={`${docs}wal-configuration.html`}>WAL Configuration</a>, <a href={`${docs}wal-internals.html`}>WAL Internals</a> and <a href={`${docs}wal-async-commit.html`}>Asynchronous Commit</a>.</li>
-        <li><a href="/learn/databases/relational/postgresql/recovery/">WAL, checkpoints, and recovery</a>: a crash test on a PostgreSQL 18 server.</li>
-        <li><a href="/learn/databases/relational/postgresql/row-versions/">Row versions, transactions, and vacuum</a>: visibility and autovacuum on a running server.</li>
+        <li>PostgreSQL 18: <a href={`${docs}storage-page-layout.html`}>Database Page Layout</a>, <a href={`${docs}wal-intro.html`}>Write-Ahead Logging (WAL)</a>, <a href={`${docs}wal-reliability.html`}>Reliability</a>, <a href={`${docs}wal-configuration.html`}>WAL Configuration</a> and <a href={`${docs}wal-async-commit.html`}>Asynchronous Commit</a>: the worked example in this article.</li>
+        <li>MySQL 8.4 Reference Manual: <a href={`${mysql}innodb-buffer-pool.html`}>Buffer Pool</a>, <a href={`${mysql}innodb-index-types.html`}>Clustered and Secondary Indexes</a>, <a href={`${mysql}innodb-redo-log.html`}>Redo Log</a>, <a href={`${mysql}innodb-checkpoints.html`}>Checkpoints</a>, <a href={`${mysql}innodb-buffer-pool-flushing.html`}>Buffer Pool Flushing</a>, <a href={`${mysql}innodb-undo-logs.html`}>Undo Logs</a>, <a href={`${mysql}innodb-purge-configuration.html`}>Purge Configuration</a>, <a href={`${mysql}innodb-doublewrite-buffer.html`}>Doublewrite Buffer</a> and <a href={`${mysql}innodb-recovery.html`}>InnoDB Recovery</a>: how InnoDB does each step. <a href={`${mysql}innodb-parameters.html`}>InnoDB startup options and system variables</a> and <a href={`${mysql}binary-log.html`}>The Binary Log</a> and <a href={`${mysql}replication-options-binary-log.html`}>Binary Logging Options and Variables</a> define the commit settings, and <a href={`${mysql}point-in-time-recovery-binlog.html`}>Point-in-Time Recovery Using Binary Log</a> the restore.</li>
+        <li>SQLite: <a href={`${sqlite}atomiccommit.html`}>Atomic Commit</a> for the rollback journal and what it assumes about disks, <a href={`${sqlite}wal.html`}>Write-Ahead Logging</a> and the <a href={`${sqlite}fileformat2.html`}>file format</a> for WAL mode and rowid tables, <a href={`${sqlite}pragma.html#pragma_synchronous`}>PRAGMA synchronous</a> for the durability levels, and the <a href={`${sqlite}backup.html`}>online backup API</a>.</li>
+        <li><a href="/learn/databases/relational/postgresql/recovery/">WAL, checkpoints, and recovery</a>: a crash test on a PostgreSQL 18 server, with the commit settings and unlogged tables.</li>
+        <li><a href="/learn/databases/relational/postgresql/row-versions/">Row versions, transactions, and vacuum</a>: visibility, HOT updates and autovacuum on a running server.</li>
+        <li><a href="/learn/databases/relational/postgresql/architecture/">Inside PostgreSQL</a>: pages, line pointers and TOAST in a worked lookup.</li>
         <li><a href="/learn/databases/relational/backup-and-restore/">Backups and recovery</a>: what to keep and how to test a restore.</li>
       </ul>
     </section>

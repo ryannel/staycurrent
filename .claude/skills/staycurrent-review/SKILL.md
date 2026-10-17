@@ -62,6 +62,14 @@ commission's scope; challenge a mismatch rather than letting a narrow brief excu
 an overbroad article. Preserve these initial expectations before the existing draft
 can define what counts as complete.
 
+A general article can be accurate about its example product and still misteach
+its subject. Repeated reviews of the relational Storage and Indexes articles checked
+PostgreSQL behaviour carefully and never asked whether InnoDB or SQLite would
+behave the same; the user noticed that the general articles were PostgreSQL
+articles. When the collection is broader than the example, ask a reviewer who
+knows another engine which explanations would mislead its users, and whether
+product-only detail has a better home in that product's series.
+
 Also ask what someone new to the subject learns from the opening alone: what the
 thing is, what it is for, and when they would reach for it. In October 2026 nine
 reviewers passed an Indexes deep dive whose opening defined a B-tree index by its

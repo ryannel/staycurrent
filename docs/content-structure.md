@@ -86,6 +86,24 @@ across focused pieces where necessary. Do not repeat the family material in full
 and do not present PostgreSQL-specific storage or maintenance as universal SQL
 behaviour. A comparison does not commit us to a deep dive into every alternative.
 
+In October 2026 the user found that the relational Storage and Indexes deep dives
+broke this rule while every review passed them. Storage opened with "Once
+PostgreSQL tells your application that COMMIT succeeded" and named PostgreSQL in
+nearly every section heading; Indexes assumed throughout that a table is a heap
+that index entries point into, which is PostgreSQL's design rather than InnoDB's
+or SQLite's. Both were accurate about PostgreSQL. Neither taught what a reader of
+the general collection needs: the mechanism relational databases share, and the
+places where a choice of engine changes it.
+
+A general article therefore names the shared mechanism in general terms (pages,
+buffer pool, write-ahead log, row location) and says where the major engines
+differ when the difference changes what a reader would predict or decide.
+PostgreSQL, MySQL's InnoDB and SQLite are the usual comparison; others earn a
+mention where they differ instructively. PostgreSQL can remain the worked example,
+because the sandbox runs it, provided the article presents it as one
+implementation. Settings, maintenance commands and data structures that exist only
+in PostgreSQL belong in the PostgreSQL series, linked from the general article.
+
 For a future messaging field, Kafka and RabbitMQ are candidate implementation
 examples. Their contrasts should follow from the messaging workloads and guarantees
 being taught. This is an example of the structure, not a messaging production brief.
