@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const here = (file) => new URL(file, import.meta.url);
-const page = readFileSync(here('../../../src/pages/learn/databases/relational/indexes.astro'), 'utf8');
+const page = readFileSync(here('../../../src/lib/sql-lessons/indexes.ts'), 'utf8');
 const s = Object.fromEntries([...page.matchAll(/const (\w+) = `([\s\S]*?)`;/g)].map((m) => [m[1], m[2]]));
 const plan = (sql) => 'EXPLAIN (ANALYZE, BUFFERS)\n' + sql;
 

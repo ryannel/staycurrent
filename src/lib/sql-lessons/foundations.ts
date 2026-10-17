@@ -259,58 +259,6 @@ ORDER BY placed_at DESC, order_id DESC LIMIT 2;`,
     ],
   },
   {
-    id: 'index-selectivity',
-    title: 'Test which reads benefit from an index',
-    description: 'Compare a selective customer lookup with a broad report over the same 20,000 orders.',
-    articleHref: '/learn/databases/relational/indexes/#check',
-    steps: [
-      {
-        title: 'Create a repeatable workload',
-        instruction: 'Run this setup first. generate_series supplies IDs 1 to 20,000. The remainder operator % distributes orders evenly among 1,000 customer IDs, so each has 20 orders. ANALYZE gives the planner statistics. These browser plans teach work and choices, not production timings. Reset and rerun this step to start over.',
-        sql: `DROP TABLE IF EXISTS lesson_index_orders;
-CREATE TABLE lesson_index_orders (
-  order_id integer PRIMARY KEY, customer_id integer NOT NULL,
-  total numeric(12,2) NOT NULL, note text NOT NULL
-);
-INSERT INTO lesson_index_orders (order_id, customer_id, total, note)
-SELECT n, n % 1000, 20 + n % 80, repeat('order detail ', 8)
-FROM generate_series(1, 20000) AS n;
-ANALYZE lesson_index_orders;
-SELECT count(*) AS orders, count(DISTINCT customer_id) AS customers FROM lesson_index_orders;`,
-        expected: 'There are 20,000 orders and 1,000 customer IDs. The primary-key index can locate an order_id, but there is no index ordered by customer_id yet.',
-      },
-      {
-        title: 'Read the plan before adding an index',
-        instruction: 'EXPLAIN ANALYZE executes this read and shows its plan. Predict how many rows match customer 42 and how many do not. Look for the scan’s actual rows and Rows Removed by Filter. TIMING OFF keeps per-node timing noise out of the example.',
-        sql: `EXPLAIN (ANALYZE, TIMING OFF)
-SELECT order_id, total FROM lesson_index_orders WHERE customer_id = 42;`,
-        expected: 'Expect 20 matching rows and a sequential scan that removes 19,980 others by filtering. “rows” before the actual section is an estimate; “actual rows” records execution. Plan wording and costs can vary with engine settings.',
-      },
-      {
-        title: 'Offer a customer index',
-        instruction: 'Create the index, then run the same read. Predict whether the result changes and which work can now be avoided. The index stores customer values with row references; total still comes from the table.',
-        sql: `CREATE INDEX lesson_index_customer ON lesson_index_orders (customer_id);
-EXPLAIN (ANALYZE, TIMING OFF)
-SELECT order_id, total FROM lesson_index_orders WHERE customer_id = 42;`,
-        expected: 'The result remains 20 rows. The checked run used a bitmap index scan followed by a bitmap heap scan: the index finds matching locations and the heap scan reads their records. An ordinary index scan is also possible. An available index is a choice the planner evaluates.',
-      },
-      {
-        title: 'Ask for almost everyone',
-        instruction: 'The index stays in place, but this report matches customer IDs 0 through 899. Predict the number of rows and whether a scan of the table might now make sense. Compare the plan with the previous lookup.',
-        sql: `EXPLAIN (ANALYZE, TIMING OFF)
-SELECT order_id, total FROM lesson_index_orders WHERE customer_id < 900;`,
-        expected: '18,000 rows match. The checked run chose a sequential scan: finding almost the whole table through an index would add work without avoiding many records. Try cutoffs of 10, 100 and 500 and inspect the chosen plans; there is no universal percentage where a plan must change.',
-      },
-      {
-        title: 'Keep the index current',
-        instruction: 'Move one order out of customer 42, then count that customer’s orders. Predict the answer. PostgreSQL must maintain the index as its indexed value changes; observing a correct answer does not measure that maintenance cost. Reset and rerun step 1 to compare from the original state.',
-        sql: `UPDATE lesson_index_orders SET customer_id = 999 WHERE order_id = 42;
-SELECT count(*) AS customer_42_orders FROM lesson_index_orders WHERE customer_id = 42;`,
-        expected: 'Customer 42 now has 19 orders. The access path remains correct after the write. Deciding whether to keep an index also requires the real workload’s write rate, storage and measured latency, which this short browser exercise does not establish.',
-      },
-    ],
-  },
-  {
     id: 'query-plans',
     title: 'Follow rows through an execution plan',
     description: 'Read filtering, grouping and sorting as connected operations, then compare estimates with execution.',

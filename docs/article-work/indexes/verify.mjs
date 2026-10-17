@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 
 const here = (file) => new URL(file, import.meta.url);
 const setup = readFileSync(here('./setup.sql'), 'utf8');
-const source = readFileSync(here('../../../src/pages/learn/databases/relational/indexes.astro'), 'utf8');
+const source = readFileSync(here('../../../src/lib/sql-lessons/indexes.ts'), 'utf8');
 const s = Object.fromEntries([...source.matchAll(/const (\w+) = `([\s\S]*?)`;/g)].map((m) => [m[1], m[2]]));
 const previous = existsSync(here('./observed.json')) ? JSON.parse(readFileSync(here('./observed.json'), 'utf8')) : {};
 const observed = { checked: '2026-10-16', runtime: 'PGlite 0.5.8, in memory. Page counts, not timings.' };
@@ -241,32 +241,16 @@ assert.equal(Number(observed.hot['fillfactor 90, total not indexed'].hot), 600);
 assert.equal(Number(observed.hot['fillfactor 90, INCLUDE (total)'].hot), 0);
 assert.equal(Number(observed.hot['default fillfactor, total not indexed'].hot), 0);
 
-// Write-ahead log written by 10,000 inserts as indexes are added.
+// Write-ahead log written by 10,000 inserts, with only a primary key and with
+// four more indexes: the sandbox lesson's statement, run as one query string.
 {
   const w = await open();
-  await w.db.exec(setup.replace('CREATE TEMP TABLE index_orders', 'CREATE TABLE index_orders'));
-  await w.db.exec('VACUUM (FREEZE, ANALYZE) index_orders');
-  const extra = [
-    'CREATE INDEX w_customer ON w (customer_id)',
-    'CREATE INDEX w_history ON w (customer_id, placed_at DESC, order_id DESC)',
-    'CREATE INDEX w_status ON w (status, placed_at)',
-    'CREATE INDEX w_total ON w (total)',
-  ];
-  observed.walBytesFor10000Inserts = {};
-  for (const i of [0, 0, 1, 2, 3, 4]) { // the first pass warms up and is overwritten
-    await w.db.exec(`DROP TABLE IF EXISTS w; CREATE TABLE w (LIKE index_orders INCLUDING ALL); ${extra.slice(0, i).join('; ')};`);
-    await w.db.exec('INSERT INTO w SELECT * FROM index_orders WHERE order_id <= 20000');
-    await w.db.exec('CHECKPOINT');
-    const a = (await w.q('SELECT pg_current_wal_insert_lsn() AS l'))[0].l;
-    await w.db.exec('INSERT INTO w SELECT * FROM index_orders WHERE order_id > 20000 AND order_id <= 30000');
-    const b = (await w.q('SELECT pg_current_wal_insert_lsn() AS l'))[0].l;
-    observed.walBytesFor10000Inserts[`primary key + ${i}`] = Number((await w.q(`SELECT pg_wal_lsn_diff('${b}', '${a}') AS d`))[0].d);
-  }
+  await w.db.exec(setup);
+  const rows = (await w.db.exec(s.writeCost)).at(-1).rows;
+  observed.walMBFor10000Inserts = Object.fromEntries(rows.map((r) => [r.inserted_into, Number(r.wal_mb)]));
   await w.db.close();
-  const wal = observed.walBytesFor10000Inserts;
-  assert(wal['primary key + 0'] > 3.1e6 && wal['primary key + 0'] < 3.4e6);
-  assert(wal['primary key + 4'] > 7.5e6 && wal['primary key + 4'] < 7.9e6);
-  assert(Object.values(wal).every((v, i, all) => i === 0 || v > all[i - 1]));
+  assert.equal(observed.walMBFor10000Inserts['primary key only'], 3.3);
+  assert.equal(observed.walMBFor10000Inserts['four more indexes'], 7.7);
 }
 
 // The downloadable script runs end to end in a fresh session.

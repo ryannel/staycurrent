@@ -10,6 +10,7 @@ import { operationsTutorials } from './sql-lessons/operations.ts';
 import { choicesTutorials } from './sql-lessons/choices.ts';
 import { foundationsTutorials } from './sql-lessons/foundations.ts';
 import { performanceTutorials } from './sql-lessons/performance.ts';
+import { indexesTutorials } from './sql-lessons/indexes.ts';
 
 export type TutorialStep = {
   title: string;
@@ -234,6 +235,7 @@ export const sandboxTutorials: Tutorial[] = [
   ...introductoryTutorials,
   ...foundationsTutorials,
   ...performanceTutorials,
+  ...indexesTutorials,
   ...relationalDepthPerformanceTutorials,
   ...operationsTutorials,
   ...capacityTutorials,
