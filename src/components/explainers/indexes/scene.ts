@@ -192,24 +192,29 @@ export function moveHead(head: SVGRectElement, at: [number, number] | null) {
   head.setAttribute('data-state', '');
 }
 
-/** A pointer from an index entry to a table row. Draw pointers into a layer
- *  beneath the panels, so the cells cover them and they show only in the gaps. */
-export function pointer(parent: SVGElement, from: [number, number], to: [number, number], vertical: boolean) {
+function pointerPath(from: [number, number], to: [number, number], vertical: boolean) {
   const [x1, y1] = from;
   const [x2, y2] = to;
-  let d: string;
   if (vertical) {
     const sy = y1 + G.ch / 2;
     const ey = y2 - G.ch / 2;
     const mid = (sy + ey) / 2;
-    d = `M ${x1} ${sy} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${ey}`;
-  } else {
-    const sx = x1 + G.cw / 2;
-    const ex = x2 - G.cw / 2;
-    const mid = (sx + ex) / 2;
-    d = `M ${sx} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${ex} ${y2}`;
+    return `M ${x1} ${sy} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${ey}`;
   }
-  const path = svg('path', { class: 'ix-pointer', d, pathLength: 1 });
-  parent.append(path);
-  return path;
+  const sx = x1 + G.cw / 2;
+  const ex = x2 - G.cw / 2;
+  const mid = (sx + ex) / 2;
+  return `M ${sx} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${ex} ${y2}`;
+}
+
+/** Pointers from index entries to table rows, drawn into a layer beneath the
+ *  panels so the cells cover them and they show only in the gaps. The layer ends
+ *  up holding exactly these pointers. Pointers already drawn stay as
+ *  they are, so only a newly found row's pointer animates in. */
+export function syncPointers(parent: SVGElement, pairs: [[number, number], [number, number]][], vertical: boolean) {
+  const want = pairs.map(([from, to]) => pointerPath(from, to, vertical));
+  const keep = new Set(want);
+  for (const el of Array.from(parent.children)) if (!keep.has(el.getAttribute('d') ?? '')) el.remove();
+  const have = new Set(Array.from(parent.children, (el) => el.getAttribute('d')));
+  for (const d of want) if (!have.has(d)) parent.append(svg('path', { class: 'ix-pointer', d, pathLength: 1 }));
 }
