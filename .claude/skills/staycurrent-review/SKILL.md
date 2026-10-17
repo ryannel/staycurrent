@@ -60,7 +60,20 @@ Before seeing the outline, have the informed reviewer state the coverage they wo
 expect from the subject, audience, title and opening promise. Compare this with the
 commission's scope; challenge a mismatch rather than letting a narrow brief excuse
 an overbroad article. Preserve these initial expectations before the existing draft
-can define what counts as complete. Share any resulting suspected gaps with an
+can define what counts as complete.
+
+Also ask what someone new to the subject learns from the opening alone: what the
+thing is, what it is for, and when they would reach for it. In October 2026 nine
+reviewers passed an Indexes deep dive whose opening defined a B-tree index by its
+contents and moved straight to page counts; the user noticed on first reading that
+it never said what an index is for. Each reviewer had a reason to accept it. The
+first sentence did name and define the term, which is what they were checking. The
+fresh reader was cast as a backend engineer who already knew what indexes are for,
+so the gap was invisible to them. And the coordinator's triage had cut the
+motivating example as a spoiler. A subject's purpose is not a spoiler; the
+article's findings are. Cast at least one reader as new to the subject, give them
+the opening before the rest, and treat a missing purpose as a structural finding,
+even in an article labelled a deep dive. Share any resulting suspected gaps with an
 uncued reader only after that reader has returned their own observations.
 
 Before the detailed reading, extract the assembled article's heading tree, preserving

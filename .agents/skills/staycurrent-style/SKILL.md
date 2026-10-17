@@ -30,11 +30,17 @@ A teaching article welcomes someone who knows why the subject interests them but
 may not yet know how to think about it. A useful opening gives that interest some
 substance: the reader begins to understand the idea and why the next question
 matters. An example can do much of this work when its details have a clear purpose.
-The revised Indexes opening in `docs/writing-style.md` shows one approach. It moves
-from what an index contains to how grouped entries locate scattered orders, then
-to the choices that arrangement creates. The user preferred that introduction to
-the earlier customer story, which made the task concrete but left the subject
-largely unexplained. Draw on the reasoning in the example; another subject may
+The revised Indexes opening in `docs/writing-style.md` shows one approach. It
+begins with what an index is for, finding rows without searching the whole table,
+then says what it holds and how grouped entries locate scattered orders. The user
+preferred that introduction to the earlier customer story, which made the task
+concrete but left the subject largely unexplained. A later rebuild kept the
+contents and lost the purpose: it opened by defining a B-tree index as "a separate,
+sorted copy of one or more columns" and moved on to page counts. Nine reviewers
+passed it. The user, on first reading, did not: it "doesn't open with anything on
+what an index actually is or what they are for." Naming what a thing is made of
+does not yet introduce it, and saying what a subject is for gives away nothing the
+article sets out to show. Draw on the reasoning in the example; another subject may
 need a different beginning.
 
 Read headings, decks, captions and controls as part of the writing. Judge how they

@@ -517,3 +517,17 @@ Indexes, and Storage and durability. Asked which model should write them, they
 answered:
 
 > Opus on high reasoning.
+
+## An opening that defined the parts, 17 October 2026
+
+The rebuilt Indexes article opened:
+
+> A **B-tree index**, the default kind in PostgreSQL, is a separate, sorted copy
+> of one or more columns of a table. Each entry holds a value from those columns
+> and the location of the row it came from.
+
+It passed nine independent reviews. The user's words on reading the live page:
+
+> This is the deep dive into indexes but it doesn't open with anything on what an
+> index actually is or what they are for. For my understanding why did all the
+> many review rounds find that acceptable?
