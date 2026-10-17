@@ -299,8 +299,8 @@ const pad6 = (slots: Slot[]) => [...slots, ...Array(6 - slots.length).fill(null)
 export const vacuum: Scene<VacState> = {
   id: 'vacuum',
   params: [{
-    id: 'snapshot', label: 'Meanwhile', initial: 'none',
-    options: [{ value: 'none', label: 'no long report' }, { value: 'held', label: 'a report holds a snapshot' }],
+    id: 'snapshot', label: 'Long report', initial: 'none',
+    options: [{ value: 'none', label: 'not running' }, { value: 'held', label: 'running' }],
   }],
   steps: ({ snapshot }) => {
     const held = snapshot === 'held';
