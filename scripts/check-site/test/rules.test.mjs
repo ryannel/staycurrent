@@ -76,8 +76,12 @@ test('contents-after-opening', () => {
   assert.deepEqual(run('contents-after-opening', article({ contents: 'none', sections: ['One', 'Sources and further reading'] })), []);
 });
 
-test('sources-section', () => {
-  assert.equal(run('sources-section', article({ sections: ['One', 'Further reading'] })).length, 1);
+test('sources-section: optional, but named and last when present', () => {
+  assert.deepEqual(run('sources-section', article({ sections: ['One', 'Two', 'Try the idea'] })), []);
+  assert.deepEqual(run('sources-section', article({ sections: ['One', 'Sources and model notes', 'Further reading'] })), []);
+  assert.equal(run('sources-section', article({ sections: ['One', 'Sources & notes'] })).length, 1);
+  assert.equal(run('sources-section', article({ sections: ['One', 'Sources and further reading', 'Try the idea'] })).length, 1);
+  assert.deepEqual(run('sources-section', article({ sections: ['References and deletion', 'Two'] })), []);
 });
 
 test('figure-labels: one word, numbered in page order', () => {
@@ -94,8 +98,16 @@ test('raw-colour: literals in rules, not in custom properties', () => {
   assert.deepEqual(rule('raw-colour').check(file).map((i) => i.message), ['color: #222']);
   const astro = { path: 'X.astro', text: '<div style="color:#fff"></div><style>.a { fill: rgb(1,2,3); }</style>' };
   assert.equal(rule('raw-colour').check(astro).length, 1);
+  const shadows = { path: 'x.css', text: '.a { box-shadow: 0 2px 8px rgb(0 0 0 / .35); } .b { text-shadow: 0 0 2px rgba(255,255,255,.4); } .c { box-shadow: 0 0 0 2px #c33; } .d { stroke: rgba(0,0,0,.4); }' };
+  assert.deepEqual(rule('raw-colour').check(shadows).map((i) => i.message), ['box-shadow: 0 0 0 2px #c33', 'stroke: rgba(0,0,0,.4)']);
 });
 
 test('viewport-width', () => {
   assert.equal(rule('viewport-width').check({ path: 'x.css', text: '.a { width: calc(100vw - 2rem); }' }).length, 1);
+});
+
+test('css-balanced', () => {
+  assert.deepEqual(rule('css-balanced').check({ path: 'x.css', text: '.a:not(.b) { color: red; } .c { content: "(" }' }), []);
+  assert.equal(rule('css-balanced').check({ path: 'x.css', text: '.a:not(.b .c { color: red; }' }).length, 1);
+  assert.equal(rule('css-balanced').check({ path: 'x.css', text: '@media print { .a { color: red; }' }).length, 1);
 });

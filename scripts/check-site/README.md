@@ -14,6 +14,12 @@ pnpm check -- --strict                        # warnings fail too
 pnpm test                                     # the rules' own tests
 ```
 
+Two components do most of the work, so the rules mostly confirm they're in use:
+`src/components/editorial/TitleLine.astro` writes the title line, with a reading
+time that `src/middleware.ts` calculates from the rendered page (`src/lib/reading-time.ts`),
+and `src/components/editorial/ArticleBody.astro` puts a contents list, built from
+the page's `<h2>`s, after the opening.
+
 Pages are classified by the kind the layout gives search (`Article`, `Guide`
 or `Playground`, from `src/lib/search.ts`). Redirect stubs are skipped.
 

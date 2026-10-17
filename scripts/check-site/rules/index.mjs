@@ -12,9 +12,10 @@ import sourcesSection from './sources-section.mjs';
 import figureLabels from './figure-labels.mjs';
 import rawColour from './raw-colour.mjs';
 import viewportWidth from './viewport-width.mjs';
+import cssBalanced from './css-balanced.mjs';
 
 export const rules = [
   singleH1, headingLevels, duplicateIds, imageAlt, internalLinks, noHeadingInFigure,
   titleLine, contentsAfterOpening, sourcesSection, figureLabels,
-  rawColour, viewportWidth,
+  rawColour, viewportWidth, cssBalanced,
 ];

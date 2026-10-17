@@ -186,6 +186,13 @@ Run the repository's `pnpm build`. These checks answer different questions from
 editorial review: an accurate illustration can still have unreadable phone labels,
 and a successful build says nothing about the argument.
 
+The page shell is shared so articles look alike without anyone keeping them in
+step. `TitleLine` writes the line under the title and calculates the reading time
+from the finished page. `ArticleBody` places the contents list after the opening
+and builds it from the `<h2>`s. The site check in `scripts/check-site/` reports
+where a page departs from that shape; its README explains each rule and why it
+exists.
+
 Carry authorised work through repair and verification without requiring routine
 human sign-off. Leave a useful handoff: what changed, what was checked, and any real
 uncertainty. The brief, evidence and review notes should let a later agent understand

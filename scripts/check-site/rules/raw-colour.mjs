@@ -1,5 +1,9 @@
 // Colours belong in custom properties, so a theme changes them in one place.
 const COLOUR = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i;
+// A translucent black or white shadow reads the same in both themes, so it can stay literal.
+const SHADOW = /^(box-shadow|text-shadow|filter)$/;
+const NEUTRAL = /rgba?\(\s*(0[\s,]+0[\s,]+0|255[\s,]+255[\s,]+255)\s*[,/][^)]*\)/gi;
+const raw = (prop, value) => COLOUR.test(SHADOW.test(prop) ? value.replace(NEUTRAL, '') : value);
 
 /** CSS in a file: whole .css files, and the <style> blocks of .astro files. */
 export function cssOf(path, text) {
@@ -16,7 +20,7 @@ export default {
   source: ['src/components', 'src/layouts', 'src/pages'],
   check(file) {
     return declarations(cssOf(file.path, file.text))
-      .filter(([prop, value]) => !prop.startsWith('--') && COLOUR.test(value))
+      .filter(([prop, value]) => !prop.startsWith('--') && raw(prop, value))
       .map(([prop, value]) => ({ message: `${prop}: ${value.slice(0, 70)}` }));
   },
 };
