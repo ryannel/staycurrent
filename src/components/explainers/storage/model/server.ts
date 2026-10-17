@@ -278,7 +278,7 @@ export const crashRecovery: Scene<ServerState> = {
         ? 'The power fails after COMMIT is sent but before the flush. The application sees its connection drop.'
         : 'The power fails after the flush, a moment before the reply leaves the server. The application sees its connection drop.';
     const outcome = crash === 'update'
-      ? { result: shortResult('P7 = 20.00. The application knows nothing committed.', 'ok'), text: 'P7 is 20.00. The application never sent COMMIT, so it knows the change didn’t happen.' }
+      ? { result: shortResult('P7 = 20.00. COMMIT was never sent.', 'ok'), text: 'P7 is 20.00. The application never sent COMMIT, so it knows the change didn’t happen.' }
       : crash === 'commit'
         ? { result: shortResult('P7 = 20.00, and the application never heard.', 'warn'), text: 'P7 is 20.00. The application saw only a dropped connection.' }
         : { result: shortResult('P7 = 22.00, but the application never heard.', 'warn'), text: 'P7 is 22.00. The application saw only a dropped connection, the same as before the flush.' };
@@ -312,7 +312,7 @@ export const asyncCommit: Scene<ServerState> = {
     const crashed = S({ sent: 'COMMIT', reply: told, buf: null, walDisk, crashed: true });
     steps.push({ text: 'The power fails.', state: crashed });
     const outcome = crash === 'early'
-      ? { result: shortResult('P7 = 20.00, though the application heard COMMIT.', 'bad'), text: 'P7 is 20.00. The database is consistent, but a commit the application heard about is gone.' }
+      ? { result: shortResult('P7 = 20.00. The acknowledged commit is lost.', 'bad'), text: 'P7 is 20.00. The database is consistent, but a commit the application heard about is gone.' }
       : { result: shortResult('P7 = 22.00. The WAL writer got there first.', 'ok'), text: 'P7 is 22.00. The WAL writer flushed the records before the power failed.' };
     const recovery = recoverySteps(walDisk, crashed, outcome.result, outcome.text);
     const done = recovery[recovery.length - 1];

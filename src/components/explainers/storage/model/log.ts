@@ -12,83 +12,95 @@ export const TOUCHES = [12, 10, 12, 14, 11, 12, 10, 13, 15, 12, 11, 10, 14, 12, 
 const BUF_PAGES = [10, 11, 12, 13, 14, 15];
 
 type Cell = { kind: 'rec' | 'ckpt'; page?: number };
-type CkptState = { cells: Cell[]; dirty: number[]; redo: number; writes: number; crashed?: boolean; replay?: boolean };
+type CkptState = { cells: Cell[]; dirty: number[]; redo: number; writes: number; fpi: number; crashed?: boolean; replay?: boolean };
 
 const sinceRedo = (state: CkptState) => state.cells.slice(state.redo + 1).filter(cell => cell.kind !== 'ckpt').length;
-
-/** Replay length and page writes for a checkpoint every `interval` records. */
-export function checkpointTotals(interval: number) {
-  let dirty = new Set<number>();
-  let writes = 0;
-  let sinceLast = 0;
-  TOUCHES.forEach((page, i) => {
-    dirty.add(page);
-    sinceLast++;
-    const n = i + 1;
-    if (n % interval === 0 && n < TOUCHES.length) {
-      writes += dirty.size;
-      dirty = new Set();
-      sinceLast = 0;
-    }
-  });
-  return { replay: sinceLast, writes };
-}
 
 export const checkpoints: Scene<CkptState> = {
   id: 'checkpoints',
   onParam: 'end',
-  params: [{
-    id: 'every', label: 'Checkpoint every', initial: '5',
-    options: [{ value: '5', label: '5 records' }, { value: '10', label: '10' }, { value: '20', label: '20' }],
-  }],
-  steps: ({ every }) => {
+  params: [
+    {
+      id: 'model', label: 'Engine model', initial: 'rounds',
+      options: [{ value: 'rounds', label: 'PostgreSQL: rounds' }, { value: 'continuous', label: 'InnoDB: continuous' }],
+    },
+    {
+      id: 'every', label: 'Batch every', initial: '5',
+      options: [{ value: '5', label: '5 records' }, { value: '10', label: '10' }, { value: '20', label: '20' }],
+    },
+  ],
+  steps: ({ every, model }) => {
     const interval = Number(every);
+    const continuous = model === 'continuous';
     const cells: Cell[] = [{ kind: 'ckpt' }];
-    const dirty = new Set<number>();
+    // First record (cell index) that dirtied each page since it was last written.
+    const firstDirty = new Map<number, number>();
     let redo = 0;
     let writes = 0;
-    const snap = (extra: Partial<CkptState> = {}): CkptState => ({ cells: [...cells], dirty: [...dirty], redo, writes, ...extra });
-    const steps: Step<CkptState>[] = [{ text: 'Just after a checkpoint. Nothing is dirty, and the redo point is at the start of the log.', state: snap() }];
+    let fpi = 0;
+    const snap = (extra: Partial<CkptState> = {}): CkptState => ({ cells: [...cells], dirty: [...firstDirty.keys()], redo, writes, fpi, ...extra });
+    const steps: Step<CkptState>[] = [{
+      text: continuous
+        ? 'Nothing is dirty, and the checkpoint position is at the start of the log.'
+        : 'Just after a checkpoint. Nothing is dirty, and the redo point is at the start of the log.',
+      state: snap(),
+    }];
     for (let start = 0; start < TOUCHES.length; start += interval) {
       const chunk = TOUCHES.slice(start, start + interval);
       chunk.forEach(page => {
-        dirty.add(page);
         cells.push({ kind: 'rec', page });
+        if (!firstDirty.has(page)) {
+          firstDirty.set(page, cells.length - 1);
+          fpi++;
+        }
       });
       const end = start + chunk.length;
       steps.push({ text: `Records ${start + 1} to ${end} change ${new Set(chunk).size} different pages.`, state: snap(), hold: 900 });
-      if (end < TOUCHES.length) {
-        const count = dirty.size;
+      if (end >= TOUCHES.length) continue;
+      if (continuous) {
+        const old = [...firstDirty.entries()].filter(([, idx]) => idx < cells.length - Math.ceil(interval / 2));
+        old.forEach(([page]) => firstDirty.delete(page));
+        writes += old.length;
+        redo = firstDirty.size ? Math.min(...firstDirty.values()) - 1 : cells.length - 1;
+        steps.push({
+          text: old.length
+            ? `Page cleaners write the ${old.length} pages that have been dirty longest. The checkpoint position moves up behind them.`
+            : 'No page has been dirty long enough to write yet.',
+          state: snap(),
+          hold: 1400,
+        });
+      } else {
+        const count = firstDirty.size;
         writes += count;
-        dirty.clear();
+        firstDirty.clear();
         cells.push({ kind: 'ckpt' });
         redo = cells.length - 1;
         steps.push({ text: `Checkpoint: ${count} dirty pages written. The redo point moves here.`, state: snap(), hold: 1600 });
       }
     }
-    steps.push({ text: `The power fails. The ${dirty.size} dirty pages in memory are lost.`, state: snap({ crashed: true }) });
+    steps.push({ text: `The power fails. The ${firstDirty.size} dirty pages in memory are lost.`, state: snap({ crashed: true }) });
     const last = snap({ crashed: true, replay: true });
-    steps.push({ text: `Recovery starts at the last redo point and replays the ${sinceRedo(last)} records after it.`, state: last });
+    steps.push({ text: `Recovery starts at the last ${continuous ? 'checkpoint position' : 'redo point'} and replays the ${sinceRedo(last)} records after it.`, state: last });
     return steps;
   },
   interval: () => 380,
-  outline: ({ every }) => {
-    const interval = Number(every);
-    const lines = ['Each price change is one WAL record and dirties its page.'];
-    for (let start = 0; start < TOUCHES.length; start += interval) {
-      const chunk = TOUCHES.slice(start, start + interval);
-      const pages = [...new Set(chunk)].sort((a, b) => a - b);
-      const end = start + chunk.length;
-      const tail = end < TOUCHES.length ? `; a checkpoint writes ${pages.length} pages and moves the redo point` : '';
-      lines.push(`Records ${start + 1}–${end} change pages ${pages.join(', ')}${tail}.`);
+  outline: params => {
+    const steps = checkpoints.steps(params);
+    const final = steps[steps.length - 1].state;
+    const interval = Number(params.every);
+    const lines = ['Each price change is one log record and dirties its page.'];
+    if (params.model === 'continuous') {
+      lines.push(`After every ${interval} records, background page cleaners write the pages dirty longest, and the checkpoint position follows the oldest page still dirty.`);
+    } else {
+      lines.push(`After every ${interval} records, a checkpoint writes every dirty page and moves the redo point.`);
     }
-    const totals = checkpointTotals(interval);
-    lines.push(`The power fails. Recovery replays ${totals.replay} records; the checkpoints wrote ${totals.writes} pages.`);
+    lines.push(`The power fails. Recovery replays ${sinceRedo(final)} records; ${final.writes} page writes were made on the way.`);
     return lines;
   },
-  stats: state => [
+  stats: (state, params) => [
     { label: state.replay ? 'Records replayed' : 'Records to replay after a crash now', value: String(sinceRedo(state)) },
-    { label: 'Pages written by checkpoints', value: String(state.writes) },
+    { label: 'Pages written', value: String(state.writes) },
+    ...(params.model === 'continuous' ? [] : [{ label: 'Full-page images logged', value: String(state.fpi) }]),
   ],
   render: (state, W) => {
     const items: Item[] = [];
@@ -285,5 +297,157 @@ export const flushPath: Scene<FlushState> = {
     const bottom = top + 4 * (lh + 6);
     if (state.result) items.push(text('result', pad, bottom + 16, state.result.text, `sf-t sf-strong sf-result-${state.result.kind}`));
     return { items, height: bottom + 26 };
+  },
+};
+
+/* ---------- Restore to a point in time ---------- */
+
+type RestoreState = { n: number };
+
+const HISTORY = [
+  { time: '09:00', label: 'base backup starts' },
+  { time: '10:00', label: 'P7 set to 22.00' },
+  { time: '14:00', label: 'DELETE FROM products' },
+  { time: '14:02', label: 'P8 set to 31.00' },
+];
+
+export const restoreTimeline: Scene<RestoreState> = {
+  id: 'restore-timeline',
+  steps: () => [
+    { text: 'At 09:00 a base backup of the running server begins. From here on, every log file is copied to an archive before the server reuses it.', state: { n: 0 } },
+    { text: 'At 10:00 a transaction commits P7 at 22.00. Its log records go to the archive too.', state: { n: 1 } },
+    { text: 'At 14:00 someone commits DELETE FROM products. The commit is durable, so crash recovery would keep it.', state: { n: 2 } },
+    { text: 'At 14:02 a valid price change for P8 commits.', state: { n: 3 } },
+    { text: 'The disk is lost, or the delete is noticed. A new server starts from the 09:00 base backup. Its files are a mixture of ages, like a crashed server’s.', state: { n: 4 } },
+    { text: 'Recovery reads the archive and replays the log in order, as after a crash. The 10:00 price change comes back.', state: { n: 5 } },
+    { text: 'The recovery target is 13:59, so replay stops before the DELETE’s commit record. That transaction never committed as far as this server is concerned.', state: { n: 6 } },
+    { text: 'The server opens on timeline 2. P7 is 22.00 and the products are back. The 14:02 change was after the target, so it is lost too and has to be applied again.', state: { n: 7 } },
+  ],
+  stats: ({ n }) => [
+    { label: 'Stop point', value: n >= 6 ? '13:59' : '—' },
+    { label: 'Timeline', value: n >= 7 ? '2' : '1' },
+  ],
+  render: ({ n }, W) => {
+    const items: Item[] = [];
+    const narrow = W < 420;
+    const pad = narrow ? 10 : 14;
+    const cw = (W - pad * 3) / 2;
+    const lx = pad;
+    const rx = pad * 2 + cw;
+    items.push(text('h-orig', lx, 14, narrow ? 'ORIGINAL · TIMELINE 1' : 'ORIGINAL SERVER · TIMELINE 1', 'sf-t sf-lane'));
+    if (n >= 4) items.push(text('h-rest', rx, 14, n >= 7 ? 'RESTORED · TIMELINE 2' : 'RESTORED COPY', 'sf-t sf-lane'));
+    const top = 26;
+    const rowH = 40;
+    const shown = n <= 3 ? n + 1 : 4;
+    HISTORY.forEach((ev, i) => {
+      const y = top + i * rowH;
+      if (i < shown) {
+        const lost = n >= 7 && i === 3;
+        const del = i === 2;
+        const cls = lost ? 'sf-card sf-dirty' : del ? 'sf-card sf-dirty' : 'sf-rec sf-rec-rec';
+        items.push(rect(`l-${i}`, lx, y, cw, 30, cls));
+        items.push(text(`l-${i}-t`, lx + 8, y + 13, ev.time, 'sf-t sf-xs sf-mono'));
+        items.push(text(`l-${i}-l`, lx + 8, y + 25, ev.label, `sf-t sf-xs${lost || del ? ' sf-dirty-text' : ''}`));
+      }
+      if (n >= 4) {
+        const replayed = (i === 0 && n >= 4) || (i === 1 && n >= 5);
+        const refused = (i >= 2 && n >= 6);
+        if (replayed) {
+          items.push(rect(`r-${i}`, rx, y, cw, 30, i === 0 ? 'sf-rec sf-rec-old' : 'sf-rec sf-rec-rec'));
+          items.push(text(`r-${i}-t`, rx + 8, y + 13, ev.time, 'sf-t sf-xs sf-mono'));
+          items.push(text(`r-${i}-l`, rx + 8, y + 25, i === 0 ? 'copy, mixed ages' : 'replayed', 'sf-t sf-xs'));
+        } else if (refused) {
+          items.push(rect(`r-${i}`, rx, y, cw, 30, 'sf-slot-free'));
+          items.push(text(`r-${i}-t`, rx + 8, y + 13, ev.time, 'sf-t sf-xs sf-mono sf-muted'));
+          items.push(text(`r-${i}-l`, rx + 8, y + 25, 'not replayed', 'sf-t sf-xs sf-muted'));
+        }
+      }
+    });
+    if (n >= 6) items.push(rect('stop', rx - 4, top + 2 * rowH - 6, cw + 8, 3, 'sf-cell-ckpt'));
+    const bottom = top + 4 * rowH;
+    const result = ['P7 = 22.00.', 'The 14:02 change must be applied again.'];
+    if (n >= 7) {
+      if (narrow) result.forEach((line, i) => items.push(text(`result-${i}`, pad, bottom + 12 + i * 16, line, 'sf-t sf-strong sf-result-ok')));
+      else items.push(text('result', pad, bottom + 12, result.join(' '), 'sf-t sf-strong sf-result-ok'));
+    }
+    return { items, height: bottom + (narrow ? 40 : 24) };
+  },
+};
+
+/* ---------- Group commit ---------- */
+
+type GroupState = { k: number };
+
+const fmtRate = (n: number) => Math.round(n).toLocaleString('en-GB');
+
+/** Commits per second the log can sustain: a model, not a measurement. */
+export function commitCeiling(clients: number, flushMs: number, group: boolean) {
+  if (!group) return 1000 / flushMs;
+  const waitMs = clients === 1 ? flushMs : 2 * flushMs;
+  return (clients * 1000) / waitMs;
+}
+
+export const groupCommit: Scene<GroupState> = {
+  id: 'group-commit',
+  onParam: 'end',
+  params: [
+    { id: 'clients', label: 'Clients committing', initial: '16', options: [{ value: '1', label: '1' }, { value: '4', label: '4' }, { value: '16', label: '16' }] },
+    { id: 'flush', label: 'One flush takes', initial: '5', options: [{ value: '0.2', label: '0.2 ms' }, { value: '2', label: '2 ms' }, { value: '5', label: '5 ms' }] },
+    { id: 'group', label: 'Group commit', initial: 'on', options: [{ value: 'on', label: 'on' }, { value: 'off', label: 'off' }] },
+  ],
+  steps: ({ clients, group }) => {
+    const n = Number(clients);
+    const on = group === 'on';
+    return [
+      { text: `${n === 1 ? 'The client has' : `All ${n} clients have`} sent COMMIT. Each commit record has to reach the disk before its client gets a reply.`, state: { k: 0 } },
+      {
+        text: on
+          ? `The first flush starts. It carries every commit record in the log so far${n > 1 ? `, so ${n} commits share it` : ''}.`
+          : 'The first flush carries one commit record. The other clients wait their turn.',
+        state: { k: 1 },
+      },
+      {
+        text: on
+          ? 'Clients that were answered send their next COMMIT at once. Commits that arrived during the flush wait for the next one, which carries them together.'
+          : 'The second flush carries the next client’s commit record, and so on down the queue.',
+        state: { k: 2 },
+      },
+      {
+        text: on
+          ? 'Each flush answers everyone who was waiting for it, so the flush rate stays the same however many clients there are.'
+          : 'Without sharing, every commit costs a whole flush, so throughput is capped at one commit per flush.',
+        state: { k: 4 },
+      },
+    ];
+  },
+  stats: (_state, { clients, flush, group }) => {
+    const n = Number(clients);
+    const f = Number(flush);
+    const on = group === 'on';
+    return [
+      { label: 'Commits per flush', value: on ? String(n) : '1' },
+      { label: 'Flushes per second', value: fmtRate(1000 / f) },
+      { label: 'Commits per second, at most', value: fmtRate(commitCeiling(n, f, on)) },
+    ];
+  },
+  render: ({ k }, W, { clients, group }) => {
+    const items: Item[] = [];
+    const narrow = W < 420;
+    const pad = narrow ? 10 : 14;
+    const n = Number(clients);
+    const on = group === 'on';
+    items.push(text('t', pad, 14, 'LOG FLUSHES, ONE AFTER ANOTHER', 'sf-t sf-lane'));
+    const gap = 6;
+    const bw = (W - pad * 2 - gap * 3) / 4;
+    for (let i = 0; i < 4; i++) {
+      const x = pad + i * (bw + gap);
+      const shown = i < k;
+      items.push(rect(`f-${i}`, x, 26, bw, 44, shown ? 'sf-rec sf-rec-rec' : 'sf-slot-free'));
+      items.push(text(`f-${i}-t`, x + bw / 2, 46, shown ? 'flush' : '', 'sf-t sf-xs sf-mid'));
+      items.push(text(`f-${i}-c`, x + bw / 2, 62, shown ? `${on ? n : 1} commit${(on ? n : 1) === 1 ? '' : 's'}` : '', 'sf-t sf-xs sf-mid sf-muted'));
+    }
+    const waiting = on ? 0 : Math.max(0, n - k);
+    items.push(text('w', pad, 96, k === 0 ? `${n} commit${n === 1 ? '' : 's'} waiting for the first flush` : on ? 'Nobody waits for more than the next flush' : `${waiting} commit${waiting === 1 ? '' : 's'} still waiting`, 'sf-t sf-xs sf-strong'));
+    return { items, height: 110 };
   },
 };

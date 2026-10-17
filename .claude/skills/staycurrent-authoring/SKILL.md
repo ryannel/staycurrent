@@ -67,14 +67,42 @@ or a familiar term is not that learning. Work backwards from the decisions the
 reader should be able to make, and supply the understanding those decisions need;
 this often calls for a small bridge rather than another article.
 
-Before drafting, ask what explanations this audience would reasonably expect from
-the subject, title and promised outcome. Derive those expectations before adapting
-them to the proposed outline; otherwise the outline can make its own omissions
-invisible. Consider the mechanisms, decisions and consequential limits the reader
-needs, including failure and recovery where those affect the article's promise.
-These are questions about this subject, not mandatory sections for every article.
-Keep a concise account of essential coverage and deliberate boundaries in the brief.
-A narrow brief does not excuse a title or introduction that promises more.
+## Break the subject down until every part gets its due
+
+Coverage comes from a working process. Start with the topic and ask what someone
+needs from it to do professional work: the mechanisms they must be able to predict,
+the decisions it informs, how it fails and how they would see that in a running
+system. Each answer is a subtopic. Then take each subtopic in turn and ask the same
+questions of it. What does a reader need from this part? Does it have parts of its
+own? How much depth does it need before the reader can use it? Keep going until each
+part is something a paragraph, a section or an article can teach well.
+
+Derive this tree from the subject, the reader and the promised outcome before
+looking at an existing outline or draft. Otherwise the outline defines what counts
+as complete, and its omissions disappear. These are questions about this subject,
+not mandatory sections for every article.
+
+The tree then shows where each part belongs. A small part may be a sentence inside
+its parent's explanation. A larger one earns a section or a subsection, and
+sometimes a figure or a worked example that carries it better than prose. A part
+that needs an investigation of its own, serves readers who would arrive for it
+directly, or would swamp its parent's argument may belong in its own article. Use
+`staycurrent-planning` for that decision, and verify that an existing destination
+actually teaches what the reader needs. Record parts you leave out on purpose, and
+why. Keep the tree and these decisions in the brief so a reviewer can test them.
+The tree says what each part needs, not the order to teach it in; the argument
+decides that. A narrow brief does not excuse a title or introduction that promises
+more.
+
+Attention should be uniform; length should not. One topic may need a paragraph and
+its neighbour several subsections and a figure. Judge each part by whether the
+reader comes away able to use it, never by matching the sections around it. In
+October 2026 the Storage article's point-in-time recovery section grew into a full
+explanation with its own subsections and figure. Next to it, the other sections
+read as thin. Cutting it back to match them was the wrong repair: the user asked
+for every topic to get that kind of attention, which meant returning to the tree
+for each one. When depth looks uneven, ask which side is under-served before
+evening anything out.
 
 ## Develop the argument and its support
 
@@ -90,7 +118,7 @@ and compare it with the article's actual argument and contents navigation. Group
 related examples where that makes their purpose clear, and introduce the change
 from explaining a concept to following its worked cases. A list of locally accurate
 headings can still leave the reader without a useful map of the article.
-Compare that map with the expected coverage from the brief: given the subject,
+Compare that map with the topic tree in the brief: given the subject,
 are there explanations a reader would expect that have no clear home? Check the
 body before diagnosing a gap. A topic may be well taught under a broader heading,
 buried where readers cannot find it, merely named, or genuinely absent. Repair the

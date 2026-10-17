@@ -116,6 +116,20 @@ export const relationalCollection: RelationalGroup[] = [
         "description": "Follow records through memory, persistent storage and recovery after a crash.",
         "scope": "Connect record placement, pages and buffers to changes, logging, checkpoints and restart in an identified engine. Explain the durability promise and which failures require another copy.",
         "status": "published"
+      },
+      {
+        "slug": "buffer-pool",
+        "title": "The buffer pool",
+        "description": "Size the page cache, understand what it keeps and evicts, and recover its contents after a restart.",
+        "scope": "Develop eviction and scan resistance, sizing against memory and the operating system's cache, warm-up after restart or failover, and reading the hit rate, in PostgreSQL, InnoDB and SQLite.",
+        "status": "draft"
+      },
+      {
+        "slug": "watching-storage",
+        "title": "Watching storage in a running database",
+        "description": "Read the metrics and logs that show the cache, checkpoints, the log and flushes at work, and use them in an incident.",
+        "scope": "Name the views, status variables and log lines per engine for cache hit rate, dirty pages, checkpoints, log volume, flush latency and old-version history; read a slow-commit or slow-restart incident from them.",
+        "status": "draft"
       }
     ]
   },

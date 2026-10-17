@@ -143,3 +143,15 @@ comparisons.
   fuzzy checkpoints as the accuracy review reports them without re-fetching those pages.
 - Doubts: SQLite `journal_mode = DELETE` default not fetched; value 2 wording is
   reasoning (see evidence); whether removing Figure 3 is wanted (restorable from git).
+
+## Handoff after the depth pass (writer, 17 October 2026)
+Changed `relational/storage.astro` and the storage figure model. No git changes. `pnpm build`: every rule passes except `internal-links`, which fails on every page with `no page at /learn/databases/relational/watching-storage/`. That page is registered by the other writer and does not exist yet. Storage links to the two companions only once their files exist (`fs.existsSync` in the frontmatter), so Storage itself adds no failing link; the failure is from the collection navigation. Re-run the build once `watching-storage.astro` lands.
+
+Section-by-section depth decisions are in the report to the coordinator. New figures: Figure 5 (`group-commit`, a labelled model) and Figure 7 now has an engine toggle (burst or continuous) with full-page-image and replay stats. Figures renumber 1 to 11. Deleted nothing.
+
+Open for review: the unverified list at the end of the fifth-pass section of `evidence.md`; whether the checkpoint-sizing arithmetic (two figures marked as arithmetic) is acceptable; whether the article is now too long to read in one sitting (about 9,000 words of prose).
+
+## Handoff: repair pass from two reviews (17 October 2026)
+Edited `storage.astro` and `model/log.ts` (checkpoint param value `burst` to `rounds`). `pnpm build` and `pnpm test` pass. Evidence in `evidence.md`, sixth pass.
+Moved out to links: the checkpoint log line (Watching `#checkpoint-line`, `#timed-requested`, `#innodb-checkpoint`), the annotated restart log and InnoDB restart phases (`#restart`), log-rate sampling and retention experiments (`#log`, `#retention`), pg_stat_io and dirty-share observation (`#writers`), hit-rate/25%/80%/O_DIRECT detail (buffer pool `#two-caches`).
+Kept against the notes: the `checkpointWarning` excerpt and `pg_stat_checkpointer` query (the one signal for log size); the InnoDB LSN query (now used for sizing); the SQLite journal/WAL and checkpoint-starvation asides where they change a prediction.

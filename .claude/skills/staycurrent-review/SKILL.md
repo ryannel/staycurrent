@@ -118,6 +118,16 @@ onward reading. Look especially for omissions that leave a recommendation,
 mechanism or practical outcome unsupported; a correct happy path can still leave
 the promised task unfinished.
 
+Build that expectation as a tree, the way the authoring skill does: the subtopics a
+working engineer needs from the subject, then the parts each of those needs, before
+reading the article's own outline. Then judge every part by the attention it gets.
+Does the reader come away able to use it, or is it named, thin or missing? Uneven
+length between sections is not itself a finding. Uneven attention is: a topic that
+deserves subsections and a figure but gets a paragraph, or a deep section whose
+neighbours were left thin. In October 2026 a coordinator cut a full point-in-time
+recovery section back to match its neighbours; the user wanted the neighbours
+brought up to its standard instead.
+
 For each consequential coverage finding, record the expected understanding, why
 this article owes it to the reader, the passage or verified destination checked,
 and the smallest sufficient repair. This might be a paragraph, a clearer heading,

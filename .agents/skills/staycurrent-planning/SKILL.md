@@ -28,6 +28,15 @@ enough substance to be recognisable. Separate articles can then teach schema des
 query behaviour, internals, diagnosis and operation. Product comparisons and a
 selective PostgreSQL deep dive connect that understanding to actual choices.
 
+A collection and an article come from the same breakdown. Take the field, ask what
+a working engineer needs from it, and break each answer into its own parts, as the
+authoring skill describes for a single article. The article boundaries are
+decisions about that tree. A part becomes its own article when it needs an
+investigation of its own, when readers would arrive for it directly, or when
+teaching it inside its parent would swamp the parent's argument. Otherwise it stays
+inside the article that needs it. Each article then gets as much depth as its parts
+require, not a length set by its siblings.
+
 Ask what orientation the new subject needs before transplanting these branches or
 the relational order example. The planning-review reference preserves how the
 first introduction missed its intended reader despite a thoughtful tree.
