@@ -287,7 +287,10 @@ function filterLessons() {
 }
 element('search').addEventListener('input', filterLessons);
 element('subject').addEventListener('change', filterLessons);
-const requested = new URL(location.href).searchParams.get('tutorial');
+// Lessons merged into another keep their old links working.
+const renamedTutorials: Record<string, string> = { 'index-order': 'indexes', 'index-selectivity': 'indexes' };
+const requestedId = new URL(location.href).searchParams.get('tutorial');
+const requested = requestedId && (renamedTutorials[requestedId] ?? requestedId);
 const initial = sandboxTutorials.find(item => item.id === requested);
 controls();
 if (initial) begin(initial, false);
