@@ -5,7 +5,13 @@
 import { svg, place } from './player';
 import { orders, root, branches, type Order, PAGES, PAGE_ROWS } from './model';
 
-export const G = { cw: 37, ch: 32, gx: 3, gy: 7, head: 26, rootW: 34, branchW: 46, treeGap: 6, pageLabel: 44 };
+// Phones get tighter cells and gaps, chosen once when the page loads, so the
+// figures that stack an index above a table fit on one screen. The drawing is
+// then shown at full size rather than scaled up, keeping text at 10.5px or more.
+export const compact = window.matchMedia('(max-width: 560px)').matches;
+export const G = compact
+  ? { cw: 34, ch: 26, gx: 2, gy: 3, head: 20, rootW: 30, branchW: 42, treeGap: 4, pageLabel: 36, titleY: 12, keyY: 12.5, subY: 22.5, markY: 8, pageY: 10.5, pageNoY: 22 }
+  : { cw: 37, ch: 32, gx: 3, gy: 7, head: 26, rootW: 34, branchW: 46, treeGap: 6, pageLabel: 44, titleY: 15, keyY: 14, subY: 26.5, markY: 8.5, pageY: 13, pageNoY: 26 };
 export const gridWidth = PAGE_ROWS * G.cw + (PAGE_ROWS - 1) * G.gx;
 export const gridHeight = PAGES * G.ch + (PAGES - 1) * G.gy;
 export const treeWidth = G.rootW + G.treeGap + G.branchW + G.treeGap;
@@ -18,9 +24,9 @@ export interface Cell { g: SVGGElement; mark: SVGTextElement; key: SVGTextElemen
 export function cell(parent: SVGElement, key: string, sub: string, extraClass = ''): Cell {
   const g = svg('g', { class: `ix-cell ${extraClass}`.trim(), 'data-state': '' }) as SVGGElement;
   g.append(svg('rect', { x: 0, y: 0, width: G.cw, height: G.ch, rx: 2 }));
-  const keyText = svg('text', { x: G.cw / 2, y: 14, class: 'ix-key', 'text-anchor': 'middle' }, key) as SVGTextElement;
-  const subText = svg('text', { x: G.cw / 2, y: 26.5, class: 'ix-sub', 'text-anchor': 'middle' }, sub) as SVGTextElement;
-  const mark = svg('text', { x: G.cw - 2.5, y: 8.5, class: 'ix-mark', 'text-anchor': 'end' }, '') as SVGTextElement;
+  const keyText = svg('text', { x: G.cw / 2, y: G.keyY, class: 'ix-key', 'text-anchor': 'middle' }, key) as SVGTextElement;
+  const subText = svg('text', { x: G.cw / 2, y: G.subY, class: 'ix-sub', 'text-anchor': 'middle' }, sub) as SVGTextElement;
+  const mark = svg('text', { x: G.cw - 2.5, y: G.markY, class: 'ix-mark', 'text-anchor': 'end' }, '') as SVGTextElement;
   g.append(keyText, subText, mark);
   parent.append(g);
   return { g, mark, key: keyText, sub: subText, x: 0, y: 0 };
@@ -56,18 +62,18 @@ export function heapPanel(parent: SVGElement, ox: number, oy: number, opts: { ti
   const group = svg('g', { class: 'ix-heap' }) as SVGGElement;
   place(group, ox, oy);
   parent.append(group);
-  title(group, 0, 15, opts.title ?? 'Table: orders (heap)');
+  title(group, 0, G.titleY, opts.title ?? 'Table: orders (heap)');
   const pages: SVGGElement[] = [];
   const vm: SVGGElement[] = [];
   for (let p = 0; p < PAGES; p++) {
     const label = svg('g', { class: 'ix-page-label', 'data-state': '' }) as SVGGElement;
     label.append(svg('rect', { x: -2, y: cellY(p) - 2, width: G.pageLabel - 4, height: G.ch + 4, rx: 3 }));
-    label.append(svg('text', { x: 4, y: cellY(p) + 13 }, 'page'));
-    label.append(svg('text', { x: 4, y: cellY(p) + 26, class: 'ix-page-no' }, String(p)));
+    label.append(svg('text', { x: 4, y: cellY(p) + G.pageY }, 'page'));
+    label.append(svg('text', { x: 4, y: cellY(p) + G.pageNoY, class: 'ix-page-no' }, String(p)));
     if (opts.vm) {
       const bit = svg('g', { class: 'ix-vm', 'data-state': '' }) as SVGGElement;
-      bit.append(svg('rect', { x: 23, y: cellY(p) + 17, width: 13, height: 12, rx: 2 }));
-      bit.append(svg('text', { x: 29.5, y: cellY(p) + 26.5, 'text-anchor': 'middle' }, ''));
+      bit.append(svg('rect', { x: G.pageLabel - 21, y: cellY(p) + G.ch - 15, width: 13, height: 12, rx: 2 }));
+      bit.append(svg('text', { x: G.pageLabel - 14.5, y: cellY(p) + G.ch - 5.5, 'text-anchor': 'middle' }, ''));
       label.append(bit);
       vm.push(bit);
     }
@@ -111,7 +117,7 @@ export function indexPanel(
   parent.append(group);
   const rows = opts.rows ?? PAGES;
   const gridX = opts.tree ? treeWidth : 0;
-  const heading = title(group, gridX, 15, opts.title);
+  const heading = title(group, gridX, G.titleY, opts.title);
   if (opts.tree) heading.setAttribute('class', 'ix-tree-head');
   const leafRows: SVGRectElement[] = [];
   for (let r = 0; r < rows; r++) {
@@ -126,8 +132,8 @@ export function indexPanel(
     // Root: two slots, each spanning the three leaves below one branch.
     const rootX = 0;
     const branchX = G.rootW + G.treeGap;
-    group.append(svg('text', { x: rootX + G.rootW / 2, y: 15, class: 'ix-tree-head', 'text-anchor': 'middle' }, 'root'));
-    group.append(svg('text', { x: branchX + G.branchW / 2, y: 15, class: 'ix-tree-head', 'text-anchor': 'middle' }, 'branch'));
+    group.append(svg('text', { x: rootX + G.rootW / 2, y: G.titleY, class: 'ix-tree-head', 'text-anchor': 'middle' }, 'root'));
+    group.append(svg('text', { x: branchX + G.branchW / 2, y: G.titleY, class: 'ix-tree-head', 'text-anchor': 'middle' }, 'branch'));
     root.forEach((slot, i) => {
       const g = svg('g', { class: 'ix-slot', 'data-state': '' }) as SVGGElement;
       const y = cellY(i * 3);
