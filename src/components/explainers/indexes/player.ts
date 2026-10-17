@@ -28,6 +28,7 @@ export abstract class IndexFigure<F extends Frame> extends HTMLElement {
   private backButton!: HTMLButtonElement;
   private nextButton!: HTMLButtonElement;
   private stepLabel!: HTMLElement;
+  private scrub!: HTMLInputElement;
   private status!: HTMLElement;
   protected stage!: HTMLElement;
 
@@ -45,6 +46,8 @@ export abstract class IndexFigure<F extends Frame> extends HTMLElement {
     this.backButton = this.querySelector('[data-back]')!;
     this.nextButton = this.querySelector('[data-next]')!;
     this.stepLabel = this.querySelector('[data-step]')!;
+    this.scrub = this.querySelector('[data-scrub]')!;
+    this.scrub.addEventListener('input', () => { this.pause(); this.go(Number(this.scrub.value) - 1); });
     this.status = this.querySelector('[data-status]')!;
     this.playButton.addEventListener('click', () => (this.playing ? this.pause() : this.play()));
     this.backButton.addEventListener('click', () => { this.pause(); this.go(this.cursor - 1); });
@@ -149,6 +152,9 @@ export abstract class IndexFigure<F extends Frame> extends HTMLElement {
     this.render(frame, this.cursor);
     this.status.textContent = this.line(frame);
     this.stepLabel.textContent = `${this.cursor + 1} / ${this.frames.length}`;
+    this.scrub.max = String(this.frames.length);
+    this.scrub.value = String(this.cursor + 1);
+    this.scrub.setAttribute('aria-valuetext', `Step ${this.cursor + 1} of ${this.frames.length}`);
     this.backButton.disabled = this.cursor === 0;
     this.nextButton.disabled = this.cursor === this.frames.length - 1;
     this.syncPlayButton();
