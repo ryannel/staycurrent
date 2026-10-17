@@ -9,7 +9,7 @@ const rule = (id) => rules.find((r) => r.id === id);
 const kind = (k) => `<meta data-pagefind-meta="kind[content]" content="${k}">`;
 
 /** A page shaped like the house article: title line, opening, contents, sections, sources. */
-function article({ meta = '<span>Relational deep dive</span><span>About 16 minutes</span>', contents = 'after', sections = ['One', 'Two', 'Sources and further reading'], body = '' } = {}) {
+function article({ meta = '<span>Deep dive</span><span>About 16 minutes</span>', contents = 'after', sections = ['One', 'Two', 'Sources and further reading'], body = '' } = {}) {
   const nav = `<nav aria-label="In this article"><ol>${sections.map((s) => `<li>${s}</li>`).join('')}</ol></nav>`;
   return `<html><head>${kind('Article')}</head><body><main><article>
     <header><h1>Indexes</h1><div class="essay-meta">${meta}</div></header>
@@ -65,9 +65,11 @@ test('no-heading-in-figure', () => {
 });
 
 test('title-line', () => {
-  assert.equal(run('title-line', article({ meta: '<span>Relational deep dive</span><span>16 min read</span>' })).length, 2);
-  assert.equal(run('title-line', article({ meta: 'Sources checked 16 October 2026' })).length, 1);
-  assert.deepEqual(run('title-line', article({ meta: 'Drawing guide · About 17 minutes · Mermaid 11' })), []);
+  assert.equal(run('title-line', article({ meta: '<span>Deep dive</span><span>16 min read</span>' })).length, 2);
+  assert.equal(run('title-line', article({ meta: 'Deep dive' })).length, 1);
+  assert.deepEqual(run('title-line', article({ meta: 'Deep dive · About 17 minutes · Mermaid 11' })), []);
+  assert.deepEqual(run('title-line', article({ meta: '<span>Companion to <a href="/x/">Querying</a></span><span>About 9 minutes</span>' })), []);
+  assert.deepEqual(run('title-line', article({ meta: 'Relational deep dive · About 9 minutes' })).map((i) => i.message), ['"Relational deep dive" isn\'t an article type (Introduction, Deep dive, Companion, Worked example, Assessment)']);
 });
 
 test('contents-after-opening', () => {
@@ -78,7 +80,7 @@ test('contents-after-opening', () => {
 
 test('sources-section: optional, but named and last when present', () => {
   assert.deepEqual(run('sources-section', article({ sections: ['One', 'Two', 'Try the idea'] })), []);
-  assert.deepEqual(run('sources-section', article({ sections: ['One', 'Sources and model notes', 'Further reading'] })), []);
+  assert.equal(run('sources-section', article({ sections: ['One', 'Further reading'] })).length, 1);
   assert.equal(run('sources-section', article({ sections: ['One', 'Sources & notes'] })).length, 1);
   assert.equal(run('sources-section', article({ sections: ['One', 'Sources and further reading', 'Try the idea'] })).length, 1);
   assert.deepEqual(run('sources-section', article({ sections: ['References and deletion', 'Two'] })), []);
@@ -103,7 +105,8 @@ test('raw-colour: literals in rules, not in custom properties', () => {
 });
 
 test('viewport-width', () => {
-  assert.equal(rule('viewport-width').check({ path: 'x.css', text: '.a { width: calc(100vw - 2rem); }' }).length, 1);
+  assert.equal(rule('viewport-width').check({ path: 'x.css', text: '.a { width: 100vw; } .b { margin-left: calc(50% - 100vw / 2); }' }).length, 2);
+  assert.deepEqual(rule('viewport-width').check({ path: 'x.css', text: '.a { width: min(1000px, calc(100vw - 3rem)); }' }), []);
 });
 
 test('css-balanced', () => {

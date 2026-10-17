@@ -139,7 +139,7 @@ The sketch leaves consequential questions open: can the request be saved while t
 
 If you run out of time, replace a difficult shape with a named rectangle. Preserve the names, group membership and labelled relationships. That gives the next person something they can understand and revise.
 
-## Further reading
+## Sources and further reading
 
 [Drawing at the whiteboard](/learn/drawing-systems/whiteboarding/) follows the first few minutes of a meeting, including what to draw while the explanation is still changing.
 

@@ -188,7 +188,11 @@ and a successful build says nothing about the argument.
 
 The page shell is shared so articles look alike without anyone keeping them in
 step. `TitleLine` writes the line under the title and calculates the reading time
-from the finished page. `ArticleBody` places the contents list after the opening
+from the finished page. Its type is one of the five in `src/lib/article-types.ts`:
+Introduction, Deep dive, Companion, Worked example or Assessment. A companion
+names the deep dive it extends. An article ends with "Sources and further
+reading", where documentation and related articles each get a line saying why
+to read them; a sandbox lesson belongs in the section it exercises. `ArticleBody` places the contents list after the opening
 and builds it from the `<h2>`s. The site check in `scripts/check-site/` reports
 where a page departs from that shape; its README explains each rule and why it
 exists.
