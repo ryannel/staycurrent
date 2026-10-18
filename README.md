@@ -106,6 +106,10 @@ The column-store essay and relational articles are working examples. Supporting
 artwork follows the theme, and interactive controls are distinct from static data.
 
 The [coverage structure](docs/content-structure.md) guides new commissions.
+The [Databases and storage proposal](docs/databases-and-storage-plan.md) maps the
+whole field and its proposed pages for discussion; it does not change which
+articles are available. The [page tree](docs/databases-and-storage-page-tree.md)
+provides a shorter view of that proposal.
 `staycurrent-planning` develops collections; `staycurrent-authoring` develops
 articles; `staycurrent-review` provides independent challenge. House skills live
 in `.agents/skills/`, mirrored in `.claude/skills/`. Keep the review notes, source

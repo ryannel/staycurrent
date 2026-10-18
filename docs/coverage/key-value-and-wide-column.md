@@ -1,0 +1,33 @@
+# Key-value and wide-column stores: proposed coverage map
+
+18 October 2026. Proposal for discussion within the [field plan](../databases-and-storage-plan.md),
+before independent planning review or writing. Use the [shared map conventions](databases-and-storage.md#map-conventions).
+
+An expert user designs keys from access patterns, bounds the work in a partition,
+handles concurrency and replication under the chosen contract, and accounts for
+secondary copies and background work. The key-value interface, ordered partition
+and wide-column model are distinguished before comparing their implementations.
+
+Running example: device D17 and readings with stable reading IDs and timestamps;
+tenant T4 owns the device. Order O1042 supplies a conditional reservation case.
+Preserve IDs when adding an alternate layout so its freshness can be inspected.
+Base: `/learn/databases/partitioned/`; retain the existing entrance.
+
+| ID | Proposed page and role | Owned sections and reader outcome | Teaching form | Entry needs; onward homes | Existing material / destination |
+| --- | --- | --- | --- | --- | --- |
+| K01 | Key-value and wide-column stores — introduction | Exact-key lookup; ordered partition groups; model against physical partition; predictable access patterns; absent joins/alternate queries; authoritative store against cache. Recognise which interface solves the job. | One reading found by ID, one device history range and one query the layout cannot serve. | No NoSQL knowledge. K02/K03/K11; C01 owns cache roles. | Existing `/learn/databases/partitioned/`; current article informs K02–K04 too. |
+| K02 | Designing keys from access patterns — deep dive | Read/write inventory; partition and sort keys; composite encodings; ordering and range bounds; item collections; tenant prefixes; secondary query shapes. Design a key schema from required outputs. | D17 history and all hot devices yesterday; show exact keys and response pages. | K01; K03 distribution, K04 alternate layouts, A09 time-series semantics. | New `key-design/`. |
+| K03 | Hot keys, buckets and changing partitions — deep dive | Hash/range placement; item/partition growth; hot tenants; time bucketing; write sharding; fan-out/merge reads; moving partitions and application routing. Trade balanced work against request complexity. | Vary one hot device, late readings and bucket duration; count read fan-out. | K02; R22 relational co-location, K08/K09 product limits. | New `hot-keys-and-buckets/`. |
+| K04 | Secondary indexes and alternate layouts — deep dive | Query-first copies; projection; sparse indexes; index maintenance and write amplification; freshness; backfill; pagination; detecting and repairing missing entries. Decide which second arrangement is worth maintaining. | A history-by-device copy and alerts-by-day copy diverge and reconcile. | K02; F05 owns general copy protocol, R12 B-tree structure. | New `secondary-layouts/`. |
+| K05 | Conditional writes and atomic work — deep dive | Compare-and-set; create-if-absent; counters and lost updates; transaction scope; conditional failure against missing reply; operation IDs; invariant design without global constraints. Complete a reservation safely. | Two callers reserve O1042, one loses its response; inspect final items. | K01/F03. R09 supplies vocabulary only; K08/K09 own native atomic APIs. | New `conditional-writes/`. |
+| K06 | Replication, quorum reads and conflicts — deep dive | Replica placement; tunable acknowledgements; quorum intersection and its limits; stale and concurrent writes; conflict/timestamp rules; repair and multi-region availability. Predict the chosen contract's observable outcomes. | Replica histories with a failed node and concurrent writers; contrast native products explicitly. | F03 vocabulary supplied locally; R35 is leader/consensus replication, not this model's synonym. | New `replication-and-consistency/`. |
+| K07 | Expiry, tombstones and operating partitioned data — practical guide | TTL against immediate logical expiry; deletion markers; compaction backlog and disk space; repair/retention interactions; overload; backup/restore; capacity/cost signals; access boundaries and upgrades. Avoid apparently deleted or balanced data hiding operational work. | Expired D17 reading, delayed replica and a growing maintenance backlog. | F04 owns LSM mechanism; K06 replication, K08/K09 commands/settings. | New `operations/`. |
+| K08 | DynamoDB's request and capacity model — product deep dive | Table/item/key operations; Query/Scan and pagination; condition/transaction API; GSI/LSI differences; read consistency and global-table modes; capacity/throttling; Streams, backup and access tools. Translate a design into actual service requests. | Native request/response worksheet with pinned service features; local emulation labelled narrowly. | K02–K07; fresh primary evidence for resource/mode-specific guarantees and pricing. | New `dynamodb/`. |
+| K09 | Cassandra and ScyllaDB's partition path — product deep dive | CQL partition/clustering keys; SSTables/memtable/commit log; read/write paths; consistency/LWT scope; timestamps; compaction/repair and tombstones; scaling and backup evidence. Understand what the partition design makes each node do. | One native write/read/repair trace; compare Cassandra/ScyllaDB only where versioned differences matter. | K02/K05/K06/F04; operational commands stay here. | New `cassandra-and-scylladb/`. |
+| K10 | Building a keyed application — practical guide | Put the model together: sessions, device history and deduplicated work; choose item boundaries, key layout and conditional operations; bound history and validate alternate copies. Avoid blindly copying a single-table recipe. | Three worked designs, each with input, exact returned result and a changed requirement. | K02–K05; C07 owns rate limiting with in-memory primitives, messaging execution remains elsewhere. | New `application-patterns/`. |
+| K11 | Choosing a keyed store — comparison | DynamoDB, Cassandra/ScyllaDB, a relational keyed table and embedded KV where relevant; access and correctness needs; multi-region work; operating model; cost of fixed access paths. Choose candidates from workload evidence. | Device history, session lookup and multi-record reservation compared under the same demands. | K01/F02; F07 evaluation, R31 relational option. | New `choosing/`. |
+
+LSM internals have one full home at F04. Product pages show their implementation,
+not another generic compaction tutorial. “Wide-column” does not mean A03's
+analytical column layout. In-memory operation is a deployment/resource choice;
+the cache collection owns invalidation and eviction rather than all key-value use.
