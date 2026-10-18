@@ -93,11 +93,12 @@ when JavaScript is unavailable.
 
 ## Writing and teaching
 
-Articles carry the EU basic AI icon with an AI-generated label. The homepage and
-`/how-this-is-made/` explain the production process, including reviews by separate
-AI agents and the limits of human oversight. `AiDisclosure.astro` supplies the
-shared label through `TitleLine.astro` and directly on guides and playgrounds
-without a title line. The footer links to the disclosure page on every route.
+Articles carry the EU basic AI icon with an AI-generated label. The site-wide
+footer gives a concise disclosure, while `/how-this-is-made/` explains the
+production process, reviews by separate AI agents, the limits of human
+oversight and an editorial disclaimer. `AiDisclosure.astro` supplies the shared
+label through `TitleLine.astro` and directly on guides and playgrounds without
+a title line.
 
 The [editorial guide](docs/editorial-guide.md), [writing references](docs/writing-style.md)
 and [illustration style](docs/illustration-style.md) record what we have learned.
