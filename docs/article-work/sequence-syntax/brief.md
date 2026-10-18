@@ -62,3 +62,10 @@ and knows how to check the renderer's version.
 The parent still has "Mermaid syntax reference" and "Other tools, and what Mermaid
 can't draw" sections (per coverage map 3.16). The plan moves the full tables here and
 keeps a short in-article summary linking to this page.
+
+## Retired, 18 October 2026
+
+The page was retired in the family restructure
+(`docs/article-work/sequences/restructure-2026-10-18.md`). Its URL redirects to
+*Sequence diagrams* `#other-dialects`, which keeps the arrow table as a reference.
+`evidence.md` stays as the record of what was rendered and checked.

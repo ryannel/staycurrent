@@ -30,15 +30,21 @@ copy for structure, tone and figures, and in October 2026 they had a style pass 
 the pieces below and independent review. Reviewers named these passages as the clearest
 examples:
 
-- Sequence diagrams: the opening; the two paragraphs after Figure 5, where three cases
-  the reader has watched become a drawing rule; and the end of "Synchronous and
-  asynchronous messages", where short sentences carry a chain of consequences.
+- Sequence diagrams: the opening; the two paragraphs after Figure 6 in "Ordering and
+  gaps", where two timings the reader has watched become the rule that a diagram
+  promises order, not time; the end of "Synchronous and asynchronous messages", where
+  short sentences carry a chain of consequences; and "Trust boundaries", which follows
+  what crosses into the user's device. Its companion, on failure and asynchrony, opens
+  with the three losses: three cases the reader watches become one drawing rule.
 - Indexes: the opening; column order in a composite index (`#composite`), where the
   reader counts entries before the rule is stated; the visibility map (`#covering`),
   which runs break, fix, new cost; and the HOT update (`#writes`).
 - Storage and durability: from Figure 4 to the naming of the write-ahead log; the row
-  versions opening and the table after Figure 3; and the backups opening, which builds
-  point-in-time recovery from mechanisms the reader already has.
+  versions opening and the table after Figure 3; and group commit (`#commit-wait` into
+  `#group-commit`), which goes from measured numbers to the mechanism in words to the
+  term as the name for what the reader saw. The opening of "How point-in-time recovery
+  works" (`backup-and-restore#pitr`) builds a new subject from mechanisms the reader
+  already has; the rest of that page is older prose and not itself a reference.
 
 They stay revisable. Where one drifts from the pieces below, the pieces win.
 `docs/writing-style.md` records passages and revisions from our own work.

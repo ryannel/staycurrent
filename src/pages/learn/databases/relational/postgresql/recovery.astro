@@ -4,6 +4,8 @@ import TitleLine from '../../../../../components/editorial/TitleLine.astro';
 import Base from '../../../../../layouts/Base.astro';
 import Sql from '../../../../../components/explainers/querying/Sql.astro';
 import RedoProgress from '../../../../../components/explainers/postgresql/core-redo-progress.astro';
+import StepFigure from '../../../../../components/explainers/storage/StepFigure.astro';
+import StorageDefs from '../../../../../components/explainers/storage/StorageDefs.astro';
 import '../../../../../styles/explorables.css';
 import '../../../../../styles/relational-design.css';
 const update=`BEGIN;
@@ -19,12 +21,41 @@ const asyncCommit=`BEGIN;
 SET LOCAL synchronous_commit = off;
 UPDATE page_views SET views = views + 1 WHERE page_id = 42;
 COMMIT;`;
+const checkpointLog=`17:26:22.060 LOG:  checkpoint starting: time
+17:26:49.135 LOG:  checkpoint complete: wrote 8348 buffers (51.0%),
+    wrote 2 SLRU buffers; 0 WAL file(s) added, 0 removed, 7 recycled;
+    write=27.013 s, sync=0.054 s, total=27.075 s; sync files=17,
+    longest=0.027 s, average=0.004 s; distance=115037 kB,
+    estimate=226460 kB; lsn=0/2582BD08, redo lsn=0/1F391760`;
+const checkpointer=`SELECT num_timed, num_requested, num_done,
+       write_time, sync_time, buffers_written
+FROM pg_stat_checkpointer;`;
+const tooOften=`LOG:  checkpoints are occurring too frequently (20 seconds apart)
+HINT:  Consider increasing the configuration parameter "max_wal_size".`;
+const writers=`SELECT backend_type, sum(writes) AS writes
+FROM pg_stat_io
+WHERE object = 'relation'
+GROUP BY backend_type
+ORDER BY writes DESC;`;
+const restartLog=`17:32:07.254 LOG:  received immediate shutdown request
+17:32:13.430 LOG:  starting PostgreSQL 18.6 ...
+17:32:13.436 LOG:  database system was interrupted; last known up at 2026-10-17 17:31:27 CEST
+17:32:13.493 LOG:  database system was not properly shut down; automatic recovery in progress
+17:32:13.494 LOG:  redo starts at 0/47181CB8
+17:32:16.298 LOG:  invalid record length at 0/6A1D6850: expected at least 24, got 0
+17:32:16.298 LOG:  redo done at 0/6A1D6808 system usage: CPU: user: 1.64 s,
+    system: 1.14 s, elapsed: 2.80 s
+17:32:16.299 LOG:  checkpoint starting: end-of-recovery immediate wait
+17:32:16.422 LOG:  checkpoint complete: wrote 16362 buffers (99.9%), ...
+    distance=573778 kB, ...
+17:32:16.424 LOG:  database system is ready to accept connections`;
 const positions=`SELECT pg_current_wal_insert_lsn() AS inserted,
        pg_current_wal_lsn() AS written,
        pg_current_wal_flush_lsn() AS flushed;`;
 ---
 <Base title="WAL, checkpoints, and recovery" description="Follow actual WAL and page states through a crash, derive redo from page progress, and distinguish durable commit, full-page images, checkpoints and recovery history.">
  <article class="visual-essay relational-design">
+ <StorageDefs />
  <header class="essay-header"><p class="eyebrow">Inside PostgreSQL</p><h1>WAL, checkpoints, and recovery</h1><TitleLine type="Deep dive" version="PostgreSQL 18" /></header>
 <ArticleBody>
  <p>After PostgreSQL reports that a transaction committed, some of its changed table pages can still exist only in memory. Losing that memory must not lose the committed result. Write-ahead logging makes this possible by preserving another description of the changes before success is acknowledged. Recovery can use that description to bring older stored pages forward.</p>
@@ -75,9 +106,70 @@ const positions=`SELECT pg_current_wal_insert_lsn() AS inserted,
  <p>That extra information has a workload cost. Frequent checkpoints repeatedly make pages eligible for first-change images and require page-write work. Longer intervals can retain more WAL and leave more work to replay after a crash. Checkpoint writes are spread over time to reduce bursts. The <a href="https://www.postgresql.org/docs/18/wal-configuration.html">checkpoint configuration discussion</a> explains this balance; choosing the shortest possible interval does not minimise all costs. If the server log warns that checkpoints are occurring too frequently, raising <code>max_wal_size</code> is the documented first response.</p>
  <p>The experiment’s single reported image is evidence that this logging path occurred, not a benchmark for an application’s WAL rate. A busy table with many changed pages, larger live contents and different checkpoint timing can generate very different volumes. Measure WAL bytes, full-page images, checkpoint activity and storage behaviour together before attributing a change to row size alone.</p>
  </section>
+ <section id="reading-checkpoints"><h2>Reading checkpoints</h2>
+ <p>Three things about checkpoints are worth watching: how often they happen, what started them, and how long their writing took. PostgreSQL reports all three in its server log, one pair of lines per checkpoint, because <code>log_checkpoints</code> is on by default. Here is one pair from a laptop running pgbench at 400 transactions a second, with <code>checkpoint_timeout</code> lowered to its 30-second minimum so that several cycles fit in two minutes.</p>
+ <pre class="plan" tabindex="0" role="region" aria-label="A checkpoint in the PostgreSQL server log"><code>{checkpointLog}</code></pre>
+ <ul>
+  <li><strong>What started it.</strong> The word after <code>checkpoint starting:</code> is the cause. <code>time</code> means <code>checkpoint_timeout</code> passed; <code>wal</code> means the log reached the limit set by <code>max_wal_size</code>. <code>immediate force wait</code> appears for a <code>CHECKPOINT</code> command, and <code>end-of-recovery</code> for the one that finishes crash recovery.</li>
+  <li><strong>How much it wrote.</strong> 8,348 buffers, 51% of shared buffers.</li>
+  <li><strong>How long the writing took.</strong> <code>write=27.013 s</code> is the design working: the writes are spread over 90% of the 30-second interval (<code>checkpoint_completion_target</code>). <code>sync=0.054 s</code> is the wait for the data files to be flushed at the end, and that is the number that grows when storage is slow.</li>
+  <li><strong>How much log it covered.</strong> <code>distance=115037 kB</code> is the log written between this checkpoint’s start and the previous one’s: a log rate you get for free.</li>
+  <li><strong>What happened to old log files.</strong> <code>7 recycled</code> means seven 16 MB segments were renamed for reuse. A run of checkpoints that remove and recycle nothing means something is holding the log, such as a failing archive or an abandoned slot.</li>
+ </ul>
+ <p><code>pg_stat_checkpointer</code>, which in PostgreSQL 17 and 18 holds the counters that used to sit in <code>pg_stat_bgwriter</code>, keeps the same story: <code>num_timed</code> for checkpoints started by the timer, <code>num_requested</code> for those requested by log size, a <code>CHECKPOINT</code> command or a backup, and <code>num_done</code> for those that finished.</p>
+ <Sql code={checkpointer} label="Count timed and requested checkpoints" />
+ <p>Under steady load most checkpoints should be timed. Many more requested than timed means log size is forcing them early, and PostgreSQL says so in the log whenever two such checkpoints start closer together than <code>checkpoint_warning</code>, 30 seconds by default:</p>
+ <pre class="plan" tabindex="0" role="region" aria-label="PostgreSQL warning about frequent checkpoints"><code>{tooOften}</code></pre>
+ <p>Who writes the pages matters as much as how many are written. The checkpointer writes pages for checkpoints, the background writer writes some early so queries find clean slots, and a session that needs a slot and finds a dirty page writes it itself, making its query wait. <code>pg_stat_io</code> counts each separately.</p>
+ <Sql code={writers} label="Page writes by kind of process" />
+ <div class="table-scroll" role="region" tabindex="0" aria-label="Page writes by kind of process in the local run"><table>
+  <caption>Observed in the same run: two minutes, 30-second checkpoints, counters reset just before with <code>pg_stat_reset_shared('io')</code>.</caption>
+  <thead><tr><th>backend_type</th><th>writes</th></tr></thead>
+  <tbody>
+   <tr><td><code>checkpointer</code></td><td>34,165</td></tr>
+   <tr><td><code>background writer</code></td><td>8,140</td></tr>
+   <tr><td><code>client backend</code></td><td>19</td></tr>
+   <tr><td><code>autovacuum worker</code></td><td>5</td></tr>
+  </tbody>
+ </table></div>
+ <p>That is the healthy shape: the background processes do almost all the writing. The documentation names the other shape: many writes by client backends “could indicate a misconfiguration of shared buffers or of the checkpointer”. A partner signal is <code>maxwritten_clean</code> in <code>pg_stat_bgwriter</code>, the rounds in which the background writer stopped at its limit of 100 pages (<code>bgwriter_lru_maxpages</code>).</p>
+ </section>
+ <section id="max-wal-size"><h2>How max_wal_size sets checkpoint spacing</h2>
+ <p>PostgreSQL wants each checkpoint to finish before the log reaches <code>max_wal_size</code>, and the log keeps growing while a checkpoint spreads its writes. So it starts the next checkpoint once the log written since the previous one began reaches the setting divided by one plus the share of the interval spent writing:</p>
+ <p class="formula">trigger = max_wal_size ÷ (1 + checkpoint_completion_target)</p>
+ <p>At the defaults, the trigger is about half the setting: 1 GB (1,024 MiB) divided by 1.9 is about 540 MiB. The server counts whole 16 MiB segments and rounds down, so a checkpoint starts after 512 to 528 MiB. The rule lives in the source (<code>CalculateCheckpointSegments</code> in <a href="https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/access/transam/xlog.c"><code>xlog.c</code></a>), not the manual, so it may change between versions.</p>
+ <p>The trigger is not the worst case. A crash just before a checkpoint finishes replays from where the previous checkpoint began: one trigger’s worth of log, plus everything written while the current checkpoint ran, close to <code>max_wal_size</code> in all.</p>
+ <p>The figure draws this for an update-heavy load writing about 28 MiB of log a second. Watch the log a crash would replay climb until a checkpoint finishes, then drop. Move the slider to change <code>max_wal_size</code>, and choose a replay rate: 169 MiB a second, measured on the same laptop by crashing a copy under that load, or half that.</p>
+ <StepFigure
+  scene="checkpoint-sizing"
+  number={1}
+  title="How max_wal_size sets checkpoint spacing and the worst-case replay"
+  alt="A chart over five minutes of how much log a crash would leave to replay, rising between checkpoints and dropping when each one finishes, against a dotted line at max_wal_size and a dashed line for what replays in 30 seconds."
+  caption="Computed from PostgreSQL’s trigger rule for a steady 28 MiB of log a second, with every checkpoint finishing on schedule and no rounding to whole segments. In max_wal_size, 1 GB means 1,024 MiB. At this write rate, log size always starts a checkpoint before the 5-minute timer would."
+ />
+ <p>At the default 1 GB, a checkpoint starts every 19 seconds or so, and the worst case replays in about 6 seconds. The real server agreed: run for 45 seconds, the load started checkpoints at a <code>distance</code> of about 516 MiB, every 20 seconds or so, and logged the warning above. That leaves plenty of room under a 30-second recovery target, but it writes the same dirty pages over and over, and after each checkpoint the next change to every page logs a full-page image again.</p>
+ <p>Raising <code>max_wal_size</code> trades that for longer replay. At 4 GB, a checkpoint starts after about 2.1 GiB, about every 77 seconds, and the worst case replays in about 24 seconds at 169 MiB a second, or about 48 at half that. <code>max_wal_size</code> is a soft limit: a checkpoint the disks can’t finish in time lets the log grow past it, so leave room below the ceiling. The method for every engine is in <a href="/learn/databases/relational/checkpoints-and-the-log/#choosing-interval">Checkpoints, torn pages and the log</a>.</p>
+ </section>
+ <section id="reading-restart"><h2>Reading a restart</h2>
+ <p>After a crash, the server log is the record of recovery. To get a real example, a laptop server was stopped with <code>pg_ctl stop -m immediate</code>, which ends every process at once without a shutdown checkpoint, while pgbench ran flat out. The startup log follows, with dates and process IDs removed.</p>
+ <pre class="plan" tabindex="0" role="region" aria-label="PostgreSQL crash recovery in the server log"><code>{restartLog}</code></pre>
+ <ul>
+  <li><strong>“last known up at 17:31:27”</strong> is when the control file was last updated, normally the last completed checkpoint. It is not the time of the crash, which was 17:32:07. A checkpoint had started at 17:32:06 but not finished, so it doesn’t count.</li>
+  <li><strong>“redo starts at 0/47181CB8”</strong> is the start of that last completed checkpoint, and <strong>“redo done at 0/6A1D6808”</strong> the last record replayed. The positions are byte offsets, so recovery replayed 560 MiB, in 2.8 seconds on this laptop.</li>
+  <li><strong>“invalid record length … expected at least 24, got 0”</strong> is how replay finds the end of the log: the next record is empty. Seen once, just before “redo done”, it is normal. If the next page belongs to a segment recycled from an earlier cycle, the same end is reported as “unexpected pageaddr”, because that page still carries its old address; a torn final write can show as an incorrect checksum instead. Tom Lane described “unexpected pageaddr” as <a href="https://www.postgresql.org/message-id/5031.1296689542%40sss.pgh.pa.us">one of the standard tests for detecting end of WAL</a>. Each is normal only at the true end of the log; replay ending well short of where the log stood is not.</li>
+  <li><strong>“checkpoint starting: end-of-recovery”</strong> writes out everything replay changed, here nearly the whole pool, before the database opens.</li>
+  <li><strong>“ready to accept connections”</strong> ends the outage, 3 seconds after the process started.</li>
+ </ul>
+ <p>A long replay is not silent: every 10 seconds (<code>log_startup_progress_interval</code>) PostgreSQL logs “redo in progress, elapsed time: …, current LSN: …”, and comparing that position with the end you expect shows how far it has got. The restart also resets the cumulative statistics, so a rate computed across it means nothing.</p>
+ </section>
  <section id="flush"><h2>When a flush does not reach the disk</h2>
- <p>Every ordering rule above rests on one report: that the operating system has put the WAL on durable storage and says so. PostgreSQL asks with the method named by <code>wal_sync_method</code>, which is <code>fdatasync</code> on Linux, and it cannot check the answer. The <a href="https://www.postgresql.org/docs/18/wal-reliability.html">reliability documentation</a> advises avoiding disk controllers whose write cache has no battery, and turning off a drive’s write cache unless the drive guarantees it is written out before power is lost. The <a href="/learn/databases/relational/storage/#flush">Storage and durability</a> article explains the caches involved and how to tell an honest drive from one that answers early.</p>
- <p>To see what your own hardware does, run <a href="https://www.postgresql.org/docs/18/pgtestfsync.html"><code>pg_test_fsync</code></a>, which times each flush method. Read its numbers with that article’s caveat: a high rate means a fast, honest drive or a lying one, and only a pull-the-plug test tells them apart. The settings in the next section decide whether <code>COMMIT</code> waits for the flush at all.</p>
+ <p>Every ordering rule above rests on one report: that the operating system has put the WAL on durable storage and says so. PostgreSQL asks with the method named by <code>wal_sync_method</code>, which is <code>fdatasync</code> on Linux, and it cannot check the answer. The <a href="https://www.postgresql.org/docs/18/wal-reliability.html">reliability documentation</a> advises avoiding disk controllers whose write cache has no battery, and turning off a drive’s write cache unless the drive guarantees it is written out before power is lost. The caches involved, and how to tell an honest drive from one that answers early, are explained in <a href="/learn/databases/relational/storage/#flush">Storage and durability</a>.</p>
+ <p>To see what your own hardware does, run <a href="https://www.postgresql.org/docs/18/pgtestfsync.html"><code>pg_test_fsync</code></a>, which times each flush method. A high rate means a fast, honest drive or a lying one, and only a <a href="/learn/databases/relational/checkpoints-and-the-log/#testing">pull-the-plug test</a> tells them apart. The settings under <a href="#policy">commit acknowledgement</a> below decide whether <code>COMMIT</code> waits for the flush at all.</p>
+ </section>
+ <section id="wal-flush-timing"><h2>Timing WAL flushes</h2>
+ <p>A commit waits for its flush, so the flush time is the least a commit can take. PostgreSQL 18 reports log I/O in <code>pg_stat_io</code>, in the rows whose <code>object</code> is <code>wal</code>: <code>writes</code> and <code>fsyncs</code>, and with <code>track_wal_io_timing</code> on, which it is not by default, <code>write_time</code> and <code>fsync_time</code>. In PostgreSQL 17 these were columns of <code>pg_stat_wal</code>.</p>
+ <p>Which column carries the flush depends on <code>wal_sync_method</code>. With <code>fdatasync</code>, the Linux default, every flush is a separate call, counted in <code>fsyncs</code> and timed in <code>fsync_time</code>. With an <code>open_datasync</code> or <code>open_sync</code> method, each write is itself synchronous, so the flush time sits inside <code>write_time</code> and <code>fsyncs</code> stays at zero. A laptop on macOS, where <code>open_datasync</code> is the default, showed exactly that: 47,076 log writes by sessions at about 0.12 ms each, and no fsyncs. That is not the cost of a durable flush; macOS acknowledges these writes before the drive has made them durable.</p>
+ <p>Wait events point at the same place. A session waiting for its flush shows the IO wait <code>WalSync</code> (or <code>WalWrite</code> with an <code>open_*</code> method). Because of group commit, the other committing sessions queue behind it and show the lightweight lock <code>WALWrite</code>; it looks like a lock wait but is the same storage cost. Sessions in <code>SyncRep</code> are waiting for a synchronous standby instead. And <code>wal_buffers_full</code> in <code>pg_stat_wal</code> counts times the WAL buffers filled and had to be written early; a steady rise suggests a larger <code>wal_buffers</code>.</p>
  </section>
  <section id="policy"><h2>Commit acknowledgement and durability settings</h2>
  <p>With <code>synchronous_commit=off</code>, PostgreSQL replies once the commit record is in the WAL buffers, and the <strong>WAL writer</strong> flushes it soon after. A crash can then lose recently acknowledged transactions, and the changed promise is which recent successes are guaranteed to survive. The WAL writer wakes every 200 ms at the default <code>wal_writer_delay</code> and, when busy, prefers to write whole WAL pages, which is why the documentation sets the longest risk window at three times that delay: about 600 ms by default. Recovery replays what survived in order, so the database ends consistent but slightly behind what the application was told. This can be appropriate for work the application explicitly tolerates losing, but it is a different contract from the stock reservation’s durable acknowledgement. See <a href="https://www.postgresql.org/docs/18/wal-async-commit.html">asynchronous commit</a>.</p>
@@ -89,7 +181,7 @@ const positions=`SELECT pg_current_wal_insert_lsn() AS inserted,
  <p>Even a fully durable commit may have an uncertain caller outcome. The connection can fail after the log flush and before the reply arrives. Retrying a purchase blindly can duplicate its business effect. The application needs an operation identity and a way to discover whether that identity already committed. WAL protects the server’s history; it cannot guarantee delivery of the response.</p>
  </section>
  <section id="history"><h2>Point-in-time recovery</h2>
- <p>Crash recovery reconstructs the database’s valid recorded history, so it cannot undo a committed mistake or replace a lost volume. <a href="/learn/databases/relational/storage/#backups">Storage and durability</a> explains point-in-time recovery as crash recovery started from an older copy, fed with archived log and stopped early. In PostgreSQL the pieces are a physical base backup, archived WAL and a recovery target, and the rest of this section is about what keeps that chain usable.</p>
+ <p>Crash recovery reconstructs the database’s valid recorded history, so it cannot undo a committed mistake or replace a lost volume. <a href="/learn/databases/relational/backup-and-restore/#pitr">Point-in-time recovery</a> is crash recovery started from an older copy, fed with archived WAL and stopped early. In PostgreSQL the pieces are a physical base backup, archived WAL and a recovery target, and the rest of this section is about what keeps that chain usable.</p>
  <p>The WAL sequence must cover the required interval and the appropriate history. A missing required segment breaks the reconstruction path; an archived file existing somewhere is insufficient unless the restore process can retrieve and use it. Timeline history matters after recovery creates a new branch. The <a href="https://www.postgresql.org/docs/18/continuous-archiving.html">continuous-archiving documentation</a> develops these requirements.</p>
  <p>Retention is an operating obligation too. Failed archiving and stalled replication slots can hold WAL beyond the expected volume. More retained log is not automatically more recoverability if it fills the storage needed for the live server. Establish the consumer or recovery requirement keeping each history available, repair the dependency and test the restore procedure. Removing WAL files by hand bypasses those relationships.</p>
  <p>A useful drill verifies concrete promises: which acknowledged operation IDs survived, which uncommitted changes remained absent, how long replay took, and whether the restored application can serve correct requests. Our two-stock-record experiment is a small instance of that method. It makes the result derivable from the surviving WAL and transaction outcomes, instead of treating “recovery succeeded” as a sufficient explanation.</p>
@@ -97,3 +189,9 @@ const positions=`SELECT pg_current_wal_insert_lsn() AS inserted,
  </ArticleBody>
  </article>
 </Base>
+<style>
+ .plan { overflow: auto; border: 1px solid var(--color-rule); background: var(--color-surface-alt); padding: 1rem; font: .78rem/1.8 var(--font-mono); max-width: 100%; margin: 1.5rem 0; }
+ .plan code { padding: 0; background: none; font: inherit; white-space: pre; }
+ .formula { margin: 1.4rem 0; padding: .6rem 0 .6rem 1rem; border-left: 2px solid var(--color-rule-strong); font: .95rem/1.6 var(--font-mono); color: var(--color-text); overflow-wrap: anywhere; }
+ @media (max-width: 600px) { .plan { font-size: .7rem; } .formula { font-size: .85rem; } }
+</style>

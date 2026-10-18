@@ -26,7 +26,11 @@ export interface Scenario {
   darkMs: number;
   strip: boolean;
   summary: string;
+  /** Boxes that group neighbouring participants, such as a system or a trust zone. */
+  groups: Group[];
 }
+
+export interface Group { label: string; from: string; to: string }
 
 export interface ParamDef {
   id: string;
@@ -58,7 +62,7 @@ export class Builder {
   lastArrival = 0;
   replay: { list: Item[]; i: number } | null = null;
   record: Item[] | null = null;
-  constructor(public participants: Participant[], public opts: { bars?: boolean; clock?: boolean; strip?: boolean; darkMs?: number } = {}) {}
+  constructor(public participants: Participant[], public opts: { bars?: boolean; clock?: boolean; strip?: boolean; darkMs?: number; groups?: Group[] } = {}) {}
 
   private add<I extends Item>(item: I): I {
     if (this.replay) {
@@ -193,6 +197,7 @@ export class Builder {
       darkMs: this.opts.darkMs ?? 1000,
       strip: !!this.opts.strip,
       summary,
+      groups: this.opts.groups ?? [],
     };
   }
 }
@@ -541,7 +546,7 @@ export const scenarios: Record<string, ScenarioDef> = {
       ]);
       const path = valid
         ? `The details are valid, so the first section of the alt runs. ${fresh ? 'Mina is a new customer, so the opt fragment runs and the API inserts her customer record before the repair request, in the same transaction.' : 'Mina is a returning customer, so the opt fragment is skipped and the API inserts only the repair request.'} The browser gets R17.`
-        : 'The details are invalid, so the else section runs and the API replies 422 without touching the database.';
+        : 'The details are invalid, so the [details invalid] section runs and the API replies 422 without touching the database.';
       return b.finish(`After POST /repairs an alt fragment offers two paths. ${path} The path not taken stays drawn, faded.`);
     },
   },
@@ -670,7 +675,7 @@ export interface Layout {
   W: number; H: number; narrow: boolean; font: number; small: number;
   xs: Record<string, number>; margin: number; spacing: number;
   headW: number; headH: number; headLines: Record<string, string[]>; stagger: boolean; headBlock: number;
-  stripY: number; top: number; rowH: number;
+  stripY: number; top: number; rowH: number; foot: number;
 }
 
 const charW = (font: number) => font * 0.56;
@@ -729,8 +734,10 @@ export function layout(s: Scenario, width: number): Layout {
   const top = stripY + (s.strip ? small * 2.6 + (narrow ? 2 : 6) : 0) + (narrow ? 8 : 10);
   // Rows are order, not time, so a phone can pack them tighter without changing the meaning.
   const rowH = narrow ? 29 : 44;
-  const H = Math.round(top + s.rows * rowH + (narrow ? 8 : 18));
-  return { W, H, narrow, font, small, xs, margin, spacing, headW, headH, headLines, stagger, headBlock, stripY, top, rowH };
+  // Group boxes put their label under the last row.
+  const foot = s.groups.length ? small * 1.9 : 0;
+  const H = Math.round(top + s.rows * rowH + (narrow ? 8 : 18) + foot);
+  return { W, H, narrow, font, small, xs, margin, spacing, headW, headH, headLines, stagger, headBlock, stripY, top, rowH, foot };
 }
 
 const rowY = (L: Layout, r: number) => L.top + (r + 0.5) * L.rowH;
@@ -899,12 +906,19 @@ export function renderSVG(s: Scenario, L: Layout, T: number, uid: string, aria: 
   const out: string[] = [];
   out.push(`<svg class="seq-svg" viewBox="0 0 ${L.W} ${L.H}" width="${L.W}" height="${L.H}" role="img" aria-labelledby="${aria.labelledby}" aria-describedby="${aria.describedby}" style="font-size:${L.font}px">`);
   out.push(`<defs><pattern id="${uid}-hatch" patternUnits="userSpaceOnUse" width="5" height="5" patternTransform="rotate(45)"><rect width="5" height="5" class="seq-hatch-bg"/><line x1="0" y1="0" x2="0" y2="5" class="seq-hatch-line"/></pattern></defs>`);
+  // group boxes, behind everything else
+  for (const g of s.groups) {
+    const half = L.spacing ? L.spacing / 2 - 3 : L.margin - 3;
+    const xa = Math.max(1, L.xs[g.from] - half), xb = Math.min(L.W - 1, L.xs[g.to] + half);
+    out.push(`<rect class="seq-group-box" x="${r1(xa)}" y="0.5" width="${r1(xb - xa)}" height="${r1(L.H - 1)}" rx="4"/>`);
+    out.push(`<text class="seq-group-text" x="${r1((xa + xb) / 2)}" y="${r1(L.H - L.small * 0.7)}" text-anchor="middle" style="font-size:${L.small}px">${esc(g.label)}</text>`);
+  }
   // participants and lifelines
   for (const p of s.participants) {
     const x = L.xs[p.id];
     const lines = L.headLines[p.id];
     const dy = L.stagger && s.participants.indexOf(p) % 2 ? L.headH + 4 : 0;
-    out.push(`<line class="seq-life" x1="${r1(x)}" y1="${r1(L.headH + dy + 2)}" x2="${r1(x)}" y2="${L.H - 6}"/>`);
+    out.push(`<line class="seq-life" x1="${r1(x)}" y1="${r1(L.headH + dy + 2)}" x2="${r1(x)}" y2="${r1(L.H - 6 - L.foot)}"/>`);
     const hx = Math.max(2, Math.min(L.W - L.headW - 2, x - L.headW / 2));
     out.push(`<rect class="seq-head" x="${r1(hx)}" y="${2 + dy}" width="${r1(L.headW)}" height="${r1(L.headH)}" rx="3"/>`);
     const y0 = 2 + dy + L.headH / 2 - ((lines.length - 1) * L.font * 1.2) / 2 + L.font * 0.35;
@@ -1041,7 +1055,7 @@ export function events(s: Scenario): Event[] {
       }
       // One event per section: which one runs, which are skipped, and where each par section starts.
       it.runs.forEach((r, i) => {
-        const what = i === 0 ? `${it.op} fragment, section ${r.guard}` : `${it.op === 'par' ? 'and' : 'else'} section ${r.guard}`;
+        const what = i === 0 ? `${it.op} fragment, section ${r.guard}` : `${it.op === 'par' ? 'and' : 'next'} section ${r.guard}`;
         const verb = it.op === 'par' ? 'begins' : r.skipped ? 'is skipped' : 'runs';
         const t0 = r.skipped ? t : r.t;
         add(t0, Math.max(t0, shown), `${what} ${verb}`, `${it.op} ${r.guard} ${verb}`);

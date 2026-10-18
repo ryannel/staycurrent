@@ -47,6 +47,11 @@ const insertOrder = `INSERT INTO orders (order_id, customer_id, placed_at)
 VALUES ('O17', 'C4', '2026-10-04 13:00:00+00');`;
 const pageIndex = `CREATE INDEX orders_customer_page_idx
 ON orders (customer_id, placed_at DESC, order_id DESC);`;
+const mixedBad = `-- ORDER BY placed_at DESC, order_id ASC, continuing after ($1, $2)
+WHERE placed_at < $1
+   OR (placed_at = $1 AND order_id > $2)`;
+const mixedGood = `WHERE placed_at <= $1
+  AND (placed_at < $1 OR order_id > $2)`;
 const snapshotCursor = `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 
 DECLARE order_export NO SCROLL CURSOR FOR
@@ -115,7 +120,7 @@ COMMIT;`;
         ['Pair: earlier than (12:00, O15)', 'O14, O13', 'Returned'],
       ]} />
       <p>The pair comparison returns O14 and O13 whether or not O17 has arrived. Deleting O16 does not change that answer either. The saved values locate a boundary; counting the rows before it is unnecessary. Even deleting O15 itself would not invalidate the boundary, provided the application saved its values rather than trying to look them up again.</p>
-      <p>For the following page, use O13’s timestamp and ID, the last pair actually returned. That yields O12. Using a strict comparison excludes the previous boundary row. An ascending list would instead continue with greater-than. Mixed directions or nullable ordering fields require a continuation condition that follows those exact ordering rules; our two fields are non-missing and both run in the same direction.</p>
+      <p>For the following page, use O13’s timestamp and ID, the last pair actually returned. That yields O12. Using a strict comparison excludes the previous boundary row. An ascending list would instead continue with greater-than. Mixed directions or nullable ordering fields require a continuation condition that follows those exact ordering rules, as <a href="#page-cost">What a page costs</a> shows; our two fields are non-missing and both run in the same direction.</p>
       <PaginationLab />
     </section>
 
@@ -141,6 +146,21 @@ COMMIT;`;
         <ResultTable caption="Two orders produce three purchased lines" columns={['order_id','line_no','product_id','quantity']} rows={ [['O12','1','P7','2'],['O13','1','P7','1'],['O13','2','P8','1']] } />
         <p>The application groups O12’s one line and O13’s two lines under their respective headers. The outer query has no line limit. Its left join also retains a header with no lines, with SQL NULL in the line fields. Because this is one ordinary statement, the header selection and line retrieval share its view. Splitting them into separate statements would require the view choice discussed in <a href="#export">A fixed export</a>.</p>
       </details>
+      <h3 id="page-cost">What a page costs</h3>
+      <p>The cost of a deep page can be measured on the same orders, at scale. On a table of 60,000 orders, one a minute, with an index on <code>(placed_at DESC, order_id DESC)</code> for a feed of every order, PostgreSQL 18.6 read these pages for one page of 20 rows. The experiment is the one behind <a href="/learn/databases/relational/indexing-queries/">Indexing queries</a>.</p>
+      <div class="table-scroll" role="region" tabindex="0" aria-labelledby="page-cost-caption"><table><caption id="page-cost-caption">Pages read for one page of 20 rows, with the feed index in place (PostgreSQL 18.6)</caption><thead><tr><th>Page requested</th><th>Offset</th><th>Keyset</th></tr></thead><tbody>
+        <tr><td>First</td><td>4</td><td>4</td></tr>
+        <tr><td>Page 1,000 (19,980 rows skipped)</td><td>654</td><td>4</td></tr>
+        <tr><td>Offset of 59,960</td><td>1,956</td><td>Not applicable</td></tr>
+      </tbody></table></div>
+      <p>An offset page walks every skipped entry, and each one usually costs a table page too, because the index lacks the columns the page returns. The last line of the table read more pages than the table holds, 1,725, because it counted the index pages it walked as well. Past some offset, scanning the table and sorting would be cheaper, though the planner still chose the index. The numbers flatter offset here: these orders were inserted in time order, so skipped rows share pages. Where neighbouring entries point to scattered rows, each skipped entry can cost its own page.</p>
+      <p>The keyset page read 4 pages at any depth, because PostgreSQL turned the pair comparison <code>(placed_at, order_id) &lt; ($1, $2)</code> into a search condition on the index: it appears under <code>Index Cond</code> in the plan. SQLite 3.51 accepted the same pair and bounded its search by the first column. MySQL’s manual shows a pair comparison using only part of a key and the expanded form, <code>a &lt; x OR (a = x AND b &lt; y)</code>, using all of it, so in MySQL write the expanded form and check the key length in <code>EXPLAIN</code>.</p>
+      <p>A pair comparison treats both columns the same way, so it fits only when the sort runs in one direction. A feed that is newest first but lowest order ID first within a time needs the expanded form:</p>
+      <Sql code={mixedBad} label="The expanded continuation that is correct but scans" />
+      <p>With an index on <code>(placed_at DESC, order_id ASC)</code>, the whole condition became a <code>Filter</code>, and page 1,000 read 654 pages, no better than an offset. The <code>OR</code> hides the fact that every qualifying row has <code>placed_at</code> at or before the boundary. Stating it as a plain range lets the index use it:</p>
+      <Sql code={mixedGood} label="The same continuation with a range the index can use" />
+      <p>Now the range bounds the search, the original condition checks only the rows with a tied time, and the page read 4 pages. The same works for any number of columns: put the loosest bound on the leading column as a plain range, and keep the exact condition after it.</p>
+      <p>A sort column that allows NULL fails quietly. Any comparison with NULL is unknown, so a row with a NULL <code>shipped_at</code> never satisfies <code>(shipped_at, order_id) &lt; ($1, $2)</code>, and those rows drop out of the list. Declare the column <code>NOT NULL</code>, or sort and index a value that can’t be NULL, such as <code>coalesce(shipped_at, 'infinity')</code>.</p>
     </section>
 
     <section id="changing-list">
@@ -179,6 +199,7 @@ COMMIT;`;
         <li><a href="https://www.postgresql.org/docs/18/queries-order.html">Sorting rows</a> and <a href="https://www.postgresql.org/docs/18/queries-limit.html">LIMIT and OFFSET</a>: ordering ties, skipped rows and the work an offset requires.</li>
         <li><a href="https://www.postgresql.org/docs/18/functions-comparisons.html#ROW-WISE-COMPARISON">Row comparisons</a>: how PostgreSQL compares the time-and-ID pair used for continuation.</li>
         <li><a href="https://www.postgresql.org/docs/18/indexes-ordering.html">Indexes and ordering</a>: when an index can supply the requested order, especially with a limit.</li>
+        <li><a href="https://dev.mysql.com/doc/refman/8.4/en/row-constructor-optimization.html">Row constructor expression optimization</a> in the MySQL 8.4 manual: when a pair comparison uses all of an index key. The page counts in <a href="#page-cost">What a page costs</a> come from the <a href="/learn/databases/relational/indexing-queries/#run">Indexing queries experiment</a>, run on PostgreSQL 18.6 on 17 October 2026.</li>
         <li><a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a>: the difference between a new committed view per statement and Repeatable Read’s transaction view.</li>
         <li><a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">Routine vacuuming</a>: why old record versions remain while an active view can still need them.</li>
         <li><a href="https://www.postgresql.org/docs/18/sql-declare.html">DECLARE</a> and <a href="https://www.postgresql.org/docs/18/sql-fetch.html">FETCH</a>: database cursor lifetime and movement through a result.</li>

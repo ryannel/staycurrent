@@ -204,3 +204,47 @@ Ownership split with Watching storage and The buffer pool applied; no new local 
 
 ### Not re-checked
 Everything unlisted in the fifth-pass section stands as recorded there.
+
+## 18 October 2026: restructure
+
+Claims added or corrected while restructuring the family and repairing it after three reviews. No new local runs; SQL Server and MySQL claims rest on the manuals.
+
+### Claims
+| Claim | Basis |
+| --- | --- |
+| SQL Server row of a 100-byte fixed row: 100 + 3 (header, null bitmap) + 4 = 107 bytes, plus a 2-byte slot, so 8,096 / 109 = 74 rows a page | Microsoft, "Estimate the size of a heap", formula worked by hand; not measured |
+| Row versioning adds a 14-byte version tag to each changed row | Microsoft, transaction locking and row versioning guide |
+| RCSI and snapshot isolation version rows in tempdb's version store; accelerated database recovery (ADR) keeps versions of every modification in the database's persistent version store; RCSI and ADR are on by default and ADR is always on in Azure SQL Database | Row versioning guide; ADR concepts page |
+| Delayed durability loses whatever was still in the log buffer at a crash or shutdown; Microsoft gives no bound; `sp_flush_log` forces it out | Microsoft, "Control transaction durability". The "log buffer" wording is our reading of the mechanism, not a quotation |
+| Indirect checkpoints with a 60 s target recovery time are the default for new databases | Microsoft, database checkpoints page |
+| `PAGE_VERIFY CHECKSUM` detects a torn or corrupt page on read and raises error 824; the page is logged in `msdb.dbo.suspect_pages`; availability groups repair it automatically from a replica | ALTER DATABASE SET options; automatic page repair page |
+| `log_reuse_wait_desc` names what holds the log; a full log raises error 9002; commits waiting on log flushes show `WRITELOG` waits | Microsoft, transaction log architecture and error 9002 pages |
+| Max server memory sets the buffer pool's ceiling | Microsoft, server memory configuration options |
+| A rebuild compacts pages inside the data file; only `DBCC SHRINKFILE` returns space to the operating system | Microsoft, pages and extents guide and shrink documentation; reviewer correction |
+| `sys.dm_db_index_physical_stats` reports record sizes only in SAMPLED or DETAILED mode | Microsoft, DMV reference; reviewer correction |
+| InnoDB record header 5 bytes, 6-byte transaction ID, 7-byte roll pointer; DYNAMIC stores long columns off-page with a 20-byte pointer | MySQL 8.4 `innodb-row-format.html` |
+| TOAST: a row is compressed or moved out above 2,032 bytes; the example row with a 1,900-byte description comes to 2,028 bytes once the value's 4-byte length header is counted, under the threshold | PostgreSQL 18 `storage-toast.html`; arithmetic |
+| Fillfactor leaves room on each page for updates; a HOT update keeps the new version on the same page with no index entry | PostgreSQL 18 `sql-createtable.html#RELOPTION-FILLFACTOR`; HOT from the PostgreSQL manual as read in earlier passes |
+| SQLite table cell: varint payload length, varint rowid, record header of one varint per column, plus a 2-byte cell pointer; large records spill to overflow pages | SQLite `fileformat2.html` |
+| Restart replay: 0x6A1D6808 − 0x47181CB8 = 587,525,968 bytes = 560 MiB (587.5 MB); the text now says MiB | Arithmetic on the logged positions |
+| Checkpoint jumps peaked at 5.3, 5.18 and 4.27 MB/s, so the companion says "between 4 and 5.5" | Local run data already recorded in the sixth pass |
+| 169 MiB/s replay is a ceiling (warm cache); the 5 GiB sizing is labelled as such | Sixth-pass reviewer note |
+| Point-in-time restore with `recovery_target_action = 'pause'` stays on timeline 1; timeline 2 starts only at promotion | PostgreSQL 18 `continuous-archiving.html#BACKUP-TIMELINES` and recovery-target settings; reviewer correction to backup Figure 1 |
+
+### Sources
+All Microsoft URLs returned 200 on 18 October 2026:
+- https://learn.microsoft.com/en-us/sql/relational-databases/databases/estimate-the-size-of-a-heap
+- https://learn.microsoft.com/en-us/sql/relational-databases/sql-server-transaction-locking-and-row-versioning-guide
+- https://learn.microsoft.com/en-us/sql/relational-databases/accelerated-database-recovery-concepts
+- https://learn.microsoft.com/en-us/sql/relational-databases/logs/control-transaction-durability
+- https://learn.microsoft.com/en-us/sql/relational-databases/logs/database-checkpoints-sql-server
+- https://learn.microsoft.com/en-us/sql/relational-databases/logs/the-transaction-log-sql-server
+- https://learn.microsoft.com/en-us/sql/relational-databases/logs/troubleshoot-a-full-transaction-log-sql-server-error-9002
+- https://learn.microsoft.com/en-us/sql/relational-databases/pages-and-extents-architecture-guide
+- https://learn.microsoft.com/en-us/sql/t-sql/statements/alter-database-transact-sql-set-options
+- https://learn.microsoft.com/en-us/sql/sql-server/failover-clusters/automatic-page-repair-availability-groups-database-mirroring
+- https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/server-memory-server-configuration-options
+- https://dev.mysql.com/doc/refman/8.4/en/innodb-row-format.html
+- https://www.postgresql.org/docs/18/storage-toast.html
+- https://www.postgresql.org/docs/18/sql-createtable.html
+- https://www.sqlite.org/fileformat2.html

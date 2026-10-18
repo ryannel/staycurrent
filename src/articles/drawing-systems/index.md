@@ -46,9 +46,9 @@ A **UML activity diagram** with partitions draws much the same thing and suits t
 
 ## Sequence diagrams
 
-Use a sequence diagram when the question is about order: which message comes first, who waits, and what happens if a reply never arrives. Each participant has a vertical **lifeline**, time runs downwards, and each arrow is a request, reply or event. Framed **fragments** mark alternatives (`alt`), optional steps (`opt`), repetition (`loop`) and parallel work (`par`).
+Use a sequence diagram when the question is about order: which message comes first, who waits, and what happens if a reply never arrives. Each participant has a vertical **lifeline**, whose events happen in order from top to bottom, and each arrow is a request, reply or event. Framed **fragments** mark alternatives (`alt`), optional steps (`opt`), repetition (`loop`) and parallel work (`par`).
 
-An architecture diagram can't answer questions like these. For example, does the browser receive its receipt before the notification job runs? What does the worker know if the email provider never replies? The [sequence article](/learn/drawing-systems/sequences/) writes each example in Mermaid, including a timeout that looks the same whether the request was lost, the reply was lost or the provider was slow.
+An architecture diagram can't answer questions like these. For example, does the browser receive its receipt before the notification job runs? What does the worker know if the email provider never replies? The [sequence article](/learn/drawing-systems/sequences/) writes each example in Mermaid, and its [companion on failure and asynchrony](/learn/drawing-systems/async-interactions/) draws a timeout that looks the same whether the request was lost, the reply was lost or the provider was slow.
 
 ## Domain models and ER diagrams
 
@@ -105,7 +105,7 @@ Each article stands alone. This is the suggested order:
 
 1. [Architecture diagrams](/learn/drawing-systems/architecture/): C4 zoom levels, relationships and deployment.
 2. [Processes and swimlanes](/learn/drawing-systems/processes/): activities, handoffs, BPMN gateways, waiting and cancellation.
-3. [Sequence diagrams](/learn/drawing-systems/sequences/): calls, replies, fragments and lost messages, in Mermaid.
+3. [Sequence diagrams](/learn/drawing-systems/sequences/): calls, replies, fragments and reading a design, in Mermaid, with a [companion on failure and asynchrony](/learn/drawing-systems/async-interactions/).
 4. [Domains and data relationships](/learn/drawing-systems/domains/): terms, identity, cardinality and the step to a schema.
 5. [States and lifecycles](/learn/drawing-systems/states/): states, events, guards, effects and state tables.
 6. [Drawing at the whiteboard](/learn/drawing-systems/whiteboarding/): building a shared drawing during a conversation.

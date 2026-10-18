@@ -3,16 +3,18 @@
  * One animated sequence diagram. The server renders the finished diagram for the
  * default settings, so the figure reads without JavaScript; the script adds playback.
  * `source`, when given, is the figure's Mermaid text, kept in a closed disclosure so
- * readers can copy it without it interrupting the reading.
+ * readers can copy it without it interrupting the reading. `still` draws the finished
+ * diagram with no playback, for figures whose point is the whole drawing at once.
  */
 import { Code } from 'astro:components';
 import { scenarios, defaults, layout, renderSVG, events, stops } from './sequence-model';
 import './async-scenarios';
+import './design-scenarios';
 import '../../../styles/explorables.css';
 import './sequences.css';
 
-interface Props { scenario: string; n: number; source?: string; sourceLabel?: string }
-const { scenario, n, source, sourceLabel = 'Mermaid source' } = Astro.props;
+interface Props { scenario: string; n: number; source?: string; sourceLabel?: string; still?: boolean }
+const { scenario, n, source, sourceLabel = 'Mermaid source', still = false } = Astro.props;
 const def = scenarios[scenario];
 if (!def) throw new Error(`Unknown sequence scenario: ${scenario}`);
 const s = def.build(defaults(def));
@@ -23,7 +25,7 @@ const svg = renderSVG(s, layout(s, 640), s.duration, uid, { labelledby: titleId,
 const ev = events(s);
 const ticks = stops(s);
 ---
-<seq-player class="visual-essay" data-scenario={scenario} data-uid={uid}>
+<seq-player class="visual-essay" data-scenario={scenario} data-uid={uid} data-still={still ? '' : undefined}>
   <figure class="seq-fig" aria-labelledby={titleId}>
     <div class="seq-head"><span class="seq-number">Figure {n}</span><p class="seq-name" id={titleId}>{def.title}</p></div>
     <div class="seq-board paper-surface">
@@ -32,7 +34,7 @@ const ticks = stops(s);
       <p class="seq-now" data-now aria-live="polite"></p>
       <p class="seq-summary" id={summaryId} data-summary>{s.summary}</p>
     </div>
-    <div class="seq-controls" data-controls>
+    {!still && <div class="seq-controls" data-controls>
       {def.params.length > 0 && (
         <div class="seq-params">
           {def.params.map(p => (
@@ -54,7 +56,7 @@ const ticks = stops(s);
         <button type="button" data-act="reset"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4.5 0 1 0 1.4-3.3" /><path d="M2.5 2.5v3h3" /></svg><span class="seq-btn-label">Reset</span></button>
         <span class="seq-count" data-count aria-hidden="true"></span>
       </div>
-    </div>
+    </div>}
     <details class="seq-transcript">
       <summary>Messages in order, as text</summary>
       <ol data-transcript>{ev.map(e => <li>{e.text}</li>)}</ol>
@@ -71,6 +73,7 @@ const ticks = stops(s);
 <script>
   import { scenarios, defaults, layout, renderSVG, updateSVG, events, stops, stopOf, clockAt, formatMs } from './sequence-model';
   import './async-scenarios';
+  import './design-scenarios';
   import type { Scenario, Layout, Event, Item, Msg, Note } from './sequence-model';
 
   // How long a line of narration stays up during playback: about 230 words a minute.
@@ -85,6 +88,17 @@ const ticks = stops(s);
       const def = scenarios[this.dataset.scenario!];
       const uid = this.dataset.uid!;
       const aria = { labelledby: `${uid}-title`, describedby: `${uid}-summary` };
+      // A still figure only needs laying out again when its width changes.
+      if (this.dataset.still !== undefined) {
+        const stage = this.querySelector('[data-stage]') as HTMLElement;
+        const s = def.build(defaults(def));
+        let width = 0;
+        const render = () => { width = stage.clientWidth; stage.innerHTML = renderSVG(s, layout(s, width), s.duration, uid, aria); };
+        render();
+        this.dataset.ready = '';
+        new ResizeObserver(() => { if (Math.abs(stage.clientWidth - width) > 4) render(); }).observe(stage);
+        return;
+      }
       const q = <T extends Element>(sel: string) => this.querySelector(sel) as T;
       const stage = q<HTMLElement>('[data-stage]');
       const scrub = q<HTMLInputElement>('[data-scrub]');
@@ -147,7 +161,9 @@ const ticks = stops(s);
         scrub.value = String(T);
         if (clock && s.clock) clock.textContent = `Clock ${formatMs(clockAt(s, T))}`;
         const k = stepAt();
-        const text = k < 0 ? 'Press Play, or step through with Next.' : playing ? ev[k].short : ev[k].text;
+        // While playing through a wait, keep naming the last step until the next one starts.
+        const said = playing && k > 0 && T + 1e-6 < ev[k].t0 ? k - 1 : k;
+        const text = k < 0 ? 'Press Play, or step through with Next.' : playing ? ev[said].short : ev[k].text;
         if (text !== shown) { shown = text; shownAt = performance.now(); now.textContent = text; }
         count.textContent = `${k + 1} / ${ev.length}`;
         scrub.setAttribute('aria-valuetext', k < 0 ? 'Start' : `Step ${k + 1} of ${ev.length}`);
@@ -287,7 +303,13 @@ const ticks = stops(s);
         }
         const act = btn.dataset.act;
         if (act === 'play') { if (playing) stop(); else play(); }
-        if (act === 'next') goStep(nextStep(), true);
+        if (act === 'next') {
+          // A Next pressed while an earlier Next is still animating finishes that step first,
+          // so every press moves one step on.
+          const pending = !playing && target !== null ? target : null;
+          if (pending !== null) { stop(); T = pending; }
+          goStep(nextStep(), true);
+        }
         if (act === 'back') goStep(prevStep(), false);
         if (act === 'reset') {
           stop();

@@ -6,8 +6,13 @@ import Sql from '../../../../components/explainers/querying/Sql.astro';
 import drillUrl from '../../../../../docs/article-work/operations-completion/restore-drill.sh?url&no-inline';
 import physicalDrillUrl from '../../../../../docs/article-work/relational-depth-review/recovery/physical-restore.py?url&no-inline';
 import RecoveryBoundary from '../../../../components/explainers/RecoveryBoundary.astro';
+import StepFigure from '../../../../components/explainers/storage/StepFigure.astro';
+import StorageDefs from '../../../../components/explainers/storage/StorageDefs.astro';
 import '../../../../styles/explorables.css';
 import '../../../../styles/relational-design.css';
+const docs = 'https://www.postgresql.org/docs/18/';
+const mysql = 'https://dev.mysql.com/doc/refman/8.4/en/';
+const sqlite = 'https://www.sqlite.org/';
 const commands = String.raw`pg_dump --format=custom --file=shop.dump sc_recovery_source
 createdb --template=template0 sc_recovery_restore
 pg_restore --exit-on-error --single-transaction --no-owner --no-acl \
@@ -24,6 +29,7 @@ WHERE o.request_key IS NULL
 ---
 <Base title="Backups and recovery" description="Plan a restore against data-loss and service-recovery requirements, execute a bounded server drill, and validate the recovered application's records.">
  <article class="visual-essay relational-design">
+  <StorageDefs />
   <header class="essay-header"><p class="eyebrow">Databases and storage</p><h1>Backups and recovery</h1><TitleLine type="Deep dive" /></header>
 <ArticleBody>
   <p>A backup preserves something from which a database can be recovered. Recovery is the larger operation: obtain the copy, reconstruct a usable database, check its contents, reconnect the application and establish what happened to work near the failure. A backup file can exist while one of those steps is impossible.</p>
@@ -41,7 +47,7 @@ WHERE o.request_key IS NULL
   <section id="copies"><h2>What the backup contains</h2>
    <p>A PostgreSQL logical dump describes database objects and their data so they can be recreated. <code>pg_dump</code> takes a consistent view of one database while ordinary activity continues. The archive can be restored selectively and is useful for a bounded drill. Roles and other cluster-wide objects need separate handling; a dump of one database is not a complete copy of the service’s configuration.</p>
    <p>A physical base backup preserves the cluster’s storage representation. With the necessary uninterrupted WAL archive, recovery can replay changes beyond that base copy and stop at a chosen point. A logical dump is not a starting point for WAL replay. The <a href="https://www.postgresql.org/docs/18/continuous-archiving.html">continuous-archiving documentation</a> explains the required chain and recovery procedure.</p>
-   <p>For an accidental deletion at 10:05, a recoverable point just before the bad transaction can be more useful than the newest possible state. But stopping there also excludes legitimate transactions committed afterwards. Restoring to an isolated environment lets the team inspect the damage and choose whether to recover particular records or replace the service’s database, with reconciliation of later work.</p>
+   <p>For an accidental deletion at 10:05, a recoverable point just before the bad transaction can be more useful than the newest possible state. Restoring to an isolated environment lets the team inspect the damage and choose whether to recover particular records or replace the service’s database.</p>
    <p>A copy’s scope must include what makes its contents usable: encryption keys, compatible engine and extension versions, roles, permissions, application configuration and any required external objects. A database containing references to missing object-storage files is not a complete application recovery. Record which procedure restores each dependency and which identities can perform it during the failure being tested.</p>
   </section>
 
@@ -55,8 +61,49 @@ WHERE o.request_key IS NULL
    <p>We executed this drill on an isolated PostgreSQL 18.6 server. The restored database contained only 101, and reconciliation returned exactly <code>req-b</code>, expected €8, with no recovered amount. The script’s whole-second timer reported zero seconds for this tiny local restore; it says nothing useful about the service’s recovery time. The meaningful observation is which acknowledged purchase survived. The <a href="/learn/databases/relational/sandbox/?tutorial=recovery-reconciliation">browser reconciliation lesson</a> executes the comparison using tables that model a saved copy and external receipts. It verifies the SQL reasoning, not actual backup integrity, media recovery or restore time.</p>
   </section>
 
-  <section id="physical"><h2>Point-in-time recovery</h2>
-   <p>The dump stopped before request <code>req-b</code>. Taking another dump after every purchase is not our only way to preserve later work. A physical backup can supply the starting files while an archive supplies the WAL generated as the source continues changing. Recovery reconstructs those changes in order, including changes made after the base backup finished.</p>
+  <section id="pitr"><h2>How point-in-time recovery works</h2>
+   <p>Durability protects committed changes from a crash. It doesn’t protect them from losing the disk, or from a mistake. If the drive holding the table files and the write-ahead log (WAL) dies, there is nothing left to replay. If someone commits <code>DELETE FROM products</code>, crash recovery will faithfully keep the delete.</p>
+   <p>A replica on another server covers a lost disk, but it copies the delete too. Undoing a mistake needs a copy from before it, and a way to bring that copy forward to just before the mistake.</p>
+   <p><strong>Point-in-time recovery</strong> is <a href="/learn/databases/relational/storage/#recovery">crash recovery</a> started from an older copy of the files, fed with saved WAL, and stopped early.</p>
+
+   <h3 id="pitr-copying">Copying a database that is running</h3>
+   <p>A physical backup is a copy of the data files, and a busy database keeps changing them while the copy is made. When the copy finishes, it looks like the disk of a server that crashed: some pages are old, some are new, and one may have been caught mid-write.</p>
+   <p>Crash recovery repairs exactly that. The backup starts by forcing a checkpoint and noting its WAL position, and keeps every WAL record from there on. Recovery replays those records over the mixed files until they agree.</p>
+   <p>PostgreSQL also <a href={`${docs}continuous-archiving.html`}>forces <code>full_page_writes</code> on</a> while the backup runs, so a page torn during the copy has a full-page image to repair it.</p>
+   <p>InnoDB’s physical backup tools take the same route with the redo log. <a href="https://docs.percona.com/percona-xtrabackup/8.4/how-xtrabackup-works.html">Percona XtraBackup</a>, for example, remembers the log position where it starts. It copies the data files while a second process copies the redo records made in the meantime, and applies them in a prepare step.</p>
+
+   <h3 id="pitr-archive">Keeping the WAL after the backup</h3>
+   <p>WAL behind a <a href="/learn/databases/relational/storage/#recovery">checkpoint</a> is recycled. A backup taken at 09:00 is only a starting point: the changes made after it live in the WAL, and those files are about to be reused.</p>
+   <p>Archiving copies each WAL file somewhere safe before that happens. PostgreSQL runs an <code>archive_command</code> on every completed WAL file, and recycles the file only once the command reports success. The archive then holds the whole history since the backup.</p>
+   <p>Its health is worth watching. If archiving fails, the archive has a gap, and no restore can replay past it. <code>pg_stat_archiver</code> reports when the last file was archived and how many attempts have failed.</p>
+
+   <h3 id="pitr-replay">Replaying, then stopping early</h3>
+   <p>Take the shop’s day. A base backup begins at 09:00. At 10:00 the price of product P7, a blue mug, is set to 22.00. At 14:00 someone commits <code>DELETE FROM products</code>, and at 14:02 a valid price change for another product, P8, commits. The delete is noticed at 14:30.</p>
+   <p>To recover, start a new server from the 09:00 backup and give it the archive and a <strong>recovery target</strong>: where to stop. PostgreSQL accepts a time, a transaction ID, a WAL position or a name saved with <code>pg_create_restore_point()</code>.</p>
+   <p>Recovery replays the records in order, exactly as after a crash, and stops at the target. Here the target is 13:59, just before the delete’s commit record. Watch what the restored copy keeps.</p>
+   <StepFigure
+    scene="restore-timeline"
+    number={1}
+    title="PostgreSQL: restoring to a point before a delete"
+    alt="Two columns: the original server’s history from 09:00 to 14:02, and a restored copy that replays the archive up to 13:59."
+    caption="Times are invented for the example. The copy at 09:00 has pages of mixed ages, which replay repairs."
+   />
+   <p>The delete’s commit record was never replayed, and by <a href="/learn/databases/relational/storage/#unfinished">the rule from crash recovery</a> a transaction without one never committed. So on the restored copy the products are back, with P7 at 22.00.</p>
+
+   <h3 id="pitr-cost">What stopping early costs</h3>
+   <p>Replay stops at a point in the WAL, not at a single transaction. The 14:02 price change for P8 committed after the target, so it is lost with the delete. Recovery can’t skip one bad transaction and keep the good ones that followed it. The application has to find the commits made after the target, from its own records or the original server’s logs, and apply them again.</p>
+   <p>The restored server also starts a new history from 13:59, and the archive still holds the old one, whose WAL from 14:00 onward describes a different future. PostgreSQL gives each history a <a href={`${docs}continuous-archiving.html#BACKUP-TIMELINES`}>timeline</a>, a number that is part of every WAL file’s name, so the new history doesn’t overwrite the old one. If 13:59 turns out to be the wrong target, you can recover again from the same archive to a different point.</p>
+   <p>Two practical consequences follow. Restoring means replaying every record since the base backup, so restore time grows with the WAL kept, which is why base backups are repeated.</p>
+   <p>And when the disk dies, the commits at risk are those whose WAL hadn’t reached the archive yet. A quiet server can hold a few commits in a half-empty WAL file for a long time, so PostgreSQL’s <code>archive_timeout</code> forces a switch to a new file at least that often. Set it no longer than the gap your RPO allows.</p>
+
+   <h3 id="pitr-engines">In MySQL and SQLite</h3>
+   <p>MySQL has the same shape with one difference. Its point-in-time step replays the <a href={`${mysql}point-in-time-recovery-binlog.html`}>binary log</a> on top of a restored backup, not InnoDB’s redo log. The binary log is kept for 30 days by default, which is the longest a backup can be bridged unless you change <code>binlog_expire_logs_seconds</code>. You choose the stop point with <code>mysqlbinlog --stop-datetime</code> or <code>--stop-position</code>, and events at or after a stop position are left out.</p>
+   <p>SQLite keeps no archive of its own. Copying its file while a transaction is in progress can produce a corrupt copy. Use the <a href={`${sqlite}backup.html`}>online backup API</a> instead, which the shell exposes as <code>.backup</code>, or <a href={`${sqlite}lang_vacuum.html`}><code>VACUUM INTO</code></a>; both make consistent snapshots. A tool outside SQLite such as <a href="https://litestream.io/how-it-works/">Litestream</a>, which ships WAL frames to storage, adds point-in-time restore.</p>
+   <p>The next section runs the same procedure on a real PostgreSQL server. It returns to the orders from the drill: in place of the delete of products, one order is deleted by mistake, and in place of P8, a later purchase shows what stopping early costs.</p>
+  </section>
+
+  <section id="physical"><h2>Point-in-time recovery on a server</h2>
+   <p>The dump stopped before request <code>req-b</code>. A base backup with an archive, as above, keeps that later work without another dump.</p>
    <p>Here is a separate server experiment using the same order identities. It starts again with only 101/<code>req-a</code>/€25, takes a physical base backup, then performs four source actions in this order. Each purchase and the deletion commits separately.</p>
    <div class="table-scroll" role="region" tabindex="0" aria-label="Physical recovery experiment history"><table><thead><tr><th>Source action after the base backup</th><th>Orders now present</th></tr></thead><tbody><tr><td>Commit 102 / req-b / €8</td><td>101 and 102</td></tr><tr><td>Create restore point before_mistake</td><td>101 and 102</td></tr><tr><td>Mistakenly delete 101</td><td>102</td></tr><tr><td>Commit 103 / req-c / €12</td><td>102 and 103</td></tr></tbody></table></div>
    <p>A named <strong>restore point</strong> writes a marker into the WAL history; it does not take another backup. This exercise creates the marker by calling <code>pg_create_restore_point</code> with the name <code>before_mistake</code> between the second purchase and the deletion. That gives us an exact boundary to test. An unexpected incident will usually require reconstructing the right boundary from evidence and using an appropriate time, transaction or log position instead.</p>
@@ -65,7 +112,7 @@ WHERE o.request_key IS NULL
    <p>The script enables archiving before calling <code>pg_basebackup --wal-method=stream --checkpoint=fast</code>. The streamed WAL makes that base usable through its own backup period. It does not include future purchases: later WAL must reach the archive too. The script switches the later segment and checks that archiving has reached it before stopping the source. PostgreSQL’s <a href="https://www.postgresql.org/docs/18/app-pgbasebackup.html">base-backup reference</a> describes the files and WAL included in that operation.</p>
    <p>On a copy of the base files, the recovery configuration names the archive, requests <code>recovery_target_name = 'before_mistake'</code> and chooses <code>recovery_target_action = 'pause'</code>. An empty <code>recovery.signal</code> file requests archive recovery at startup. Pausing keeps the target in recovery so we can inspect it through read-only queries before deciding whether it should become a writable service.</p>
    <p>In the executed PostgreSQL 18.6 trial, <code>pg_is_wal_replay_paused()</code> returned true and <code>transaction_read_only</code> was on. The recovered orders were 101/€25 and 102/€8. The second purchase survived even though it was absent when we took the base, because recovery obtained its later change from WAL. The deletion had not been replayed.</p>
-   <p>Now compare with all three independently acknowledged requests. Request <code>req-c</code> is missing. That is not a replay failure: it committed after the chosen stopping point. Recovery has followed the instruction correctly. It restores the cluster at a boundary in its history; it cannot skip one bad transaction and automatically preserve every good transaction after it.</p>
+   <p>Now compare with all three independently acknowledged requests. Request <code>req-c</code> is missing, like P8 above: it committed after the stopping point, so replay correctly left it out.</p>
    <p>This leaves an application decision. Replacing the service’s database with this target would require reconciling request <code>req-c</code> and any other later work. Alternatively, the recovered target can supply evidence for repairing only the damaged records in the current database. In our one-table fixture that means recovering 101 while keeping the current 102 and 103. A real order also has stock, lines, payment and fulfilment state to reconcile. Inspect those relationships and the current record before choosing a repair; neither choice means charging any acknowledged purchase again.</p>
    <p>The experiment remains paused and is then stopped. It does not perform a production cutover. Reopening a recovered service also requires the role, application and deletion checks below. The <a href="https://www.postgresql.org/docs/18/runtime-config-wal.html#RUNTIME-CONFIG-WAL-RECOVERY-TARGET">recovery-target settings</a> explain the available boundaries and what pause, promotion or shutdown mean at the target.</p>
   </section>
@@ -97,6 +144,9 @@ WHERE o.request_key IS NULL
   <section class="essay-sources" aria-labelledby="sources"><h2 id="sources">Sources and further reading</h2>
    <ul>
     <li><a href="https://www.postgresql.org/docs/18/backup-dump.html">PostgreSQL 18: SQL dump</a>: a dump’s consistent view and the scope of logical restoration.</li>
+    <li><a href={`${docs}continuous-archiving.html`}>PostgreSQL 18: Continuous Archiving and Point-in-Time Recovery</a>: base backups, archiving, recovery targets and timelines.</li>
+    <li><a href={`${mysql}point-in-time-recovery-binlog.html`}>MySQL 8.4: Point-in-Time Recovery Using Binary Log</a>, <a href="https://docs.percona.com/percona-xtrabackup/8.4/how-xtrabackup-works.html">how Percona XtraBackup works</a>, the <a href={`${sqlite}backup.html`}>SQLite online backup API</a> and <a href="https://litestream.io/how-it-works/">how Litestream works</a>: the same idea in the other engines.</li>
+    <li><a href="/learn/databases/relational/storage/">Storage and durability</a>: the log, checkpoints and crash recovery that point-in-time recovery reuses.</li>
     <li><a href="/learn/databases/relational/postgresql/recovery/">WAL, checkpoints, and recovery</a>: the physical recovery machinery behind replaying committed changes.</li>
    </ul>
   </section>

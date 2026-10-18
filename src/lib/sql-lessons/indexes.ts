@@ -154,6 +154,55 @@ WHERE email = 'Shopper0042@Example.com';`;
 export const lowerEmail = `SELECT order_id
 FROM index_orders
 WHERE lower(email) = 'shopper0042@example.com';`;
+export const statusLast = `CREATE INDEX index_orders_cover_status
+ON index_orders (customer_id, placed_at DESC, order_id DESC, status)
+INCLUDE (total);`;
+export const dropStatusLast = `DROP INDEX index_orders_cover_status;`;
+export const bareSetup = `CREATE INDEX index_orders_customer
+ON index_orders (customer_id);
+CREATE INDEX index_orders_placed
+ON index_orders (placed_at);`;
+export const bareDay = `SELECT order_id
+FROM index_orders
+WHERE placed_at >= timestamptz '2026-02-01 00:00:00+00'
+  AND placed_at < timestamptz '2026-02-02 00:00:00+00';`;
+export const truncDay = `SELECT order_id
+FROM index_orders
+WHERE date_trunc('day', placed_at) = timestamptz '2026-02-01 00:00:00+00';`;
+export const plusZero = `SELECT *
+FROM index_orders
+WHERE customer_id + 0 = 42;`;
+export const asText = `SELECT *
+FROM index_orders
+WHERE customer_id::text = '42';`;
+export const asNumeric = `SELECT *
+FROM index_orders
+WHERE customer_id = 42::numeric;`;
+export const asBigint = `SELECT *
+FROM index_orders
+WHERE customer_id = 42::bigint;`;
+export const catchAll = `PREPARE orders_for(integer) AS
+SELECT order_id
+FROM index_orders
+WHERE ($1 IS NULL OR customer_id = $1);`;
+export const latestOne = `SELECT order_id, placed_at
+FROM index_orders
+WHERE customer_id = 42
+ORDER BY placed_at DESC
+LIMIT 1;`;
+export const quietCustomer = `INSERT INTO index_orders
+SELECT 60000 + n, 1001,
+  timestamptz '2025-12-01 00:00:00+00' + n * interval '1 hour',
+  'paid', 10, 'shopper1001@example.com', ''
+FROM generate_series(1, 60) AS series(n);
+ANALYZE index_orders;`;
+export const latestQuiet = `SELECT order_id, placed_at
+FROM index_orders
+WHERE customer_id = 1001
+ORDER BY placed_at DESC
+LIMIT 1;`;
+export const latestIndex = `CREATE INDEX index_orders_customer_placed
+ON index_orders (customer_id, placed_at);`;
 export const staleSetup = `CREATE TEMP TABLE events (
   event_id integer PRIMARY KEY,
   kind text NOT NULL,

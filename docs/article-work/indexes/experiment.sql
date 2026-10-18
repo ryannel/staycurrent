@@ -207,6 +207,26 @@ WHERE customer_id = 42
 ORDER BY placed_at DESC, order_id DESC
 LIMIT 10;
 
+-- The same query with status as the last key column: the condition is
+-- checked inside the index.
+
+CREATE INDEX index_orders_cover_status
+ON index_orders (customer_id, placed_at DESC, order_id DESC, status)
+INCLUDE (total);
+
+ANALYZE index_orders;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT order_id, placed_at, total
+FROM index_orders
+WHERE customer_id = 42
+  AND placed_at >= timestamptz '2026-02-01 00:00:00+00'
+  AND status = 'paid'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;
+
+DROP INDEX index_orders_cover_status;
+
 -- Partial and expression indexes.
 
 CREATE INDEX index_orders_pending
@@ -331,6 +351,121 @@ WHERE lower(email) = 'shopper0042@example.com';
 SELECT indexrelname, idx_scan
 FROM pg_stat_user_indexes
 WHERE relname = 'index_orders';
+
+-- Indexing queries: the diagnosis cases. Start again from only a
+-- customer index and a placed_at index.
+
+DROP INDEX index_orders_pending, index_orders_day, index_orders_customer_time,
+  index_orders_placed, index_orders_email;
+
+CREATE INDEX index_orders_customer
+ON index_orders (customer_id);
+CREATE INDEX index_orders_placed
+ON index_orders (placed_at);
+
+ANALYZE index_orders;
+
+-- The column has to stand alone.
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT order_id
+FROM index_orders
+WHERE placed_at >= timestamptz '2026-02-01 00:00:00+00'
+  AND placed_at < timestamptz '2026-02-02 00:00:00+00';
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT order_id
+FROM index_orders
+WHERE date_trunc('day', placed_at) = timestamptz '2026-02-01 00:00:00+00';
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT *
+FROM index_orders
+WHERE customer_id = 42;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT *
+FROM index_orders
+WHERE customer_id + 0 = 42;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT *
+FROM index_orders
+WHERE customer_id::text = '42';
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT *
+FROM index_orders
+WHERE customer_id = 42::numeric;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT *
+FROM index_orders
+WHERE customer_id = 42::bigint;
+
+-- A catch-all optional filter: a plan made for the value, then a plan
+-- made for any value.
+
+PREPARE orders_for(integer) AS
+SELECT order_id
+FROM index_orders
+WHERE ($1 IS NULL OR customer_id = $1);
+
+SET plan_cache_mode = force_custom_plan;
+
+EXPLAIN (ANALYZE, BUFFERS)
+EXECUTE orders_for(42);
+
+SET plan_cache_mode = force_generic_plan;
+
+EXPLAIN (ANALYZE, BUFFERS)
+EXECUTE orders_for(42);
+
+RESET plan_cache_mode;
+
+-- ORDER BY with LIMIT: the planner walks the placed_at index. Then a
+-- customer whose orders are all older than everyone else's, and the
+-- composite index that removes the gamble.
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT order_id, placed_at
+FROM index_orders
+WHERE customer_id = 42
+ORDER BY placed_at DESC
+LIMIT 1;
+
+INSERT INTO index_orders
+SELECT 60000 + n, 1001,
+  timestamptz '2025-12-01 00:00:00+00' + n * interval '1 hour',
+  'paid', 10, 'shopper1001@example.com', ''
+FROM generate_series(1, 60) AS series(n);
+ANALYZE index_orders;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT order_id, placed_at
+FROM index_orders
+WHERE customer_id = 1001
+ORDER BY placed_at DESC
+LIMIT 1;
+
+CREATE INDEX index_orders_customer_placed
+ON index_orders (customer_id, placed_at);
+
+ANALYZE index_orders;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT order_id, placed_at
+FROM index_orders
+WHERE customer_id = 42
+ORDER BY placed_at DESC
+LIMIT 1;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT order_id, placed_at
+FROM index_orders
+WHERE customer_id = 1001
+ORDER BY placed_at DESC
+LIMIT 1;
 
 -- Statistics that no longer match the data: a separate pair of tables.
 -- Autovacuum never processes temporary tables, so nothing refreshes the

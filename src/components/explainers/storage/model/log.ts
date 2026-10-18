@@ -451,11 +451,12 @@ export const restoreTimeline: Scene<RestoreState> = {
     { text: 'The disk is lost, or the delete is noticed. A new server starts from the 09:00 base backup. Its files are a mixture of ages, like a crashed server’s.', state: { n: 4 } },
     { text: 'Recovery reads the archive and replays the log in order, as after a crash. The 10:00 price change comes back.', state: { n: 5 } },
     { text: 'The recovery target is 13:59, so replay stops before the DELETE’s commit record. That transaction never committed as far as this server is concerned.', state: { n: 6 } },
-    { text: 'The server opens on timeline 2. P7 is 22.00 and the products are back. The 14:02 change was after the target, so it is lost too and has to be applied again.', state: { n: 7 } },
+    { text: 'Replay pauses at the target, PostgreSQL’s default, so the copy can be checked read-only. P7 is 22.00 and the products are back. The 14:02 change was after the target, so it is lost too and has to be applied again.', state: { n: 7 } },
+    { text: 'Promoting the copy to a writable server starts timeline 2: a new history that branches from 13:59 and leaves the old one in the archive.', state: { n: 8 } },
   ],
   stats: ({ n }) => [
     { label: 'Stop point', value: n >= 6 ? '13:59' : '—' },
-    { label: 'Timeline', value: n >= 7 ? '2' : '1' },
+    { label: 'Timeline', value: n >= 8 ? '2' : '1' },
   ],
   render: ({ n }, W) => {
     const items: Item[] = [];
@@ -465,7 +466,7 @@ export const restoreTimeline: Scene<RestoreState> = {
     const lx = pad;
     const rx = pad * 2 + cw;
     items.push(text('h-orig', lx, 14, narrow ? 'ORIGINAL · TIMELINE 1' : 'ORIGINAL SERVER · TIMELINE 1', 'sf-t sf-lane'));
-    if (n >= 4) items.push(text('h-rest', rx, 14, n >= 7 ? 'RESTORED · TIMELINE 2' : 'RESTORED COPY', 'sf-t sf-lane'));
+    if (n >= 4) items.push(text('h-rest', rx, 14, n >= 8 ? 'RESTORED · TIMELINE 2' : 'RESTORED COPY', 'sf-t sf-lane'));
     const top = 26;
     const rowH = 40;
     const shown = n <= 3 ? n + 1 : 4;

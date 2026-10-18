@@ -256,7 +256,20 @@ observed.history.coverAfterNeighbourUpdate = { node: 'Index Only Scan', heapFetc
 p = await plan(s.residual);
 assert.equal(find(p, 'Index Scan')['Rows Removed by Filter'], 2);
 assert.equal(find(p, 'Index Scan')['Actual Rows'], 10);
-observed.residual = { fetched: 12, removed: 2, returned: 10 };
+observed.residual = { fetched: 12, removed: 2, returned: 10, pages: pages(p.Plan), filter: find(p, 'Index Scan').Filter ?? null };
+// The same query with status added as the last key column: the condition is
+// checked inside the index, so no row is fetched only to be thrown away.
+await db.exec(s.statusLast + ' ANALYZE index_orders;');
+p = await plan(s.residual);
+{
+  const scan = nodes(p.Plan).find((n) => n['Index Name'] === 'index_orders_cover_status');
+  assert(scan, 'trailing-status index used');
+  assert(String(scan['Index Cond']).includes('status'));
+  assert.equal(scan.Filter, undefined);
+  assert.equal(scan['Actual Rows'], 10);
+  observed.statusLast = { node: scan['Node Type'], pages: pages(p.Plan), indexCond: scan['Index Cond'] };
+}
+await db.exec(s.dropStatusLast);
 
 // Partial, expression and unique indexes.
 await db.exec(s.partialIndex);
@@ -295,8 +308,8 @@ observed.splits = {
   randomOrder: { pages: await size('random_keys_pkey'), ...(await leafStats('random_keys_pkey')) },
 };
 assert.equal(observed.splits.inOrder.pages, 166);
-// random() differs between runs: nine runs gave 219 to 244 pages, most near 225.
-assert(observed.splits.randomOrder.pages >= 215 && observed.splits.randomOrder.pages <= 250, String(observed.splits.randomOrder.pages));
+// 200 runs gave 214 to 244, mean 227
+assert(observed.splits.randomOrder.pages >= 205 && observed.splits.randomOrder.pages <= 255, String(observed.splits.randomOrder.pages));
 
 // Deleted rows: two in three, scattered through the table, on a copy.
 await db.exec(s.thinned);
@@ -376,6 +389,58 @@ await assert.rejects(db.exec("INSERT INTO index_orders SELECT 60001, customer_id
 // result is not recorded.
 await q(s.usage);
 await db.close();
+
+// A condition the index cannot see through: only a customer index and a
+// placed_at index, and the catch-all optional filter as a prepared statement.
+{
+  const b = await open();
+  await b.db.exec(setup);
+  await b.db.exec(s.bareSetup + ' ANALYZE index_orders;');
+  const row = async (sql) => { const bp = await b.plan(sql); return { node: bp.Plan['Node Type'], pages: pages(bp.Plan) }; };
+  observed.bare = {
+    day: await row(s.bareDay), truncDay: await row(s.truncDay),
+    lookup: await row(s.lookup), plusZero: await row(s.plusZero), asText: await row(s.asText),
+    asNumeric: await row(s.asNumeric), asBigint: await row(s.asBigint),
+  };
+  for (const k of ['truncDay', 'plusZero', 'asText', 'asNumeric']) assert.equal(observed.bare[k].pages, 1725, k);
+  assert.equal(observed.bare.lookup.pages, 62);
+  assert.equal(observed.bare.asBigint.pages, 62);
+  await b.db.exec(s.catchAll);
+  await b.db.exec('SET plan_cache_mode = force_custom_plan');
+  const custom = await b.plan('EXECUTE orders_for(42)');
+  await b.db.exec('SET plan_cache_mode = force_generic_plan');
+  const generic = await b.plan('EXECUTE orders_for(42)');
+  await b.db.exec('RESET plan_cache_mode');
+  observed.catchAll = { custom: { node: custom.Plan['Node Type'], pages: pages(custom.Plan) }, generic: { node: generic.Plan['Node Type'], pages: pages(generic.Plan) } };
+  assert.equal(observed.catchAll.generic.node, 'Seq Scan');
+  assert.equal(observed.catchAll.generic.pages, 1725);
+  assert.equal(observed.catchAll.custom.pages, 62);
+  await b.db.close();
+}
+
+// ORDER BY with LIMIT: the planner walks the placed_at index backwards,
+// expecting to meet the customer's rows early. A customer whose orders all
+// lie at the old end makes it read almost the whole table.
+{
+  const l = await open();
+  await l.db.exec(setup);
+  await l.db.exec(s.bareSetup + ' ANALYZE index_orders;');
+  const shape = (lp) => {
+    const scan = nodes(lp.Plan).find((n) => n['Index Name']);
+    return { index: scan['Index Name'], removed: scan['Rows Removed by Filter'] ?? 0, pages: pages(lp.Plan) };
+  };
+  observed.limitTrap = { usual: shape(await l.plan(s.latestOne)) };
+  await l.db.exec(s.quietCustomer);
+  observed.limitTrap.quiet = shape(await l.plan(s.latestQuiet));
+  assert.equal(observed.limitTrap.usual.index, 'index_orders_placed');
+  assert.equal(observed.limitTrap.quiet.index, 'index_orders_placed');
+  assert(observed.limitTrap.quiet.pages > 1500);
+  await l.db.exec(s.latestIndex + ' ANALYZE index_orders;');
+  observed.limitTrap.fixed = { usual: shape(await l.plan(s.latestOne)), quiet: shape(await l.plan(s.latestQuiet)) };
+  assert.equal(observed.limitTrap.fixed.quiet.index, 'index_orders_customer_placed');
+  assert.equal(observed.limitTrap.fixed.quiet.removed, 0);
+  await l.db.close();
+}
 
 // The same selectivity test with the rows shuffled across the pages.
 {

@@ -166,3 +166,11 @@ marker and no `ref`; the article says so and shows the note idiom.
   `export class Builder` there and an import in `SequencePlayer.astro`. Both are one-line
   edits; the parent's deepening agent also works in these files.
 - The deck of cross-links assumes sibling pages exist under their current slugs.
+
+## Restructured, 18 October 2026
+
+Now *Failure, asynchrony and races in sequence diagrams*, the single failure companion to
+*Sequence diagrams*. Timeouts, retries and the outbox's failure cases moved in; broker,
+saga and webhook mechanics were cut to sentences. See
+`docs/article-work/sequences/restructure-2026-10-18.md` and the coverage map in
+`docs/coverage/drawing-systems.md`.

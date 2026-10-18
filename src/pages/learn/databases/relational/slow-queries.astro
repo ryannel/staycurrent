@@ -16,6 +16,14 @@ WHERE datname = current_database()
 ORDER BY xact_start NULLS LAST;`;
 const estimate = `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)
 SELECT count(*) FROM perf_jobs WHERE state = 'queued';`;
+const hitRatio = `-- PostgreSQL: run twice, a few minutes apart, and subtract.
+SELECT blks_hit, blks_read FROM pg_stat_database
+WHERE datname = current_database();
+
+-- MySQL: the same idea with two status variables.
+SHOW GLOBAL STATUS
+WHERE Variable_name IN ('Innodb_buffer_pool_read_requests',
+                        'Innodb_buffer_pool_reads');`;
 ---
 <Base title="Understanding database performance" description="Trace a slow request through connection waits, generated queries, execution plans and maintenance, then test an improvement under a representative workload.">
  <article class="visual-essay relational-design">
@@ -56,6 +64,30 @@ SELECT count(*) FROM perf_jobs WHERE state = 'queued';`;
    <p>Real data has less tidy distributions. A tenant may own most records; two filtered columns may be strongly related. PostgreSQL’s <a href="https://www.postgresql.org/docs/18/planner-stats.html">statistics</a> include common values, distributions and optional statistics spanning multiple columns. Investigate where estimates first depart substantially from actual rows before changing statistics settings. A large mismatch near the bottom of a join plan can make the work above it unexpectedly expensive. Prepared statements also deserve testing in the application’s actual execution mode, because a plan shared between parameter values can differ from one made for a particular value. The PostgreSQL chapter <a href="/learn/databases/relational/postgresql/query-execution/">Planning and executing a query</a> works through this with tenants of different sizes and compares the resulting plans.</p>
    <p>Interpret the measurements carefully. Plan cost is not elapsed milliseconds. Where a node has multiple <code>loops</code>, its actual row count is an average per execution. Buffer hits count accesses to pages already in PostgreSQL’s buffers; reads do not alone prove a physical storage access because the operating system may cache them. Parent measurements can include child work, so summing every node double-counts it. The <a href="/learn/databases/relational/query-execution/">query execution article</a> follows these details through complete plans.</p>
    <p>A plain <code>EXPLAIN</code> shows the intended strategy without executing it. Use that distinction when investigating costly or modifying statements: <code>EXPLAIN ANALYZE UPDATE ...</code> really performs an update. The experiment here uses a read on disposable records. Its browser execution times do not estimate a production server’s latency.</p>
+  </section>
+
+  <section id="hit-rate"><h2>Reading the cache hit rate</h2>
+   <p>The <strong>hit rate</strong> is the share of page requests the <a href="/learn/databases/relational/buffer-pool/">buffer pool</a> answered from memory: hits divided by hits plus reads. It is the most quoted cache number and one of the easiest to misread. Each engine counts both halves in its own place.</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-label="Where each engine counts hits and reads"><table>
+    <thead><tr><th scope="col">Engine</th><th scope="col">Hits</th><th scope="col">Reads (misses)</th></tr></thead>
+    <tbody>
+     <tr><td>PostgreSQL</td><td><code>blks_hit</code> in <code>pg_stat_database</code>; <code>hits</code> in <code>pg_stat_io</code></td><td><code>blks_read</code>; <code>reads</code></td></tr>
+     <tr><td>InnoDB</td><td><code>Innodb_buffer_pool_read_requests</code> counts every request, hit or not</td><td><code>Innodb_buffer_pool_reads</code></td></tr>
+     <tr><td>SQL Server</td><td>No hit count: <code>sys.dm_os_performance_counters</code> gives the ratio as <code>Buffer cache hit ratio</code> divided by its <code>base</code> counter</td><td><code>Page reads/sec</code>, a running total despite its name</td></tr>
+     <tr><td>SQLite</td><td><code>SQLITE_DBSTATUS_CACHE_HIT</code>, per connection</td><td><code>SQLITE_DBSTATUS_CACHE_MISS</code></td></tr>
+    </tbody>
+   </table></div>
+   <p>For PostgreSQL the rate is <code>blks_hit / (blks_hit + blks_read)</code>. For InnoDB, whose request counter already includes the misses, it is 1 minus <code>Innodb_buffer_pool_reads</code> divided by <code>Innodb_buffer_pool_read_requests</code>.</p>
+   <Sql code={hitRatio} label="Sampling hit and read counters in PostgreSQL and MySQL" />
+   <p>Five things make the rate mislead:</p>
+   <ul>
+    <li><strong>The counters run from the last reset.</strong> A rate over three months hides the bad hour. Sample the counters twice, a few minutes apart, and divide the differences.</li>
+    <li><strong>It counts page requests, not queries.</strong> An index lookup makes three or four requests, and the upper index pages are almost always hits. If the leaf and the table page missed every time, the lookup would wait on the drive twice, yet half its requests would count as hits. One query with a bad plan can be slow at 99.9%.</li>
+    <li><strong>Small differences are large.</strong> At 99%, one request in a hundred is a read; at 99.9%, one in a thousand. That is ten times fewer reads, from a change that looks like rounding. Reads per second, compared with what the storage can serve, is the more useful number.</li>
+    <li><strong>In PostgreSQL a read may not reach the drive.</strong> A low rate can be harmless when the operating system’s cache answers in microseconds. With <code>track_io_timing</code> on, <code>pg_stat_io</code> and <code>pg_stat_database</code> report how long reads took.</li>
+    <li><strong>Large scans pull it down without hurting anyone.</strong> A sequential scan through PostgreSQL’s buffer ring counts nearly every page as a read, so a nightly report lowers the day’s rate while the working set stays cached. <code>EXPLAIN (ANALYZE)</code> reports a single query’s own hits and reads instead.</li>
+   </ul>
+   <p>The questions that matter more are how many reads a second get through, how long they take, and which queries cause them. Turning those into a sizing decision is covered in <a href="/learn/databases/relational/buffer-pool/#too-small">The buffer pool</a>.</p>
   </section>
 
   <section id="maintenance"><h2>Maintenance</h2>

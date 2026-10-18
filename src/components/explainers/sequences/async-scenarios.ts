@@ -1,4 +1,4 @@
-// Scenarios for "Drawing asynchronous and event-driven interactions".
+// Scenarios for "Failure, asynchrony and races in sequence diagrams".
 // They register into the shared `scenarios` table, so SequencePlayer renders them like the others.
 import { Builder, scenarios } from './sequence-model';
 import type { Participant } from './sequence-model';
@@ -13,8 +13,6 @@ const P: Record<string, Participant> = {
   topic: { id: 'topic', label: 'Repair events', short: 'Topic' },
   tech: { id: 'tech', label: 'Technician app', short: 'Tech app' },
   billing: { id: 'billing', label: 'Billing' },
-  mina: { id: 'mina', label: 'Mina' },
-  timer: { id: 'timer', label: 'Scheduler' },
   booking: { id: 'booking', label: 'Booking' },
   slots: { id: 'slots', label: 'Scheduling' },
   parts: { id: 'parts', label: 'Inventory' },
@@ -211,57 +209,10 @@ Object.assign(scenarios, {
     },
   },
 
-  // A flow that waits for a person for up to two days.
-  confirm: {
-    title: 'Waiting 48 hours for Mina',
-    params: [{ id: 'when', label: 'Mina replies', default: 'prompt', options: [
-      { value: 'prompt', label: 'Within hours' },
-      { value: 'reminded', label: 'After the reminder' },
-      { value: 'released', label: 'After the release' },
-    ] }],
-    build: (p: Record<string, string>) => {
-      const b = new Builder([P.mina, P.api, P.timer], { strip: true });
-      b.pause(0.2);
-      b.msg('api', 'mina', 'Confirm appointment A5', 'async');
-      b.msg('api', 'timer', 'Remind +24 h, release +48 h', 'sync');
-      b.msg('timer', 'api', 'Timers stored', 'reply');
-      b.status('api', 'holding', 'A5 held');
-      b.note(['api'], 'Row saved: A5 held until Friday 10:00', { rows: 1.5 });
-      const confirm = () => {
-        b.msg('mina', 'api', 'Confirm A5', 'sync');
-        b.msg('api', 'mina', 'Confirmed', 'reply');
-        b.msg('api', 'timer', 'Cancel timers', 'sync');
-        b.msg('timer', 'api', 'OK', 'reply');
-        b.status('api', 'done', 'A5 confirmed');
-      };
-      if (p.when === 'prompt') {
-        b.gap('2 hours later', 0.7, 0);
-        confirm();
-        return b.finish('The API offers appointment A5, holds its time and asks the scheduler to fire a reminder after 24 hours and a release after 48. Mina confirms two hours later, so the API confirms the appointment and cancels both timers.');
-      }
-      b.gap('24 hours later', 0.7, 0);
-      b.msg('timer', 'api', 'Reminder due', 'async');
-      b.msg('api', 'mina', 'Reminder: confirm A5', 'async');
-      if (p.when === 'reminded') {
-        b.gap('5 hours later', 0.7, 0);
-        confirm();
-        return b.finish('The scheduler fires the reminder after 24 hours and the API sends it. Mina confirms 5 hours later, still inside the 48 hours, so the API confirms the appointment and cancels the timers.');
-      }
-      b.gap('24 hours later, no reply', 0.8, 0);
-      b.msg('timer', 'api', 'Release due', 'async');
-      b.status('api', 'released', 'A5 free');
-      b.msg('api', 'mina', 'A5 released', 'async');
-      b.gap('The next morning', 0.7, 0);
-      b.msg('mina', 'api', 'Confirm A5', 'sync');
-      b.msg('api', 'mina', '409: A5 released', 'error');
-      return b.finish('The scheduler fires the reminder after 24 hours and the release after 48. The API frees the time for A5 and tells Mina. When she confirms the next morning, the API refuses with 409, because the time is no longer held for her.');
-    },
-  },
-
   // A booking saga with compensation.
   saga: {
     title: 'A booking saga and its compensation',
-    params: [{ id: 'deposit', label: 'Deposit', default: 'paid', options: [
+    params: [{ id: 'deposit', label: 'Deposit', default: 'declined', options: [
       { value: 'paid', label: 'Accepted' },
       { value: 'declined', label: 'Declined' },
       { value: 'retry', label: 'Declined, reply lost' },
@@ -289,7 +240,7 @@ Object.assign(scenarios, {
       b.note(['booking'], 'Undo completed steps, latest first', { tone: 'warn' });
       b.msg('booking', 'parts', 'Release part P3', 'sync');
       if (p.deposit === 'retry') {
-        b.msg('parts', 'booking', 'Released', 'lost', { lostAt: 0.5 });
+        b.msg('parts', 'booking', 'Released', 'lost', { lostAt: 0.75 });
         b.status('parts', 'free', '');
         b.note(['booking'], 'No reply: send the release again', { tone: 'warn' });
         b.msg('booking', 'parts', 'Release part P3 (again)', 'sync');

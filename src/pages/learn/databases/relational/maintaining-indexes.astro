@@ -9,7 +9,9 @@ import '../../../../styles/relational-design.css';
 const docs = 'https://www.postgresql.org/docs/18/';
 const mysql = 'https://dev.mysql.com/doc/refman/8.4/en/';
 const sqlite = 'https://www.sqlite.org/';
+const mssql = 'https://learn.microsoft.com/en-us/sql/';
 const indexes = '/learn/databases/relational/indexes/';
+const pgIndexes = '/learn/databases/relational/postgresql/indexes/';
 
 const pgSizes = `-- Size of every index on a table, with how often it has been used
 SELECT i.indexrelid::regclass AS index,
@@ -17,26 +19,23 @@ SELECT i.indexrelid::regclass AS index,
        s.idx_scan, s.last_idx_scan
 FROM pg_index i
 JOIN pg_stat_user_indexes s ON s.indexrelid = i.indexrelid
-WHERE i.indrelid = 'o_rand'::regclass
+WHERE i.indrelid = 'orders'::regclass
 ORDER BY pg_relation_size(i.indexrelid) DESC;`;
-
-const pgStatIndex = `CREATE EXTENSION IF NOT EXISTS pgstattuple;
-
-SELECT tree_level, index_size, leaf_pages, empty_pages, deleted_pages,
-       avg_leaf_density, leaf_fragmentation
-FROM pgstatindex('o_rand_customer_idx');
---  tree_level | index_size | leaf_pages | empty_pages | deleted_pages | avg_leaf_density | leaf_fragmentation
--- ------------+------------+------------+-------------+---------------+------------------+--------------------
---           2 |    7987200 |        969 |           0 |             0 |            19.19 |                  0`;
 
 const innodbSizes = `-- Pages in each index of one table, from InnoDB's persistent statistics
 SELECT index_name, stat_value * @@innodb_page_size AS bytes
 FROM mysql.innodb_index_stats
 WHERE database_name = 'shop' AND table_name = 'orders'
-  AND stat_name = 'size';
+  AND stat_name = 'size';`;
 
--- 'n_leaf_pages' is the same table's leaf-page count, and ANALYZE TABLE
--- refreshes both numbers.`;
+const mssqlSizes = `-- Pages and page density for each index on a table
+SELECT i.name, s.page_count,
+       s.avg_page_space_used_in_percent AS density,
+       s.avg_fragmentation_in_percent
+FROM sys.dm_db_index_physical_stats(
+       DB_ID(), OBJECT_ID('dbo.orders'), NULL, NULL, 'SAMPLED') AS s
+JOIN sys.indexes AS i
+  ON i.object_id = s.object_id AND i.index_id = s.index_id;`;
 
 const sqliteSizes = `-- Pages and how full they are, per table and index (needs the dbstat table)
 SELECT name, count(*) AS pages,
@@ -48,83 +47,29 @@ ORDER BY pages DESC;
 PRAGMA page_count;       -- pages in the file
 PRAGMA freelist_count;   -- pages in the file that hold nothing`;
 
-const reindexForms = `-- One index, writes allowed throughout (cannot run inside BEGIN ... COMMIT)
-REINDEX INDEX CONCURRENTLY o_rand_customer_idx;
+const innodbRebuild = `-- Rebuilds the table and every index on it, in place; writes continue
+ALTER TABLE orders FORCE, ALGORITHM=INPLACE, LOCK=NONE;`;
 
--- Every index on a table, one after another
-REINDEX TABLE CONCURRENTLY o_rand;
+const mssqlRebuild = `-- Compacts leaf pages in place; always online, can be stopped at any time
+ALTER INDEX orders_customer ON dbo.orders REORGANIZE;
 
--- The blocking form: faster, but writes wait and so do most queries
-REINDEX INDEX o_rand_customer_idx;`;
+-- Builds the index again; ONLINE = ON lets writes continue where the edition allows it
+ALTER INDEX orders_customer ON dbo.orders REBUILD WITH (ONLINE = ON);`;
 
-const waiting = `-- Is the rebuild running, or waiting for an older transaction?
-SELECT pid, state, wait_event_type, wait_event, left(query, 40) AS query
-FROM pg_stat_activity
-WHERE query ILIKE 'reindex%' AND pid <> pg_backend_pid();
--- pid  | state  | wait_event_type | wait_event | query
--- 4121 | active | Lock            | virtualxid | reindex index concurrently o_rand_cust`;
-
-const invalid = `-- Indexes that queries ignore and writes still maintain
+const invalid = `-- PostgreSQL: indexes that queries ignore and writes may still maintain
 SELECT c.relname AS index, i.indrelid::regclass AS table_name,
        i.indisvalid, i.indisready
 FROM pg_index i
 JOIN pg_class c ON c.oid = i.indexrelid
-WHERE NOT i.indisvalid;
---  index              | table_name | indisvalid | indisready
--- --------------------+------------+------------+-----------
---  o_rand_cust_ccnew  | o_rand     | f          | t
+WHERE NOT i.indisvalid;`;
 
-DROP INDEX CONCURRENTLY o_rand_cust_ccnew;`;
-
-const innodbRebuild = `-- Rebuilds the table and every index on it, in place; writes continue
-OPTIMIZE TABLE orders;
-
--- The same rebuild, spelled so you can state the locking you require
-ALTER TABLE orders FORCE, ALGORITHM=INPLACE, LOCK=NONE;`;
-
-const sqliteRebuild = `REINDEX o_customer_idx;   -- rebuild one index; freed pages go to the freelist
-VACUUM;                   -- rewrite the whole file; needs free disk, shrinks it`;
-
-const buildSettings = `-- PostgreSQL: for this session's build only
-SET maintenance_work_mem = '1GB';             -- default 64MB
-SET max_parallel_maintenance_workers = 4;     -- default 2
-CREATE INDEX CONCURRENTLY orders_customer_placed_idx
-  ON orders (customer_id, placed_at);`;
-
-const pgStats = `-- After a bulk load, collect statistics now instead of waiting for autovacuum
-ANALYZE jobs;
-
--- Is autovacuum keeping up? Rows changed since the last ANALYZE, and when it last ran
-SELECT relname, n_live_tup, n_mod_since_analyze, last_analyze, last_autoanalyze
-FROM pg_stat_user_tables
-WHERE relname = 'jobs';
-
--- Partitioned parents are never analyzed automatically
-ANALYZE measurements;`;
-
-const staleBefore = `-- jobs: 500,000 rows, 499,500 with state = 'done', loaded just now
-EXPLAIN (ANALYZE, TIMING OFF) SELECT * FROM jobs WHERE state = 'done';
-
--- Before ANALYZE
-Bitmap Heap Scan on jobs  (cost=26.26..4378.42 rows=2301 width=72)
-                          (actual rows=499500.00 loops=1)
-  ->  Bitmap Index Scan on jobs_state_idx  (rows=2301) (actual rows=499500.00)
-
--- After ANALYZE
-Seq Scan on jobs  (cost=0.00..11932.00 rows=499617 width=64)
-                  (actual rows=499500.00 loops=1)`;
-
-const innodbStats = `ANALYZE TABLE orders;    -- read lock while it samples; refreshes persistent statistics
-
--- Per table, if the defaults do not suit:
-ALTER TABLE orders STATS_AUTO_RECALC=1, STATS_SAMPLE_PAGES=50;`;
-
-const sqliteStats = `-- Long-lived connection: once at open, then now and then
-PRAGMA optimize=0x10002;
-PRAGMA optimize;
-
--- Short-lived connection: just before closing. Also after CREATE INDEX.
-PRAGMA optimize;`;
+const mssqlUsage = `-- SQL Server: reads and writes per index since the last restart
+SELECT i.name, u.user_seeks, u.user_scans, u.user_lookups, u.user_updates
+FROM sys.indexes AS i
+LEFT JOIN sys.dm_db_index_usage_stats AS u
+  ON u.object_id = i.object_id AND u.index_id = i.index_id
+ AND u.database_id = DB_ID()
+WHERE i.object_id = OBJECT_ID('dbo.orders');`;
 
 const duplicates = `-- Indexes with exactly the same columns, operator classes, ordering and predicate
 SELECT indrelid::regclass AS table_name,
@@ -152,22 +97,25 @@ WHERE NOT a.indisunique AND a.indisvalid;`;
 const mysqlRedundant = `SELECT table_name, redundant_index_name, dominant_index_name, sql_drop_index
 FROM sys.schema_redundant_indexes;`;
 
-const mysqlInvisible = `-- Hide the index from the optimizer; it is still kept up to date
-ALTER TABLE orders ALTER INDEX orders_customer_idx INVISIBLE;
-
+const trialDrop = `-- MySQL: hide the index from the optimizer; it is still kept up to date
+ALTER TABLE orders ALTER INDEX orders_customer INVISIBLE;
 -- Something got slower? Undo it at once, without a rebuild
-ALTER TABLE orders ALTER INDEX orders_customer_idx VISIBLE;
+ALTER TABLE orders ALTER INDEX orders_customer VISIBLE;
 
--- After a representative period with no regressions
-ALTER TABLE orders DROP INDEX orders_customer_idx;`;
+-- SQL Server: disabling deletes the index's data but keeps its definition
+ALTER INDEX orders_customer ON dbo.orders DISABLE;
+-- Undoing it means building the index again
+ALTER INDEX orders_customer ON dbo.orders REBUILD;
+-- For a unique index, also re-enable the foreign keys that reference it
+ALTER TABLE dbo.order_lines WITH CHECK CHECK CONSTRAINT fk_order_lines_orders;`;
 
 const rollout = `-- 1. Build the replacement beside the old index (PostgreSQL)
-CREATE INDEX CONCURRENTLY orders_customer_placed_idx
+CREATE INDEX CONCURRENTLY orders_customer_placed
   ON orders (customer_id, placed_at DESC);
 
 -- 2. Confirm it finished
 SELECT indisvalid FROM pg_index
-WHERE indexrelid = 'orders_customer_placed_idx'::regclass;
+WHERE indexrelid = 'orders_customer_placed'::regclass;
 
 -- 3. Check the queries it is for: EXPLAIN (ANALYZE) and look for the new name
 
@@ -177,35 +125,38 @@ FROM pg_stat_user_indexes
 WHERE relname = 'orders';
 
 -- 5. Drop the old one without blocking
-DROP INDEX CONCURRENTLY orders_customer_idx;`;
+DROP INDEX CONCURRENTLY orders_customer;`;
 
 const checks = `-- PostgreSQL: AccessShareLock, safe on a live primary or a standby
 CREATE EXTENSION IF NOT EXISTS amcheck;
 SELECT bt_index_check('orders_pkey', heapallindexed => true);
 
--- MySQL (InnoDB): QUICK skips the row-link scan
-CHECK TABLE orders QUICK;
+-- MySQL (InnoDB)
+CHECK TABLE orders;
+
+-- SQL Server
+DBCC CHECKTABLE ('dbo.orders');
 
 -- SQLite: one row 'ok', or one row per problem
 PRAGMA integrity_check;`;
 ---
-<Base title="Maintaining indexes" description="Why an index stays large after rows are deleted, how to measure it in PostgreSQL 18, InnoDB and SQLite, which rebuild each engine offers and what it locks, how to keep planner statistics current, and how to find, drop and replace indexes safely.">
+<Base title="Maintaining indexes" description="Running a set of indexes over years: why an index stays large after deletes, how to measure it in PostgreSQL 18, InnoDB, SQL Server and SQLite, when a rebuild is worth it and what each engine’s rebuild locks, building on a live table, finding unused and redundant indexes, trial drops and replacing an index safely.">
   <article class="visual-essay relational-design">
-    <header class="essay-header"><p class="eyebrow">Databases and storage</p><h1>Maintaining indexes</h1><TitleLine type="Companion" version="PostgreSQL 18, with InnoDB (MySQL 8.4) and SQLite comparisons" /></header>
+    <header class="essay-header"><p class="eyebrow">Databases and storage</p><h1>Maintaining indexes</h1><TitleLine type="Companion" version="PostgreSQL 18, with InnoDB (MySQL 8.4), SQL Server and SQLite comparisons" /></header>
 <ArticleBody>
 
-    <p>An index is built once and then lives in the database for years, while the table under it is inserted into, updated and deleted from. Three things drift. The index can end up much larger than the rows it covers. The statistics the planner uses to decide whether to use it can fall behind the data. And the set of indexes itself collects members that nothing uses, duplicates and half-finished builds. This companion to <a href={indexes}>Indexes</a> is about noticing each of these, choosing the repair, and knowing what the repair locks while it runs.</p>
-    <p>It follows an <code>orders</code> table that has grown for a year. Every example is a question an on-call engineer might ask: why is this index 200 MB for a table with 100,000 live rows, can it be rebuilt while the shop is taking orders, why did a query switch to a sequential scan after last night's import, and which of the thirteen indexes on this table can go. PostgreSQL 18 is the worked example. The text says where InnoDB, MySQL 8.4’s storage engine, and SQLite differ in ways that change what you would do. The measurements come from PostgreSQL 18.6 and SQLite 3.54.0 on one laptop, with a million-row table. They show how big things are and what blocks what, not how fast anything runs. MySQL was not run for this article; its behaviour is as the 8.4 manual describes it.</p>
+    <p>An index is built once and then lives for years while the table under it changes. Two things drift. An index can end up much larger than the rows it covers, and the set of indexes collects members that nothing uses, duplicates and half-finished builds. This companion to <a href={indexes}>Indexes</a> is about noticing each, choosing the repair, and knowing what the repair locks while it runs.</p>
+    <p>The questions are the ones an on-call engineer asks. Why is this index 200 MB for a table with 100,000 live rows? Can it be rebuilt while the shop is taking orders? Which of the thirteen indexes on this table can go? PostgreSQL 18 is the worked example. The measurements come from PostgreSQL 18.6 and SQLite 3.54.0 on one laptop with million-row tables, and show sizes and blocking, not speed. InnoDB and SQL Server are described from their documentation.</p>
 
     <section aria-labelledby="why"><h2 id="why">Why an index stays large after deletes</h2>
-      <p>A B-tree index stores its entries in fixed-size pages, sorted by key, and each page holds as many entries as fit. Deleting a row removes its entries from the index, and what that frees is space inside a page. Whether a whole page becomes free, and whether the file gets smaller, depends on how the deletes were spread. <a href={`${indexes}#splits`}>Indexes</a> introduced the pages and splits; this section follows what happens when entries leave.</p>
+      <p><a href={`${indexes}#deleted-rows`}>Indexes</a> showed the mechanism: a delete frees space inside a page, and a page is released only when it is completely empty. Whether a delete leaves an index sparse depends on how the deleted keys were spread through it.</p>
 
       <h3 id="empty-or-thin">Pages that empty and pages that thin out</h3>
-      <p>Two deletions with the same row count leave very different indexes. To see this, take a table of one million orders with indexes on <code>id</code> (the primary key), <code>placed_at</code> (increasing with <code>id</code>), <code>customer_id</code> and <code>total</code> (both effectively random). Make two copies. In one, delete 90% of the rows at random. In the other, delete the oldest 90% by <code>id</code>, as a retention job would. Run <code>VACUUM</code> on both, which is the step that removes dead index entries.</p>
-      <div class="table-scroll" role="region" tabindex="0" aria-label="Index size and page fullness after deleting 90% of one million rows in PostgreSQL">
+      <p>Take a table of one million orders with indexes on <code>id</code> (the primary key), <code>customer_id</code> and <code>total</code> (both effectively random). In one copy, delete 90% of the rows at random. In another, delete the oldest 90% by <code>id</code>, as a retention job would. Then run <code>VACUUM</code> on both.</p>
+      <div class="table-scroll" role="region" tabindex="0" aria-labelledby="thin-caption">
         <table>
-          <caption>Index state after deleting 90% of one million rows and running <code>VACUUM</code> (PostgreSQL 18.6)</caption>
-          <thead><tr><th scope="col">Index</th><th scope="col">Size before and after</th><th scope="col">Leaf pages in use</th><th scope="col">Pages marked deleted</th><th scope="col">Average leaf density</th></tr></thead>
+          <caption id="thin-caption">Index state after deleting 90% of one million rows and running <code>VACUUM</code> (PostgreSQL 18.6)</caption>
+          <thead><tr><th scope="col">Index</th><th scope="col">Size before and after</th><th scope="col">Leaf pages in use</th><th scope="col">Pages emptied</th><th scope="col">Average leaf density</th></tr></thead>
           <tbody>
             <tr><th scope="row">Primary key, 90% deleted at random</th><td>21 MB, 21 MB</td><td>2,733</td><td>0</td><td>9%</td></tr>
             <tr><th scope="row"><code>customer_id</code>, deleted at random</th><td>7.8 MB, 7.8 MB</td><td>969</td><td>0</td><td>19%</td></tr>
@@ -214,187 +165,148 @@ PRAGMA integrity_check;`;
           </tbody>
         </table>
       </div>
-      <p>No index file got smaller. In the first row, the random deletes left every leaf page about a tenth full. No page was entirely empty, so no page could be released: a tenth of the entries are still scattered through all 2,733 pages. In the third row, deleting the oldest keys emptied whole pages. PostgreSQL took 2,467 of them out of the tree and marked them deleted, and the 274 pages still in use are 90% full. That index is not bloated in the sense that matters, because the empty pages are available for new entries. It is still 21 MB on disk. The <code>total</code> index was in the same table as the tidy primary key and is as bad as the random ones, because its keys are unrelated to age. Which indexes on a table go sparse depends on how the key relates to whatever decides which rows are deleted.</p>
-      <p>PostgreSQL’s <a href={`${docs}routine-reindex.html`}>routine reindexing</a> page states the rule: pages that have become completely empty are reclaimed for reuse, but a page that keeps a few entries stays allocated, so patterns where most but not all keys in each range are deleted waste space. The table behind these indexes behaved the same way. Its 96 MB file did not shrink after <code>VACUUM</code> either; vacuum makes the space reusable, it does not return it. <a href="/learn/databases/relational/postgresql/row-versions/">Row versions and vacuum</a> explains why dead rows linger until vacuum and what can hold it back.</p>
+      <p>The <code>total</code> index shows the trap. It sat on the same table as the tidy primary key and came out as sparse as the random-delete indexes, because its keys are unrelated to age. Which indexes go sparse depends on how each key relates to whatever decides which rows are deleted. No index file got smaller, but deleting the oldest keys emptied 2,467 primary-key pages, which are available for new entries, so that index is not bloated in the sense that matters.</p>
+      <p>Emptied pages come back into use only after a later <code>VACUUM</code>, once no running transaction could still follow a link into them. So one vacuum after a large delete is not the end of the story. <a href={`${pgIndexes}#bloat`}>Indexes in PostgreSQL</a> measures the delay, and the defences PostgreSQL has against update churn.</p>
 
-      <h3 id="reuse">When freed pages come back into use</h3>
-      <p>A page marked deleted is not available at once. After the first <code>VACUUM</code> of the oldest-deleted copy, <code>pg_freespace</code> listed no free pages in the primary-key index. Inserting 900,000 new rows grew it from 21 MB to 41 MB, as if nothing had been freed. A second <code>VACUUM</code> listed all 2,467 pages as free, and a further 500,000 inserts left the index at 41 MB. The <a href="https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/access/nbtree/README">nbtree README</a> gives the reason. A deleted page is stamped with a transaction ID, and it can be reused only once no running scan could still follow a link into it, which means every transaction that was running at that point has finished. A <code>VACUUM</code> places a page in the free space map at its end only if that is already true. On a busy system it often is by the next run. On an idle copy nothing has moved, so two <code>VACUUM</code>s back to back free nothing. Here the 900,000 inserts were the newer transactions that started and finished between the two runs.</p>
-      <p>The practical reading is that an index which stays flat while the table churns is healthy, and that one vacuum after a large delete is not the end of the story. If you delete a lot and then insert a lot, expect the file to settle at roughly the peak. If the work is a one-off cleanup after which the table stays small, the space is wasted and a rebuild is the way to recover it.</p>
-
-      <h3 id="updates">Updates leave debris too</h3>
-      <p>Deletes are the clearest case, but any update that cannot be a heap-only update (the HOT updates in <a href={`${indexes}#writes`}>Indexes</a>) adds a new entry to every index and leaves the old one for vacuum. PostgreSQL has two defences. <strong>Bottom-up deletion</strong> removes entries it can see are dead when a leaf page is about to split because of that churn, and <strong>deduplication</strong> stores a repeated key once with a list of row locations when the page would otherwise split. The <a href={`${docs}btree.html`}>B-tree implementation</a> chapter says an index can stay the same size under constant update churn. Neither helps the scattered-delete case above. Deduplication is also switched off for some types, <code>numeric</code> and floating-point columns among them, and for <code>INCLUDE</code> indexes.</p>
-
-      <h3 id="engines">InnoDB and SQLite</h3>
-      <p>InnoDB deletes in two steps. A delete marks the record, and a background <strong>purge</strong> removes it once no transaction can see it. When a delete leaves an index page less than half full (<a href={`${mysql}index-page-merge-threshold.html`}>the <code>MERGE_THRESHOLD</code>, 50 by default</a>), InnoDB tries to merge it with a neighbour. So InnoDB resists the 10%-full pages above more than PostgreSQL does, though not completely: its pages vary between half and fully full, and the <a href={`${mysql}innodb-file-defragmenting.html`}>manual</a> says it is difficult to say how much space a table should take. A secondary index is a separate tree, but the table itself is also an index, ordered by primary key, so its sparse pages count toward the same problem. Lowering <code>MERGE_THRESHOLD</code> makes merging happen later and leaves more empty space, so the manual presents it as a trade, not a fix.</p>
-      <p>SQLite puts a page that empties onto a <strong>freelist</strong> and reuses it before it grows the file. In the SQLite run, deleting 90% of a million rows left the file at its original 27,705 pages, 23,741 of them on the freelist. The random-key indexes had been compacted somewhat, to about 46% full, but not rebuilt. As in PostgreSQL, the file stays the size of its peak until something rewrites it.</p>
+      <h3 id="engines">InnoDB, SQL Server and SQLite</h3>
+      <p>InnoDB marks a deleted record and removes it later in a background purge. When a delete leaves a page less than half full (<code>MERGE_THRESHOLD</code>, 50 by default), it tries to merge the page with a neighbour, so it resists the 10%-full pages above, though its pages still vary between half and fully full. The table is itself an index ordered by primary key, so its sparse pages count too.</p>
+      <p>SQL Server releases emptied pages but, like PostgreSQL, doesn’t merge partly full ones until the index is reorganized or rebuilt. SQLite puts emptied pages on a <strong>freelist</strong> and reuses them before growing the file. Deleting 90% of a million rows left the SQLite file at its original 27,705 pages, 23,741 of them on the freelist, and the random-key indexes about 46% full. In every engine the file stays the size of its peak until something rewrites it.</p>
     </section>
 
     <section aria-labelledby="measure"><h2 id="measure">Measuring size and bloat</h2>
-      <p>Bloat is not a number any engine reports. What each gives you is size and, in two of the three, how full the pages are. The judgement is yours: is this index larger than it needs to be, and will the space come back into use by itself?</p>
+      <p>No engine reports bloat as a number. Each gives you sizes, and most say how full the pages are. The judgement is yours: is this index larger than it needs to be, and will the space come back into use by itself?</p>
 
       <h3 id="baseline">How large should it be?</h3>
-      <p>Divide the index size by the number of live rows. The million-row primary key was 21 MB, about 22 bytes an entry, and after a rebuild the 100,000 rows that survived the random delete took 2.2 MB, the same 22 bytes. That ratio is your baseline for an index with that key. A rebuilt PostgreSQL B-tree fills its leaf pages to 90% (the default <code>fillfactor</code>), and InnoDB fills a rebuilt clustered index to about 15/16, per its manual, so the table is about 93% full after a rebuild. A key twice as wide costs roughly twice as much per entry, and an index on a column that is mostly <code>NULL</code> or on a partial predicate covers fewer rows than the table has.</p>
-      <p>Two cheap checks use only sizes. Compare the index with the same ratio on a fresh copy, such as a database restored from a logical dump, which builds every index from scratch. And watch growth: an index that grows much faster than the table’s live row count, or that keeps growing while the row count is flat, has pages that are not being reused.</p>
+      <p>Divide the index size by the number of live rows. The million-row primary key was 21 MB, about 22 bytes an entry, and after a rebuild the 100,000 surviving rows took 2.2 MB, the same 22 bytes. That ratio is your baseline for an index with that key. A rebuilt PostgreSQL B-tree fills its leaf pages to 90%, and InnoDB fills a rebuilt index to about 15/16.</p>
+      <p>Two cheap checks need only sizes. Compare the ratio with a fresh copy, such as a database restored from a logical dump, which builds every index from scratch. And watch growth: an index that keeps growing while the live row count is flat has pages that aren’t being reused.</p>
 
       <h3 id="measure-pg">PostgreSQL</h3>
-      <p><code>pg_relation_size</code> gives the size of any relation in bytes, and <code>pg_stat_user_indexes</code> adds how many times each index has been scanned. Put them in one query and the biggest, least-used indexes come first.</p>
+      <p><code>pg_relation_size</code> gives the size of an index, and <code>pg_stat_user_indexes</code> how often it has been scanned. Together they put the biggest, least-used indexes first.</p>
       <Sql code={pgSizes} label="List the indexes on a table with size and scan counts" />
-      <p>To see inside an index, the <a href={`${docs}pgstattuple.html`}><code>pgstattuple</code></a> extension ships with PostgreSQL and provides <code>pgstatindex</code>. It reads the whole index, so run it off-peak on a large one, and it needs the <code>pg_stat_scan_tables</code> role.</p>
-      <Sql code={pgStatIndex} label="Read page counts and fullness for one B-tree index" />
-      <p><code>avg_leaf_density</code> is the average percentage of each leaf page in use. A rebuilt index reads about 90, and the table above shows 9 and 19. <code>deleted_pages</code> and <code>empty_pages</code> count pages that are out of the tree and waiting for reuse. <code>leaf_fragmentation</code> measures how far the leaf pages' physical order has drifted from key order; it matters for range scans, less for space. A density in the teens alongside a size that is many times the baseline is the signature of the random-delete case. A large <code>deleted_pages</code> with a dense remainder is the other case, where the space is reusable and the question is whether you need it back.</p>
+      <p>For page density, the <code>pgstattuple</code> extension’s <code>pgstatindex</code> reads the whole index and reports the average leaf density: about 90 for a fresh index, 9 and 19 for the random-delete indexes above. <a href={`${pgIndexes}#bloat`}>Indexes in PostgreSQL</a> shows how to read it.</p>
 
       <h3 id="measure-innodb">InnoDB</h3>
-      <p>InnoDB keeps index sizes in its persistent statistics. The <a href={`${mysql}innodb-persistent-stats.html`}><code>size</code> row of <code>mysql.innodb_index_stats</code></a> is the index’s total page count, and <code>n_leaf_pages</code> is the leaves. Multiply by the page size, 16 KB by default.</p>
+      <p>InnoDB keeps index sizes in its persistent statistics: the <code>size</code> row of <code>mysql.innodb_index_stats</code> is the index’s page count, refreshed with the statistics. There is no page-density report, so judge by size per live row against a baseline. The table itself appears as <code>PRIMARY</code>.</p>
       <Sql code={innodbSizes} label="List InnoDB index sizes for one table" />
-      <p>These are page counts as of the last statistics update, refreshed when the table changes by more than 10% or when you run <code>ANALYZE TABLE</code>. <code>size</code> counts allocated pages, so it does not fall when rows are deleted. There is no page-density report in the server, so judge by size per live row against a baseline. The table’s clustered index is the table itself, and appears here under <code>PRIMARY</code>.</p>
+
+      <h3 id="measure-sqlserver">SQL Server</h3>
+      <p><code>sys.dm_db_index_physical_stats</code> reports pages, page density and fragmentation for each index. Density needs the <code>SAMPLED</code> or <code>DETAILED</code> mode.</p>
+      <Sql code={mssqlSizes} label="Report page counts and density for each index in SQL Server" />
+      <p>Microsoft’s guidance is to look at density before fragmentation. Fragmentation measures how far the pages’ order on disk has drifted from key order, which matters little on solid-state storage. Low density means more pages to read and cache for the same rows.</p>
 
       <h3 id="measure-sqlite">SQLite</h3>
-      <p>The <a href={`${sqlite}dbstat.html`}><code>dbstat</code></a> virtual table gives one row per page, with the bytes in use and unused, and exists only when SQLite was compiled with <code>SQLITE_ENABLE_DBSTAT_VTAB</code>. It was available in the shell used for this article, and <code>sqlite3_analyzer</code> reports from it. <code>PRAGMA freelist_count</code> against <code>page_count</code> says how much of the file is empty.</p>
+      <p>The <code>dbstat</code> virtual table gives one row per page with the bytes in use, when SQLite was compiled with <code>SQLITE_ENABLE_DBSTAT_VTAB</code>. <code>PRAGMA freelist_count</code> against <code>page_count</code> says how much of the file is empty.</p>
       <Sql code={sqliteSizes} label="Report page counts and fullness per b-tree in SQLite" />
     </section>
 
     <section aria-labelledby="rebuild"><h2 id="rebuild">Rebuilding an index</h2>
-      <p>A rebuild reads the live entries, sorts them and writes a fresh index with full pages, then retires the old one. It is the one operation that returns the space in a thin index, and it costs a full scan of the table (or index) plus the writes, so the questions are when it is worth it and what it holds up.</p>
+      <p>A rebuild reads the live entries, sorts them and writes a fresh index with full pages. It is the one operation that returns the space in a thin index, and it costs a full read plus the writes, so the questions are when it is worth it and what it holds up.</p>
 
       <h3 id="when-rebuild">When a rebuild is worth doing</h3>
-      <p>Not on a calendar. A scheduled weekly reindex of every index spends I/O and WAL, and for most indexes it changes nothing. The manual states a modest benefit, that a fresh B-tree is slightly faster to scan because neighbouring pages are physically adjacent, and the case for a rebuild is mainly space. Rebuild when you have measured an index at a fraction of its baseline size, the table is not about to grow back into it, and the space matters: disk close to full, backups and replicas that copy it, or a working set that no longer fits in the buffer pool because of half-empty pages (<a href="/learn/databases/relational/buffer-pool/">The buffer pool</a> shows why that costs reads). If the rows are about to return, as in a table that is purged and refilled each month, the space is already reusable and a rebuild saves nothing.</p>
+      <p>Not on a calendar. A weekly rebuild of every index spends I/O and log volume, and for most indexes changes nothing. Rebuild when you have measured an index at many times its baseline size, the table isn’t about to grow back into it, and the space matters: disk close to full, backups and replicas that copy it, or a working set that no longer fits in memory because of half-empty pages (<a href="/learn/databases/relational/buffer-pool/">The buffer pool</a> shows why that costs reads). A table that is purged and refilled each month already reuses its space, and a rebuild saves nothing.</p>
+      <p>Be careful what you credit a rebuild with. A rebuild also refreshes the index’s statistics, from every row, and Microsoft’s maintenance guidance notes that the speed-up people see after a rebuild often comes from those statistics; updating them alone gets the same gain more cheaply. Before scheduling rebuilds because queries got faster after one, try refreshing statistics instead, as <a href="/learn/databases/relational/query-execution/#refresh">When statistics are refreshed</a> describes.</p>
 
-      <h3 id="reindex">PostgreSQL: REINDEX and what it locks</h3>
-      <Sql code={reindexForms} label="Rebuild one index, a table's indexes, or one index with blocking" />
-      <p>Plain <code>REINDEX</code> is the simple one. In the trial it held a <code>ShareLock</code> on the table, which stopped inserts, and an <code>AccessExclusiveLock</code> on the index itself. A query using the index waited, which is expected. So did <code>EXPLAIN</code> of a primary-key lookup on the same table, because the planner takes a lock on every index of a table when it plans, and the manual says <code>REINDEX</code> blocks nearly every query that is not a cached plan. Use it on a table nothing is using, such as one in a maintenance window or a new staging copy.</p>
-      <p><code>REINDEX ... CONCURRENTLY</code> takes no lock that stops <code>INSERT</code>, <code>UPDATE</code> or <code>DELETE</code>. It builds a second copy of the index while writes continue, catches up with the rows written meanwhile, swaps the new one in and drops the old. This is the mechanism of <code>CREATE INDEX CONCURRENTLY</code>, which <a href="/learn/databases/relational/postgresql/indexes/#concurrently">Indexes in PostgreSQL</a> explains, and it has the same costs:</p>
-      <ul>
-        <li><strong>It needs room for both copies.</strong> Until the swap, the old and new index coexist. Check free disk against the size of the largest index being rebuilt, and note that <code>REINDEX TABLE CONCURRENTLY</code> builds new copies of all the table’s indexes before it drops any old one, so it needs room for all of them at once.</li>
-        <li><strong>It writes the index twice over.</strong> Rebuilding an 11 MB index on <code>customer_id</code>, in a table of 1.5 million rows, wrote about 10 MB of write-ahead log, whether concurrent or not, and the log is what a standby replays. A large rebuild is a burst of replication traffic.</li>
-        <li><strong>It waits for older transactions.</strong> The build must wait for every transaction that started before a step, so a long-running one stalls it. In the trial, a transaction left open for seven seconds kept the rebuild in <code>wait_event = virtualxid</code> until it ended, while inserts from other sessions went through. The query below shows a rebuild in that state.</li>
-        <li><strong>It takes a <code>ShareUpdateExclusiveLock</code>.</strong> That does not block ordinary reads and writes, but it blocks other schema changes on the table, and only one concurrent build per table can run at a time. A rebuild during a migration will collide with it; <a href="/learn/databases/relational/schema-changes/#schema-locks">Schema locks and timeouts</a> covers bounding how long a command waits.</li>
-        <li><strong>It cannot run in a transaction block.</strong> It runs as several transactions, which is a problem for migration tools that wrap every migration in one.</li>
-      </ul>
-      <Sql code={waiting} label="See whether a concurrent rebuild is waiting for another transaction" />
-      <p>Several things are not rebuildable concurrently: an index behind an exclusion constraint (skipped when you reindex a table, an error for that single index), and the system catalogs. For the heaviest case, <code>VACUUM FULL</code> and <code>CLUSTER</code> rewrite the table and rebuild all its indexes, but they hold an <code>AccessExclusiveLock</code> on the table for the duration. For one thin index, <code>REINDEX CONCURRENTLY</code> is the narrower tool.</p>
-      <p>The rebuild the trial ran on the randomly emptied table took each index from its old size to 2.2 MB (the primary key, from 21 MB), 1.7 MB (<code>customer_id</code>, from 7.8 MB) and 2.2 MB each for <code>placed_at</code> and <code>total</code>. Together the four indexes went from about 72 MB to 8 MB, and the relation total from 169 MB to about 104 MB. The table’s own 96 MB was not touched, since <code>REINDEX</code> only rebuilds indexes. Recovering the table’s space is a separate decision, with <code>VACUUM FULL</code> or an external tool such as <code>pg_repack</code> that rewrites it with a shorter lock.</p>
-
-      <h3 id="failed-rebuild">When a concurrent rebuild or build fails</h3>
-      <p>A concurrent command that stops part way, cancelled by a timeout, a deadlock or a unique violation, does not undo everything. It leaves an index that queries ignore but writes still maintain, so it costs you the write overhead for nothing. A cancelled <code>REINDEX CONCURRENTLY</code> in the trial left <code>o_rand_cust_ccnew</code> next to the intact original; a failed <code>CREATE UNIQUE INDEX CONCURRENTLY</code> over a column with duplicates left the new index too. Look for them with <code>pg_index</code>:</p>
-      <Sql code={invalid} label="Find invalid indexes and drop one without blocking" />
-      <p>The two columns say different things. <code>indisvalid = false</code> means queries do not use it. <code>indisready = true</code> means writes still update it, as with the <code>_ccnew</code> leftover, and so it is costing every write. The manual names the leftovers: a <code>_ccnew</code> index is the unfinished new one, and the fix is to drop it and run the rebuild again. A <code>_ccold</code> index is the old one that could not be dropped after a successful swap, and is safe to drop. In <code>psql</code>, <code>\d table</code> marks them <code>INVALID</code>. Check for them after any failed migration, and consider a monitoring query that alerts on any row.</p>
+      <h3 id="reindex">PostgreSQL: REINDEX</h3>
+      <p>Plain <code>REINDEX</code> blocks writes to the table and most queries on it. <code>REINDEX INDEX CONCURRENTLY</code> builds a second copy while writes continue and swaps it in, so it needs room for both. Rebuilding the randomly emptied indexes above took the four of them from about 72 MB to 8 MB. <a href={`${pgIndexes}#bloat`}>Indexes in PostgreSQL</a> covers the locks, the copy a failed run leaves behind and how to watch a rebuild that is waiting.</p>
 
       <h3 id="rebuild-innodb">InnoDB: the table is rebuilt, not one index</h3>
-      <p>InnoDB has no statement that rebuilds one secondary index. The tools rebuild the table and with it every index. <code>OPTIMIZE TABLE</code> is <a href={`${mysql}optimize-table.html`}>mapped to <code>ALTER TABLE ... FORCE</code></a> for InnoDB, which copies the rows into a new table file in place using online DDL: reads and writes continue, with a brief exclusive metadata lock when it starts and again when it commits. Because the commit waits for older transactions, a long-running one can hold up the finish, much as it holds up <code>REINDEX CONCURRENTLY</code>. Tables with a <code>FULLTEXT</code> index fall back to a table copy that blocks writes. <code>OPTIMIZE TABLE</code> accepts no <code>ALGORITHM</code> or <code>LOCK</code> clause, so if you want the server to refuse anything that would block, use the <code>ALTER</code> form.</p>
-      <Sql code={innodbRebuild} label="Rebuild an InnoDB table and its indexes" />
-      <p>With one file per table, which is the default, the old file’s space goes back to the operating system once the new one is in place. A rebuild needs disk space for the second copy and generates redo log in proportion to the table, and a replica that applies the statement repeats the work; large rebuilds are a reason replicas lag. External tools such as <code>gh-ost</code> and <code>pt-online-schema-change</code> exist to run the same rebuild with finer control. To rebuild just one index, drop and re-add it in one statement, <code>ALTER TABLE orders DROP INDEX i, ADD INDEX i (...)</code>. Two separate statements would leave a window with no index. The manual lists both operations as in place and allowing concurrent changes, and nothing else is rebuilt.</p>
+      <p>InnoDB has no statement that rebuilds one secondary index. <code>OPTIMIZE TABLE</code> maps to <code>ALTER TABLE ... FORCE</code>, which copies the rows into a new table file in place, with every index. Reads and writes continue, with a brief exclusive metadata lock at the start and the end, and the end waits for older transactions. Tables with a <code>FULLTEXT</code> index fall back to a copy that blocks writes. The <code>ALTER</code> form lets you demand that nothing blocks:</p>
+      <Sql code={innodbRebuild} label="Rebuild an InnoDB table and its indexes without blocking writes" />
+      <p>With one file per table, the default, the old file’s space goes back to the operating system. To rebuild one index alone, drop and add it in one statement, <code>ALTER TABLE orders DROP INDEX i, ADD INDEX i (...)</code>; two statements would leave a window with no index.</p>
+
+      <h3 id="rebuild-sqlserver">SQL Server: reorganize or rebuild</h3>
+      <p>SQL Server offers two operations. <code>REORGANIZE</code> compacts the leaf pages in place, is always online and can be stopped part way without losing its progress. <code>REBUILD</code> builds the index again and updates its statistics; with <code>ONLINE = ON</code> writes continue, but online index operations aren’t available in every edition, so check yours.</p>
+      <Sql code={mssqlRebuild} label="Reorganize or rebuild one SQL Server index" />
 
       <h3 id="rebuild-sqlite">SQLite: REINDEX frees pages, VACUUM shrinks the file</h3>
-      <p><code>REINDEX</code> in SQLite deletes and recreates indexes. The <a href={`${sqlite}lang_reindex.html`}>manual</a> gives changed collations and changed expression-index functions as its reasons, and as a space tool it does less than it might: in the trial it rebuilt <code>o_customer</code> from 46% to 99% full, but the file stayed 27,705 pages and the freelist grew by 328 pages. The space is reusable inside the file, not returned. Only <code>VACUUM</code> rewrites the file, here from 27,705 pages to 2,674, and every b-tree came out 99% full.</p>
-      <Sql code={sqliteRebuild} label="Rebuild one index, then rewrite the database file" />
-      <p>SQLite has one writer at a time. A transaction that held <code>REINDEX</code> open for four seconds let a second connection read but made its write fail with <code>database is locked</code> (with a busy timeout of zero), in both rollback-journal and WAL modes. <code>VACUUM</code> is a write that copies the entire database to a temporary file and back, so it can need up to twice the database size in free disk and it fails if the connection has an open transaction. <code>VACUUM INTO 'file'</code> writes a compacted copy without touching the original, which suits a nightly compacted backup.</p>
+      <p><code>REINDEX</code> in SQLite rebuilt the customer index from 46% to 99% full, but the file stayed 27,705 pages, with the freed pages on the freelist. Only <code>VACUUM</code> rewrites the file, here from 27,705 pages to 2,674. It holds the single write lock throughout and can need twice the database size in free disk. <code>VACUUM INTO 'file'</code> writes a compacted copy without touching the original.</p>
 
       <h3 id="rebuild-summary">The rebuild options side by side</h3>
-      <div class="table-scroll" role="region" tabindex="0" aria-label="Rebuild options in PostgreSQL, InnoDB and SQLite compared">
+      <div class="table-scroll" role="region" tabindex="0" aria-labelledby="rebuild-caption">
         <table>
-          <caption>What each rebuild does to the file, to writers and to the disk</caption>
+          <caption id="rebuild-caption">What each rebuild does to writers and to the disk</caption>
           <thead><tr><th scope="col">Operation</th><th scope="col">What it rebuilds</th><th scope="col">Writes during it</th><th scope="col">Needs</th></tr></thead>
           <tbody>
             <tr><th scope="row">PostgreSQL <code>REINDEX INDEX</code></th><td>One index</td><td>Blocked, and most queries on the table too</td><td>Room for the new copy</td></tr>
-            <tr><th scope="row">PostgreSQL <code>REINDEX INDEX CONCURRENTLY</code></th><td>One index</td><td>Allowed; waits for older transactions; blocks other schema changes</td><td>Room for both copies; about the index size in WAL</td></tr>
-            <tr><th scope="row">PostgreSQL <code>VACUUM FULL</code></th><td>Table and all indexes</td><td>Blocked, reads too</td><td>Room for the new table</td></tr>
-            <tr><th scope="row">InnoDB <code>OPTIMIZE TABLE</code> or <code>ALTER TABLE ... FORCE</code></th><td>Table and all indexes</td><td>Allowed; brief exclusive locks at start and end</td><td>Room for the new file; redo log</td></tr>
-            <tr><th scope="row">SQLite <code>REINDEX</code></th><td>One index, or all of a table’s</td><td>One writer at a time; others wait or fail</td><td>None extra; the file does not shrink</td></tr>
-            <tr><th scope="row">SQLite <code>VACUUM</code></th><td>The whole file</td><td>Same, for the whole time</td><td>Up to twice the file in free disk</td></tr>
+            <tr><th scope="row">PostgreSQL <code>REINDEX INDEX CONCURRENTLY</code></th><td>One index</td><td>Allowed; waits for older transactions</td><td>Room for both copies</td></tr>
+            <tr><th scope="row">InnoDB <code>ALTER TABLE ... FORCE</code></th><td>Table and all indexes</td><td>Allowed; brief exclusive locks at start and end</td><td>Room for the new file</td></tr>
+            <tr><th scope="row">SQL Server <code>REORGANIZE</code></th><td>One index’s leaf pages, in place</td><td>Allowed</td><td>Little extra</td></tr>
+            <tr><th scope="row">SQL Server <code>REBUILD</code></th><td>One index</td><td>Blocked, or allowed with <code>ONLINE = ON</code> where the edition offers it</td><td>Room for the new copy</td></tr>
+            <tr><th scope="row">SQLite <code>VACUUM</code></th><td>The whole file</td><td>One writer at a time, for the whole run</td><td>Up to twice the file in free disk</td></tr>
           </tbody>
         </table>
       </div>
     </section>
 
     <section aria-labelledby="build"><h2 id="build">Building new indexes safely</h2>
-      <p>A new index is also a maintenance operation, and the lock it takes is the first thing to know. The engines differ.</p>
+      <p>A new index is a maintenance operation too, and the lock it takes is the first thing to know:</p>
       <ul>
-        <li><strong>PostgreSQL:</strong> <code>CREATE INDEX</code> blocks writes until it finishes, <code>CREATE INDEX CONCURRENTLY</code> does not, at the price of a second scan and a wait for older transactions. <a href="/learn/databases/relational/postgresql/indexes/#concurrently">Indexes in PostgreSQL</a> explains why.</li>
-        <li><strong>InnoDB:</strong> adding a secondary index is an <a href={`${mysql}innodb-online-ddl-operations.html`}>in-place operation that allows concurrent changes</a> and does not rebuild the table. The statement finishes only after the transactions that were using the table when it started complete, so one long transaction can leave it waiting. While it runs, InnoDB records concurrent changes in a log whose size <code>innodb_online_alter_log_max_size</code> limits, and the build fails when that log fills.</li>
-        <li><strong>SQLite:</strong> the build holds the single write lock until it finishes, so every other writer waits for the whole build.</li>
+        <li><strong>PostgreSQL:</strong> <code>CREATE INDEX</code> blocks writes until it finishes. <code>CREATE INDEX CONCURRENTLY</code> doesn’t, at the price of a second pass over the table and a wait for older transactions; <a href={`${pgIndexes}#concurrently`}>Indexes in PostgreSQL</a> explains why. Raising <code>maintenance_work_mem</code> for the session speeds the sort.</li>
+        <li><strong>InnoDB:</strong> adding a secondary index is in place and allows concurrent writes, without rebuilding the table. It finishes only after transactions that were using the table have ended, and fails if the log of concurrent changes outgrows <code>innodb_online_alter_log_max_size</code>.</li>
+        <li><strong>SQL Server:</strong> <code>CREATE INDEX ... WITH (ONLINE = ON)</code> allows writes, in the editions that offer online index operations.</li>
+        <li><strong>SQLite:</strong> the build holds the single write lock, so every other writer waits for it.</li>
       </ul>
-      <p>For all three, put a bound on how long the command may wait for its locks, as <a href="/learn/databases/relational/schema-changes/#schema-locks">Schema locks and timeouts</a> describes, because a command stuck behind a long transaction holds up everything queued after it.</p>
-
-      <h3 id="build-time">Time and memory</h3>
-      <p>A build sorts every entry. In PostgreSQL the sort uses <code>maintenance_work_mem</code>, which defaults to 64 MB, and a B-tree build can use <code>max_parallel_maintenance_workers</code> parallel workers, default 2. Raising them for the session that runs the build is the usual way to shorten it, bearing in mind that the memory limit applies to the command as a whole and that the build competes with production traffic for CPU and I/O.</p>
-      <Sql code={buildSettings} label="Give one session's index build more memory and workers" />
-      <p>InnoDB has settings for the same trade, <code>innodb_ddl_buffer_size</code> and <code>innodb_ddl_threads</code> for the session and <code>innodb_sort_buffer_size</code> for the server, which the manual’s <a href={`${mysql}innodb-parameters.html`}>InnoDB parameters</a> page documents.</p>
+      <p>In every engine, put a bound on how long the command may wait for its locks, as <a href="/learn/databases/relational/schema-changes/#schema-locks">Schema locks and timeouts</a> describes, because a command stuck behind a long transaction holds up everything queued after it. When you are loading a table, rather than changing a live one, create the indexes after the load, as <a href={`${indexes}#upkeep`}>Building, finding and dropping indexes</a> explains.</p>
 
       <h3 id="build-replicas">Replicas</h3>
-      <p>A build runs on the primary and then reaches each replica. PostgreSQL’s physical standbys replay the write-ahead log the build produced, which for a rebuild was about the size of the index. InnoDB replicas normally run the same <code>ALTER</code> themselves, one statement at a time, so a long build on the primary becomes a long stretch on each replica during which later changes queue. Watch replication delay while a large build runs, and for InnoDB prefer to schedule a heavy one where lag is tolerable.</p>
-    </section>
-
-    <section aria-labelledby="stats"><h2 id="stats">Keeping statistics current</h2>
-      <p>An index only helps when the planner decides to use it, and the planner decides from <strong>statistics</strong>: row counts, the number of distinct values in each column, and the most common values and their frequencies. Statistics are a sample taken at one moment. When the data changes a lot and they do not, the planner estimates from a table that no longer exists. <a href="/learn/databases/relational/slow-queries/#plans">Plans and changing data</a> and <a href="/learn/databases/relational/query-execution/#estimates">Planner estimates</a> show how those estimates become plans; this section is about keeping them fresh in each engine.</p>
-
-      <h3 id="stats-pg">PostgreSQL: autovacuum analyzes, eventually</h3>
-      <p>PostgreSQL’s autovacuum process runs <code>ANALYZE</code> on a table once the rows inserted, updated or deleted since the last one exceed <code>autovacuum_analyze_threshold</code> (50) plus <code>autovacuum_analyze_scale_factor</code> (0.1) times the table’s row count. A table of a million rows triggers after about 100,000 changes, and a worker picks it up on a later scheduled pass, not at that moment. Two situations leave the statistics wrong in the meantime.</p>
-      <ul>
-        <li><strong>Right after a bulk load.</strong> The table is large but has never been analyzed, or has statistics from when it was empty. In the trial, a freshly loaded table of 500,000 rows with autovacuum off had no row estimate at all, and the planner guessed 2,301 rows for both <code>state = 'done'</code> (really 499,500) and <code>state = 'queued'</code> (really 500). It chose an index-driven bitmap scan for the half-million-row query. After <code>ANALYZE</code> it estimated 499,617 and chose a sequential scan.</li>
-        <li><strong>A partitioned parent.</strong> Autovacuum never analyzes a partitioned table itself, only its partitions. The <a href={`${docs}routine-vacuuming.html`}>manual</a> tells you to run <code>ANALYZE</code> on the parent after the first load and whenever the distribution changes much.</li>
-      </ul>
-      <Sql code={staleBefore} label="The same query's plan before and after ANALYZE" />
-      <Sql code={pgStats} label="Analyze after a bulk load and check when it last ran" />
-      <p>The habit is simple: finish every bulk load, restore and large backfill with an <code>ANALYZE</code> of the tables it touched. The cost is a sample read of the table. Two other levers exist and belong to the planner articles: raising a column’s statistics target with <code>ALTER TABLE ... SET STATISTICS</code> for a skewed column, and <code>CREATE STATISTICS</code> for columns that are correlated. Creating an expression index also makes PostgreSQL gather statistics for the expression, which is one reason a new index can change plans for queries that did not use it.</p>
-
-      <h3 id="stats-innodb">InnoDB: persistent statistics</h3>
-      <p>InnoDB stores its statistics in <code>mysql.innodb_table_stats</code> and <code>mysql.innodb_index_stats</code> so they survive a restart (<code>innodb_stats_persistent</code>, on by default). It recalculates them in the background when more than 10% of a table’s rows have changed (<code>innodb_stats_auto_recalc</code>, on by default), and always when an index is added. The estimate samples 20 index pages per index by default. Run <code>ANALYZE TABLE</code> after a big load. It takes a read lock while it samples, and the manual says the recalculation is neither instant nor replicated: each server does its own automatic one, while a manual <code>ANALYZE TABLE</code> is replicated and so runs on the replicas too.</p>
-      <Sql code={innodbStats} label="Refresh InnoDB statistics and set per-table options" />
-      <p>InnoDB estimates a skewed value on an indexed column by searching the index for it, not from these statistics, so a long <code>IN</code> list or a parameterised statement is the thing to examine there, along with <code>eq_range_index_dive_limit</code>. <a href={`${mysql}optimizer-statistics.html`}>Histograms</a> (<code>ANALYZE TABLE ... UPDATE HISTOGRAM</code>) serve columns that have no index, where the optimizer has nothing to search.</p>
-
-      <h3 id="stats-sqlite">SQLite: PRAGMA optimize</h3>
-      <p>SQLite collects statistics only when asked, with <code>ANALYZE</code>, and keeps them in a table that planning reads. Its <a href={`${sqlite}pragma.html#pragma_optimize`}>documentation</a> recommends <code>PRAGMA optimize</code> instead of calling <code>ANALYZE</code> yourself. It decides which tables could benefit, runs <code>ANALYZE</code> on them with a limit on how long that may take, and is “usually a no-op or nearly so”. The documented routine is to run it just before closing a short-lived connection, to run <code>PRAGMA optimize=0x10002</code> when a long-lived one opens (the <code>0x2</code> bit runs <code>ANALYZE</code> where it would help, and the <code>0x10000</code> bit makes it consider every table, not only those this connection has used, which matters on a connection that has used none yet) and then every hour or day, and to run it after any schema change, especially after <code>CREATE INDEX</code>.</p>
-      <Sql code={sqliteStats} label="Run PRAGMA optimize at connection open, close and after schema changes" />
-
-      <h3 id="stats-stale">Recognising stale statistics</h3>
-      <p>The symptom is a plan whose estimated row counts are far from the actual ones. <code>EXPLAIN (ANALYZE)</code> prints both side by side: 2,301 against 499,500 above. A new index that the planner does not pick up, a sequential scan where an index is obvious, or a plan that regressed after an import point the same way, and the fix is to refresh statistics first and consider the index second. <a href="/learn/databases/relational/slow-queries/">Understanding database performance</a> works through the diagnosis.</p>
+      <p>A build runs on the primary and then reaches each replica. PostgreSQL’s physical standbys replay the write-ahead log it produced, roughly the size of the index. MySQL replicas normally run the same <code>ALTER</code> themselves, so a long build on the primary becomes a long stretch on each replica during which later changes queue. Watch replication delay while a large build runs.</p>
     </section>
 
     <section aria-labelledby="drop"><h2 id="drop">Finding indexes to remove</h2>
-      <p>Every index costs space and write work whether or not any query uses it, and tables acquire them over the years. There are three kinds to look for, each with a different test, and then the question of how to drop one safely.</p>
+      <p>Every index costs space and write work whether or not any query uses it. There are three kinds to look for, each with its own test, and then the question of how to drop one safely.</p>
 
       <h3 id="drop-unused">Unused indexes</h3>
-      <p>PostgreSQL counts index scans in <code>pg_stat_user_indexes</code>, and since version 16 records <code>last_idx_scan</code>, the time of the last one. MySQL’s sys schema lists unused indexes in <code>schema_unused_indexes</code>, and SQLite keeps no usage counts. The size query under <a href="#measure-pg">Measuring size and bloat</a> includes both columns. A zero is evidence only if the counters have covered everything the system does. PostgreSQL resets them after an unclean shutdown or point-in-time recovery, each replica has its own, and a monthly report or year-end job can use an index that no scan has touched since the counters began. MySQL’s counters come from the performance schema, which starts empty at every server restart, so right after one every index looks unused; the manual says the view is most useful once the server has run a representative workload. Check <code>stats_reset</code> in <code>pg_stat_database</code>, look at every replica that serves reads, and ask whether a rare job needs it. An index that enforces a primary key or a unique constraint stays however few scans it records, and so does one on a foreign key’s referencing column if deleting from the parent table runs often.</p>
+      <p>PostgreSQL counts index scans in <code>pg_stat_user_indexes</code> and, since version 16, records <code>last_idx_scan</code>. MySQL’s sys schema lists unused indexes in <code>schema_unused_indexes</code>. SQL Server counts seeks, scans, lookups and updates per index in <code>sys.dm_db_index_usage_stats</code>. SQLite keeps no usage counts. The PostgreSQL query is in <a href="#measure-pg">Measuring size and bloat</a>; the SQL Server one follows.</p>
+      <Sql code={mssqlUsage} label="Reads and writes per index in SQL Server" />
+      <p>A zero is evidence only if the counters have covered everything the system does:</p>
+      <ul>
+        <li><strong>Resets.</strong> PostgreSQL resets its counters after an unclean shutdown or point-in-time recovery. MySQL’s and SQL Server’s start empty at every server restart, and SQL Server’s also when a database is detached or shut down. Right after a restart every index looks unused.</li>
+        <li><strong>Replicas.</strong> Each replica keeps its own counts, so look at every one that serves reads.</li>
+        <li><strong>Rare jobs.</strong> A monthly report or year-end job may use an index nothing else touches.</li>
+        <li><strong>Constraints.</strong> An index that enforces a primary key or unique constraint stays however few scans it records, and so does one on a foreign key’s referencing column if parent rows are deleted.</li>
+      </ul>
+      <p>The opposite advice comes from the same engines. SQL Server’s missing-index suggestions and similar advisers propose indexes from single queries’ estimates. Microsoft calls them a starting point, not a prescription: they don’t order the columns for you, never suggest unique or filtered indexes, and are cleared on restart. Weigh each against the indexes you already have, as <a href={`${indexes}#design`}>Designing an index for a query</a> does.</p>
 
       <h3 id="drop-duplicate">Duplicate and redundant indexes</h3>
-      <p>Two indexes can be the same index, and a short one can be covered by a longer one. An index on <code>(customer_id)</code> is redundant beside <code>(customer_id, placed_at)</code>, because the longer index serves a lookup on its leading column. Both cost writes. The first PostgreSQL query below finds exact duplicates by comparing the stored definition, the second finds non-unique indexes that are a leading prefix of another. Both were run against a table with a deliberate duplicate and prefix and reported them. If <code>one_enforces_a_constraint</code> is true, the unique or primary-key index is the one to keep and its plain twin is the one to drop. Both queries ignore two things you should check by eye before dropping: <code>INCLUDE</code> columns, which may make the shorter index the one that answers a query without the table, and a descending column, where the prefix index does not give the same order.</p>
+      <p>An index on <code>(customer_id)</code> is redundant beside <code>(customer_id, placed_at)</code>, because the longer index serves a lookup on its leading column, and both cost writes. The first PostgreSQL query below finds exact duplicates, and the second finds non-unique indexes that are a leading prefix of another. If <code>one_enforces_a_constraint</code> is true, keep the unique index and drop its plain twin.</p>
       <Sql code={duplicates} label="Find duplicate and prefix-redundant indexes in PostgreSQL" />
-      <p>MySQL’s <a href={`${mysql}sys-schema-redundant-indexes.html`}><code>sys.schema_redundant_indexes</code></a> does this and prints the <code>DROP</code> statement.</p>
+      <p>Both queries ignore two things to check by eye before dropping: <code>INCLUDE</code> columns, which may make the shorter index the one that covers a query, and a descending column, where the prefix doesn’t give the same order. In InnoDB, also check that the shorter index isn’t the one backing a foreign key. MySQL’s <code>sys.schema_redundant_indexes</code> does this search and prints the <code>DROP</code> statement.</p>
       <Sql code={mysqlRedundant} label="List redundant indexes with MySQL's sys schema" />
 
       <h3 id="drop-invalid">Invalid indexes</h3>
-      <p>The query in <a href="#failed-rebuild">When a concurrent rebuild or build fails</a> finds the third kind: indexes left half built. Unlike the others they have no benefit at all.</p>
+      <p>A PostgreSQL concurrent build or rebuild that stops part way, cancelled by a timeout, a deadlock or a unique violation, leaves an invalid index behind. Queries ignore it, but if <code>indisready</code> is true, writes still maintain it, so it costs every write for nothing.</p>
+      <Sql code={invalid} label="Find invalid indexes in PostgreSQL" />
+      <p>Drop it with <code>DROP INDEX CONCURRENTLY</code> and run the build again. Check for these after any failed migration, and consider alerting on any row. SQL Server’s equivalent check is for indexes left disabled: <code>is_disabled</code> in <code>sys.indexes</code>.</p>
 
       <h3 id="drop-safely">Dropping without making things worse</h3>
-      <p>A plain <code>DROP INDEX</code> in PostgreSQL takes an <code>AccessExclusiveLock</code> on the table, so it stops reads and writes until it gets the lock and finishes. <code>DROP INDEX CONCURRENTLY</code> waits for conflicting transactions instead of blocking, with limits: one index per statement, no <code>CASCADE</code>, not inside a transaction block, and not for an index that backs a unique or primary-key constraint, which you drop with <code>ALTER TABLE ... DROP CONSTRAINT</code>.</p>
-      <p>The risk of dropping is a query you forgot. MySQL lets you test it first. <a href={`${mysql}invisible-indexes.html`}>An invisible index</a> is ignored by the optimizer but still maintained, so making it visible again is immediate and needs no rebuild. A primary key cannot be made invisible. PostgreSQL has no equivalent, so the way to retain the option of undoing a drop is to keep the <code>CREATE INDEX</code> statement and have the time and disk to run it again, a rebuild of a large index being exactly the cost this article keeps pointing at. SQLite is the same, and cheaper only because its databases are usually smaller.</p>
-      <Sql code={mysqlInvisible} label="Hide a MySQL index, restore it, then drop it" />
+      <p>A plain <code>DROP INDEX</code> in PostgreSQL takes an exclusive lock on the table, stopping reads and writes until it finishes. <code>DROP INDEX CONCURRENTLY</code> waits for conflicting transactions instead, one index per statement and not inside a transaction block. An index behind a unique or primary-key constraint is dropped with <code>ALTER TABLE ... DROP CONSTRAINT</code>.</p>
+      <p>The risk of dropping is a query you forgot. Two engines let you rehearse:</p>
+      <Sql code={trialDrop} label="Trial drops in MySQL and SQL Server" />
+      <p>A MySQL <strong>invisible</strong> index is ignored by the optimizer but still maintained, so making it visible again is instant. A SQL Server <strong>disabled</strong> index is different: its data is deleted and only its definition kept, so it costs no writes, but undoing it means a full rebuild. Disabling a unique index also disables the foreign keys that reference it, and they stay off after the rebuild until you re-enable them with <code>ALTER TABLE … WITH CHECK CHECK CONSTRAINT</code>. Disabling a clustered index makes the whole table unreadable, so disable only nonclustered indexes. PostgreSQL and SQLite have no equivalent; keep the <code>CREATE INDEX</code> statement and the time and disk to run it again.</p>
     </section>
 
     <section aria-labelledby="rollout"><h2 id="rollout">Replacing an index in production</h2>
-      <p>Changing an index, to add a column, change the order or turn it into a partial index, is a build, a check and a drop, in that order, with both indexes present in between. Never drop first: a query that depended on the old index runs against the table until the new one exists. The steps, in PostgreSQL:</p>
+      <p>Changing an index, to add a column, change the order or make it partial, is a build, a check and a drop, in that order, with both indexes present in between. Never drop first: queries that depended on the old index run against the table until the new one exists. In PostgreSQL:</p>
       <Sql code={rollout} label="Build, verify, compare and drop a replacement index" />
-      <p>Step 2 matters because a failed concurrent build looks like a completed command to a migration tool that ignores the error. Step 3 is the point of the exercise: run the plans for the queries the new index is meant to serve, on data shaped like production, and look for the new index’s name. Step 4 is optional but cheap; if the old index shows no scans after a representative period while the new one does, the drop is safe. In MySQL, replace step 5 with making the old index invisible, waiting, and dropping it as in the example above. In SQLite, create the new index, check the plans with <code>EXPLAIN QUERY PLAN</code>, drop the old one and run <code>PRAGMA optimize</code>.</p>
-      <p>If the new index has the same definition as one being rebuilt for space, there is no need for this procedure: <code>REINDEX CONCURRENTLY</code> does the same swap for you.</p>
+      <p>Step 2 matters because a failed concurrent build can look like a finished command to a migration tool that ignores the error. Step 3 is the point of the exercise: read the plans for the queries the new index is for, on production-shaped data. In MySQL, replace step 5 with making the old index invisible, waiting, then dropping it. In SQL Server, build with <code>ONLINE = ON</code> where the edition allows it. In SQLite, create the new index, check the plans with <code>EXPLAIN QUERY PLAN</code>, drop the old one and run <code>PRAGMA optimize</code>.</p>
     </section>
 
     <section aria-labelledby="integrity"><h2 id="integrity">Checking that an index is sound</h2>
-      <p>An index can be wrong in a way that no query reports: entries in the wrong order, entries missing for rows that exist, or pointers to nowhere. A hardware fault, a bug, or a change to the rules that sort text can cause it. The last is the one to know. If the operating system library that supplies collation rules changes under a text index, which can happen when a replica or restored server runs a different OS version, the stored order stops matching the order the server now expects, and lookups quietly miss rows. PostgreSQL’s <a href={`${docs}amcheck.html`}>amcheck</a> documentation lists this among its cases. SQLite’s <code>REINDEX</code> page gives a changed collation as its first reason to rebuild.</p>
-      <Sql code={checks} label="Check index integrity in PostgreSQL, MySQL and SQLite" />
-      <p><code>bt_index_check</code> in PostgreSQL takes only the lock an ordinary <code>SELECT</code> takes and works on a standby, and with <code>heapallindexed</code> it also checks that every table row has its entry, at the cost of several times the work. <code>bt_index_parent_check</code> is more thorough and takes a <code>ShareLock</code> that blocks writes, and cannot run on a hot standby. A passing check does not prove an index is sound, only that this test found nothing, and the manual says <code>REINDEX</code> may not repair every failure. InnoDB’s <code>CHECK TABLE</code> checks index structure and entry counts, and only the <code>QUICK</code> option changes what it does for InnoDB. It can block other work on large tables, and the manual warns that a corrupt page can stop the server. SQLite’s <code>PRAGMA integrity_check</code> reads the whole database and reports <code>ok</code> or a list of problems; <code>quick_check</code> skips the comparison of index contents with the table.</p>
-      <p>When a check finds a bad index, rebuilding it is usually the repair, and the section above says how. Treat the cause as the problem, though: an index that was damaged once by a disk or a collation change can be damaged again.</p>
+      <p>An index can be wrong without any query reporting it: entries out of order, entries missing for rows that exist. The cause to know about is a change to the rules that sort text. If the operating-system library that supplies collations changes under a text index, as can happen when a replica or restored server runs a different OS version, the stored order stops matching the order the server expects, and lookups quietly miss rows.</p>
+      <Sql code={checks} label="Check index integrity in four engines" />
+      <p>PostgreSQL’s <code>bt_index_check</code> takes only the lock a <code>SELECT</code> takes and works on a standby; with <code>heapallindexed</code> it also checks that every row has its entry, at several times the cost. A passing check shows only that this test found nothing. InnoDB’s <code>CHECK TABLE</code>, SQL Server’s <code>DBCC CHECKTABLE</code> and SQLite’s <code>PRAGMA integrity_check</code> check structure and entry counts, and can be slow on large tables. When a check finds a bad index, rebuilding it is usually the repair, but treat the cause as the problem: what damaged it once can do so again.</p>
     </section>
 
     <section class="essay-sources" aria-labelledby="sources"><h2 id="sources">Sources and further reading</h2>
-      <p>Checked on 17 October 2026. Index sizes, page counts, density, rebuild results, lock behaviour and the statistics example come from PostgreSQL 18.6 and SQLite 3.54.0 on one laptop, with million-row tables, autovacuum off for the PostgreSQL runs and no replicas. They show sizes and blocking, not speed. MySQL was not run, and its behaviour is as the 8.4 manual documents it.</p>
+      <p>Checked on 17 and 18 October 2026. Index sizes, page counts, density and rebuild results come from PostgreSQL 18.6 and SQLite 3.54.0 on one laptop, with million-row tables and autovacuum off for the PostgreSQL runs. MySQL and SQL Server were not run; their behaviour is as their documentation describes it.</p>
       <ul>
-        <li>PostgreSQL 18: <a href={`${docs}sql-reindex.html`}>REINDEX</a> for the locks, the six concurrent steps and the <code>_ccnew</code> and <code>_ccold</code> leftovers; <a href={`${docs}routine-reindex.html`}>Routine Reindexing</a> for when rebuilding is worthwhile; <a href={`${docs}btree.html`}>B-Tree Indexes</a> for deduplication and bottom-up deletion; <a href={`${docs}pgstattuple.html`}>pgstattuple</a> for <code>pgstatindex</code>; <a href={`${docs}amcheck.html`}>amcheck</a>; <a href={`${docs}sql-dropindex.html`}>DROP INDEX</a>; <a href={`${docs}routine-vacuuming.html`}>Routine Vacuuming</a> for the analyze trigger and partitioned parents.</li>
-        <li>MySQL 8.4 Reference Manual: <a href={`${mysql}optimize-table.html`}>OPTIMIZE TABLE</a>; <a href={`${mysql}innodb-online-ddl-operations.html`}>Online DDL Operations</a> for which index and table changes allow concurrent writes; <a href={`${mysql}innodb-persistent-stats.html`}>Persistent Optimizer Statistics</a>; <a href={`${mysql}invisible-indexes.html`}>Invisible Indexes</a>; <a href={`${mysql}sys-schema-redundant-indexes.html`}>schema_redundant_indexes</a>; <a href={`${mysql}index-page-merge-threshold.html`}>Merge Threshold for Index Pages</a>; <a href={`${mysql}check-table.html`}>CHECK TABLE</a>.</li>
-        <li>SQLite: <a href={`${sqlite}lang_vacuum.html`}>VACUUM</a>, <a href={`${sqlite}lang_reindex.html`}>REINDEX</a>, <a href={`${sqlite}dbstat.html`}>the dbstat table</a>, and the <a href={`${sqlite}pragma.html`}>pragma list</a> for <code>optimize</code>, <code>integrity_check</code> and <code>freelist_count</code>.</li>
-        <li><a href={indexes}>Indexes</a>: the deep dive this companion extends, with pages, splits and the unused-index query.</li>
-        <li><a href="/learn/databases/relational/postgresql/row-versions/">Row versions and vacuum</a>: why dead rows and their index entries linger, and what holds vacuum back.</li>
-        <li><a href="/learn/databases/relational/postgresql/indexes/">Indexes in PostgreSQL</a>: how concurrent builds work, and the GIN and BRIN maintenance this article leaves out.</li>
-        <li><a href="/learn/databases/relational/slow-queries/">Understanding database performance</a> and <a href="/learn/databases/relational/schema-changes/">Schema changes</a>: diagnosing a plan that went wrong, and bounding how long a migration waits for locks.</li>
+        <li>PostgreSQL 18: <a href={`${docs}sql-reindex.html`}>REINDEX</a>, <a href={`${docs}routine-reindex.html`}>Routine Reindexing</a>, <a href={`${docs}pgstattuple.html`}>pgstattuple</a>, <a href={`${docs}amcheck.html`}>amcheck</a>, <a href={`${docs}sql-dropindex.html`}>DROP INDEX</a> and <a href={`${docs}monitoring-stats.html`}>The Cumulative Statistics System</a> (index scan counts and when they reset).</li>
+        <li>MySQL 8.4: <a href={`${mysql}optimize-table.html`}>OPTIMIZE TABLE</a>, <a href={`${mysql}innodb-online-ddl-operations.html`}>Online DDL Operations</a>, <a href={`${mysql}innodb-persistent-stats.html`}>Persistent Optimizer Statistics</a>, <a href={`${mysql}invisible-indexes.html`}>Invisible Indexes</a>, <a href={`${mysql}sys-schema-unused-indexes.html`}>schema_unused_indexes</a>, <a href={`${mysql}sys-schema-redundant-indexes.html`}>schema_redundant_indexes</a>, <a href={`${mysql}index-page-merge-threshold.html`}>Merge Threshold for Index Pages</a> and <a href={`${mysql}check-table.html`}>CHECK TABLE</a>.</li>
+        <li>SQL Server: <a href={`${mssql}relational-databases/indexes/reorganize-and-rebuild-indexes`}>Optimize index maintenance</a> (page density against fragmentation, and rebuild gains that come from statistics), <a href={`${mssql}relational-databases/system-dynamic-management-views/sys-dm-db-index-physical-stats-transact-sql`}>sys.dm_db_index_physical_stats</a>, <a href={`${mssql}relational-databases/system-dynamic-management-views/sys-dm-db-index-usage-stats-transact-sql`}>sys.dm_db_index_usage_stats</a>, <a href={`${mssql}relational-databases/indexes/tune-nonclustered-missing-index-suggestions`}>Tune nonclustered indexes with missing index suggestions</a>, <a href={`${mssql}relational-databases/indexes/disable-indexes-and-constraints`}>Disable indexes and constraints</a>, <a href={`${mssql}relational-databases/indexes/perform-index-operations-online`}>Perform index operations online</a> and <a href={`${mssql}t-sql/database-console-commands/dbcc-checktable-transact-sql`}>DBCC CHECKTABLE</a>.</li>
+        <li>SQLite: <a href={`${sqlite}lang_vacuum.html`}>VACUUM</a>, <a href={`${sqlite}lang_reindex.html`}>REINDEX</a>, <a href={`${sqlite}dbstat.html`}>the dbstat table</a> and the <a href={`${sqlite}pragma.html`}>pragma list</a>.</li>
+        <li><a href={indexes}>Indexes</a>: the deep dive this companion extends. <a href="/learn/databases/relational/indexing-queries/">Indexing queries: diagnosis and patterns</a>: finding why a query ignores an index.</li>
+        <li><a href={pgIndexes}>Indexes in PostgreSQL</a>: <code>REINDEX CONCURRENTLY</code> in detail, page reuse, deduplication and concurrent builds.</li>
+        <li><a href="/learn/databases/relational/postgresql/row-versions/">Row versions and vacuum</a> and <a href="/learn/databases/relational/schema-changes/">Schema changes</a>: why dead entries linger, and bounding how long a migration waits for locks.</li>
       </ul>
     </section>
   </ArticleBody>

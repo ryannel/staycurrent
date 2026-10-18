@@ -38,8 +38,42 @@ WHERE occurred_at >= timestamp '2026-01-01 00:30:00'
 const skip=`CREATE INDEX core_seek_tier_id ON core_seek (tier, id);
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT id, note FROM core_seek WHERE id = 731;`;
+const prefixIndex=`CREATE INDEX accounts_email_prefix
+ON accounts (email text_pattern_ops);`;
+const cIndex=`CREATE INDEX accounts_email_c
+ON accounts (email COLLATE "C");`;
+const trigram=`CREATE EXTENSION pg_trgm;
+CREATE INDEX accounts_email_trgm
+ON accounts USING gin (email gin_trgm_ops);`;
+const pgStatIndex=`CREATE EXTENSION IF NOT EXISTS pgstattuple;
+
+SELECT tree_level, index_size, leaf_pages, empty_pages, deleted_pages,
+       avg_leaf_density, leaf_fragmentation
+FROM pgstatindex('o_rand_customer_idx');
+--  tree_level | index_size | leaf_pages | empty_pages | deleted_pages | avg_leaf_density | leaf_fragmentation
+-- ------------+------------+------------+-------------+---------------+------------------+--------------------
+--           2 |    7987200 |        969 |           0 |             0 |            19.19 |                  0`;
+const reindexForms=`-- One index, writes allowed throughout (cannot run inside BEGIN ... COMMIT)
+REINDEX INDEX CONCURRENTLY o_rand_customer_idx;
+
+-- Every index on a table, one after another
+REINDEX TABLE CONCURRENTLY o_rand;
+
+-- The blocking form: faster, but writes wait and so do most queries
+REINDEX INDEX o_rand_customer_idx;`;
+const waiting=`-- Is the rebuild running, or waiting for an older transaction?
+SELECT pid, state, wait_event_type, wait_event, left(query, 40) AS query
+FROM pg_stat_activity
+WHERE query ILIKE 'reindex%' AND pid <> pg_backend_pid();
+-- pid  | state  | wait_event_type | wait_event | query
+-- 4121 | active | Lock            | virtualxid | reindex index concurrently o_rand_cust`;
+const buildSettings=`-- For this session's build only
+SET maintenance_work_mem = '1GB';             -- default 64MB
+SET max_parallel_maintenance_workers = 4;     -- default 2
+CREATE INDEX CONCURRENTLY orders_customer_placed_idx
+  ON orders (customer_id, placed_at);`;
 ---
-<Base title="Indexes in PostgreSQL" description="Derive B-tree descent, the planner’s page costs, index-only scans and the visibility map, GIN candidate combinations and BRIN range elimination, then test operator support, physical correlation, HOT updates and maintenance costs.">
+<Base title="Indexes in PostgreSQL" description="Derive B-tree descent, the planner’s page costs, index-only scans and the visibility map, GIN candidate combinations and BRIN range elimination, then test operator support, prefix matching under a language collation, physical correlation, HOT updates, bloat and REINDEX.">
  <article class="visual-essay relational-design">
  <header class="essay-header"><p class="eyebrow">Inside PostgreSQL</p><h1>Indexes in PostgreSQL</h1><TitleLine type="Deep dive" version="PostgreSQL 18" /></header>
 <ArticleBody>
@@ -76,6 +110,22 @@ SELECT id, note FROM core_seek WHERE id = 731;`;
  <Sql code={json} label="Use an operator supported by the document index" />
  <p>Change the predicate to <code>attributes -&gt;&gt; 'tag' = 'priority'</code>. The lesson still returns twenty records, but the plan scans the table: it is now comparing an extracted text expression, rather than using whole-document containment. A B-tree expression index on that exact extraction would be a different design. A query rewrite is appropriate only when its meaning is correct for all permitted records, not merely when the current fixture happens to produce the same IDs.</p>
  <p>Likewise, <code>jsonb_path_ops</code> and the default <code>jsonb_ops</code> store different searchable information and support different operators. Path-and-value hashes make the former focused for its supported containment and path searches; it does not support the top-level key-existence operator <code>?</code>. The <a href="/learn/databases/relational/postgresql/json/">JSON chapter</a> derives these choices from document structure and the exact expression being queried.</p>
+ <h3 id="like">Prefix matching under a language collation</h3>
+ <p>A B-tree on text orders strings by the column’s collation. Under a language collation, strings that share a prefix aren’t guaranteed to sit side by side, so an ordinary index can’t turn <code>LIKE 'ab1%'</code> into a range. On 60,000 accounts in a database with an English ICU collation, measured on PostgreSQL 18.6 with the experiment from <a href="/learn/databases/relational/indexing-queries/#run">Indexing queries</a>:</p>
+ <div class="table-scroll" role="region" tabindex="0" aria-labelledby="like-caption"><table><caption id="like-caption"><code>email LIKE 'ab1%'</code> on 60,000 accounts (13 matches) in a database with an English collation</caption><thead><tr><th>Index or query</th><th>Pages read</th></tr></thead><tbody>
+  <tr><td>No index, or the default index on <code>(email)</code></td><td>442</td></tr>
+  <tr><td><code>(email text_pattern_ops)</code></td><td>16</td></tr>
+  <tr><td><code>(email COLLATE "C")</code></td><td>16</td></tr>
+  <tr><td><code>(lower(email) text_pattern_ops)</code>, query on <code>lower(email)</code></td><td>16</td></tr>
+  <tr><td>The same index, query with <code>ILIKE</code></td><td>442</td></tr>
+  <tr><td>Default index, <code>LIKE '%ab1%'</code> (156 matches)</td><td>442</td></tr>
+  <tr><td><code>gin (email gin_trgm_ops)</code>, <code>LIKE '%ab1%'</code></td><td>135</td></tr>
+ </tbody></table></div>
+ <p>The operator class <code>text_pattern_ops</code> compares strings character by character. The index then serves <code>LIKE 'prefix%'</code> and equality, but not <code>&lt;</code>, <code>&gt;</code> or <code>ORDER BY</code> in the language’s order. Declaring the index <code>COLLATE "C"</code> does the same, and the planner builds the range from the index’s collation, so the query needs no change. Keep the default index as well if you also sort in the language order.</p>
+ <Sql code={prefixIndex} label="An operator class for prefix matching under a language collation" />
+ <Sql code={cIndex} label="Or an index in the C collation" />
+ <p>A case-insensitive prefix search needs <code>lower(email)</code> indexed with the pattern operator class, and every query must say <code>lower(email) LIKE ...</code>; <code>ILIKE</code> can’t use it. A leading wildcard has no range at all. The <code>pg_trgm</code> extension indexes every three-character piece of each value in a GIN index: 135 pages instead of 442 for 156 matches, for an index of 471 pages against the B-tree’s 367. For natural-language search, <a href="/learn/databases/relational/postgresql/full-text-search/">full-text search</a> is the better tool.</p>
+ <Sql code={trigram} label="A trigram index for substring searches" />
  </section>
  <section id="gin"><h2>GIN indexes and posting lists</h2>
  <p>A single array or document can contain several searchable elements. GIN, an inverted index, extracts keys from each value and associates each key with the heap references where it occurs. A key with relatively few references can keep a compact posting list; a frequently occurring key can need a posting tree. Searching starts from the requested keys rather than inspecting every complete document.</p>
@@ -110,8 +160,35 @@ SELECT id, note FROM core_seek WHERE id = 731;`;
  <p>A BRIN summary is compact because it represents many rows together. Its ongoing usefulness depends on its ranges remaining selective and being summarised. Small index size alone is not sufficient: the scattered-table experiment has a small summary structure that excludes too little to justify using it for the selected query.</p>
  <h3 id="concurrently">Building an index while writes continue</h3>
  <p>A plain <code>CREATE INDEX</code> blocks writes to the table until it finishes, because rows changed during the build would otherwise be missing from the index. <a href="https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY"><code>CREATE INDEX CONCURRENTLY</code></a> lets writes continue, and the price follows from that. A scan of the table sees only the rows that existed when it began, so the build needs a second scan to catch up with the rows written during the first, and it must wait for transactions that could still change or read the table. It does more work and takes longer. If the build fails part way, it leaves an invalid index behind, which queries ignore but writes still maintain. Drop it, or rebuild it with <code>REINDEX INDEX CONCURRENTLY</code>. Because it runs as several transactions, it cannot run inside a transaction block, which matters to migration tools that wrap every change in one.</p>
- <h3>Choosing among access methods</h3>
- <p>The decision is consequently more specific than choosing a favourite access method. Write the exact query, derive the information that could eliminate work, and inspect a representative plan with actual candidates, rechecks, heap visits and ordering. Then include the index’s storage, build procedure and maintenance under the expected write rate. For specialised range, spatial or nearest-neighbour operators, start with the supporting type and operator class; the <a href="/learn/databases/relational/postgresql/extensions/">types and extensions chapter</a> follows that connection.</p>
+ </section>
+ <section id="bloat"><h2>Bloat, page reuse and REINDEX</h2>
+ <p><a href="/learn/databases/relational/maintaining-indexes/#empty-or-thin">Maintaining indexes</a> shows that deleting most of a table’s rows leaves its indexes the same size. This section covers how PostgreSQL reuses the space, how to measure it, and what a rebuild locks.</p>
+ <h3 id="reuse">When freed pages come back into use</h3>
+ <p>A B-tree page that becomes empty is taken out of the tree and stamped with a transaction ID. It can be reused only once no running scan could still follow a link into it, and a <code>VACUUM</code> adds it to the free space map only if that is already true when the vacuum ends. In a test on a million-row table after deleting the oldest 90%, the first <code>VACUUM</code> left no free pages in the primary-key index, and 900,000 new rows grew it from 21 MB to 41 MB. A second <code>VACUUM</code> listed all 2,467 emptied pages as free, and a further 500,000 inserts left the index at 41 MB. On a busy system the next vacuum usually frees the pages; on an idle copy, two vacuums back to back free nothing.</p>
+ <h3 id="churn">Deduplication and bottom-up deletion</h3>
+ <p>Updates that can’t be HOT add an entry to every index and leave the old one for vacuum. Two defences act when a leaf page is about to split. <strong>Bottom-up deletion</strong> removes entries for row versions it can see are dead, and <strong>deduplication</strong> stores a repeated key once with a list of row locations. The <a href="https://www.postgresql.org/docs/18/btree.html#BTREE-IMPLEMENTATION">B-tree implementation</a> chapter says an index can stay the same size under constant update churn this way. Neither helps scattered deletes. Deduplication is off for some types, <code>numeric</code> and floating-point among them, and for <code>INCLUDE</code> indexes.</p>
+ <h3 id="pgstatindex">Measuring density with pgstatindex</h3>
+ <p>The <a href="https://www.postgresql.org/docs/18/pgstattuple.html"><code>pgstattuple</code></a> extension, shipped with PostgreSQL, provides <code>pgstatindex</code>. It reads the whole index, so run it off-peak on a large one; it needs the <code>pg_stat_scan_tables</code> role. The query below reads the customer index on Maintaining’s million-row table after 90% of its rows were deleted at random (<code>o_rand</code>).</p>
+ <Sql code={pgStatIndex} label="Read page counts and fullness for one B-tree index" />
+ <p><code>avg_leaf_density</code> is the average percentage of each leaf page in use: about 90 for a fresh index, 19 for this randomly thinned one. <code>deleted_pages</code> and <code>empty_pages</code> count pages out of the tree and waiting for reuse. <code>leaf_fragmentation</code> measures how far the leaves’ physical order has drifted from key order. A density in the teens with a size many times the baseline is the scattered-delete case; many deleted pages with a dense remainder means the space is reusable.</p>
+ <h3 id="reindex">REINDEX and what it locks</h3>
+ <Sql code={reindexForms} label="Rebuild one index, a table's indexes, or one index with blocking" />
+ <p>Plain <code>REINDEX</code> held a <code>ShareLock</code> on the table, which stopped inserts, and an <code>AccessExclusiveLock</code> on the index. Even <code>EXPLAIN</code> of a primary-key lookup waited, because planning takes a lock on every index of the table. Use it only on a table nothing is using.</p>
+ <p><code>REINDEX ... CONCURRENTLY</code> builds a second copy while writes continue, catches up, swaps it in and drops the old one, with the costs of <a href="#concurrently">a concurrent build</a>:</p>
+ <ul>
+  <li><strong>Room for both copies.</strong> <code>REINDEX TABLE CONCURRENTLY</code> builds new copies of all the table’s indexes before dropping any, so it needs room for all of them at once.</li>
+  <li><strong>Write-ahead log.</strong> Rebuilding an 11 MB index wrote about 10 MB, plain or concurrent, which every standby replays.</li>
+  <li><strong>Waits for older transactions.</strong> A transaction left open kept the rebuild in <code>wait_event = virtualxid</code> until it ended, while other sessions’ inserts went through. The query below shows that state.</li>
+  <li><strong>A <code>ShareUpdateExclusiveLock</code>.</strong> It doesn’t block reads or writes, but it blocks other schema changes, and only one concurrent build per table can run at once.</li>
+  <li><strong>No transaction block.</strong> It runs as several transactions.</li>
+ </ul>
+ <Sql code={waiting} label="See whether a concurrent rebuild is waiting for another transaction" />
+ <p>A failed concurrent rebuild leaves its copies named by role. A <code>_ccnew</code> index is the unfinished new copy: drop it and run the rebuild again. A <code>_ccold</code> index is the old copy that couldn’t be dropped after a successful swap, and is safe to drop. Indexes behind exclusion constraints and system catalogs can’t be rebuilt concurrently.</p>
+ <p>For the heaviest case, <code>VACUUM FULL</code> and <code>CLUSTER</code> rewrite the table and all its indexes under an <code>AccessExclusiveLock</code>; the <code>pg_repack</code> extension does the same with a shorter lock. A build sorts every entry, so raising its session’s memory and workers shortens it:</p>
+ <Sql code={buildSettings} label="Give one session's index build more memory and workers" />
+ </section>
+ <section id="choosing"><h2>Choosing among access methods</h2>
+ <p>The decision is more specific than choosing a favourite access method. Write the exact query, derive the information that could eliminate work, and inspect a representative plan with actual candidates, rechecks, heap visits and ordering. Then include the index’s storage, build procedure and maintenance under the expected write rate. For specialised range, spatial or nearest-neighbour operators, start with the supporting type and operator class; the <a href="/learn/databases/relational/postgresql/extensions/">types and extensions chapter</a> follows that connection.</p>
  </section>
  </ArticleBody>
  </article>

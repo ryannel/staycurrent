@@ -99,21 +99,21 @@ export const relationalCollection: RelationalGroup[] = [
         "slug": "indexes",
         "title": "Indexes",
         "description": "Connect an index's structure to the queries it helps and the work it adds.",
-        "scope": "Develop ordered lookups, ranges, composite keys, filtering, sorting, covering access and selectivity. Weigh table fetches, storage and writes, then verify an index choice.",
+        "scope": "Develop ordered lookups, ranges, heaps and clustered tables, composite keys and what an index does with each condition, sorting, covering access and selectivity. Weigh table fetches, storage, writes and key choice, then design and verify an index for a query.",
         "status": "published"
       },
       {
         "slug": "indexing-queries",
-        "title": "Indexing common query patterns",
-        "description": "Choose the index for an order list, join, page of results, search, OR condition or queue, and see in the plan why a query that should use an index does not.",
-        "scope": "Measure order-by-limit, grouping and distinct values, join and foreign-key indexes, offset against keyset pages, conditions and prefixes an index cannot see through, OR and AND, and recurring shapes such as queues, soft deletes and tenants.",
+        "title": "Indexing queries: diagnosis and patterns",
+        "description": "Find out why a query ignores an index you expected it to use, and choose the index for the query shapes that recur in every application.",
+        "scope": "Read index use in four engines' plans, then diagnose wrapped columns, type mismatches, LIKE, the missing leading column, OR, broad conditions, stale statistics and parameters. Work through sorted lists with a limit, the latest row per group, joins and foreign keys, queues, soft deletes, case-insensitive lookups and optional filters.",
         "status": "draft"
       },
       {
         "slug": "maintaining-indexes",
         "title": "Maintaining indexes",
-        "description": "Keep indexes the right size, rebuild them safely, keep statistics current and remove the ones that cost more than they save.",
-        "scope": "Measure index bloat and rebuilds, compare each engine's locking during a rebuild, refresh statistics after bulk changes, and find duplicate, invalid and unused indexes.",
+        "description": "Keep indexes the right size, rebuild and build them safely, and remove the ones that cost more than they save.",
+        "scope": "Measure index size and density in four engines, decide when a rebuild is worth it and what each engine's rebuild locks, build on a live table, find unused, duplicate and invalid indexes, rehearse a drop and replace an index in production.",
         "status": "draft"
       }
     ]
@@ -127,22 +127,22 @@ export const relationalCollection: RelationalGroup[] = [
       {
         "slug": "storage",
         "title": "Storage and durability",
-        "description": "Follow records through memory, persistent storage and recovery after a crash.",
-        "scope": "Connect record placement, pages and buffers to changes, logging, checkpoints and restart in an identified engine. Explain the durability promise and which failures require another copy.",
+        "description": "Follow a row through pages, memory, the log and crash recovery, and choose what a crash may take away.",
+        "scope": "Explain pages, what a row and a large value cost, the buffer pool, where old versions live, the write-ahead log and group commit, crash recovery, the trust placed in a flush and the durability settings, in PostgreSQL with InnoDB, SQL Server and SQLite compared.",
         "status": "published"
       },
       {
         "slug": "buffer-pool",
         "title": "The buffer pool",
-        "description": "Size the page cache, understand what it keeps and evicts, and recover its contents after a restart.",
-        "scope": "Develop eviction and scan resistance, sizing against memory and the operating system's cache, warm-up after restart or failover, and reading the hit rate, in PostgreSQL, InnoDB and SQLite.",
+        "description": "Size the page cache against the working set and memory, and get it warm again after a restart.",
+        "scope": "Explain what the pool should hold, the two caches, sizing against memory, scans that push hot pages out and warm-up after a restart or failover, in PostgreSQL, InnoDB, SQL Server and SQLite.",
         "status": "draft"
       },
       {
-        "slug": "watching-storage",
-        "title": "Watching storage in a running database",
-        "description": "Read the metrics and logs that show the cache, checkpoints, the log and flushes at work, and use them in an incident.",
-        "scope": "Name the views, status variables and log lines per engine for cache hit rate, dirty pages, checkpoints, log volume, flush latency and old-version history; read a slow-commit or slow-restart incident from them.",
+        "slug": "checkpoints-and-the-log",
+        "title": "Checkpoints, torn pages and the log",
+        "description": "Choose how often to checkpoint, survive torn pages, decide whether a flush can be trusted and keep the log from filling the disk.",
+        "scope": "Size checkpoints from a recovery-time target, compare torn-page protection, test a volume's flush, find what holds the log and estimate restart time, then read four incidents, in PostgreSQL, InnoDB, SQL Server and SQLite.",
         "status": "draft"
       }
     ]
@@ -361,6 +361,7 @@ export const relationalAliases: Record<string, string> = {
   "choosing-indexes": "indexes",
   "join-algorithms": "query-execution",
   "commit-and-recovery": "storage",
+  "watching-storage": "checkpoints-and-the-log",
   "diagnosing-waits": "slow-queries",
   "performance-testing": "slow-queries",
   "maintenance": "slow-queries",
