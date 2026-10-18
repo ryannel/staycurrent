@@ -213,4 +213,3 @@ execution. The three house articles calibrate explanation and media; they do not
 supply a fixed outline. Existing reading is reconciled separately after these
 choices, with no route/status changes and no automatic certification of old prose.
 The plan is ready for the user's scope discussion. It commissions no articles.
-

@@ -197,4 +197,3 @@ Layer: 1 model, 2 working mechanism, 3 expert cases, 4 product specifics, R refe
 | Synchronous standby levels (the old Storage Figure 14) | *Replication and failover* `#acknowledgements` teaches the table; the figure's scene stays in the shared model, unused, until that page adopts it |
 | Column storage | Column-stores essay |
 | Compression, encryption at rest, LSM engines, eviction algorithms beyond a paragraph, allocation structures | Left out of this article. Proposed field homes: A03 for column compression, F08 for encryption policy, B08 for volume encryption, F04 for LSM. Other eviction/allocation internals remain reference material. |
-
