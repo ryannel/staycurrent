@@ -117,6 +117,17 @@ export abstract class IndexFigure<F extends Frame> extends HTMLElement {
     });
   }
 
+  /** The same measurement on the 60,000-order table, or null to hide the line. */
+  protected scale(value: string | null, label = 'At 60,000 orders:') {
+    const line = this.querySelector<HTMLElement>('[data-scale]');
+    if (!line) return;
+    line.hidden = !value;
+    if (!value) return;
+    const [l, v] = [line.querySelector('[data-scale-label]')!, line.querySelector('[data-scale-value]')!];
+    if (l.textContent !== label) l.textContent = label;
+    if (v.textContent !== value) v.textContent = value;
+  }
+
   protected param(name: string): string {
     const control = this.querySelector<HTMLElement>(`[data-param="${name}"]`)!;
     if (control instanceof HTMLInputElement && control.type === 'checkbox') return String(control.checked);
@@ -155,8 +166,13 @@ export abstract class IndexFigure<F extends Frame> extends HTMLElement {
     this.scrub.max = String(this.frames.length);
     this.scrub.value = String(this.cursor + 1);
     this.scrub.setAttribute('aria-valuetext', `Step ${this.cursor + 1} of ${this.frames.length}`);
+    // A button that disables while focused drops focus to the page, so hand
+    // it to the button a keyboard user is most likely to want next.
+    const focused = document.activeElement;
     this.backButton.disabled = this.cursor === 0;
     this.nextButton.disabled = this.cursor === this.frames.length - 1;
+    if (focused === this.nextButton && this.nextButton.disabled) this.playButton.focus();
+    if (focused === this.backButton && this.backButton.disabled) this.nextButton.focus();
     this.syncPlayButton();
   }
 

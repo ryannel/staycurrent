@@ -1,0 +1,354 @@
+
+
+- 
+- 
+- 
+- 
+- Relational databases: articles
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+-    
+Databases and storage
+
+# Watching storage in a running database
+ Companion to Storage and durabilityAbout 31 minutesPostgreSQL 18, with InnoDB (MySQL 8.4) and SQLite   
+Storage and durability followed one price change through the buffer pool, the log, a checkpoint and a crash. From the application, almost none of that is visible. A commit waiting on a slow flush just takes longer. A checkpoint writing thousands of pages appears as a few slow requests. A log that can’t be recycled appears as a disk filling up for no obvious reason. Yet each mechanism does report what it is doing, in counters the engine keeps and in lines it writes to its own log. This article reads those reports one mechanism at a time: where to find them in each engine, what an ordinary reading looks like, and what a bad one usually means. 
+PostgreSQL 18 is the worked example. The outputs shown come from a real PostgreSQL 18.6 server on a laptop, running the banking workload that ships with its pgbench benchmark tool. They show the shape of each signal, not numbers to expect on your hardware. Sizes are in PostgreSQL’s units, where 1 MB is 1,024 kB. InnoDB (MySQL 8.4) and SQLite appear where they report differently; no MySQL server was run for this article, so its names come from the manual and no InnoDB output is shown. The last sections use the signals together on four common incidents: commits that got slow, a restart that takes too long, a log directory filling the disk, and a table or undo history that keeps growing. 
+Two neighbouring questions have their own articles. Why one query is slow, including lock waits and plans, belongs to Understanding database performance. How large the cache should be, and what it keeps, belongs to The buffer pool, the companion on the cache. Here the cache appears only as far as watching it needs. 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+
+## Where each engine reports 
+PostgreSQL keeps cumulative statistics in views whose names begin with pg_stat_, and writes events such as checkpoints and crash recovery to its server log. InnoDB reports through MySQL’s global status variables, read with SHOW GLOBAL STATUS; through a larger set of counters in information_schema.INNODB_METRICS, only some of which are switched on by default; and through a text report, SHOW ENGINE INNODB STATUS. Its events go to the MySQL error log. SQLite has no server, so nothing collects numbers on your behalf. The application asks: PRAGMA statements return the state of the log and its checkpoints, the C function sqlite3_db_status() reports one connection’s cache hits and misses, and a callback registered for sqlite3_log() receives notices such as a recovery. The sizes of the database’s files on disk are a signal too. 
+Most of these numbers are counters that only grow: blocks read since the statistics were last reset, bytes of log written, checkpoints completed. One reading of a counter says little. Take two readings a known interval apart and divide the difference by the interval, and you have a rate: reads per second, log bytes per second. Monitoring systems do this for you, but you need to know when the counters restart. MySQL’s status variables start from zero when the server starts. PostgreSQL saves its statistics on a clean shutdown and, its documentation says, resets all of them after crash recovery. A rate computed across a restart means nothing. PostgreSQL also caches what a transaction has read from these views until the transaction ends, so a monitoring script that wraps several samples in one transaction sees the same numbers each time; take each sample in its own transaction, as psql does by default; Understanding database performance shows the same precaution for the activity view. 
+Some of these signals exist only if they were set up before the incident. The incidents below assume this much:  
+- a monitoring role that can read other sessions: pg_monitor in PostgreSQL, the PROCESS privilege in MySQL for the InnoDB status report and transaction table; 
+- PostgreSQL’s track_wal_io_timing for log flush times and track_io_timing for data files, both off by default, and the pg_buffercache extension to count dirty pages; 
+- any INNODB_METRICS counter you rely on that is off by default, enabled with innodb_monitor_enable; 
+- a sqlite3_log() callback in each SQLite application, without which a recovery leaves no trace.  
+Few of these signals have a correct value. A checkpoint every five minutes is ordinary on one server and a warning on another. What helps is knowing your own server’s readings on an ordinary day, so that a change stands out. Each incident at the end starts from such a change.  
+
+## Reads and the cache 
+Every page the engine needs is either already in the buffer pool, a hit, or has to be fetched, a read. Hits divided by hits plus reads, over an interval, is the hit ratio: the share of page requests answered from memory. 
+In PostgreSQL, blks_hit and blks_read in pg_stat_database count them per database, and pg_stat_io splits them by the kind of process that asked. A PostgreSQL read is a request to the operating system, which may answer from its own file cache, so the documentation is careful to say these counters don’t distinguish data fetched from disk from data already in the kernel’s cache. InnoDB’s pair is Innodb_buffer_pool_read_requests, every logical page request, and Innodb_buffer_pool_reads, requests the pool could not satisfy and had to read from disk. Because InnoDB bypasses the operating system’s cache for its data files by default on Linux, its reads are closer to real drive reads. SQLite counts per connection, as SQLITE_DBSTATUS_CACHE_HIT and SQLITE_DBSTATUS_CACHE_MISS. 
+Sample both counters, with the commit count (xact_commit in pg_stat_database, MySQL’s Com_commit), at the start and end of an interval, and you have reads per second and reads per transaction as well as the ratio. In the local run, the sessions serving pgbench made 1,048,459 hits and 40,196 reads in two minutes: 96%, or about 335 reads a second. What those numbers mean for the size of the pool, and why the ratio alone misleads, is the subject of The buffer pool. 
+One cache signal belongs with writing rather than reading. Innodb_buffer_pool_wait_free counts the times InnoDB needed a page slot, found no clean one, and waited while dirty pages were flushed. The manual says it should be small when the pool is sized well. A count that keeps rising means reads are waiting for writes, which is the subject of the next section.  
+
+## Dirty pages and who writes them 
+A dirty page has to be written to its file before its slot can hold a different page. How many pages are dirty matters less than which process ends up writing them, because only one of the possible writers makes a query wait. 
+PostgreSQL has three. The checkpointer writes every page dirtied before a checkpoint, spread over most of the interval to the next one. The background writer wakes every 200 ms (bgwriter_delay) and writes dirty pages when clean ones look scarce. Its documentation gives the reason: it makes it less likely that a process serving queries will find no clean buffer and have to write dirty ones itself. The third is the session’s own process. When it needs a slot and the page it would evict is dirty, it writes the page itself, and its query waits for that write. pg_stat_io counts each kind of writer separately. 
+
+SELECT backend_type, sum(writes) AS writes
+FROM pg_stat_io
+WHERE object = 'relation'
+GROUP BY backend_type
+ORDER BY writes DESC; 
+The query returns totals since the counters were last reset, which on a production server may be months. Run it twice and subtract, or reset first with pg_stat_reset_shared('io'), as the local run did; the shares are what to compare. 
+  Observed in the local run: two minutes at 400 transactions a second, 30-second checkpoints, with the counters reset just before. 
+ | backend_type | writes  
+ | checkpointer | 34,165 
+ | background writer | 8,140 
+ | client backend | 19 
+ | autovacuum worker | 5    
+That is the healthy shape: the checkpointer and background writer do almost all the writing, and the sessions serving queries (client backend) almost none. The documentation names the other shape directly: large numbers of writes by client backends “could indicate a misconfiguration of shared buffers or of the checkpointer.” In practice it means pages are being dirtied faster than the background processes clean them, or the pool is too small for the pages in use, and some queries pay for a write before they can read. A partner signal is maxwritten_clean in pg_stat_bgwriter: the rounds in which the background writer stopped at its limit of 100 pages (bgwriter_lru_maxpages). It was 9 in the local run; a steady rise alongside backend writes says the limit is holding it back. The same view reports evictions, pages pushed out to make room. Evictions by client backends rise with reads, so they belong to the cache question in The buffer pool rather than to writing. 
+To count dirty pages directly, the pg_buffercache extension that ships with PostgreSQL provides pg_buffercache_summary(). In the local run the count climbed from almost nothing to 14,921 of 16,384 buffers in the first half-minute, then settled between about 10,000 and 12,000 once checkpoints were writing. A high count on its own is not a fault: most of the pool was dirty here while the sessions wrote almost nothing themselves. It becomes one when it stays high together with writes by client backends. Figure 1 below shows the whole run. 
+InnoDB reports Innodb_buffer_pool_pages_dirty against Innodb_buffer_pool_pages_total; SHOW ENGINE INNODB STATUS calls the same count “Modified db pages”. Its writers are page cleaner threads, which write from two ends: the oldest changes first, which advances the checkpoint, and pages near the end of the eviction list, which keeps clean pages available. When neither keeps up, a session waits for a free page, and Innodb_buffer_pool_wait_free rises. Adaptive flushing raises the page cleaners’ rate as the dirty share passes innodb_max_dirty_pages_pct_lwm (10%) and as the redo log fills; at innodb_max_dirty_pages_pct, 90 by default, InnoDB flushes aggressively. SHOW ENGINE INNODB STATUS shows the redo side in its LOG section, as “Log sequence number” and “Last checkpoint at”. 
+
+SHOW GLOBAL STATUS WHERE Variable_name IN (
+  'Innodb_buffer_pool_read_requests', 'Innodb_buffer_pool_reads',
+  'Innodb_buffer_pool_pages_dirty', 'Innodb_buffer_pool_pages_total',
+  'Innodb_buffer_pool_wait_free'); 
+SQLite has no background writer. A transaction’s changed pages stay in the connection’s cache and are written at commit, to the WAL file in WAL mode. If the cache fills before the commit, SQLite has to write some pages early, and SQLITE_DBSTATUS_CACHE_SPILL counts those; its documentation suggests a larger cache when it rises.  
+
+## Reading checkpoints 
+A checkpoint writes the pages dirtied before a log position, then records that position as the place crash recovery will start. Three things about checkpoints are worth watching: how often they happen, what started them, and how long their writing took. PostgreSQL reports all three in its server log, one pair of lines per checkpoint, because log_checkpoints is on by default. 
+
+### The checkpoint log line 
+Here is one pair from the local run, wrapped to fit. Only the time is kept from each line’s prefix. For the experiment, checkpoint_timeout was lowered from its default of 5 minutes to its minimum, 30 seconds, so that several cycles fit in two minutes. 
+
+17:26:22.060 LOG:  checkpoint starting: time
+17:26:49.135 LOG:  checkpoint complete: wrote 8348 buffers (51.0%),
+    wrote 2 SLRU buffers; 0 WAL file(s) added, 0 removed, 7 recycled;
+    write=27.013 s, sync=0.054 s, total=27.075 s; sync files=17,
+    longest=0.027 s, average=0.004 s; distance=115037 kB,
+    estimate=226460 kB; lsn=0/2582BD08, redo lsn=0/1F391760 
+Read it in this order.  
+- What started it. The word after checkpoint starting: is the cause. time means checkpoint_timeout passed. wal means the log written since the last checkpoint reached the limit set by max_wal_size. immediate force wait appears for a CHECKPOINT command, and end-of-recovery for the one that finishes crash recovery. 
+- How much it wrote. 8,348 buffers, 51% of shared buffers. 
+- How long the writing took. write=27.013 s looks alarming and isn’t. PostgreSQL spreads the writes over about 90% of the interval (checkpoint_completion_target is 0.9), and 90% of 30 seconds is 27. A long write phase is the design working. sync=0.054 s is the time spent waiting for the data files to be flushed at the end, and that is the number that grows when storage is slow or overloaded. longest names the slowest single file. 
+- How much log it covered. distance=115037 kB is the log written between this checkpoint’s start and the previous one’s: about 112 MB in 30 seconds here. It is a log rate you get for free. It is not quite what a crash would replay: replay starts from the last completed checkpoint, so a crash while the next one is writing replays nearly two intervals’ worth. 
+- What happened to old log files. 7 recycled means seven 16 MB segments behind the previous checkpoint were renamed for reuse. If files are kept instead, the section on log retention below explains why.  
+
+### A checkpoint cycle, recorded 
+Figure 1 plots the same run sampled once a second: how fast the log was written, and how many buffers were dirty. The shaded bands are the three complete checkpoints, from their start line to their completion line.  
+Figure 1
+PostgreSQL: log written and dirty buffers through three checkpoints 
+
+Recorded on a laptop: PostgreSQL 18.6, pgbench at 400 transactions a second, 128 MB of shared buffers (16,384 pages), checkpoints every 30 seconds. A manual checkpoint ran just before the first sample, which is why the log rate also starts high. The rates belong to this run, not to PostgreSQL in general.  
+Two patterns repeat. The dirty-page count rises until a checkpoint starts writing, then holds steady, because the checkpointer and the background writer now clean pages about as fast as the workload dirties them. And the log rate jumps at every checkpoint start, from under 3 MB a second to over 5, then decays over the next 20 seconds, with no change in the workload. 
+The jump is full-page images. After a checkpoint starts, the first change to each page writes a copy of the whole page into the log, so a crash can repair a torn page (Storage and durability explains why). Right after a checkpoint, almost every change is a first change; as the interval goes on, more changes land on pages already copied. pg_stat_wal counts the images in wal_fpi. Over the two minutes it recorded 55,653 images among 329,288 log records. A separate 20-second run straight after a checkpoint, measured with pg_waldump --stats, found full-page images made up 95% of the log’s bytes. pgbench updates rows scattered over a table of 33,000 pages, so most changes land on a page not yet copied. A workload that keeps changing the same few pages would show a much smaller share. 
+A periodic rise in log volume and in write I/O, lined up with checkpoint starts, is therefore normal. What deserves attention is a rise in commit latency at the same moments, which the incidents section returns to. 
+
+### Timed or requested 
+pg_stat_checkpointer, which in PostgreSQL 17 and 18 holds the checkpoint counters that used to sit in pg_stat_bgwriter, keeps the same story as counters: num_timed for checkpoints started by the timer, num_requested for those requested by the log size limit, a CHECKPOINT command or a backup, and num_done for those that actually ran. It also sums write_time, sync_time and buffers_written. 
+On a server with steady load, most checkpoints should be timed. A run of requested ones means the log is reaching max_wal_size before the timer fires, and PostgreSQL says so in the log whenever two checkpoints caused by the log filling come closer together than checkpoint_warning, 30 seconds by default: 
+
+17:27:36.298 LOG:  checkpoints are occurring too frequently (6 seconds apart)
+17:27:36.298 HINT:  Consider increasing the configuration parameter "max_wal_size".
+17:27:36.298 LOG:  checkpoint starting: wal 
+That warning came from repeating the same two-minute workload with max_wal_size lowered from its default of 1 GB to 64 MB. 
+  The same two-minute workload, run once with each setting, on one laptop. The counts are of checkpoints started; num_done, which counts completed ones, was 3 and 12, because the last checkpoint of each run was still writing. 
+ | Reading | max_wal_size = 1GB | max_wal_size = 64MB  
+ | Checkpoints timed / requested | 4 / 0 | 0 / 13 
+ | “Too frequently” warnings | 0 | 13 
+ | Pages written by checkpointer + background writer | 34,165 + 8,140 | 47,262 + 33 
+ | Log written (wal_bytes) | 442 MB | 421 MB 
+ | Full-page images (wal_fpi) | 55,653 | 52,475 
+ | Average transaction latency (pgbench) | 1.90 ms | 2.62 ms    
+The signals behave as the documentation predicts: every checkpoint became a requested one, each followed the last by 6 to 10 seconds, and the log said so 13 times. Average transaction latency rose from 1.90 ms to 2.62 ms, and that is the cost users would notice. pgbench’s figure includes time a transaction waited for its scheduled start, which also rose, so not all of the difference is slower commits; with one run of each on a laptop, take the rise as an indication, not a measurement. The other costs were smaller than you might expect. Page writes rose by about 12%, and the log hardly changed, for the reason in the previous section: in this workload nearly every change hit a page not yet copied since the last checkpoint, at either interval. Where the same pages change many times a minute, frequent checkpoints multiply full-page images instead. So treat the warning as a reason to look at commit latency, log volume and write I/O, and raise max_wal_size, which is the documentation’s first response, rather than as proof of a particular cost. 
+
+### InnoDB: how full the redo log is 
+InnoDB has no checkpoint events to log, because its checkpoint moves continuously behind the oldest page still dirty. What you watch instead is the distance between the newest log record and the checkpoint, often called the checkpoint age, against the redo log’s fixed size. Innodb_redo_log_current_lsn minus Innodb_redo_log_checkpoint_lsn gives it in bytes, and Innodb_redo_log_logical_size reports the span of redo still in use directly. The size it is compared with is innodb_redo_log_capacity, 100 MB by default in MySQL 8.4. 
+
+SHOW GLOBAL STATUS LIKE 'Innodb_redo_log_%';
+SELECT @@innodb_redo_log_capacity; 
+Normally the age rises and falls well below capacity as the page cleaners keep pace. When it approaches capacity, the manual describes InnoDB flushing dirty pages more aggressively, with a temporary drop in throughput if the log does fill; in the worst case the error log reports “Redo log is running out of free space, pausing user threads” and suggests a larger innodb_redo_log_capacity. So a sawtooth of throughput, with the checkpoint age pinned near the limit, is InnoDB’s version of PostgreSQL’s too-frequent checkpoints: the log is too small for the write rate, or the page cleaners are held back by innodb_io_capacity (10,000 by default in 8.4) or by slow storage. 
+
+### SQLite: what a checkpoint returns 
+In WAL mode, SQLite checkpoints automatically when a commit leaves the WAL file at 1,000 pages or more, copying the logged pages back into the database file. PRAGMA wal_checkpoint runs one by hand and returns three numbers: whether a blocking checkpoint was stopped by another connection (1) or not (0), the number of pages in the WAL file, and the number of those pages copied back. Run with no other connection open, the result below shows a checkpoint that finished: everything in the log was copied. 
+  Observed with SQLite 3.54.0 after 5,000 small inserts in WAL mode. 
+ | Statement | busy | log | checkpointed 
+ | PRAGMA wal_checkpoint(PASSIVE) | 0 | 413 | 413   
+When the third number stays below the second, something is stopping the copy. The section on old versions shows what.  
+
+## How fast the log grows, and why it stays 
+The log is written at the rate of change, and kept until nothing needs it. Both halves show up in production: the rate sets the disk, replication and archive bandwidth you need, and anything that stops old log being released turns into a disk that fills. 
+
+### Measuring the rate 
+PostgreSQL gives the rate three ways. pg_stat_wal counts records, full-page images and bytes. The current log position, pg_current_wal_lsn(), is itself a byte offset, so the difference between two readings, from pg_wal_lsn_diff(), is the bytes written in between. And each checkpoint’s distance gives the log per checkpoint interval. 
+
+-- Run at the start and the end of an interval, then subtract.
+SELECT now(), pg_current_wal_lsn(), wal_records, wal_fpi, wal_bytes
+FROM pg_stat_wal; 
+In the local run the log grew by 442 MB in two minutes at 400 transactions a second: about 3.7 MB a second, or roughly 9.5 kB per transaction of five short statements, most of it full-page images. That is the kind of figure to know for your own server, because it sets how fast an archive or a replica has to keep up. Its share of full-page images tells you whether checkpoint spacing is part of the cost. PostgreSQL can compress the images with wal_compression, off by default. More indexes on a table also mean more log per row changed, since every index entry that changes is logged too. 
+InnoDB reports bytes written to the redo log as Innodb_os_log_written, and its current position as Innodb_redo_log_current_lsn; sample either twice. SQLite’s SQLITE_DBSTATUS_CACHE_WRITE counts the pages a connection has written to the WAL file. 
+
+### What holds the log back 
+PostgreSQL removes or recycles a log segment at a checkpoint, and only once nothing still needs it. Recovery needs everything from the latest checkpoint’s start. With archiving on, a segment must have been archived. A replication slot holds everything its consumer has not yet confirmed. And wal_keep_size, 0 by default, keeps a fixed amount for standbys. max_wal_size is not a limit on any of these. The documentation calls it “never a hard limit” and says that if archiving fails repeatedly, “old WAL files will accumulate in pg_wal until the situation is resolved,” and that a slow or failed standby using a slot has the same effect. 
+To see that happen, the local server was restarted with archiving on and an archive command that always fails, false, with max_wal_size at 256 MB, then given 25 seconds of unthrottled pgbench. The log said this once a second: 
+
+17:32:39.263 LOG:  archive command failed with exit code 1
+17:32:39.263 DETAIL:  The failed archive command was: false
+17:32:41.275 WARNING:  archiving write-ahead log file "00000001000000000000006A"
+    failed too many times, will try again later 
+These queries show the effect from inside the database: 
+
+SELECT archived_count, failed_count, last_failed_wal, last_failed_time
+FROM pg_stat_archiver;
+
+SELECT slot_name, active, wal_status,
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS held_back
+FROM pg_replication_slots;
+
+SELECT pg_size_pretty(sum(size)) AS pg_wal_size FROM pg_ls_waldir(); 
+  Observed in the local run. max_wal_size was 256 MB throughout; the starting size is segments left for reuse by earlier runs with a 1 GB limit. 
+ | Moment | pg_wal size | Segments waiting to archive | failed_count  
+ | Before the workload | 576 MB | 0 | 0 
+ | After 25 s of writes, archiving failing | 2,080 MB | 129 | 37 
+ | Archive command repaired, archive caught up | 2,096 MB | 0 | 42 
+ | After the next checkpoint | 256 MB | 0 | 42    
+Two things in that table are easy to miss. The log grew to eight times max_wal_size without any error. The checkpoint lines showed it instead: every one read 0 removed, 0 recycled, some with files added, and the server warned that checkpoints were occurring too frequently. A run of checkpoints that recycle nothing is the retention signal to learn. And repairing the archive did not free any space by itself: the backlog was archived within 20 seconds, but the files stayed until the next checkpoint removed them. On a real incident that can be minutes later. The count of waiting segments is the number of files in pg_wal/archive_status ending .ready, which pg_ls_archive_statusdir() lists. 
+A replication slot whose consumer has gone looks similar. A slot created and left unused during 15 more seconds of the same workload held back 706 MB, and pg_replication_slots showed it as active = f with wal_status extended, meaning the retained log has gone past max_wal_size. max_slot_wal_keep_size caps what a slot may hold; it is unlimited by default. Setting it to 512 MB and running a checkpoint freed the space and marked the slot lost, with invalidation_reason wal_removed. The consumer would then need a fresh copy of the database, which is the trade that setting makes; the replication article discusses it. 
+A long transaction does not by itself keep PostgreSQL’s log. It keeps old row versions, the subject of the next section. Through a logical replication slot it can hold the log as well, because decoding has to be able to read that transaction from its start. 
+
+### In InnoDB and SQLite 
+InnoDB’s redo log cannot fill a disk: it is a set of files in the #innodb_redo directory whose total size is fixed by innodb_redo_log_capacity. Pressure on it shows as the flushing stalls described above. What grows in MySQL is the binary log, kept for replicas and point-in-time recovery. Its files are removed when they are older than binlog_expire_logs_seconds, 30 days by default, or by PURGE BINARY LOGS. MySQL does not keep them for a disconnected replica: PURGE BINARY LOGS won’t delete a file a connected replica is reading, but a replica that is offline when its files expire cannot continue. A binary log directory that grows faster than expected is a write-volume question, and one that never shrinks is an expiry setting. InnoDB’s undo, which a long transaction does make grow, is in the next section. 
+SQLite’s WAL file grows when checkpoints cannot finish, because a reader is still using older frames, or when automatic checkpoints have been switched off. It does not shrink after a checkpoint either: SQLite starts writing at the beginning of the file again and keeps its size, unless PRAGMA journal_size_limit is set or a checkpoint is run in TRUNCATE mode. A large -wal file next to a quiet database is not necessarily a problem; one that keeps growing is.  
+
+## Flush time and commit latency 
+A commit with the default settings waits for the log to be flushed to storage, so the time a flush takes is the least a commit can take. Group commit lets one flush serve several commits at once, so throughput can grow with concurrency while each commit still waits at least one flush. When commit latency rises and nothing else has changed, the flush is the first thing to measure. 
+PostgreSQL 18 reports log I/O in pg_stat_io, in the rows whose object is wal: writes and fsyncs, and with track_wal_io_timing on, which it is not by default, write_time and fsync_time. In PostgreSQL 17 these were columns of pg_stat_wal; in 18 they moved here. Which column carries the flush depends on wal_sync_method. With fdatasync, the Linux default, every flush is a separate call, counted in fsyncs and timed in fsync_time. With an open_datasync or open_sync method, each write is itself synchronous, so the flush time is inside write_time and fsyncs stays at zero. The laptop used open_datasync, the default on macOS, and showed exactly that: 47,076 log writes by the sessions themselves, taking 5.7 seconds in total, about 0.12 ms each, and no fsyncs. Don’t take 0.12 ms as the cost of a durable flush. macOS acknowledges these writes before the drive has made them durable, which is the early acknowledgement Storage and durability describes and the warning at the end of this section is about. That article measured about 0.04 ms a commit with the same setting on the same laptop; the difference here is several sessions sharing the log, not the device. 
+Two more PostgreSQL signals point at the same place. While a session waits for its flush, pg_stat_activity shows the IO wait event WalSync (or WalWrite with an open_* method). Because of group commit, most other committing sessions are queued behind that one, and they show the LWLock wait WALWrite, “waiting for WAL buffers to be written to disk”. It looks like a lock wait but is the same storage cost. Sessions waiting in IPC SyncRep are waiting for a synchronous standby to confirm, which is a replication cost, not a local flush. And wal_buffers_full in pg_stat_wal counts times the in-memory log buffer filled and had to be written early; it was 0 throughout the local run, and a steady rise suggests a larger wal_buffers. 
+InnoDB counts redo flushes in Innodb_os_log_fsyncs and waits for a full log buffer in Innodb_log_waits. Timings come from the Performance Schema, whose file I/O summary tables report time spent on the redo log’s files under the event wait/io/file/innodb/innodb_log_file. SQLite has nothing inside to report; time the commits in the application. 
+Wherever the numbers come from, compare them with a baseline for the storage itself. PostgreSQL ships pg_test_fsync, which times each sync method on a given directory, and the operating system’s own disk statistics show the device’s queue and wait times. If a commit takes 5 ms and a flush on that volume takes 4 ms, the commit is not slow; the storage is. That baseline also catches the opposite warning from Storage and durability: a flush far faster than the device could possibly manage suggests a cache is answering it.  
+
+## Old row versions that pile up 
+Every engine keeps old versions of changed rows until no reader can need them, and in every engine one long-running transaction or snapshot stops the cleanup. What grows depends on where the old versions live, so the signal differs. 
+In PostgreSQL, old versions stay in the table as dead rows until VACUUM removes them, and it can remove only those older than the oldest snapshot still in use. Two queries cover the usual investigation: which sessions hold the oldest snapshots, and which tables have the most dead rows and when autovacuum last ran on them. 
+
+SELECT pid, state, xact_start, age(backend_xmin) AS snapshot_age
+FROM pg_stat_activity
+WHERE backend_xmin IS NOT NULL
+ORDER BY age(backend_xmin) DESC
+LIMIT 5;
+
+SELECT relname, n_live_tup, n_dead_tup, last_autovacuum
+FROM pg_stat_user_tables
+ORDER BY n_dead_tup DESC
+LIMIT 5; 
+A session at the top of the first list with an old xact_start, often idle in transaction, together with tables whose n_dead_tup keeps rising while last_autovacuum is recent, means vacuum is running but cannot remove what it finds. Row versions, transactions, and vacuum works through that diagnosis, and the case where vacuum simply can’t keep up. 
+In InnoDB, old versions are undo records, and the number of transactions’ worth of undo waiting for purge is the history list length. It appears as “History list length” in the TRANSACTIONS part of SHOW ENGINE INNODB STATUS and as the counter trx_rseg_history_len, which is enabled by default. There is no status variable for it. On a healthy server it rises and falls as purge keeps up. A history list that only climbs means purge is blocked, and the usual cause is the oldest open transaction, which INNODB_TRX lists with its start time and thread. 
+
+SELECT name, count
+FROM information_schema.INNODB_METRICS
+WHERE name = 'trx_rseg_history_len';
+
+SELECT trx_id, trx_state, trx_started, trx_mysql_thread_id, trx_rows_modified
+FROM information_schema.INNODB_TRX
+ORDER BY trx_started
+LIMIT 5; 
+The cost shows up in two places. Readers that need old versions rebuild them from longer undo chains, so queries slow down. And the undo tablespace files, undo_001 and undo_002 by default, grow; with innodb_undo_log_truncate, on by default, InnoDB truncates one once it passes innodb_max_undo_log_size (1 GB) and purge has freed it. innodb_max_purge_lag, 0 by default, can delay writes when the history list passes a limit, which trades write latency for a bounded history. 
+SQLite keeps old versions only in WAL mode, as frames in the WAL file that an open reader may still need. A checkpoint cannot copy frames past the snapshot of the oldest reader, and cannot restart the log while any reader is using it; SQLite’s documentation calls the result checkpoint starvation. This run opened a reading transaction on a second connection, then kept writing: 
+  Observed with SQLite 3.54.0; each step is 5,000 small inserts. Automatic checkpoints at 1,000 pages were left on. 
+ | State | -wal file | wal_checkpoint(PASSIVE)  
+ | No reader | 1.6 MB | 0, 413, 413 
+ | Reader open, first step | 1.6 MB | 0, 412, 0 
+ | Reader open, second step | 3.2 MB | 0, 825, 0 
+ | Reader open, third step | 4.9 MB | 0, 1248, 0 
+ | Reader closed | 4.9 MB | 0, 1248, 1248 
+ | More writes, then wal_checkpoint(TRUNCATE) | 0 | 0, 0, 0    
+With the reader open, the log passed the 1,000-page automatic checkpoint and nothing was copied back. A TRUNCATE checkpoint tried at that point returned 1 in its first column: blocked. Once the reader finished, an ordinary checkpoint copied everything, but the file kept its size, and new writes reused it, until a later TRUNCATE checkpoint. The signal to watch, then, is a WAL file that keeps growing together with a checkpointed count that stays behind log; the cause is a connection holding a read transaction open.  
+
+## Reading a restart 
+After a crash, the server’s log is the record of recovery: where replay began, how much log it read, whether it reached a clean end, and when the database opened. To get a real example, the local server was stopped with pg_ctl stop -m immediate, which ends every process at once, without a shutdown checkpoint, while pgbench was running flat out. The startup log follows, with dates and process IDs removed and two lines shortened. 
+
+17:32:07.254 LOG:  received immediate shutdown request
+17:32:13.430 LOG:  starting PostgreSQL 18.6 ...
+17:32:13.436 LOG:  database system was interrupted; last known up at 2026-10-17 17:31:27 CEST
+17:32:13.493 LOG:  database system was not properly shut down; automatic recovery in progress
+17:32:13.494 LOG:  redo starts at 0/47181CB8
+17:32:16.298 LOG:  invalid record length at 0/6A1D6850: expected at least 24, got 0
+17:32:16.298 LOG:  redo done at 0/6A1D6808 system usage: CPU: user: 1.64 s,
+    system: 1.14 s, elapsed: 2.80 s
+17:32:16.299 LOG:  checkpoint starting: end-of-recovery immediate wait
+17:32:16.422 LOG:  checkpoint complete: wrote 16362 buffers (99.9%), ...
+    distance=573778 kB, ...
+17:32:16.424 LOG:  database system is ready to accept connections  
+- “database system was interrupted; last known up at 17:31:27” gives the last time the control file was updated, normally at the last completed checkpoint. It is not the time of the crash, which was 17:32:07. A checkpoint had started at 17:32:06 but not finished, so it doesn’t count. 
+- “not properly shut down; automatic recovery in progress” confirms this is crash recovery, not a clean start. 
+- “redo starts at 0/47181CB8” is the start of that last completed checkpoint. “redo done at 0/6A1D6808” is the last record replayed. The two positions are byte offsets, so recovery replayed 560 MB of log, in 2.8 seconds on this laptop. 
+- “invalid record length … expected at least 24, got 0” is how replay finds the end of the log: the next record is empty. Seen once, just before “redo done”, it is normal. The message depends on what follows the last record. Here the log ended in a segment file that had not been used before, so the next bytes were zeros. If the next page belongs to a segment file recycled from an earlier cycle, the same end is reported as “unexpected pageaddr”, because that page still carries its old address. Another crash test on the same laptop ended that way. A torn final write can show as an incorrect checksum or a bad prev-link instead. The manual doesn’t list these; Tom Lane described “unexpected pageaddr” on the PostgreSQL mailing list as one of the standard tests for detecting end of WAL. Each is normal only at the true end of the log. What deserves investigation is replay ending well short of where the log stood at the crash, or an error that stops startup. 
+- “checkpoint starting: end-of-recovery” writes out everything replay changed, here 16,362 buffers, nearly the whole pool, before the database opens. 
+- “ready to accept connections” ends the outage. From process start to this line took 3 seconds.  
+The amount of log to replay is what decides the time. It is roughly the log written since the last checkpoint began, so a crash late in a long checkpoint interval replays the most, and max_wal_size and checkpoint_timeout together bound it. PostgreSQL starts a checkpoint for log size once about max_wal_size / (1 + checkpoint_completion_target) has been written, a rule that lives in the source (CalculateCheckpointSegments in xlog.c) rather than the manual, here about 540 MB, so that the log since the previous checkpoint stays under the limit while the new one writes. One had just started at the crash, so replay covered 560 MB. That rule also gives the worst case: close to max_wal_size. Replay speed depends on storage and on how many replayed pages must first be read, so measure it on a copy of your own server rather than scaling from these numbers. A long replay is not silent: every 10 seconds (log_startup_progress_interval) PostgreSQL logs a line of the form “redo in progress, elapsed time: …, current LSN: …”, and comparing that position with the end you expect tells you how far it has got. Remember also that the restart has reset the statistics counters. 
+InnoDB’s error log tells the same story in its own words. The messages defined in the 8.4 server’s error-log message file include “Database was not shutdown normally!”, “Starting crash recovery.”, “Doing recovery: scanned up to log sequence number …”, “Applying a batch of … redo log records …” and “Apply batch completed!”. Then comes InnoDB’s second phase: transactions that were open at the crash are rolled back from undo, in the background, after the server has started accepting connections. A long one reports progress as “Still rolling back transaction …; … undo records rolled back out of … total”, and the manual warns that this rollback can take three or four times as long as the transaction had been running. Restarting the server doesn’t cancel it; the documented escape is to start with innodb_force_recovery set to 3, which skips the rollback and is meant only for getting data out of a damaged server. So a MySQL server can be open and still slow, with new sessions meeting locks held by transactions being rolled back. 
+SQLite recovers on the first open after a crash. In WAL mode that connection rebuilds the WAL index from the WAL file while holding an exclusive lock, so other connections get SQLITE_BUSY until it finishes; in rollback-journal mode it rolls back a hot journal. Neither appears anywhere unless the application has registered a sqlite3_log() callback, which then receives SQLITE_NOTICE_RECOVER_WAL or SQLITE_NOTICE_RECOVER_ROLLBACK. Registering one is the only way to know a recovery happened.  
+
+## Four incidents 
+Each incident below starts from what someone notices and works towards a mechanism, using the signals above. The order of the checks matters more than any one number: each step rules out a whole family of causes before the next. 
+
+### Commits got slow 
+Requests that write are slower, and the database time is in COMMIT or in single-statement writes. First, confirm the time is spent waiting on storage and not on locks: sample pg_stat_activity during the slowdown. Sessions in WalSync, WalWrite or the LWLock WALWrite are waiting for the log, and sessions in SyncRep for a synchronous standby, a question for Replicas and failover; sessions in other lock waits belong to Understanding database performance. 
+If they are waiting for the log, compare the flush time per call (fsync_time or write_time over the count, for the wal rows in pg_stat_io) with your baseline. Those times exist only if track_wal_io_timing was already on; without it, you have the wait events and the operating system’s disk statistics. A flush that got slower with an unchanged workload points at the storage: another tenant on a shared volume, a cloud volume out of burst credits, a failing device. Check the operating system’s disk statistics for the same window. If flush time is unchanged but commits per second rose, the log is simply busier; group commit absorbs some of that. 
+If the slowdown comes and goes, line it up with the checkpoint log. Slow commits during the first part of each checkpoint, with a higher log rate and many full-page images, mean checkpoint writes and image-heavy log are competing with commit flushes on the same storage. Longer, timed checkpoints and a larger max_wal_size spread that cost. A high sync= time in the checkpoint lines tells you the data-file flushes themselves are slow. And if client backends show page writes in pg_stat_io, queries are cleaning pages that the background writer should have. 
+On InnoDB, check whether the checkpoint age sits near innodb_redo_log_capacity, whether Innodb_buffer_pool_wait_free is rising, and the timing of the redo log’s file I/O in the Performance Schema. On SQLite, which allows one writer at a time, slow commits are as often a long write transaction holding the lock as a slow flush; time both, and count the SQLITE_BUSY results and busy_timeout waits that show the lock. 
+
+### A restart that takes too long 
+The server crashed or was killed, and it is still not accepting connections. Read the startup log first. “Redo starts at” gives the starting position and the progress lines give the current one. The end is roughly where the log stood at the crash: the log written since the last completed checkpoint began, which you can estimate from the log rate and the time of that checkpoint’s “checkpoint starting” line, and which is at most about max_wal_size. If the progress position is advancing, recovery is working; the question is only time. If the replay finished but the server still isn’t ready, look at what came after it, such as the end-of-recovery checkpoint on slow storage. 
+The lasting fix is to decide how long recovery may take and set checkpoints to match. Recovery time grows with the log since the last checkpoint, so the timer and max_wal_size are the controls, at the price of more frequent checkpoints. Measure replay speed on a copy before choosing, and don’t forget a cold cache afterwards: the server opens with the pages recovery touched, not the ones the workload needs. 
+On InnoDB, also check the error log for rollback progress. A server that is open but slow after a crash may be rolling back a large transaction, and the fix is in the application: don’t run one transaction that changes millions of rows. On SQLite, a long first open after a crash is the WAL recovery, and the WAL file’s size tells you how much it has to read. 
+
+### The log directory is filling the disk 
+Disk alerts point at pg_wal, the binary log directory or a -wal file. In PostgreSQL, ask the three questions in order. Is archiving failing? pg_stat_archiver shows a rising failed_count and a recent last_failed_time, and the server log shows the archive command’s error. Is a slot holding the log? pg_replication_slots shows an inactive slot, or one far behind, with wal_status extended. Is wal_keep_size large? If none of these, the log is being written faster than checkpoints can retire it, which the checkpoint lines and the log rate will show. 
+Fix the cause, not the files. Never delete segments from pg_wal by hand: recovery and replicas may need them, and a missing one can leave the server unable to start. Repair the archive destination or command, or decide that a dead slot’s consumer will be rebuilt and drop the slot. Then expect the space back at the next checkpoint, not at once; running CHECKPOINT brings it forward. To keep it from recurring, alert on archive failures and on slots that are inactive or behind, and consider max_slot_wal_keep_size if losing a replica is better than losing the primary’s disk. 
+In MySQL, a growing binary log directory means writes are heavy or expiry is too long for the disk; check binlog_expire_logs_seconds against how far your replicas can lag before purging. A SQLite -wal file that keeps growing means a reader that never finishes, or checkpoints switched off, as the history section showed. 
+
+### A table or undo history that keeps growing 
+A PostgreSQL table grows although its row count is steady, or InnoDB’s history list length climbs for hours. Both are old versions that cannot be cleaned up, and the first question is the same in both engines: what is the oldest transaction or snapshot, and who owns it? In PostgreSQL that is the session with the oldest backend_xmin, or a replication slot (the xmin and catalog_xmin columns of pg_replication_slots) or a prepared transaction (pg_prepared_xacts), neither of which appears in pg_stat_activity; in InnoDB the oldest row of INNODB_TRX. Usually it is a report or batch job, or a connection left idle inside a transaction by an application that forgot to commit. 
+If no old transaction exists and the history still grows, cleanup is running but falling behind. In PostgreSQL, the autovacuum timestamps and the dead-row counts per table show whether a busy table is vacuumed often enough; Row versions, transactions, and vacuum covers tuning it. In InnoDB, more purge threads (innodb_purge_threads) or a purge lag limit are the controls. A PostgreSQL table that grew will not shrink on its own when the backlog clears; the space is reused, and VACUUM FULL returns it by rewriting the table under an exclusive lock, a trade the row-versions article weighs. InnoDB’s undo files are truncated automatically once they pass innodb_max_undo_log_size and purge has caught up.  
+
+## What to watch, by engine 
+The same signals, gathered for reference. “Sample” means a counter to read twice and turn into a rate. 
+
+ | Signal | PostgreSQL 18 | InnoDB (MySQL 8.4) | SQLite | A bad reading suggests  
+ | Page reads | Sample blks_read, blks_hit (pg_stat_database); reads, hits (pg_stat_io) | Sample Innodb_buffer_pool_reads, _read_requests | SQLITE_DBSTATUS_CACHE_MISS, _HIT | Reads per transaction rising: the pages in use no longer fit, or a scan is pushing them out 
+ | Dirty pages | pg_buffercache_summary() | Innodb_buffer_pool_pages_dirty / _pages_total | Not reported; SQLITE_DBSTATUS_CACHE_SPILL counts pages written early | High together with backend writes or wait_free: writers not keeping up 
+ | Who writes pages | Sample writes by backend_type (pg_stat_io) | Sample Innodb_buffer_pool_wait_free | Not applicable | Query sessions writing or waiting for free pages 
+ | Checkpoints | Server log with log_checkpoints; num_timed, num_requested (pg_stat_checkpointer) | Checkpoint age: Innodb_redo_log_current_lsn − _checkpoint_lsn against innodb_redo_log_capacity | PRAGMA wal_checkpoint result | Mostly requested, “too frequently” warnings, age near capacity, or checkpointed behind log 
+ | Log rate | Sample wal_bytes, wal_fpi (pg_stat_wal) or pg_current_wal_lsn() | Sample Innodb_os_log_written | SQLITE_DBSTATUS_CACHE_WRITE | A rise with unchanged traffic: new indexes, bulk changes, or more full-page images 
+ | Log kept | pg_ls_waldir(); pg_stat_archiver; pg_replication_slots | Binary log directory size; binlog_expire_logs_seconds | -wal file size | Archiving failing, an abandoned slot, a reader that never ends 
+ | Log flush | wal rows of pg_stat_io (fsyncs, fsync_time, write_time); waits WalSync, WalWrite | Sample Innodb_os_log_fsyncs; redo file I/O time in the Performance Schema | Commit time measured in the application | Flush time up with the same workload: storage is slower 
+ | Old versions | n_dead_tup, last_autovacuum; oldest backend_xmin | History list length (trx_rseg_history_len); oldest INNODB_TRX | -wal size with checkpointed behind log | A long transaction or snapshot, or cleanup falling behind 
+ | Recovery | Startup lines in the server log; progress every 10 s | Crash recovery and rollback messages in the error log | SQLITE_NOTICE_RECOVER_* via sqlite3_log() | A replay longer than your target; a large rollback after opening     
+
+## Sources and further reading 
+Checked on 17 October 2026. PostgreSQL outputs were recorded on a laptop with PostgreSQL 18.6; SQLite outputs with SQLite 3.54.0 through Python. No MySQL server was run; InnoDB names come from the MySQL 8.4 manual, and its messages from the 8.4 server source.  
+- PostgreSQL 18: The Cumulative Statistics System defines every pg_stat_* view used here, including pg_stat_io’s rows for the log. WAL Configuration explains checkpoint triggers, the warning and why log accumulates; pg_replication_slots defines wal_status; pg_buffercache and pg_test_fsync are the two tools named. 
+- MySQL 8.4 Reference Manual: Server Status Variables for every Innodb_ counter, InnoDB Standard Monitor output for SHOW ENGINE INNODB STATUS, Buffer Pool Flushing and Redo Log for flushing under redo pressure, Purge Configuration for the history list, and InnoDB Recovery for rollback after a crash. The server’s error-log message file on the 8.4 branch defines the recovery and redo messages quoted. PostgreSQL’s end-of-log messages are explained in Tom Lane’s 2011 reply on pgsql-admin, and the checkpoint trigger rule in xlog.c. 
+- SQLite: Write-Ahead Logging, especially “Avoiding Excessively Large WAL Files”; PRAGMA wal_checkpoint for the three result columns; sqlite3_db_status options for the cache counters; result codes for the recovery notices. 
+- Storage and durability: the mechanisms behind every signal here. 
+- The buffer pool: sizing the cache, what it keeps and evicts, and warming it after a restart. 
+- Understanding database performance: when the time goes to one query, a lock or the application rather than storage. 
+- Row versions, transactions, and vacuum: diagnosing retained snapshots and vacuum in depth. 
+- Following a change to another PostgreSQL server: slots and the log they retain. 
+- WAL, checkpoints, and recovery: log positions, full-page images and a crash test on PostgreSQL 18. 
+- Backups and recovery: what an incomplete archive costs when you restore.       
+
+## 
+
+## 
+
+## 
+
+## 
+
+

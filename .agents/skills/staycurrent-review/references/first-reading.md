@@ -1,172 +1,137 @@
 # Follow the explanation as it arrives
 
 This reference can be given to an independent reader without the project's article
-histories or intended answers. The purpose is to follow the reader's understanding,
-effort and curiosity as the article develops. Missing explanations are one finding;
-opportunities for better support or further reading matter too.
+histories or intended answers. You are giving the author evidence they can't produce
+themselves: what the article teaches as it arrives, where a reader gets stuck, where
+they work harder than they should, and where the page spends their time without giving
+anything back. Record each observation at the point it happens, before later passages
+or your own knowledge can make it disappear.
 
-For an outline review, first use the audience, title and opening promise to record
-what you expect this article to help you understand. Then inspect its heading tree
-before the rest of its body, retaining heading levels and reading order. Record the overview it gives and where you would
-look for the explanations you need. Distinguish main sections from figure labels
-and headings inside closed optional exercises. Then read the section openings and
-transitions to see whether the apparent groups and changes of subject are explained.
-Label this as an outline-first reading: seeing the later headings is different from
-encountering every section without advance knowledge. A contents list may help, but
-compare it with the headings actually present on the page. Note expected explanations
-that have no apparent home, then check the body before calling them missing. Separate
-what the article must teach to fulfil its promise from an interesting further topic.
-A heading alone cannot establish that its subject is explained, and a subject can be
-taught adequately without a heading of its own. Preserve the initial expectation
-alongside what the reading actually supplies.
+## Before you read
 
-Start with the audience and their reasonable starting knowledge. Read the assembled
-article from top to bottom, including headings, examples, illustrations, captions
-and interactive instructions where they appear. Record questions as they arise,
-before later passages or outside knowledge can make the earlier gap disappear.
-For an agent, receiving successive sections separately can preserve that distinction
-better than receiving the whole article and retrospectively describing a first
-impression. Keep enough nearby text to read a thought rather than judging isolated
-sentences.
+Start with the audience and their reasonable starting knowledge. From the title,
+audience and opening promise, record what you expect the article to help you
+understand, and what someone expert in its subject would be able to do.
 
-Before entering a section, record what its heading lets you expect from the context
-so far. After reading, compare that expectation with the section's actual subject
-and development. Preserve a vague or misleading first impression even if you can
-later infer why the author chose the heading. Understanding the body does not by
-itself show that its label helped you navigate or anticipate it.
-To test that anticipation without hindsight, receive or extract the heading before
-its body and save the observation before opening the next chunk. If both arrived
-together, describe the judgment as retrospective rather than a preserved first
-expectation.
+If you've been asked for an outline-first reading, read the heading tree before the
+body, keeping its levels and order. Record the overview it gives and where you would
+look for the explanations you expect. Tell main sections apart from figure labels and
+headings inside closed optional exercises. Note expected explanations that have no
+apparent home, then check the body before calling them missing: a subject can be taught
+well without a heading of its own, and a heading doesn't show its subject is explained.
+Label this an outline-first reading, since seeing later headings is different from
+meeting each section without warning.
 
-An observation made at the end of the opening is especially useful: what can you
-now explain about the subject, and which passage gave you that understanding?
-That is different from wanting to know more or recognising something from expertise.
-Keep this early impression alongside what the first section adds. It helps the
-author see whether the beginning has prepared the reader for the explanation that
-follows, even when every sentence was easy to understand.
+## Read in order
 
-Follow each sentence, code statement, result and label in sequence, stopping at the
-first unsupported inference even within a section. Reading source files may expose
-code constants or implementation comments before their place in the article;
-use assembled content for the first reading. Identify the artifact and revision,
-and distinguish a rendered browser reading from HTML extraction or source inspection.
-State the delivery granularity and save observations before opening the next chunk;
-long sections may need to be split at meaningful subheadings.
-Closed setup notes are optional opened material, and no-JavaScript alternatives are
-fallback inspection. Mark those boundaries before delivering extracted text. If
-extraction flattened them, disclose that limit instead of calling the result a
-default-visible first reading. Do not count them as ordinary visible reading.
-Exclude script and style nodes before delivering
-extracted chunks, so implementation details do not precede the explanation. Scripts
-can change initial result markup: an extracted default is not an observed live state.
-Before capturing a lazy-loaded illustration, scroll it into view and wait for its
-image to decode. Preserve an incomplete first impression if it happened, but recheck
-loading before diagnosing a missing relationship or label as an illustration defect.
+Read the assembled article from top to bottom, including headings, examples,
+illustrations, captions and interactive instructions. Receiving successive sections
+separately preserves a first impression better than reading the whole and describing
+it afterwards; save your observations before opening the next chunk, and if a heading
+and its body arrived together, say the judgement is retrospective. Keep enough nearby
+text to read a thought rather than isolated sentences.
 
-For a collection, establish the reading order from its actual navigation. Include
-substantive supplemental pages with their stated role; do not invent a sequence
-for outlines or count redirects as separate lessons. Carry forward what earlier
-pages actually explained. Distinguish a complete-route reading from entering a
-page directly; neither establishes the other reader's prerequisites. Also keep
-the example's identities, meanings, units and
-starting state: a reused identifier invites continuity unless a new setup is made
-clear. Inspect both the main reading path and optional practice details when a
-reset or prerequisite lives only in the latter. A complete explanation on one
-path need not make the other path complete.
+Before each section, record what its heading leads you to expect from the context so
+far. Afterwards, compare that with what the section actually develops. Keep a vague or
+misleading first impression even if you can later work out why the author chose the
+heading.
 
-A useful observation identifies the passage and the reader's question: “I know
-what this operation does, but why do we need it here?” or “How did we get that result
-from these inputs?” Other questions may concern an unfamiliar term, a change of
-example, what a code value refers to, an illustration's connection to the prose,
-or an apparent contradiction with something already taught. These are prompts for
-attention, not a list to populate. Follow whatever actually interrupts understanding.
+At the end of the opening, record what you can now explain about the subject and which
+passage gave you that. This is different from wanting to know more, or recognising
+something from your own expertise. Then note whether the first section builds on that
+beginning.
 
-Notice effort even when the explanation is understandable. Are you keeping several
-values in memory, mentally drawing a relationship, or reconstructing a sequence
-across paragraphs? Record what you had to picture, and where that effort began.
-That gives the author a useful reason to consider an illustration. If you want to
-change an input or try a different event order to test your understanding, record
-the question you would explore; it may justify an interactive example. Prefer
-observations such as “I had to remember which request had already read the value”
-to an unexplained recommendation to add a diagram. Code and result tables may be
-the right support when the reader needs to connect exact instructions to an answer.
+Follow each sentence, code statement, result and label in sequence, and stop at the
+first inference the page hasn't supported, even mid-section. A useful observation names
+the passage and the question: "I know what this operation does, but why do we need it
+here?" or "How did we get that result from these inputs?" Others concern an unfamiliar
+term, a change of example, what a value refers to, how a figure connects to the prose,
+or an apparent contradiction with something already taught. Follow whatever actually
+interrupts understanding rather than populating a list.
 
-Curiosity can also reveal a good destination beyond this article. Notice when a
-brief mention opens a substantial question, when you want to understand a mechanism
-more deeply, or when a digression interrupts the current explanation. Distinguish
-understanding needed to follow this article from a useful next investigation. The
-former needs enough explanation here; a link to a planned child article cannot
-stand in for it. The latter may deserve a nested article, an existing destination,
-or a note for later planning. Suggest the question that reading would answer,
-rather than expanding the collection automatically.
+Notice effort even when you do understand. Are you holding several values in memory,
+mentally drawing a relationship, or reconstructing a sequence across paragraphs? Record
+what you had to picture and where that began; "I had to remember which request had
+already read the value" is more useful than "add a diagram". If you want to change an
+input or reorder events to test your understanding, record the question you would
+explore.
 
-These observations do not prescribe a medium. A clearer sentence may remove the
-mental burden; a static drawing may make an interaction unnecessary. An illustration
-should support a complete textual explanation, and a separate article should have
-its own useful purpose. Preserve passages that make difficult ideas easy as well
-as those that cause friction, so revision can retain what is working.
+Notice time that buys you nothing, too, as carefully as gaps. A passage may re-explain
+what you already had, run longer than its idea needed, describe in prose what an
+example would show at a glance, or wander into a neighbouring subject the article
+doesn't need. Say what you would have lost if it were gone; sometimes the answer is a
+condition you needed, and sometimes it is nothing.
 
-Do not pretend to lack knowledge you have. Instead, say which step you supplied
-from expertise and whether the intended reader has been given a way to supply it.
-Definitions, named prerequisites and links are not themselves evidence that the
-necessary understanding is available. A reader entering through this article's
-own link may also need a brief reminder of a concept taught elsewhere.
+Curiosity can point beyond the article. Notice when a brief mention opens a substantial
+question or a digression interrupts the current thought. Distinguish understanding you
+need to follow this article, which it should supply, from a useful next investigation,
+which may deserve a link or a note for later planning. A link to a planned article
+can't stand in for the former.
 
-For code and worked results, trace one concrete input through the instructions to
-the answer. Could this audience map values to fields, distinguish application
-branches from executable commands, and interpret the result before its explanation
-arrives? Separate understanding the stated outcome from being able to adapt the
-example. A correct warning can leave a practical choice unfinished: check whether
-the final design can process the values its rules admit, or clearly ends as a
-deliberate failure exercise. Distinguish original input from the value retained
-after conversion or rounding. Completeness follows the article's own promise;
-these questions do not require implementing every surrounding application.
-Record uncertainty about running a practice setup separately from uncertainty
-about its meaning. Understanding a result does not establish that a reader knows
-how to open the supplied database or file; an unattempted setup is not an observed
-execution failure.
+Record passages that make difficult ideas easy, as well as those that cause friction,
+so a revision keeps what works. Don't pretend to lack knowledge you have. Say which
+step you supplied from expertise, and whether the intended reader has been given a way
+to supply it. A definition, a named prerequisite or a link is not itself evidence that
+the understanding is available.
 
+## Code, worked results and exercises
 
-For a prediction exercise that applies earlier teaching, trace the needed facts
-back to the preceding passages before judging its completeness. An isolated read
-can expose an unstated dependency, but a contextual exercise need not restate its
-whole lesson. Record the prediction before opening its answer. In a commissioned
-human session, keep learning targets and expected answers out of the participant's
-advance instructions, preserve assistance, and mark an unrun session as pending;
-agent reasoning cannot supply the missing human observations.
+Trace one concrete input through the instructions to the answer. Could this audience map
+values to fields, tell application branches from executable commands, and interpret the
+result before its explanation arrives? Understanding the stated outcome is different
+from being able to adapt the example. A correct warning can leave a practical choice
+unfinished, so check whether the final design can handle the values its rules admit, or
+clearly ends as a deliberate failure. Distinguish original input from a value retained
+after conversion or rounding. Record uncertainty about running a practice setup
+separately from uncertainty about its meaning; an unattempted setup is not an observed
+failure.
 
-Keep the original question when a later passage answers it. Add where and how it
-was resolved, then judge the consequence. A question answered in the next sentence
-may be good pacing. An unanswered curiosity may be outside the article's purpose.
-A reader who has to interpret a code block or accept a recommendation before its
-reason arrives may need a different sequence. Do not turn all three into requests
-for more introductory text.
+For a prediction exercise, record your prediction before opening the answer, and trace
+the facts it needs back to earlier passages before judging whether it is complete. In a
+commissioned human session, keep learning targets and expected answers out of the
+participant's instructions, and mark an unrun session as pending; agent reasoning can't
+supply the missing human observations.
 
-After the first reading, separate observations from repair ideas. Trace consequential
-questions back to their cause: an omitted explanation, a misplaced passage, assumed
-knowledge, a jump in abstraction, or an example that changed the subject. The repair
-may be a sentence, a moved explanation, a drawing, a worked result, or removing a
-detour. Preserve discoveries that matter without collecting a quota of objections.
+## Reading from extracted text
 
-Build a repair plan in reading order, then prioritise it by the understanding or
-decision at stake. For each consequential repair, retain the trigger, consequence,
-smallest useful change and a reader prediction or example to recheck. Distinguish
-necessary explanation, practical completion, reduced effort and optional onward
-curiosity. Later source checks or another review may disagree with the first
-reading; preserve those perspectives rather than replacing the original record.
-Keep article-specific lessons outside this context-free reference so future readers
-do not receive expected answers.
+Use the assembled article, not source files, which can expose code constants or
+comments before their place in the reading. Identify the artifact and revision, and say
+whether you read a rendered page, extracted HTML or source. Mark closed setup notes as
+optional material and no-JavaScript alternatives as fallbacks; if extraction flattened
+them, say so rather than calling the result a default reading. Exclude script and style
+nodes, and remember that scripts can change initial markup, so an extracted default is
+not an observed live state. Before judging a lazy-loaded illustration, scroll it into
+view and let it load. When figures carry the lesson, extracted text can't stand in for
+the page: read the rendered page section by section, with its figures, instead.
 
-A concise question log can quote the trigger, record what was understood at that
-point, and append the later resolution or remaining gap. The handoff should make
-clear what prevents following the argument, what merely slows it, and what is useful
-curiosity. Include opportunities to make a relationship visible or a consequence
-explorable, grounded in the reading rather than a media quota. It should also say
-when a passage successfully answers a question the reader was ready to ask.
+## Reading a collection
 
-Use the first reading alongside technical and media review. Text extracted from a
-page preserves sequence but cannot establish visual clarity or interaction behaviour.
-After repair, reread the affected explanation and its transitions. A fresh reader
-is valuable when the argument changes substantially; an informed reviewer can check
-a local repair. Neither is proof that a novice will understand everything.
+Take the reading order from the collection's actual navigation. Include substantive
+supplemental pages with their stated role, and don't count redirects or outlines as
+lessons. Carry forward what earlier pages actually explained, along with the example's
+identities, meanings, units and starting state; a reused identifier invites continuity
+unless a new setup is made clear. Reading the whole route and entering one page directly
+are different readings, and neither establishes the other's prerequisites. Check optional
+practice details too when a reset or prerequisite lives only there.
+
+## After the reading
+
+Keep the original question when a later passage answers it; add where it was resolved
+and judge the consequence. A question answered in the next sentence may be good pacing,
+and an unanswered curiosity may be outside the article's purpose. A reader who must
+interpret a code block or accept a recommendation before its reason arrives may need a
+different order. Don't turn all three into requests for more introductory text.
+
+Then separate observations from repair ideas. Trace consequential questions to their
+cause: an omitted explanation, a misplaced passage, assumed knowledge, a jump in
+abstraction, or an example that changed subject. The repair may be a sentence, a moved
+passage, a drawing, a worked result or removing a detour. For each consequential one,
+keep the trigger, the consequence, the smallest useful change and a prediction to
+recheck it with, in reading order and then by what is at stake.
+
+The handoff should make clear what prevents following the argument, what merely slows
+it, what costs time without return, and what is useful curiosity, along with the
+passages that answered a question just as the reader was ready to ask it. Extracted text
+preserves sequence but can't establish visual clarity or interaction. Keep
+article-specific lessons out of this reference, so future readers don't receive expected
+answers.

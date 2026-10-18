@@ -1,0 +1,246 @@
+
+
+- 
+- 
+- 
+- 
+- Relational databases: articles
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+-      
+Databases and storage
+
+# The buffer pool
+ Companion to Storage and durabilityAbout 23 minutesPostgreSQL 18, with InnoDB (MySQL 8.4) and SQLite comparisons   
+Every page a query reads or changes passes through the buffer pool, the cache of pages a database keeps in memory. Storage and durability introduced it: a page already in memory is a hit, a page fetched from storage is a read, and once every slot is taken, each read has to evict a page to make room. This article is about what follows from that: which pages the pool keeps, how much memory to give it, why it is empty after a restart, and how to tell whether it is doing its job. 
+Those questions matter because a hit costs a memory lookup and a read can cost a trip to the drive, and the pool is usually far smaller than the database. When it holds the pages your application keeps coming back to, most page requests never leave memory. When it loses them, to a nightly report, a restart or a failover to a standby, the same queries start waiting on storage, and the application slows down although nothing is broken. 
+The examples follow the shop from Storage and durability. Every product page view looks up the products table through its primary-key index, and a nightly report reads the whole page_views table. PostgreSQL 18 is the worked example, and the text says where InnoDB, MySQL’s storage engine, and SQLite behave differently enough to change what you should expect. The measured numbers come from PostgreSQL 18 and SQLite on a laptop, with a pool deliberately made tiny so the effects show up with small tables. They show which pages stay in memory, not how fast anything runs. 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+
+## What the pool holds 
+The pool holds table pages and index pages side by side, and they compete for the same slots. Finding one product, call it P7, through the primary-key index takes four page requests in a typical three-level B-tree: the index’s root page, a branch page, the leaf page holding the entry for P7, and finally the table page holding the row. Each request is a hit or a read. In InnoDB the table is an index, a B-tree ordered by primary key, so its table pages are that index’s leaves and the same lookup takes three requests. InnoDB also keeps the undo log pages, which hold old row versions, in the same pool. 
+Those four requests don’t behave alike. An index page holds hundreds of entries, so each branch page points to hundreds of leaves, and the levels above the leaves stay small. In the test database, the primary-key index on the 1.2-million-row page_views table has 3,279 leaf pages and only 13 pages above them. Every lookup passes through those few upper pages, so they are almost always cached. Which leaves and table pages are in memory decides most of the hits and misses, which matters again when we read the hit rate. 
+The pages a workload keeps using over some period, an hour, say, are its working set. In the test database the shop’s working set is the whole products table and its index, 501 pages or about 4 MB. A real application’s working set might be the last month of orders, the active customers and the upper levels of every index, but not five years of order history that nobody reads. The size of the database says little about how big the pool needs to be; the working set says a great deal.  
+
+## Two caches: the pool and the operating system’s 
+As Storage and durability noted, PostgreSQL reads its files through the operating system, which keeps its own cache of recently used file data, the page cache. A miss in shared buffers, PostgreSQL’s name for its pool, can therefore be served from memory. In the test, with the shop’s 444 table pages pushed out of a 16 MB pool, reading them back one page at a time took 2 to 3 microseconds a page, far quicker than a drive. (PostgreSQL 18 normally combines neighbouring pages into larger reads, set by io_combine_limit; for this measurement it was set to one page, so each page was a separate request.) 
+Two things follow for sizing. A page can be held twice, in shared buffers and in the page cache, and memory given to one is memory the other can’t use, which is why PostgreSQL’s documentation suggests starting at 25% of RAM on a dedicated server and says more than 40% is unlikely to work better. And PostgreSQL’s own counters can’t tell you whether a read reached the drive: blks_read and EXPLAIN’s read= count misses in shared buffers, whether the page cache answered them or not. 
+InnoDB takes the other route. In MySQL 8.4, innodb_flush_method defaults to O_DIRECT on Linux and other Unix systems, so reads bypass the page cache. Each page is in memory once, a miss is a read from the device, and the pool can take most of the machine: the manual says up to 80% of physical memory is often assigned on a dedicated server. 
+SQLite has no server, so each connection keeps its own small page cache, about 2 MB by default in the standard build, and relies on the operating system’s cache, which all connections share. A connection throws its cached pages away when another connection has changed the file, so where other connections write often, a larger cache helps less than its size suggests. 
+This changes what to expect from a restart. Restarting the PostgreSQL server, or the application that holds SQLite connections, empties their own caches but leaves the page cache warm, so misses come from memory at first. Restarting MySQL leaves no page cache to fall back on; InnoDB instead saves a list of its cached pages and reads them back, as described below. Rebooting the machine, moving to a new virtual machine or failing over starts every cache empty.  
+
+## Which page leaves 
+Once the pool is full, every read evicts something, and the eviction policy decides what. A good policy keeps the working set and lets go of pages that won’t be needed again. The hard case is a job that reads a lot of pages exactly once. The shop’s nightly report reads every page of page_views: 14,815 pages in the test, more than seven times the 2,048 slots of the 16 MB pool. Whether that report also pushes out the shop’s product pages depends on the engine. 
+
+### Least recently used, and why one scan defeats it 
+The classic policy is least recently used, or LRU. Keep the pages in a list ordered by when each was last used; a page that is used moves to the front, and when room is needed, the page at the back is evicted. A working set used constantly stays near the front, which is what you want. 
+A large scan is LRU’s weak spot. Each page the report reads goes to the front, used once, and pushes everything else one place back. Once it has read as many pages as the pool holds, every slot holds a report page that won’t be used again, and the shop’s pages are gone. It can be worse than that: a table slightly larger than the cache, scanned again and again, never gets a single hit, because each page has been evicted by the time the scan comes back round to it. 
+SQLite’s default page cache keeps its unused pages on a plain LRU list. In the test database, with SQLite’s 4 kB pages and its default 2 MB cache, about 500 pages, the shop’s table is 771 pages. Each scan of it makes 772 page requests, the table’s pages plus the schema page that describes it. Scanning it twice in a row gave 4 hits and 768 misses the second time. After a scan of page_views, the next scan of products missed all 771 table pages. For SQLite that is usually acceptable, because those misses are served by the operating system’s cache; the remedy, when it matters, is a larger cache_size on that connection. 
+The figure runs the same report against four policies: LRU, and the ones PostgreSQL and InnoDB use, described below. Start with least recently used, then switch policy and replay. In the midpoint policy, the young sublist holds S1 to S4 and W1, and the old sublist holds W2 to W4.  
+Figure 1
+A report’s scan against four eviction policies  
+
+Eight buffer-pool slots in a row. Four hold shop pages S1 to S4, four hold pages W1 to W4 used once. A report then reads pages R1 onwards, one at a time, and the shop asks for its four pages again. 
+- Eight pool slots. Four hold pages the shop uses constantly (S1 to S4); four hold pages used once (W1 to W4). A report then reads pages R1 onwards, each once.
+- Least recently used: each report page goes to the front of the list and the page at the end is evicted. After eight report pages, all four shop pages are gone, and the shop has to read them again.
+- Clock sweep: a hand moves round the slots, taking one off each page’s usage count and evicting the first page at 0. The shop’s pages start at 5, so an 8-page report only wears them down to 1; a 24-page report evicts them.
+- Clock sweep with a ring: a large sequential scan reuses two slots of its own, so the shop’s pages are never touched, whatever the report’s length.
+- Midpoint insertion: new pages enter at the head of the old sublist (the last three slots) and leave from its tail unless used again more than a second later. The shop’s pages stay in the young sublist.  
+
+ Policy  Least recently usedClock sweepClock + ringMidpoint  
+ Report reads  8 pages24 pages   
+ Play Back Next Step Reset     
+A model, not a recording: eight slots stand in for thousands, and the ring is two slots where PostgreSQL’s is hundreds of kilobytes. In the clock policies the number under each page is its usage count. The midpoint model treats the report’s repeated uses of each page as falling within one second, so none is promoted, and each shop request as coming more than a second after the last.   
+
+### PostgreSQL: usage counts and a clock 
+PostgreSQL doesn’t keep a list. Each buffer has a usage count: a page starts at 1 when it is read in, and every time a query uses it the count goes up by one, to a maximum of 5. To find a slot, a clock hand moves round the buffers in order. It takes 1 off each count it passes and evicts the first page whose count is already 0. That scheme is called the clock sweep. 
+A page used once survives one pass of the hand and leaves on the next; a page at 5 survives five. That protection runs out under a long enough run of misses. Each page the report reads enters at count 1, and the hand has to pass it once before it can be evicted, so the report can’t simply recycle its own pages: to find room it keeps going round the whole pool, and each time round it lowers the shop’s pages by one. In the figure, an 8-page report wears the shop’s counts from 5 down to 1, and all four pages survive; a 24-page report evicts them. The test pool behaved the same way. An index range scan of about 3,000 pages, half again the size of the pool, left 500 of the shop’s 501 pages cached, with their counts down from 5 to 1. A second scan like it evicted them. On a real server, the shop keeps using its pages while the report runs, which raises their counts again, so in practice the working set survives longer than in a test with only the report running. 
+
+### PostgreSQL: a ring for large scans 
+For the scans most likely to flood the pool, PostgreSQL steps aside from the clock altogether. A sequential scan of a table larger than a quarter of shared buffers gets a small ring of buffers and reuses them for the whole scan, and pages read through the ring never get a usage count above 1. The buffer manager’s notes describe the same treatment for VACUUM, whose ring is set by vacuum_buffer_usage_limit (2 MB by default), and for COPY and CREATE TABLE AS, which get 16 MB. 
+The test shows it working. The report’s sequential scan of page_views, run by three processes in parallel, read all 14,815 pages and left 96 of them in the pool, 32 per process. The shop’s pages weren’t touched, and the next product query was all hits. 
+The ring is a few hundred kilobytes to a couple of megabytes. It grows with the pool, because each process may only pin a fair share of the pool’s buffers at once, and the ring is limited to that share. At the default 128 MB, a scan by one process left 94 pages behind, about 750 kB, which is that share. 
+The ring doesn’t cover everything that reads a lot:  
+- The same report run through an index scan or a bitmap scan uses the normal clock. In the test, reading the same rows through the primary key took 18,093 reads, the table’s 14,815 pages plus nearly all 3,279 index leaves, and afterwards nothing of the shop was left: the next product query read all 444 table pages again. A plan change from a sequential scan to an index scan can therefore change what a report does to everyone else. 
+- A bulk UPDATE or DELETE dirties the pages it scans. Reusing a dirty ring page would mean flushing the log first, so PostgreSQL drops it from the ring and takes another buffer through the clock; the notes say such a scan effectively falls back to the normal strategy. 
+- Tables smaller than a quarter of the pool are read through the clock on purpose: a table that size may well be part of the working set.  
+
+### InnoDB: an old sublist and a one-second wait 
+InnoDB keeps an LRU list, but it doesn’t put new pages at the front. The list is split at a midpoint into a young sublist of pages used recently and an old sublist at the tail, which takes 3/8 of the pool by default (innodb_old_blocks_pct is 37). A page read from disk goes in at the head of the old sublist. It moves to the young sublist only if it is used again at least innodb_old_blocks_time after its first use, 1,000 ms by default. A scan reads a page, uses it a few times within milliseconds and moves on, so its pages pass through the old sublist and fall off the end, and the young sublist, where the working set lives, isn’t touched. The manual calls this making the buffer pool scan resistant. 
+The protection is a time window, not a judgement about the query. A job that reads a page, does slow work and comes back to the same page more than a second later makes that page young. Setting innodb_old_blocks_time to 0 promotes every page on its second use, which is close to plain LRU. The old sublist is also where the working set’s own pages start. A page the shop needs, once read, has to be used again at least a second after its first use. If it reaches the end of the old sublist before that happens, it is evicted before it earns a place. MySQL wasn’t run for this article; this is the documented behaviour, and the figure’s midpoint policy is a model of it. 
+
+### Seeing what the pool keeps 
+In PostgreSQL the pg_buffercache extension shows what is in shared buffers. This query lists the relations holding the most buffers in the current database, with their average usage count. A working set shows up as tables and indexes with high average counts; a pool full of a report’s table at count 1 means a scan has been through the clock. 
+
+SELECT c.relname, count(*) AS buffers,
+       round(avg(b.usagecount), 1) AS avg_usage
+FROM pg_buffercache b
+JOIN pg_class c ON b.relfilenode = pg_relation_filenode(c.oid)
+WHERE b.reldatabase = (SELECT oid FROM pg_database
+                       WHERE datname = current_database())
+GROUP BY c.relname
+ORDER BY buffers DESC
+LIMIT 10; 
+The view takes no locks, so on a busy server its result is approximate, and on a large pool it reads every buffer header; pg_buffercache_summary() and pg_buffercache_usage_counts() are cheaper totals. In InnoDB, the INNODB_BUFFER_POOL_STATS table and the BUFFER POOL AND MEMORY section of SHOW ENGINE INNODB STATUS report pages made young and pages not made young. During a large scan, a rising “not young” count is the scan resistance working. In SQLite, sqlite3_db_status returns one connection’s cache hits and misses, and the command-line shell prints them after each statement with .stats on.  
+
+## When evicting a page means writing it 
+Evicting an unchanged page costs nothing; evicting a changed one means writing it first. The pool doesn’t only hold copies of pages on disk. It also holds the changes waiting to be written: dirty pages. Before a dirty page’s slot can be reused, the page has to be written to its file, and the log up to that page’s last change has to be on disk first. Background processes write dirty pages ahead of time so that clean slots are usually available: PostgreSQL’s background writer, and InnoDB’s page cleaner threads. PostgreSQL’s checkpointer also cleans pages, but it writes them so that recovery has less to replay, and clean slots are a side effect. 
+When they fall behind, the query that needs a slot has to write the dirty page itself. A query that only wanted to read becomes slow because of someone else’s writes. In InnoDB, with O_DIRECT, that is a wait for the device. In PostgreSQL the write usually lands in the operating system’s cache and returns quickly; the wait that hurts is flushing the log first, when the page’s last change isn’t on disk yet. PostgreSQL’s pg_stat_io view counts writes by the process type that made them, and its documentation says a large number of writes by client backends can mean shared buffers or the checkpointer is misconfigured. InnoDB counts the waits directly in Innodb_buffer_pool_wait_free, which the manual says should be small if the pool is sized properly. 
+Pool size also changes the work a checkpoint does. A larger pool can hold more dirty pages, so a checkpoint may have more to write, which is why PostgreSQL’s documentation says a larger shared_buffers usually needs a larger max_wal_size, to spread those writes over a longer period. Watching storage in a running database shows how to see which processes are doing the writing.  
+
+## Choosing a size 
+
+### How big the working set is, and where more memory stops helping 
+Giving the pool more memory helps until it holds the working set, then helps much less. To see why, take a modelled workload: a 100 GB database that receives 40,000 page requests a second, where 99% of requests fall on an 8 GB working set and the remaining 1% are spread evenly over the other 92 GB. Assume a policy that keeps the working set first. Each row is arithmetic from those assumptions, not a measurement. 
+  Hit rate and reads per second for the modelled workload 
+ | Pool size | Hit rate | Reads per second  
+ | 2 GB | 24.8% | 30,100 
+ | 4 GB | 49.5% | 20,200 
+ | 6 GB | 74.3% | 10,300 
+ | 8 GB | 99.0% | 400 
+ | 16 GB | 99.1% | 365 
+ | 32 GB | 99.3% | 296 
+ | 64 GB | 99.6% | 157    
+Below 8 GB, every working-set page the pool can’t hold is a page that will be wanted again soon, so the reads climb steeply: half the working set costs fifty times the reads. Above 8 GB, the extra memory holds pages from the rarely used 92 GB, and each gigabyte saves fewer reads than the last. That bend, the knee, is the size worth finding. Real workloads don’t have a sharp edge between hot and cold pages, so the knee is a curve rather than a corner, but the shape holds. 
+You rarely know the working set in advance, and in PostgreSQL the direct experiment, trying several sizes and watching reads per second, costs a restart each time, so it is best run on a replica or a copy with the same traffic. Two readings get close without restarts. The first is the spread of usage counts. Sample pg_buffercache_usage_counts() every few minutes through a busy period. Buffers at 0 or 1 have been used at most once lately and are the next to go; buffers at 2 or more were used again. If a steady share of the pool stays at 0 or 1, the pages in repeated use fit, and the number of buffers at 2 and above is a rough measure of them. In the test, after the shop’s queries and part of a report, 511 of 2,048 buffers were at 5, nearly all of them the shop’s 500 cached pages, and 1,488 were at 0 or 1. If instead nearly every buffer sits high while reads continue, the working set is bigger than the pool. 
+Treat that measure as a guide to the order of magnitude, and trust a trend across many samples more than one reading. Three things mislead it. Counts only fall when the clock hand moves, and the hand only moves when a slot is needed, so in a pool with spare room pages keep high counts long after their last use, and the measure runs high. A single query that touches the same page several times in quick succession, as an index scan does when neighbouring rows share a table page, raises its count without the page being part of any working set. And the measure can’t see past the pool: if the working set is larger, it reports the pool’s size, and only the read rate shows how much larger. 
+One reading is more definite: if pg_buffercache_summary() still reports unused buffers after a full day, the pool is larger than everything the workload touched. 
+The second reading is where the misses go. With track_io_timing on, pg_stat_io reports how long reads took. Reads that take a few microseconds are coming from the operating system’s cache, so the working set fits in shared buffers and the page cache together; reads that take a drive’s latency mean it doesn’t fit in either, and more memory for one or the other will help. InnoDB makes the experiment easier, because its pool can grow while running: raise it in steps and watch Innodb_buffer_pool_reads per second fall, and stop when it stops falling. An Innodb_buffer_pool_pages_free count that stays high after a full day’s traffic means the pool is larger than what the workload touches. 
+
+### What else needs the memory 
+The pool shares the machine with everything else the database and the operating system need, and running out is worse than a smaller pool. If the total exceeds physical memory, the operating system starts moving memory to swap, and a buffer-pool “hit” can become a disk read the database can’t even see; or it stops a process to free memory, which may be the database.  
+- PostgreSQL gives each sort and hash operation up to work_mem (4 MB by default), and hash tables up to twice that, set by hash_mem_multiplier. A query can run several such operations at once, in many sessions at once. Servers that run reports often raise work_mem, so take 32 MB: 100 active queries each running two sorts could use 6.4 GB, and more if the operations are hashes. Maintenance work such as VACUUM and index builds uses maintenance_work_mem, and each connection is a process with its own memory. Whatever is left is the operating system’s page cache, which PostgreSQL relies on. On a 64 GB server, 16 GB of shared buffers leaves room for all of that. 
+- InnoDB allocates about 10% more than innodb_buffer_pool_size for the pool’s own control structures, the manual says. On a 64 GB server, an 80% pool is 51 GB and costs about 56 GB, leaving 8 GB for the operating system, connections and their per-session buffers such as sort_buffer_size and join_buffer_size, and any temporary tables. 
+- SQLite’s cache is per connection, so the total is the cache size times the number of open connections. Twenty connections at 64 MB each can use up to 1.28 GB, since each cache grows only as pages are used, and each holds its own copy of the pages it uses.  
+
+### Starting points 
+For PostgreSQL, start shared buffers at 25% of RAM on a dedicated server and rarely go past 40%, as the documentation suggests; the page cache holds much of the rest of the working set. Changing it requires a restart. Don’t confuse it with effective_cache_size, which allocates nothing: it tells the planner how much of the data it can expect to find cached in shared buffers and the page cache together, and so how cheap repeated index access will be. On Linux, huge pages reduce the cost of managing a large pool. PostgreSQL asks for them by default (huge_pages = try), but only gets them if they have been reserved in the operating system, which most distributions don’t do by default, and with try it falls back silently. shared_memory_size_in_huge_pages reports how many to reserve. 
+For InnoDB on a server that runs nothing else, up to 80% is the manual’s figure. Starting MySQL with --innodb-dedicated-server sets the pool from the detected memory: 128 MB below 1 GB, half the memory from 1 to 4 GB, and 75% above that. The manual advises against it when the server shares the machine with other applications. 
+For SQLite, raise cache_size when a connection repeatedly reads more than 2 MB of pages and the misses cost something. The setting lasts only as long as the connection, so set it each time one is opened. 
+
+### Signs the pool is too small 
+The clearest sign is a steady stream of reads under a steady workload, which the storage feels. In PostgreSQL, pg_stat_io counts evictions, and its documentation says a high count in the normal context can mean shared buffers should be increased. Check how long those reads take before acting, though, with track_io_timing on. If they come from the page cache in microseconds, a larger shared buffers moves pages from one cache to the other and gains little. In InnoDB, a sustained rate of Innodb_buffer_pool_reads and a growing Innodb_buffer_pool_wait_free both point to a pool smaller than the working set. A full pool on its own means nothing; every pool fills up. 
+Whether a stream of reads is a problem depends on what the storage can serve. On a cloud volume, the provisioned IOPS and throughput are part of the volume’s configuration, and reads above them are throttled. On your own hardware, a benchmark tool such as fio can measure random reads of the database’s page size, 8 kB for PostgreSQL and 16 kB for InnoDB, at the concurrency the server produces. Read latency is the better signal in practice. While the storage keeps up, the time per read stays flat as reads rise; when the time per read climbs, the storage is near its limit, whatever the hit rate says.  
+
+## A cold pool after a restart or failover 
+After a restart the pool is empty, and every page of the working set has to be read once before it can be hit. Until then the database is slow in a way that looks like a problem but is only a cache filling up. How long that lasts depends on the size of the working set and on where the misses are served from. 
+
+### What warming costs 
+Take the 64 GB server from the memory budget, with 16 GB of shared buffers holding a 16 GB working set: about 2.1 million PostgreSQL pages of 8 kB. If the storage can serve 5,000 random reads a second to this server, reading each of them once takes about seven minutes, and that assumes every one of those reads is a new page of the working set. In practice the most used pages come back within seconds and the long tail of occasionally used pages takes much longer, so throughput climbs gradually; MySQL’s manual describes the same warm-up after restarting a busy server. If the restart left the operating system’s page cache warm, as a PostgreSQL restart without a reboot does, those reads are memory copies and the slow period is short. After a reboot or on a new machine, they go to the drive. 
+
+### Saving the pool’s contents and loading them back 
+Both servers can record which pages were cached and read them back after a restart, in bulk and in file order, which is faster than waiting for queries to ask for them one at a time. 
+InnoDB does this by default. At shutdown it writes the tablespace and page numbers of the most recently used 25% of each pool’s pages (innodb_buffer_pool_dump_pct) to a small file, ib_buffer_pool, and at startup it reads those pages back in the background without delaying startup. SHOW STATUS LIKE 'Innodb_buffer_pool_load_status' reports progress, and SET GLOBAL innodb_buffer_pool_load_abort = ON stops a load that is competing with live traffic. Raising the percentage covers more of the working set at the cost of a longer load. The file is written at shutdown, or when you set innodb_buffer_pool_dump_now, so after a crash the server loads whatever list was saved last. Setting innodb_buffer_pool_dump_now on a schedule keeps that list recent. The same pair of commands can restore the normal working set after a report has disturbed it: dump during normal traffic, load after the report. 
+PostgreSQL does it with the pg_prewarm extension. Loaded through shared_preload_libraries, its background worker saves the list of cached pages to autoprewarm.blocks every five minutes and at shutdown, and two workers read them back after a restart. Because the list is saved regularly, it is recent even after a crash. The function of the same name loads a table or index by hand. 
+
+-- postgresql.conf, then restart:
+--   shared_preload_libraries = 'pg_prewarm'
+-- The background worker now saves the list of cached pages every
+-- 5 minutes and at shutdown, and reloads it after a restart.
+
+-- Load one table and its index by hand, for example after a failover:
+SELECT pg_prewarm('products'), pg_prewarm('products_pkey');
+--  pg_prewarm | pg_prewarm
+-- ------------+------------
+--         444 |         57 
+In the test, restarting with automatic prewarming on restored all 444 of the shop’s table pages, logged as “prewarmed 507 of 507 previously-loaded blocks”, the shop’s 501 table and index pages plus six other pages that were cached at the time, and the first product query was all hits. With it off, the same query after a restart read all 444 pages, and only the second run hit. The documentation adds that prewarmed pages get no special protection: an eviction policy treats them like any others, and prewarming more than fits evicts the earlier pages. 
+SQLite has nothing to save. Its caches are small and refill quickly, and the cache that matters after a restart of the application is the operating system’s, which survives unless the machine restarted. 
+
+### After a failover 
+Failing over to a standby moves the load to a server whose pool was filled by different work. A physical standby’s pool holds the pages that replaying the primary’s log has touched, which are the pages recent writes changed, plus whatever queries on the standby have read. If no reads went to the standby, it doesn’t hold the primary’s read working set, and it becomes the primary partly cold, at the moment the system is already under stress. A MySQL replica applies the primary’s row changes rather than its physical log, which means finding each changed row, so its pool holds those pages and their index paths; the conclusion is the same. That follows from how replay and the pool work rather than from a documented guarantee, and the size of the effect depends on how much of the working set is written as well as read. 
+Three things help. Sending real read traffic to standbys keeps their pools close to the primary’s. Running pg_prewarm on the most important tables and indexes can be a step in the failover runbook. Automatic prewarming does nothing at that moment: promotion isn’t a restart, and the worker reloads pages only when the server starts. And measuring the slow period in a failover drill tells you how long it lasts before you need to know. Replication and failover covers the rest of that decision.  
+
+## Reading the hit rate 
+The hit rate is the share of page requests the pool answered from memory: hits divided by hits plus reads. Each engine counts both, in its own place. 
+  Where each engine counts hits and reads 
+ | Engine | Hits | Reads (misses)  
+ | PostgreSQL | blks_hit in pg_stat_database; hits in pg_stat_io | blks_read; reads 
+ | InnoDB | Innodb_buffer_pool_read_requests counts every request, hit or not | Innodb_buffer_pool_reads 
+ | SQLite | SQLITE_DBSTATUS_CACHE_HIT, per connection | SQLITE_DBSTATUS_CACHE_MISS    
+For PostgreSQL the rate is blks_hit / (blks_hit + blks_read). For InnoDB, whose request counter already includes the misses, it is 1 minus Innodb_buffer_pool_reads divided by Innodb_buffer_pool_read_requests. Either is easy to misread:  
+- The counters run from the last reset. A rate over three months hides the bad hour. Sample the counters twice, a few minutes apart, and divide the differences. 
+- It counts page requests, not queries. The lookup of P7 makes four requests, and the root and branch pages are almost always hits. If the leaf and the table page missed every time, each lookup would wait on the drive twice, yet half its requests would count as hits. Mixed in with queries that touch only cached pages, it leaves the server-wide rate looking healthy while this query waits on every run. One query with a bad plan can be slow at 99.9%. 
+- Small differences are large. At 99%, one request in a hundred is a read; at 99.9%, one in a thousand. That is ten times fewer reads, from a change that looks like a rounding error. In the sizing table, 99.0% and 99.6% are 400 and 157 reads a second. Reads per second, compared with what the storage can serve, is the more useful number. 
+- In PostgreSQL a read may not reach the drive. A low rate can be harmless when the page cache answers in microseconds. With track_io_timing on, pg_stat_io and pg_stat_database also report how long reads took, which tells you whether they were cheap. 
+- Large scans pull it down without hurting anyone. A sequential scan through PostgreSQL’s ring counts every page as a read, so the nightly report lowers the day’s rate while the shop keeps every page it needs. EXPLAIN (ANALYZE) reports a single query’s own hits and reads; PostgreSQL 18 includes the buffer counts by default, as Understanding database performance shows.  
+
+-- PostgreSQL: run twice, a few minutes apart, and subtract.
+SELECT blks_hit, blks_read FROM pg_stat_database
+WHERE datname = current_database();
+
+-- MySQL: the same idea with two status variables.
+SHOW GLOBAL STATUS
+WHERE Variable_name IN ('Innodb_buffer_pool_read_requests',
+                        'Innodb_buffer_pool_reads'); 
+The questions that matter more are how many reads a second the pool lets through, how long they take, whether evictions or waits for clean pages are rising, and which queries cause them. Watching storage in a running database covers those signals across the cache, checkpoints, the log and flushes.  
+
+## Changing the size while running 
+PostgreSQL reads shared_buffers only at server start, so a change means a restart, and the restart empties the pool. Plan it for a quiet period, or as part of a switchover to a standby, and pair it with prewarming. 
+InnoDB can resize online with SET GLOBAL innodb_buffer_pool_size. It grows or shrinks in chunks, so the size you get is rounded up to a multiple of the chunk size times the number of pool instances, which can be noticeably more than you asked for. Online doesn’t mean free. The resize doesn’t start until active transactions have finished, and while it runs, new transactions that need the pool wait, apart from parts of a shrink. On a server with long-running transactions, that can mean a pause in service. Innodb_buffer_pool_resize_status reports progress. Shrinking also evicts pages, so some of the working set has to be read again. 
+SQLite’s PRAGMA cache_size can change at any time on any connection, takes effect for that connection only, and is forgotten when the connection closes. Set it in the code that opens connections, so every connection in a pool gets the same value.  
+
+## Sources and further reading 
+Checked on 17 October 2026. Measurements come from PostgreSQL 18.6 with a 16 MB pool and SQLite 3.54 on one laptop, and show which pages stayed cached, not performance. The sizing table and the warm-up estimate are arithmetic from stated assumptions. MySQL wasn’t run; its behaviour is as documented. Figure 1 is a model.  
+- PostgreSQL 18: Resource Consumption for shared_buffers, work_mem, huge pages and the VACUUM ring; The Cumulative Statistics System for pg_stat_database and pg_stat_io; pg_buffercache and pg_prewarm for looking inside the pool and refilling it. 
+- PostgreSQL source: the buffer manager README, the clearest description of the clock sweep and the buffer rings, and short enough to read in one sitting. 
+- MySQL 8.4 Reference Manual: Buffer Pool for the LRU list and the monitor output; Making the Buffer Pool Scan Resistant; Configuring InnoDB Buffer Pool Size for online resizing; Saving and Restoring the Buffer Pool State; Automatic Configuration for a Dedicated Server; and Server Status Variables for the counters. 
+- SQLite: PRAGMA cache_size and sqlite3_db_status for cache hits and misses. 
+- Storage and durability: the deep dive this companion extends, with pages, dirty pages, the log and checkpoints. 
+- Understanding database performance: per-query buffer counts in context, and how to tell waiting from work. 
+- Replication and failover: what a standby holds and how to plan the switch.       
+
+## 
+
+## 
+
+## 
+
+## 
+
+

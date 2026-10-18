@@ -1,0 +1,112 @@
+---
+import IndexFigure from './IndexFigure.astro';
+import Segmented from './Segmented.astro';
+const { number = 11 } = Astro.props;
+---
+<IndexFigure tag="ix-deleted-figure" number={number} title="Deleting two-thirds of the rows from an index">
+ <pre slot="query"><code data-sql>DELETE FROM orders WHERE order_id % 3 &lt;&gt; 0;
+VACUUM orders;
+REINDEX INDEX orders_pkey;</code></pre>
+ <Segmented slot="params" name="deletion" label="Delete" value="scattered" options={[
+  { value: 'scattered', label: '2 rows in every 3' },
+  { value: 'oldest', label: 'the oldest 24' },
+ ]} />
+ The primary key index of the same 36 orders, one leaf page per line, with the number of entries on each page beside it. Both choices delete 24 rows. Step through the delete, the vacuum and the rebuild, and watch the pages in the file.
+ <span slot="fallback">The primary key index holds 36 entries on six leaf pages. Deleting two rows in every three leaves 12 rows, two on every page: after VACUUM removes the dead entries, all six pages are still in use, each a third full. Deleting the oldest 24 rows instead empties the first four pages, which VACUUM takes out of the tree and keeps for reuse, but the file still has six pages. In both cases REINDEX builds the index again from the 12 rows, on two pages. On the 60,000-order table, deleting two rows in three left the primary key at 166 pages after VACUUM, and deleting the oldest 40,000 emptied 109 of its 164 leaf pages without shrinking the file. REINDEX brought both to 57 pages.</span>
+</IndexFigure>
+
+<script>
+ import { IndexFigure, canvas, svg, type Frame, type Layout } from './player';
+ import { orders, ctid, PAGES, PAGE_ROWS } from './model';
+ import { indexPanel, gridWidth, panelHeight, setCell, moveCell, G, cellY, type IndexPanel } from './scene';
+
+ type Mode = 'scattered' | 'oldest';
+ type Phase = 'start' | 'delete' | 'vacuum' | 'reindex';
+ interface DeleteFrame extends Frame { phase: Phase }
+ const doomed: Record<Mode, (id: number) => boolean> = { scattered: (id) => id % 3 !== 0, oldest: (id) => id <= 24 };
+ const SQL: Record<Mode, string> = {
+  scattered: 'DELETE FROM orders WHERE order_id % 3 <> 0;\nVACUUM orders;\nREINDEX INDEX orders_pkey;',
+  oldest: 'DELETE FROM orders WHERE order_id <= 24;\nVACUUM orders;\nREINDEX INDEX orders_pkey;',
+ };
+
+ class DeletedFigure extends IndexFigure<DeleteFrame> {
+  panel!: IndexPanel;
+  notes: SVGTextElement[] = [];
+  outlines: SVGRectElement[] = [];
+  wideAt = 520;
+  get mode() { return this.param('deletion') as Mode; }
+  build(): DeleteFrame[] {
+   const mode = this.mode;
+   this.querySelector('[data-sql]')!.textContent = SQL[mode];
+   const scattered = mode === 'scattered';
+   return [
+    { phase: 'start', hold: 1600, short: '36 entries on six full leaf pages.', note: 'The primary key index: 36 entries in order_id order, six to a leaf page, every page full.' },
+    { phase: 'delete', hold: 2200, short: '24 rows deleted; their entries are still there.',
+     note: scattered
+      ? 'DELETE removes two rows in every three. The rows are deleted, but their index entries stay on the pages, dead, until VACUUM removes them. Every page lost four of its six.'
+      : 'DELETE removes orders 1 to 24. Their entries stay on the pages, dead, until VACUUM removes them. All of them sit on the first four pages.' },
+    { phase: 'vacuum', hold: 2600, short: scattered ? 'VACUUM: six pages, each a third full.' : 'VACUUM: four empty pages, kept for reuse.',
+     note: scattered
+      ? 'VACUUM removes the dead entries. The 12 survivors stay where they were, two on every page, so the index still reads and caches six pages for a third of the entries.'
+      : 'VACUUM removes the dead entries. The first four pages are now empty, so PostgreSQL takes them out of the tree and keeps them for reuse. The file is still six pages long.' },
+    { phase: 'reindex', hold: 2600, short: 'REINDEX: 12 entries on two pages.',
+     note: 'REINDEX builds the index again from the 12 rows that remain. Packed together, they fill two pages, and the file shrinks to two pages.' },
+   ];
+  }
+  draw(_layout: Layout) {
+   const noteX = gridWidth + 12;
+   const svgRoot = canvas(this.stage, noteX + 112, panelHeight + 6, 'The primary key index of the 36 orders, one leaf page per line, as rows are deleted, the table is vacuumed and the index is rebuilt.', 1.3);
+   const byId = [...orders].sort((a, b) => a.id - b.id);
+   this.panel = indexPanel(svgRoot, 4, 2, byId, { title: 'Primary key index · order_id', key: (o) => String(o.id), sub: (o) => ctid(o) });
+   this.outlines = [];
+   this.notes = [];
+   for (let r = 0; r < PAGES; r++) {
+    const outline = svg('rect', { class: 'ix-free-page', x: -3, y: cellY(r) - 3, width: gridWidth + 6, height: G.ch + 6, rx: 3, 'data-state': '' }) as SVGRectElement;
+    this.panel.group.append(outline);
+    this.outlines.push(outline);
+    const note = svg('text', { class: 'ix-leaf-note', x: noteX, y: cellY(r) + G.ch / 2 + 4, 'data-state': '' }, '') as SVGTextElement;
+    this.panel.group.append(note);
+    this.notes.push(note);
+   }
+  }
+  render(frame: DeleteFrame) {
+   const mode = this.mode;
+   const dead = doomed[mode];
+   const at = ['start', 'delete', 'vacuum', 'reindex'].indexOf(frame.phase);
+   const survivors = orders.filter((o) => !dead(o.id)).map((o) => o.id);
+   orders.forEach((o) => {
+    const c = this.panel.cells.get(o.id)!;
+    const gone = dead(o.id);
+    const slot = at >= 3 ? survivors.indexOf(o.id) : o.id - 1;
+    if (slot >= 0) { const [x, y] = this.panel.position(slot); moveCell(c, x, y); }
+    setCell(c, !gone ? (at >= 3 ? 'found' : '') : at === 1 ? 'reject' : at >= 2 ? 'hidden' : '');
+   });
+   const pageEntries = (page: number) => {
+    if (at >= 3) return page < survivors.length / PAGE_ROWS ? PAGE_ROWS : -1;
+    const ids = orders.filter((o) => Math.floor((o.id - 1) / PAGE_ROWS) === page).map((o) => o.id);
+    return at >= 2 ? ids.filter((id) => !dead(id)).length : ids.length;
+   };
+   let inFile = 0, holding = 0, entries = 0;
+   for (let p = 0; p < PAGES; p++) {
+    const n = pageEntries(p);
+    const deadHere = at === 1 ? orders.filter((o) => Math.floor((o.id - 1) / PAGE_ROWS) === p && dead(o.id)).length : 0;
+    let text = '', state = '';
+    if (n < 0) { text = 'removed'; state = 'gone'; }
+    else if (n === 0) { text = 'empty, reusable'; state = 'strong'; }
+    else if (deadHere) text = `${n - deadHere} live, ${deadHere} dead`;
+    else text = `${n} of ${PAGE_ROWS}`;
+    if (this.notes[p].textContent !== text) this.notes[p].textContent = text;
+    this.notes[p].setAttribute('data-state', state);
+    this.outlines[p].setAttribute('data-state', n === 0 ? 'free' : '');
+    if (n >= 0) inFile++;
+    if (n > 0) holding++;
+    if (n > 0) entries += n;
+   }
+   this.counters([['entries on pages', entries], ['pages in the file', inFile, true], ['pages holding entries', holding]]);
+   this.scale(mode === 'scattered'
+    ? 'deleting 2 rows in 3 left the primary key at 166 pages after VACUUM; REINDEX made it 57'
+    : 'deleting the oldest 40,000 emptied 109 of 164 leaf pages, but the file stayed at 166 pages; REINDEX made it 57');
+  }
+ }
+ if (!customElements.get('ix-deleted-figure')) customElements.define('ix-deleted-figure', DeletedFigure);
+</script>

@@ -21,6 +21,27 @@ understandable. A backfill's short batch did not prove completion when another
 writer could make selected rows ineligible. The missing depth was a consequence
 of the demonstrated mechanism, not another introductory definition.
 
+## Depth follows the subject, in both directions
+
+Two corrections in October 2026 mark out the range. In the general Storage article,
+the point-in-time recovery section grew into a full explanation with subsections and
+a figure of its own. A coordinator cut it back to match its thinner neighbours, and the
+user rejected the repair: matching neighbouring sections is not a reason to cut. Whether
+that section's depth was right is a separate question, answered by what an expert
+practitioner needs and checked against evidence, not by anyone's preference.
+
+In the same month, Sequence diagrams went the other way. Two review rounds asked what
+was missing, the writers added it, and the subject grew into a deep dive with three
+companions, explaining asynchronous delivery and tool syntax at length. The user had
+expected some light writing and a set of examples. An expert in sequence diagrams draws
+most scenarios clearly and knows the corner cases that mislead; a catalogue of drawn
+examples teaches that faster than prose about it, and how brokers deliver messages
+belongs to another field.
+
+Both corrections came from the same question: what does an expert practitioner do with
+this part, and what is the fastest way to give a newcomer that ability? Neither answer
+came from matching neighbouring sections or from listing everything that could be said.
+
 ## Choose what the experiment can honestly show
 
 The SQL playground executes PostgreSQL through PGlite. Its outbox and replication

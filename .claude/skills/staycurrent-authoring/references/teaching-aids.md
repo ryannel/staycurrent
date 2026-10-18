@@ -1,7 +1,9 @@
 # Choose support for a particular thought
 
 The text, illustration and experiment should help the reader follow the same idea.
-The prose carries a complete explanation. Supporting media can make a relationship
+When the article explains a mechanism, the prose carries a complete explanation; when
+it teaches a practice through worked examples, the examples carry the lesson and the
+prose says what each one shows. Supporting media can make a relationship
 visible, let someone inspect a sequence, or give them a way to test their intuition.
 Choose the form from that opportunity, not from a target number of illustrations.
 
@@ -47,6 +49,33 @@ A reader encountering it alone needs enough context to know the question, what c
 change and how to interpret the result. “Here are those same 16 records” once relied
 on distant prose for that context. Keeping the model's setup with the model, while
 explaining the conclusion in the article, made both work better.
+
+## Animations that anchor the text
+
+In the pieces that inspired the house style (listed in the style skill), the animations
+carry much of the explanation. Sam Who's are small simulations with play, pause, a time
+or speed control and a reset, one every two or three paragraphs, and most reuse the same
+model with one thing changed. Ciechanowski's give one slider to one quantity, and the
+paths they trace make a relationship visible before any equation. Each has a single job.
+The prose before it says what to watch, the reader watches requests drop or blocks
+fragment, and the prose after it says what they saw and names the term. Colour carries
+state, such as a request darkening while it waits. Their figures keep arriving to the
+end, because each new idea is a change to the model. When our three reference articles
+were compared with them in October 2026, ours had a figure every 600 to 950 words of
+prose against their 110 to 150, and the gap was widest in the later sections on cases
+and operations. Indexes had one figure in its last 3,400 words, although page splits,
+index bloat and the visibility map are all states that change. Those later sections are
+often where a reader most needs to see the change.
+
+Use the same pattern here. Reuse one model across the page where you can, keep the
+controls few (play and pause, stepping or a time scrubber, reset, and a parameter only
+when changing it teaches), and make the motion smooth and the labels readable. Someone
+reading only the prose should still learn the point. Respect `prefers-reduced-motion` by
+starting paused or stepping instead of animating, make every control work from the
+keyboard, give each figure a text alternative, and don't rely on colour alone. Build them
+as Astro components with inline SVG and plain TypeScript, following
+`src/components/explainers/`, in the site's light and dark tokens and legible at phone
+width.
 
 ## Meaning in the finished page
 

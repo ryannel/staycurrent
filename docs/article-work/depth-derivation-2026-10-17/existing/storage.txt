@@ -1,0 +1,472 @@
+
+
+- 
+- 
+- 
+- Relational databases: articles
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+-      
+Databases and storage
+
+# Storage and durability
+ Deep diveAbout 37 minutesPostgreSQL 18, with InnoDB (MySQL 8.4) and SQLite comparisons   
+Durability is the promise that a committed change survives a crash. Once the database tells your application that COMMIT succeeded, the change must still be there after a power cut, a kernel panic or a killed server process. Relational databases keep that promise through the way they store data: how rows sit on disk, how they are copied into memory to be changed, and what is written to disk before the reply. 
+Every example follows one change. A shop’s products table holds P7, a blue mug priced at 20.00, and an UPDATE raises it to 22.00. The drawings and numbers describe PostgreSQL 18’s defaults on one server, and the text names MySQL’s InnoDB and SQLite where they work differently. 
+
+BEGIN;
+UPDATE products
+SET current_price = 22.00
+WHERE product_id = 'P7';
+COMMIT; 
+Memory is fast and lost in a power cut. Disk survives, but every write to it is slow. So where does P7 live, and what has to reach the disk before the database can say COMMIT? 
+The answers support a handful of decisions: which commit setting to run and what it risks, how large to let the log grow before a checkpoint, whether a drive’s flush can be trusted, how long a restart after a crash will take, and what would bring back a lost disk. Each comes with the one thing to check for it: the flush time for the commit setting, timed against requested checkpoints for the log size, a pull-the-plug test for the drive, the replay rate measured on a copy for the restart, and the archive’s last success for the lost disk. The article follows engines that change fixed-size pages in place and keep a log. Log-structured stores, which write sorted files instead of updating pages, the internals of filesystems and distributed commit across servers are outside it. Watching storage in a running database reads the views and log lines behind each of these in full. 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+
+## Rows live in pages 
+Relational engines store a table as a file of fixed-size pages, and every row lives inside one page. To read one row, the engine reads the whole page that holds it. The size differs: PostgreSQL uses 8 kB, InnoDB 16 kB by default (fixed when the instance is created), and SQLite 4 kB by default, adjustable from 512 bytes to 64 kB. A row can’t span two pages, so values too wide for a page are stored elsewhere and referenced from the row. PostgreSQL moves them to TOAST tables and InnoDB’s default row format stores long values off-page behind a 20-byte pointer. Reading such a column costs extra page reads that a query for the narrow columns avoids. 
+How pages form a table also differs, and it changes what a lookup costs. PostgreSQL keeps a heap, with each row wherever there is room, and every index entry holds a row’s address. InnoDB keeps the table itself as a B-tree ordered by primary key. A secondary index entry holds the primary key instead of an address, so a lookup through it finds the key and then searches the table’s tree for the row: two descents where a heap needs one. SQLite keeps each table as a B-tree keyed by an integer rowid. 
+How these layouts fill, split and age is the subject of Indexes; here only the page matters. The drawing below shows one concrete layout, PostgreSQL’s. Press play to fill an empty table, then try a different row size.  
+Figure 1
+PostgreSQL rows and line pointers filling three pages  
+
+Three 8 kB pages drawn as tall columns. Line pointers grow down from each header; rows stack up from the bottom. 
+- Three empty 8 kB pages. Each starts with a 24-byte header.
+- Each inserted row adds a 4-byte line pointer after the header and puts the row at the end of the free space, so the two grow towards each other.
+- With 100 bytes of data a row takes 128 bytes, plus a 4-byte pointer: 132 in all. So 61 rows fit before page 0 is full and row 62 starts page 1.
+- With 40-byte rows, 120 fit on a page; with 250-byte rows, 28; with 1,000-byte rows, 7; with 2,000-byte rows, 4.  
+
+ Row data  40 B100 B250 B1,000 B2,000 B   
+ Play Back Next Step Reset     
+PostgreSQL’s layout, drawn to scale except the 24-byte header, drawn thicker so it stays visible. A row holding 100 bytes of data takes 132 bytes: a 24-byte row header, the data, 4 bytes of padding so the next row starts on an 8-byte boundary, and its 4-byte pointer. The rows have no NULL values.   
+In PostgreSQL a row’s address is its page and item number, which you can read as the hidden ctid column. P7 is at (12,3), page 12, item 3. The page header and line pointers are explained in Inside PostgreSQL. 
+
+SELECT ctid, product_id, current_price
+FROM products
+WHERE product_id = 'P7';
+--   ctid  | product_id | current_price
+-- --------+------------+---------------
+--  (12,3) | P7         |         20.00 
+Every index on a table is stored in pages too, and one row change usually touches several. An insert adds an entry to every index; an update changes the table page that holds the row and the indexes whose columns it changes. Each of those pages is changed in memory first and written to disk later, and every change is logged. That is why a table with many indexes writes more log per row, and why a commit that touches one row can still change pages in several places. 
+Deleting rows does not shrink the files. The freed space is reused by later inserts, and the file keeps its size unless it is rewritten. In PostgreSQL, plain VACUUM makes dead versions’ space reusable and can cut empty pages off the end of the file, but empty space in the middle stays. Giving it back takes a rewrite: VACUUM FULL in PostgreSQL, which holds a lock on the table, ALTER TABLE ... FORCE in InnoDB, and VACUUM in SQLite. A rewrite writes the whole table again, and logs it.  
+
+## A cache of pages in memory 
+No engine reads or changes a page on disk directly. Each keeps a cache of pages in memory, called the buffer pool, and works only on the pages in it. To read P7, the engine first needs page 12 in a slot. PostgreSQL calls its pool shared buffers, shared by every connection, and starts it at 128 MB, or 16,384 pages of 8 kB. InnoDB’s buffer pool also defaults to 128 MB. SQLite has no server, so each connection keeps its own page cache, about 2 MB by default. Watch a few PostgreSQL queries ask for products.  
+Figure 2
+PostgreSQL: four buffer slots above the table file  
+
+Four buffer slots in memory above pages of the table file on disk. 
+- Shared buffers start empty. This drawing has four slots.
+- A query asks for P7. The index says it is at page 12, item 3.
+- Page 12 isn’t in memory, so PostgreSQL reads all 8 kB of it from the table file into a free slot. That is one read.
+- It finds item 3 on the page in memory and returns 20.00.
+- The next query asks for P3, also on page 12. The page is already in memory, so this is a hit.
+- P40 lives on page 31, which isn’t in memory either. That is another read.
+- P7 again: a hit.
+- Other queries read pages 10 and 11. All four slots are now in use.
+- P50 is on page 13, and no slot is free. The pool evicts a page that has been used little. Page 12 was used three times and stays; page 31 goes, and page 13 takes its slot.  
+
+ Play Back Next Step Reset     
+Shared buffers is PostgreSQL’s name for the buffer pool. Four slots stand in for 16,384. Real lookups also read index pages through the same buffers; this drawing counts only table pages.   
+The first query for page 12 paid for a read; every later query for it was a hit and never left memory. Once every slot was taken, the next read had to evict a page to reuse its slot. PostgreSQL’s EXPLAIN (ANALYZE) reports these counts on each plan node, in a line such as Buffers: shared hit=3 read=1. 
+A read doesn’t always reach the drive, because the operating system keeps its own cache of file data, and PostgreSQL leans on it where InnoDB bypasses it. The buffer pool explains the two caches and how to size the pool. What matters here is that the pool is memory, so a crash empties it: the first queries after a restart read from disk, and a recovered server can be correct and still slow until its working set is back. 
+The buffer pool also covers how engines choose what to evict, how to warm the pool after a restart and how to read the hit rate.  
+
+## Updating a row without overwriting it 
+A crash can leave the changes of a transaction that never committed in the table files, because the engine writes a changed page when a checkpoint reaches it or its slot is needed, without waiting for the transaction that changed it to commit. Recovery has to make those changes disappear. How an engine does that depends on how it keeps the old version of a row, which it needs anyway for readers: if an update overwrote P7 in place, a report that had read 20.00 and was still running could no longer repeat its read. Where the old value lives is the largest design difference between the engines, and it decides what a long-running transaction costs. 
+PostgreSQL writes a new row version into the table and marks the old one as replaced, so both sit in the same page for a while. A query decides which one it may see by comparing the transactions that created and replaced each version with the moment its snapshot was taken. VACUUM removes the versions no snapshot can see. Row versions, transactions, and vacuum follows that in detail. 
+InnoDB changes the row in place and writes the old value to an undo log. A reader that needs the earlier value rebuilds it from there, and a background purge discards undo entries once no reader needs them. If purge falls behind, innodb_max_purge_lag can delay inserts, updates and deletes until it catches up; the default of 0 never does. SQLite’s default mode keeps the old page only for undo: its rollback journal, described below, holds each page’s original contents until the commit, and readers are never given old versions. In WAL mode a reader works from the log as it stood when its read began. 
+
+ | Engine | Old versions live | What a long transaction costs | One thing to look at  
+ | PostgreSQL | In the table, beside current rows | Dead versions can’t be removed, so tables and indexes grow. Rolling back is cheap, because the new versions are simply never visible. | The oldest backend_xmin in pg_stat_activity 
+ | InnoDB | In the undo log | The undo history grows. Rolling back a huge transaction can take several times as long as the change did. | History list length in SHOW ENGINE INNODB STATUS 
+ | SQLite | Nowhere in the default mode. In WAL mode, in the log. | A writer waits for readers before its final write. In WAL mode, a reader that is always open stops a checkpoint from finishing, and the log file grows without bound. | The size of the -wal file    
+
+## Changed pages wait in memory 
+A dirty page is a page in the buffer pool that has changed since it was last written to disk. After the update, page 12 in memory holds the 22.00 version, while page 12 in the table file still holds only 20.00. A dirty page also has to be written out before its slot can be reused for another page. It may hold a change from a transaction that has not committed yet. Writing it does not wait for the commit: a checkpoint or an eviction writes whatever the page holds, so the table files can contain uncommitted changes, as the previous section assumed. 
+Suppose a database replied to COMMIT while the only copy of the new price was still in memory. The figure shows what that costs.  
+Figure 3
+A database without a log  
+
+Two lanes: memory, holding page 12 in shared buffers, above disk, holding page 12 in the table file. 
+- Page 12 is in shared buffers, and the table file holds the same copy. P7 costs 20.00.
+- The UPDATE adds a new version of P7 to the page in memory. The page is now dirty.
+- Suppose COMMIT replied straight away, with nothing written to disk.
+- The power fails. Everything in memory is gone, including the only copy of 22.00.
+- After the restart, page 12 is read from the table file. P7 costs 20.00 again.  
+
+ Play Back Next Step Reset     
+A hypothetical design, shown for contrast. A coral outline and the word ‘dirty’ mark a page whose memory copy differs from the file.   
+The application was told the change committed, and the change is gone. The obvious fix is to write page 12 to the table file before replying. For engines that keep a log, as most do, that is a bad trade: one transaction can dirty pages across the table and its indexes, each a separate write to a different place on disk, and a page half-written when the power fails is part old and part new. SQLite’s default mode does write the pages at commit, and a journal, described below, is what makes that safe. So what does the commit write instead?  
+
+## The log is written before the pages 
+The answer for most engines is a second record of the change that is cheap to write. PostgreSQL’s write-ahead log, or WAL, is a record of every change to a page, precise enough to repeat it. InnoDB’s redo log does the same job. Both append records to the end of a file and number them with a log sequence number, or LSN: a position in the log that only grows. In both, each page remembers the LSN of the last record that changed it. Step through the price change again, this time with the log.  
+Figure 4
+PostgreSQL: the price change with a write-ahead log  
+
+The same lanes, with WAL buffers added to memory and the WAL file added to disk. 
+- The same starting point, now with a write-ahead log: WAL buffers in memory, WAL files on disk.
+- The UPDATE changes page 12 in memory and appends a WAL record for the change. The page’s LSN now points past that record.
+- COMMIT appends a commit record for transaction 812. Nothing has reached the disk yet.
+- PostgreSQL writes the WAL buffers to the WAL file and asks the operating system to flush it to disk. It waits for the disk to confirm.
+- Only now does the application hear COMMIT. The table file still says 20.00.
+- Later, a checkpoint, PostgreSQL’s periodic write of dirty pages, writes page 12 to the table file. The page is clean again.  
+
+ Play Back Next Step Reset     
+The drawing keeps the update record in memory until COMMIT; a background flush may write it to disk sooner.   
+That order gives the log its name. Before a dirty page goes to the table file, the log up to that page’s LSN must already be on disk. The table file still said 20.00 when the application heard COMMIT, and that’s fine, because the log on disk can rebuild 22.00. 
+
+### Who writes a dirty page 
+If commit writes the log and not the pages, something else must write the pages, and which writer does the work decides where the cost lands. In PostgreSQL there are three. The checkpointer writes the pages that a checkpoint needs, the background writer writes some pages early so that queries find clean slots, and a query that needs a slot and finds only dirty pages must write one out itself before it can read, which adds write latency to a read. InnoDB’s page cleaner threads do this work continuously. They start flushing early once the share of dirty pages passes innodb_max_dirty_pages_pct_lwm (10% by default), flush aggressively at innodb_max_dirty_pages_pct (90%), and adapt the pace to how fast the redo log is filling. SQLite has no background writer. The connection that commits writes its own pages. 
+Who does the writing matters more than how many pages are dirty, because only a query’s own write makes the query wait. Watching storage shows how to count each kind of writer. 
+
+### What COMMIT waits for 
+While a transaction runs, its log records collect in a buffer in memory: the WAL buffers in PostgreSQL, the log buffer in InnoDB. At COMMIT the engine appends a commit record, writes the buffer to the log file, and asks the operating system to flush the file. Only when the flush returns does it reply. The flush is the slow step, because it waits for the storage to confirm. So a single client committing one row at a time can’t commit faster than the storage flushes. If a flush takes 5 ms, the limit is 200 commits a second, however fast the processor is. 
+The local run is an observation, not a benchmark. The server was PostgreSQL 18.6 on an Apple-silicon laptop with its internal SSD and default settings, except that wal_sync_method was fsync_writethrough, which asks the drive to flush its own write cache. (The default there returns in a fraction of a millisecond, because macOS acknowledges a plain flush before the drive has finished, and gave about 25,000 commits a second.) pgbench ran a script that inserts one row per transaction. 
+
+ | Case | Commits per second | Time per commit  
+ | 1 client, full flush | about 190 | 5.1 ms 
+ | 16 clients, full flush | about 1,570 | 10.2 ms 
+ | 1 client, synchronous_commit = off (limited by the processor, not the storage) | about 72,000 | 0.014 ms 
+ | 16 clients, synchronous_commit = off (limited by the processor, not the storage) | about 170,000 | 0.09 ms 
+ | 10,000 rows in one transaction | one commit | 8 to 12 ms in all   
+One client is held to the flush time: 5.1 ms a commit is 196 commits a second. Sixteen clients get eight times the throughput from the same drive, and a commit takes twice as long. Turning the wait off, or committing ten thousand rows at once, removes the flush from the path almost entirely. Batching is the application’s choice, and turning the wait off belongs to the settings section below. The next part explains the middle result: why sixteen clients get eight times the throughput from the same drive. 
+
+### Group commit 
+When many transactions commit at once, they can share a flush. Their commit records are in the same log buffer, so one flush makes all of them durable, and every one of them gets its reply. PostgreSQL does this, and InnoDB does it for its redo log and its binary log. A commit that arrives while a flush is in progress misses it and waits for the next, so a commit takes between one and two flushes. That is the 10.2 ms in the table: twice 5.1. The figure models the ceiling this sets. Choose how many clients are committing, how long a flush takes and whether commits share flushes.  
+Figure 5
+Commits sharing log flushes  
+
+Four log flushes in a row, each labelled with the number of commits it carries. 
+- All 16 clients have sent COMMIT. Each commit record has to reach the disk before its client gets a reply.
+- The first flush starts. It carries every commit record in the log so far, so 16 commits share it.
+- Clients that were answered send their next COMMIT at once. Commits that arrived during the flush wait for the next one, which carries them together.
+- Each flush answers everyone who was waiting for it, so the flush rate stays the same however many clients there are.  
+
+ Clients committing  1416  
+ One flush takes  0.2 ms2 ms5 ms  
+ Group commit  onoff   
+ Play Back Next Step Reset     
+A model of the ceiling, not a benchmark. Each client commits again as soon as it is answered, and processor time is ignored. With 16 clients and a 5 ms flush it gives 1,600 commits a second, close to the 1,570 observed above. Real engines always share flushes; turning sharing off shows what it saves.   
+The consequence is that commit latency is flush latency. How many commits per second a log can sustain depends on the flush time and on how many clients commit together, and a drive with a slow flush limits a write-heavy workload more than its raw bandwidth would suggest. SQLite has nothing to group, because it allows one writer at a time. 
+
+### What a record holds, and the other log 
+Redo and write-ahead records describe changes to pages, in a form precise enough to repeat. They are not SQL statements. Replaying a statement against whatever data happens to be there could give a different answer; replaying a page change gives the same page. MySQL also keeps a binary log, a separate record of changes written for replicas and for point-in-time recovery, which describes changes in terms of the data rather than the pages. Both logs are written at commit, and the settings section returns to how they stay in step. 
+
+### SQLite’s two ways 
+SQLite’s default mode works the other way round. Before changing a page, it saves the page’s original contents in a rollback journal. It then writes the new pages into the database file, flushes them, and deletes the journal. The deletion is the commit. After a crash, a journal that is still there means the commit never finished, and SQLite copies the saved pages back. A commit in this mode needs several flushes: two for the journal and one for the database file. SQLite’s WAL mode works like the logs above instead: commits append page frames to a separate file, a frame marked as the end of a transaction is the commit, and the first connection to open the database after a crash reads the log, ignoring frames whose checksums fail. It writes the content once instead of twice, which is a large part of why it is faster.  
+
+## Crash recovery 
+Crash recovery replays the log after a crash to bring the table files up to date. It doesn’t start at the beginning of the log. It starts at the last checkpoint, a position before which the engine knows every change is already in the table files. Each record is applied only where it is missing: recovery compares the record’s LSN with the LSN on the page it changes. If the page is older, the change is missing and recovery applies it. If the page already has it, recovery skips it, so no change is applied twice. What the crash costs depends on what it destroyed. A killed server process leaves the operating system’s cache intact, so everything the server had written survives, flushed or not. A kernel panic or a power cut keeps only what had been flushed. Choose when the power fails, then watch PostgreSQL recover.  
+Figure 6
+PostgreSQL: crash recovery at three moments  
+
+The lanes from figure 4, with the power failing at the chosen moment. 
+- Page 12 and P7 at 20.00, as before. This time the power fails partway through.
+- The UPDATE changes page 12 in memory and appends a WAL record for the change. The page’s LSN now points past that record.
+- COMMIT appends a commit record for transaction 812. Nothing has reached the disk yet.
+- PostgreSQL writes the WAL buffers to the WAL file and asks the operating system to flush it to disk. It waits for the disk to confirm.
+- The power fails after the flush, a moment before the reply leaves the server. The application sees its connection drop.
+- On restart, recovery looks up the last checkpoint in a small control file, pg_control, and replays the WAL from there.
+- Replaying the earlier records rebuilds page 12 as it was at LSN 0/4F2A1C8. That is older than the update record, so the page is missing the update.
+- Recovery applies the update record. The 22.00 version is back, and the page LSN moves to 0/5000148.
+- The commit record for transaction 812 follows, so the 22.00 version counts as committed.
+- P7 is 22.00. The application saw only a dropped connection, the same as before the flush.  
+
+ Power fails  before COMMITbefore flushafter flush   
+ Play Back Next Step Reset     
+Page 12 had already changed once since the last checkpoint, so the earlier records include it. Records still in memory at the crash are gone.   
+
+### Unfinished transactions 
+Recovery brings back exactly the transactions whose commit records reached disk. The log may also hold records of transactions that never committed, and what happens to those depends on where old versions live. PostgreSQL replays them like any others, and their versions stay invisible: with no commit record in the log, the transaction counts as aborted, so no snapshot is allowed to see its versions. 
+InnoDB replays the redo log first, which restores the unfinished changes too, and then rolls those transactions back using the undo log. It accepts connections before that rollback finishes, so new connections can briefly meet locks held by transactions that are being undone. A transaction that had changed millions of rows takes correspondingly long to undo, and the manual notes that killing the process does not help, because the rollback starts again on startup. SQLite’s recovery is the journal restore or the checksummed log described above. 
+
+### How long it takes 
+Replay time is roughly the amount of log between the last checkpoint’s redo point and the end of the log, divided by how fast the server can apply it. That is why checkpoint settings set recovery time, which the next section turns into a sizing rule. The local run measured the replay rate once. After a checkpoint, an update-heavy pgbench test ran for 20 seconds and wrote 566 MiB (594 MB) of log. Then the server was stopped with pg_ctl stop -m immediate, which skips the shutdown checkpoint much as a crash does. Replaying that log took 3.35 seconds on the same laptop, about 169 MiB a second, and another 0.56 seconds went on a checkpoint at the end of recovery, before the server accepted connections. (This was a separate run from the one in Watching storage, which crashed another copy.) The rate is a best case. The log in that test was mostly full-page images, whole-page copies that replay quickly and that the torn-pages section explains, and the files were in the operating system’s cache. After a reboot, or on a standby that has just started, replay can be much slower. Both numbers belong to that machine and workload; yours are worth measuring the same way, by crashing a copy under load. 
+Replay is only part of the outage. The server also has to notice the crash and restart, InnoDB may still be rolling back a large transaction, and the cache starts cold. A recovery-time target should include all four. PostgreSQL’s server log reports where replay began (redo starts at), where it ended (redo done at) and how long replay took, so the difference between the two positions is the log replayed. Reading a restart goes through that log line by line, and through InnoDB’s phases. 
+
+### What recovery cannot repair 
+Recovery replays the log it finds, so it fixes only what the log can fix. It cannot bring back commits whose log records were never really on disk, which is what a drive that acknowledged a flush early causes. It cannot repair damage that is not a tear: a bit flip or a bad sector is detected by checksums in PostgreSQL and InnoDB, but replaying the log does not rewrite the page, and the remedy is a copy from elsewhere. It does not survive missing or replaced files: log files deleted by hand, a SQLite journal or -wal file moved away from its database, or a data directory restored without its log. And it cannot bring back a lost disk. Those cases are what the last section is for.  
+
+## Checkpoints bound the replay 
+A checkpoint is a log position before which every change is already in the table files. Recovery starts there, and the log before it can be reused. Without checkpoints, recovery would replay the whole history and the log would grow without limit. Every engine therefore trades three costs against each other: recovery time, which grows with the log since the last checkpoint; page writes, because a page that changes again after a checkpoint has to be written again; and, in PostgreSQL, log volume. What differs is how engines move the position forward. 
+
+### In rounds or continuously 
+PostgreSQL works in rounds. Every 5 minutes (checkpoint_timeout), or sooner if the log approaches max_wal_size (1 GB), it picks a position, writes every page dirtied before it, and records the position, spreading the writes over most of the interval (checkpoint_completion_target, 0.9) so the disk is not hit all at once. 
+InnoDB moves the position continuously. Its fuzzy checkpointing flushes dirty pages in small batches in the background, and the checkpoint advances behind the oldest page still dirty, so there are no rounds. The consequence is a stall rather than a spike. InnoDB’s redo log has a fixed capacity, and when writes fill it faster than the flushing keeps up, a sharp checkpoint forces dirty pages out and throughput drops until space is free. SQLite in WAL mode is the simplest: it checkpoints when the log reaches 1,000 pages, and that checkpoint, like every automatic one, does not wait for readers. 
+The figure runs both models over the same forty price changes. Price changes arrive for products on pages 10 to 15. Choose the model and how often it acts, and compare the replay, the page writes and, for PostgreSQL, the full-page images, whole-page copies written into the log after a checkpoint, which the torn-pages section explains.  
+Figure 7
+Checkpoints in rounds and continuously  
+
+Six pages in shared buffers, marked clean or dirty, above a grid of log records labelled with their pages. C marks a checkpoint. 
+- Each price change is one log record and dirties its page.
+- After every 5 records, a checkpoint writes every dirty page and moves the redo point.
+- The power fails. Recovery replays 5 records; 30 page writes were made on the way.  
+
+ Engine model  PostgreSQL: roundsInnoDB: continuous  
+ Batch every  5 records1020   
+ Play Back Next Step Reset     
+Checkpoints here are instant and counted in records; real ones are timed and spread out. The continuous model flushes the pages that have been dirty longest after every batch, which is a simplification of InnoDB’s pacing. Full-page images are PostgreSQL’s defence against torn pages; InnoDB uses a doublewrite buffer instead.   
+In the rounds model, a checkpoint every 5 records leaves 5 records to replay after the crash, at the price of 30 page writes and 35 full-page images. A checkpoint every 20 records leaves 20 to replay, with 6 writes and 12 images. The images are counted because PostgreSQL logs a whole page the first time it changes after a checkpoint, so the more often it checkpoints, the more of them it writes. Rare checkpoints cost less in writes and more in recovery time. 
+
+### What you can set 
+
+ | Engine | What starts a checkpoint | Settings that matter  
+ | PostgreSQL | Time, or log size | checkpoint_timeout (5 min), max_wal_size (1 GB), checkpoint_completion_target (0.9), min_wal_size (80 MB), checkpoint_warning (30 s) 
+ | InnoDB | Nothing in particular: flushing is continuous and speeds up as the log fills or the pool gets dirty | innodb_redo_log_capacity (100 MiB), innodb_max_dirty_pages_pct (90), innodb_max_dirty_pages_pct_lwm (10), innodb_adaptive_flushing (on), innodb_io_capacity 
+ | SQLite, WAL mode | Log size | PRAGMA wal_autocheckpoint (1,000 pages); manual modes PASSIVE, FULL, RESTART and TRUNCATE   
+
+### Choosing an interval 
+Start from a recovery-time target and work backwards. Say a restart may spend 30 seconds replaying. At the 169 MiB a second measured above, that is about 5 GB of log. That rate is a best case, as noted above, so a plan should use a lower one measured on your own hardware. 
+Then find out how much log a crash can leave to replay. PostgreSQL starts a checkpoint for log size when the log written since the previous checkpoint reaches max_wal_size divided by (1 + checkpoint_completion_target). That rule is in the source (CalculateCheckpointSegments, in xlog.c), not in the manual, and at the defaults it makes the trigger about half of the setting: 1 GB divided by 1.9 is about 540 MB. The checkpoint then takes most of an interval to finish, and the log keeps growing while it does, so a crash late in a checkpoint replays close to max_wal_size in all. The trigger distance is not the worst case. In the heavy test, which wrote about 28 MB a second, checkpoints started at a distance of about 516 MiB, every 20 seconds or so, and the server log objected: 
+LOG:  checkpoints are occurring too frequently (20 seconds apart)
+HINT:  Consider increasing the configuration parameter "max_wal_size". 
+The worst case there is about 1 GB, which replays in about 6 seconds at 169 MiB a second, far inside the target, so the target is not what needs attention. The cost is. A checkpoint every 20 seconds writes dirty pages over and over, and logs a full-page image the first time each page changes after every one. Raising max_wal_size trades that for longer replay. At 4 GB the trigger would be about 2.1 GB, a checkpoint every 75 seconds or so at 28 MB a second, and the worst case about 24 seconds at the best-case rate, inside 30. At half that rate it would be about 48. These figures are arithmetic from assumptions, not measurements, but the method carries over: replay speed times the time you can spend gives a ceiling for max_wal_size, and the observed distance shows how close the settings run to it. 
+In InnoDB the redo log capacity plays the same part, because the checkpoint trails the end of the log by at most that much, and the manual says flushing grows more aggressive once the files occupy more than the capacity. The 8.4 server can resize it while running. To size it from a write rate, sample the log position twice and divide the difference by the seconds between the samples: that is the redo InnoDB writes per second, and the capacity divided by it is how long the log lasts before flushing must catch up. At 60 MiB a second, the default 100 MiB lasts under 2 seconds. Choose a capacity that covers the longest burst of writing you want to absorb without pages being forced out, and keep the gap between the two positions well below it. The manual gives no formula for this, so the method is reasoning from the mechanism, not a documented rule. 
+
+SHOW GLOBAL STATUS LIKE 'Innodb_redo_log_%_lsn'; 
+
+### Seeing a checkpoint 
+The decision above turns on one count: how many checkpoints the timer started and how many the log size did. pg_stat_checkpointer keeps both, and many more num_requested than num_timed means checkpoints are being forced early by log size. PostgreSQL also says so in the server log, with the warning shown earlier, whenever two such checkpoints start closer together than checkpoint_warning. 
+
+SELECT num_timed, num_requested, write_time, sync_time, buffers_written
+FROM pg_stat_checkpointer; 
+With log_checkpoints on, which it is by default, each checkpoint also writes a pair of lines that say what started it, how much it wrote, how long the writing and the flush took and how much log it covered. The checkpoint log line reads one field by field, and Timed or requested compares one workload at two values of max_wal_size. InnoDB’s counterpart is the gap between Innodb_redo_log_current_lsn and Innodb_redo_log_checkpoint_lsn, read against the capacity, and SQLite’s is the result of PRAGMA wal_checkpoint, which says whether the checkpoint was blocked. Watching storage reads both. 
+
+ | You see | Likely cause | What to change  
+ | Server log says checkpoints are occurring too frequently | PostgreSQL is starting checkpoints because of log size, closer together than checkpoint_warning | Raise max_wal_size, then check recovery time against your target 
+ | Latency rises at regular intervals | Checkpoint writes competing with queries | The writes are already spread over 90% of the interval, so give the I/O more capacity, or lengthen the interval if recovery time allows 
+ | InnoDB writes stall now and then when busy | The redo log is nearly full and a sharp checkpoint is forcing pages out | Raise innodb_redo_log_capacity; check innodb_io_capacity 
+ | The SQLite -wal file keeps growing | A reader is open across checkpoints, so none can finish | Find the long reader, or run a RESTART or TRUNCATE checkpoint in a gap between readers    
+
+## How much log there is, and why it stays 
+The log is a cost as well as a protection. It is written on every commit, shipped to replicas and archives, and kept until nothing needs it. Three things set how much of it there is: how many pages a change touches, because every changed page is logged and every index is more pages; how many changes there are, and how wide their rows; and, in PostgreSQL, the full-page images logged after each checkpoint, which is why frequent checkpoints inflate the log. Watching storage measures the rate from each engine’s counters. 
+Log that is no longer needed for recovery can be reused, and several things can stop that. In PostgreSQL, log stays until a checkpoint has passed it, and then until an archive command has copied it, which is documented to let files accumulate if archiving falls behind. A replication slot keeps log a lagging standby has not yet received, with no limit by default (max_slot_wal_keep_size is -1). InnoDB’s redo log has a fixed capacity; when it fills, writes stall instead, which is the checkpoint stall above. MySQL’s binary logs are kept for 30 days by default (binlog_expire_logs_seconds) whether or not anything needs them, and a busy server can fill its disk with them. A SQLite log that cannot be checkpointed grows. The common incident is the PostgreSQL one: the log directory fills the disk because a slot or an archive command stopped consuming, and the server can no longer write, which stops every commit. What holds the log back shows how to see which of these it is, and Replication in PostgreSQL covers slots.  
+
+## Pages torn by a crash 
+A torn page is a page that was only partly written when the power failed. A database writes a whole page at a time, but a drive only promises to write each sector whole, traditionally 512 bytes. That makes a PostgreSQL page 16 sectors and an InnoDB page 32, and the power can fail between any two of them. Drives with larger sectors tear less often, but a page is still more than one sector. A log record that says “change these bytes” can’t be applied to a page that is half old and half new, so every engine needs a way to get a whole page back. 
+PostgreSQL’s way is full_page_writes, on by default. The first time a page changes after a checkpoint, the log record for that change carries a full-page image, a copy of the whole page. Watch a page write fail partway, with the setting on and then off.  
+Figure 8
+PostgreSQL: a torn page and its full-page image  
+
+Page 12 as sixteen 512-byte sectors, in shared buffers and in the table file, with its WAL record below. 
+- Page 12 changed for the first time since the last checkpoint, so its WAL record, already on disk, carries a copy of the whole page.
+- The checkpoint writes page 12 to the table file: sixteen 512-byte sectors, one after another.
+- The power fails after 6 of the 16 sectors. Page 12 on disk is torn: part new, part old.
+- Recovery reaches the record with the full-page image and copies it over the torn page.
+- Page 12 is whole again. Later records for it apply on top of this copy.  
+
+ full_page_writes  onoff   
+ Play Back Next Step Reset     
+New sectors are striped; old ones are plain. Drives don’t promise to write sectors in order; the drawing shows them in order for clarity.   
+With the image in the log, recovery doesn’t need the torn page at all. It copies the image over it and replays later changes on top. One image per checkpoint is enough: recovery always starts at the last checkpoint, so the first record it meets for a page is the one carrying the image. InnoDB keeps the copy somewhere else. Before it writes a page to its place in the data file, it writes the page to a doublewrite buffer, on by default. If the write is torn, recovery finds a good copy there and then applies the redo log. SQLite never overwrites a page it can’t restore: the rollback journal holds the original, and in WAL mode the main file changes only at a checkpoint, which doesn’t discard the log until the file has been flushed, so a checkpoint torn by a crash is redone from the log. 
+
+ | Engine | Where the clean copy lives | When it is written | What it costs  
+ | PostgreSQL | A full-page image in the log | At the first change to a page after a checkpoint | Log volume, up to 8 kB per page per checkpoint 
+ | InnoDB | The doublewrite buffer | Every time a page is flushed | A second write of every page flushed, to a sequential area 
+ | SQLite, rollback journal | The journal holds the original page | Before the page is changed | An extra file write and flushes at every commit 
+ | SQLite, WAL mode | The log still holds the frames | At commit; the log is kept until the checkpoint is flushed | Checkpoint writes   
+Detecting damage is a separate job from repairing it. A checksum stored with each page tells the engine that a page is wrong; only a clean copy fixes it. PostgreSQL’s data checksums are on by default for clusters created by initdb in version 18, and InnoDB’s innodb_checksum_algorithm defaults to crc32. SQLite does not checksum database pages by default; its WAL frames carry checksums, and an optional checksum extension adds a per-page one. A checksum also catches damage that is not a tear, such as a bit flip on the drive, which no full-page image or doublewrite can repair. PostgreSQL counts failures in pg_stat_database.checksum_failures. 
+The protection can sometimes be turned off. PostgreSQL’s documentation names ZFS as a file system that prevents partial page writes, so full_page_writes can be off on it. InnoDB’s innodb_doublewrite can be off, or set to detect only, and the manual notes the buffer is turned off automatically on Fusion-io devices that support atomic writes. Turning it off is a decision to rely on the storage writing a page atomically. If you cannot show that it does, the safe choice is to leave it on and accept the cost.  
+
+## Whether a flush reaches the disk 
+
+### What a flush asks for 
+Every guarantee so far rests on one report. To make a log record durable, a database writes it to the log file and then calls fsync (fdatasync on Linux, which skips metadata the log doesn’t need), which asks the operating system to put the file’s data on durable storage and to return only when it has. PostgreSQL, InnoDB and SQLite all rely on that return. If it is wrong, a committed transaction can vanish. 
+Two caches sit between the database and the storage itself. The operating system’s page cache holds data the database has handed over but not yet flushed. The drive has its own write cache, and on many drives that cache is ordinary volatile memory. Follow the commit record down, first with a drive that honours flush requests, then with one that doesn’t.  
+Figure 9
+PostgreSQL: the flush path  
+
+Four layers, top to bottom: WAL buffers, the operating system page cache, the drive’s write cache and its flash cells. 
+- The commit record for transaction 812 sits in PostgreSQL’s WAL buffers.
+- PostgreSQL hands it to the operating system, which keeps it in its page cache. That is still memory.
+- fdatasync asks the operating system to send it to the drive. It lands in the drive’s write cache first.
+- This drive copies the cached data to its flash cells before it reports success.
+- fdatasync returns, and PostgreSQL replies COMMIT.
+- The power fails. Every volatile layer is wiped, but the commit record is in flash.
+- Recovery finds the commit record and replays the change. P7 costs 22.00.  
+
+ The drive  honours flushesignores flushes   
+ Play Back Next Step Reset     
+The top three layers are memory. An operating-system crash loses the top two; a database process crash loses only the first.   
+
+### Where the promise breaks 
+The database couldn’t notice anything wrong with the second drive, which simply reported the data safe while it sat in volatile memory. The warning appears in every engine’s documentation. PostgreSQL’s says many SSDs ignore flush requests by default; MySQL’s says that in the worst case a power outage can corrupt InnoDB data; SQLite’s says neither of its two flush interfaces “works as advertised on many systems.” The layers where data can be lost, and what protects each, are these. 
+
+ | Layer | What loses data there | What protects it  
+ | Database buffer | A crash of the server process, or anything worse | The commit waits for the flush 
+ | Operating-system cache | A kernel panic or power loss | fsync before replying 
+ | Controller cache | Power loss, if the cache has no battery | A battery or flash-backed cache, or a write-through setting 
+ | Drive cache | Power loss, if the drive acknowledged the flush early | Power-loss protection, or the cache turned off 
+ | Virtual or network volume | Whatever the hypervisor or storage service does before it acknowledges a write | The provider’s documented meaning of an acknowledged write   
+Drives sold with power-loss protection hold enough stored energy to finish writing their cache, so their cache is safe to count on. On a virtual machine or a network volume, the layers are the provider’s, and the guarantee is whatever its documentation says an acknowledged write means; read it for the volume type you use. Local instance storage, for example, may disappear when an instance stops, whatever it acknowledged. 
+A flush can also fail. If the operating system could not write a page back, a retry may report success even though the data was dropped. PostgreSQL treats this as fatal: with data_sync_retry off, the default, a failure to flush the data files raises a PANIC and the server restarts and recovers from the log. Continuing as if nothing had happened is how a database loses writes without telling anyone. 
+
+### Checking your own storage 
+Counting flushes gives a rough test for a spinning disk. At 7,200 rpm it turns 120 times a second, so it can complete at most about 120 flushes a second, and a result in the thousands means a cache is answering. That is arithmetic, not a documented limit, and it fails for SSDs: an honest drive with power-loss protection can flush thousands of times a second, so a high count alone proves nothing. PostgreSQL’s pg_test_fsync times each flush method, which tells you what a flush costs on your volume but not whether it is honest. fio with --fsync=1 measures a write followed by a flush on any volume, at the block size and concurrency you choose. What does is pulling the plug during a write test, which the reliability page suggests doing with a tool such as diskchecker.pl, or the drive’s documented power-loss protection. On a managed service such as Amazon RDS or Google Cloud SQL, the provider chooses the drives, so these hardware checks are theirs to make. The settings in the next section, which decide whether COMMIT waits for the flush, are still yours. 
+The flush time is also the floor for commit latency, as the table of commit rates showed: 5 ms a commit on that laptop when the drive flushed for real, against 0.04 ms when macOS acknowledged early. SQLite’s documentation warns of the same macOS behaviour and offers PRAGMA fullfsync. Local flash with power-loss protection, a network-attached volume and a spinning disk can differ widely here, and so do the commit rates they allow. This article gives no typical flush time for each: no documentation or vendor page checked for it states one that holds across volumes, so measure the volume you run on, under the load you expect. 
+
+### Seeing flush time in production 
+PostgreSQL can time its log flushes. With track_wal_io_timing on, the row of pg_stat_io for the wal object reports how many flushes each backend type made and how long they took, and sessions waiting on one show the wait event WalSync. InnoDB counts the flushes of its redo log in Innodb_os_log_fsyncs, and the application’s own commit latency, at the percentile you care about, is the number the flush finally limits. Watching storage in a running database reads these in an incident.  
+
+## Trading durability for speed 
+Waiting for a flush at every commit is the expensive part of a write, as the commit rates above showed, so every engine lets you wait less, for the same trade: a crash can lose the most recent commits, and nothing else. The settings differ in name and in grain. 
+
+### The three settings  
+- PostgreSQL: synchronous_commit = off replies as soon as the commit record is in memory, and a background process flushes it soon after. That process wakes every 200 ms by default (wal_writer_delay), and because it prefers to write whole pages when busy, the documentation puts the longest risk window at three times that delay: about 600 ms at the default. You can set it for a single transaction. 
+- InnoDB: innodb_flush_log_at_trx_commit is 1 by default, which writes and flushes the redo log at each commit. At 2 it hands the log to the operating system at each commit but flushes it only about once a second. If just the MySQL process dies, the operating system still holds those writes; if the machine loses power or the kernel crashes, about the last second of commits goes. At 0 it writes and flushes once a second, so the log sits in the server’s own buffer in between and even a killed MySQL process loses up to a second (the manual says any unexpected mysqld exit can erase up to innodb_flush_log_at_timeout seconds, and that the once-a-second flush is not guaranteed to be on time). With the binary log on, which is the default in 8.4, a commit also writes the binary log, the record of changes that replicas and point-in-time recovery read. With sync_binlog and innodb_flush_log_at_trx_commit both at 1, their defaults, a commit flushes the redo log and the binary log, and after a crash InnoDB completes or rolls back each prepared transaction so that the two logs agree. With sync_binlog = 0 the server leaves flushing the binary log to the operating system, so after a power cut or an operating-system crash it can hold committed transactions its binary log lacks. Replicas and point-in-time recovery read that log, so what is missing there is missing from them, and a replica that had already read events the source then lost holds commits the source no longer has. 
+- SQLite: the defaults are the rollback journal (journal_mode = DELETE) and synchronous = FULL. A common tuned choice is WAL mode with synchronous = NORMAL, which skips the flush at commit. The database stays consistent, but a transaction that committed can roll back after a power loss or operating-system crash.  
+In every case recovery still replays what reached the disk, in order, so the database ends consistent. Here is the price change with PostgreSQL’s setting off. Choose whether the power fails before or after the background flush.  
+Figure 10
+PostgreSQL: the price change with synchronous_commit off  
+
+The lanes from figures 4 and 6, with synchronous_commit off. 
+- The same update, with synchronous_commit = off.
+- The UPDATE changes page 12 and appends its WAL record, as before.
+- COMMIT appends the commit record and replies at once. It does not wait for a flush.
+- The power fails.
+- On restart, recovery replays whatever reached the disk, as before. P7 is 20.00. The database is consistent, but a commit the application heard about is gone.  
+
+ Power fails  before WAL writerafter WAL writer   
+ Play Back Next Step Reset     
+The same model as figures 4 and 6, with one setting changed.   
+
+### Choosing what may be lost 
+The settings are cheap to change and easy to regret, so decide per kind of data what the last few seconds of it are worth. Ask what losing them costs, and whether the data can be recovered another way, from an upstream queue or an event log, or simply rebuilt. A mixed workload is why PostgreSQL lets you set the commit mode for one transaction, while InnoDB’s setting is server-wide and SQLite’s, a pragma, applies per connection (which is inferred from how the documentation presents it, not stated outright). A relaxed setting suits some data and not other data in the same database. 
+
+ | Kind of data | What losing the last moments costs | A reasonable setting  
+ | Payments, orders, anything the user has seen confirmed | A confirmation that can’t be honoured, and no record to rebuild it from | The default, with full durability 
+ | Page-view and click counters | A few seconds of counts nobody will miss | Asynchronous commit, for those transactions only 
+ | Events that can be replayed from a queue or an upstream log | Replay from the source after a crash | Asynchronous commit, provided you can tell where to resume 
+ | Caches, scratch tables, test and CI databases, bulk loads that can restart | Rebuild from scratch | Unlogged tables, or flushing off for a throwaway database   
+Handling conflicts and uncertain outcomes covers the first row’s problem from the application’s side. The relaxed settings never tell the application anything: COMMIT returns success either way, and the loss only shows up after a crash, by comparing with what the application remembers. 
+
+### With replicas 
+A commit is as durable as the places it has been flushed. A copy on another machine can stand in for the local flush, or add to it, but only if the commit waits for it. In PostgreSQL, when synchronous standbys are configured, synchronous_commit chooses how far the standby must get before COMMIT returns: remote_write means it has written the commit record to its file system, which survives a crash of the standby’s PostgreSQL but not of its operating system; on means it has flushed it; remote_apply means it has also applied it, so queries there see the change. MySQL’s semisynchronous replication, a plugin that has to be installed and enabled on the source and the replicas, makes a commit wait until at least one replica has acknowledged receiving the transaction, which it does after writing it to its relay log and flushing. By default the wait comes after the source has synced its binary log and before it commits to InnoDB. If no replica answers within the timeout, the source falls back to asynchronous replication. 
+An ordinary asynchronous replica adds a copy of what was shipped, with no promise about the latest commits. After a failover to it, commits that had not yet been shipped are gone, although the application was told they succeeded. Replication and failover covers what each level promises and how failover chooses a new primary.  
+
+## What can lose a committed change 
+Gathering the sections above, these are the ways a change the application was told about can be lost. 
+
+ | Cause | How much can be lost | Database consistent afterwards? | How you would notice  
+ | A relaxed commit setting | A window: about 600 ms in PostgreSQL at the default writer delay, about a second with InnoDB’s setting at 2 after an operating-system crash, and at 0 even after a crash of the MySQL process alone, the most recent commits for SQLite in WAL mode at NORMAL | Yes | Only by comparing with what the application remembers 
+ | A drive that acknowledges flushes it hasn’t made | No limit | Not guaranteed; MySQL’s manual warns that in the worst case data can be corrupted | Only by a pull-the-plug test before it happens 
+ | Flushing switched off (fsync = off, synchronous = OFF) | No limit | No: the database can be corrupt beyond repair, because the order between log and pages is no longer enforced | Errors at the next start, or none 
+ | PostgreSQL unlogged tables | All their rows after any crash | Yes: the table is empty | The table is empty after a restart, and on a promoted standby 
+ | Failover to an asynchronous replica | The commits not yet shipped | Yes | Replication lag before the failover 
+ | Losing the disk, restoring an old backup, or committing a bad statement | Everything since the backup, or the mistake | Yes | Only a restore helps, as the last section explains    
+
+## What the application knows after COMMIT 
+The commonest way to lose track of a commit has nothing to do with storage. The application sends COMMIT and the connection drops: a network fault, a timeout, a restarted proxy. The server may be perfectly healthy. It may have received the command, committed, and failed to deliver the reply, or never have received it at all. The application cannot tell which, and the database has no way to make its reply arrive. 
+A server crash adds the case Figure 6 showed: the application sees the same dropped connection whether the power failed before the flush, when the change is gone, or after it, when the change committed. Either way, retrying blindly could apply the change twice, which matters more for a payment than for a price. Handling conflicts and uncertain outcomes shows how to make a retry safe.  
+
+## Backups and point-in-time recovery 
+Durability protects committed changes from a crash. It doesn’t protect them from losing the disk, or from a mistake. If the drive holding the table files and the log dies, there is nothing left to replay. If someone commits DELETE FROM products, crash recovery will faithfully keep the delete. A replica on another server covers a lost disk, but it copies the delete too. Undoing a mistake needs a copy from before it, and a way to bring that copy forward to just before the mistake. 
+That second part is nothing new. Point-in-time recovery is crash recovery started from an older copy of the files, fed with a saved log, and stopped early. Each piece is something the earlier sections already described. 
+
+### Copying a database that is running 
+A backup is a copy of the data files, and a busy database keeps changing them while the copy is made. When the copy finishes, it looks like the disk of a server that crashed: some pages are old, some are new, and one may have been caught mid-write. You already know what repairs that. The backup starts by forcing a checkpoint and noting its log position, keeps every log record from there on, and recovery replays those records over the mixed files until they agree. PostgreSQL’s documentation says the same: any inconsistency in the copy “will be corrected by log replay”. It also forces full_page_writes on while the backup runs, so a page torn during the copy has a full-page image to repair it. InnoDB’s physical backup tools take the same route with the redo log. Percona XtraBackup, for example, remembers the log position where it starts, copies the data files while a second process copies the redo records made in the meantime, and applies them in a prepare step. 
+
+### Keeping the log after the backup 
+The checkpoint section showed that log behind a checkpoint is recycled. A backup taken at 09:00 is only a starting point; the changes made after it live in the log, and the log is about to be reused. Archiving copies each log file somewhere safe before that happens. PostgreSQL runs an archive_command on every completed WAL file, and recycles the file only once the command reports success. The archive then holds the whole history since the backup. Its health is worth watching, because a failing archive is how the history develops a gap: pg_stat_archiver reports when the last file was archived and how many attempts have failed. 
+
+### Replaying, then stopping early 
+Take the shop’s day. A base backup begins at 09:00. At 10:00 P7 is set to 22.00. At 14:00 someone commits DELETE FROM products, and at 14:02 a valid price change for another product, P8, commits. The delete is noticed at 14:30. 
+To recover, start a new server from the 09:00 backup and give it the archive and a recovery target: where to stop. PostgreSQL accepts a time, a transaction ID, a log position or a name saved with pg_create_restore_point(). Recovery replays the records in order, exactly as after a crash, and stops at the target. Here the target is 13:59, just before the delete’s commit record. By the rule from the crash-recovery section, a transaction whose commit record wasn’t replayed never committed, so the delete is gone and P7 is back at 22.00.  
+Figure 11
+PostgreSQL: restoring to a point before a delete  
+
+Two columns: the original server's history from 09:00 to 14:02, and a restored copy that replays the archive up to 13:59. 
+- At 09:00 a base backup of the running server begins. From here on, every log file is copied to an archive before the server reuses it.
+- At 10:00 a transaction commits P7 at 22.00. Its log records go to the archive too.
+- At 14:00 someone commits DELETE FROM products. The commit is durable, so crash recovery would keep it.
+- At 14:02 a valid price change for P8 commits.
+- The disk is lost, or the delete is noticed. A new server starts from the 09:00 base backup. Its files are a mixture of ages, like a crashed server’s.
+- Recovery reads the archive and replays the log in order, as after a crash. The 10:00 price change comes back.
+- The recovery target is 13:59, so replay stops before the DELETE’s commit record. That transaction never committed as far as this server is concerned.
+- The server opens on timeline 2. P7 is 22.00 and the products are back. The 14:02 change was after the target, so it is lost too and has to be applied again.  
+
+ Play Back Next Step Reset     
+Times are invented for the example. The copy at 09:00 has pages of mixed ages, which replay repairs.   
+
+### What stopping early costs 
+Replay stops at a point in the log, not at a single transaction. The 14:02 price change for P8 committed after the target, so it is lost with the delete. Recovery can’t skip one bad transaction and keep the good ones that followed it. The application has to find the commits made after the target, from its own records or the original server’s logs, and apply them again. 
+The restored server also starts a new history from 13:59, and the archive still holds the old one, whose log from 14:00 onward describes a different future. PostgreSQL gives each history a timeline, a number that is part of every log file’s name, so the new history doesn’t overwrite the old one. If 13:59 turns out to be the wrong target, you can recover again from the same archive to a different point. 
+Two practical consequences follow. Restoring means replaying every record since the base backup, so restore time grows with the log, which is why base backups are repeated. And when the disk dies, the commits at risk are those whose log hadn’t reached the archive yet. A quiet server can hold a few commits in a half-empty log file for a long time, so PostgreSQL’s archive_timeout forces a switch to a new file at least that often. 
+
+### In MySQL and SQLite 
+MySQL has the same shape with one difference. Its point-in-time step replays the binary log, the record of changes that replicas also read, on top of a restored backup, not the redo log. The binary log is kept for 30 days by default, which is the longest a backup can be bridged unless you change binlog_expire_logs_seconds. You choose the stop point with mysqlbinlog --stop-datetime or --stop-position, and events at or after a stop position are left out. SQLite keeps no log archive of its own. Copying its file while a transaction is in progress can produce a corrupt copy, so use the online backup API, which the shell exposes as .backup, or VACUUM INTO, which make consistent snapshots. A tool outside SQLite such as Litestream, which ships WAL frames to storage, adds point-in-time restore. 
+Backups and recovery covers how to decide what to recover, how to run a restore drill, and what an incomplete archive looks like.  
+
+## Sources and further reading 
+Checked on 17 October 2026. The figures model PostgreSQL’s documented behaviour; they are not recordings of a server. The commit rates, the replay time and the log lines come from a PostgreSQL 18.6 server on one Apple-silicon laptop and are observations about that machine; no MySQL server was available, so nothing about InnoDB was measured.  
+- PostgreSQL 18: Continuous Archiving and Point-in-Time Recovery, Database Page Layout, Write-Ahead Logging (WAL), Reliability, WAL Configuration, Asynchronous Commit, WAL settings, replication settings, error handling and pg_test_fsync: the worked example in this article. 
+- MySQL 8.4 Reference Manual: Buffer Pool, Clustered and Secondary Indexes, Physical Structure of an InnoDB Index, Row Formats, Redo Log, Checkpoints, Buffer Pool Flushing, Undo Logs, Purge Configuration, Doublewrite Buffer, InnoDB Recovery and Optimizing InnoDB Transaction Management: how InnoDB does each step. InnoDB startup options and system variables, status variables, The Binary Log, Binary Logging Options and Variables and Semisynchronous Replication define the settings and counters, and Point-in-Time Recovery Using Binary Log the restore. 
+- SQLite: Atomic Commit for the rollback journal and what it assumes about disks, Write-Ahead Logging and the file format for WAL mode and rowid tables, PRAGMA synchronous and PRAGMA wal_checkpoint, How To Corrupt An SQLite Database File, the checksum extension, and the online backup API. 
+- Tools outside the engines: how Percona XtraBackup works for physical InnoDB backups, and how Litestream works for SQLite log shipping. 
+- WAL, checkpoints, and recovery: a crash test on a PostgreSQL 18 server, with the commit settings and unlogged tables. 
+- Row versions, transactions, and vacuum: visibility, HOT updates and autovacuum on a running server. 
+- Inside PostgreSQL: pages, line pointers and TOAST in a worked lookup. 
+- Backups and recovery: what to keep and how to test a restore.       
+
+## 
+
+## 
+
+## 
+
+## 
+
+

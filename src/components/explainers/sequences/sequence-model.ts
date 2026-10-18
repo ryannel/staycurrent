@@ -39,11 +39,15 @@ export interface ScenarioDef {
   title: string;
   params: ParamDef[];
   build: (p: Record<string, string>) => Scenario;
+  /** On a parameter change, slide rows from the old drawing to the new one instead of replaying. */
+  morph?: boolean;
+  /** What to say once a morph has finished. */
+  morphNote?: (p: Record<string, string>) => string;
 }
 
 const TRAVEL = 0.75;
 
-class Builder {
+export class Builder {
   T = 0;
   ms = 0;
   row = 0;
@@ -200,6 +204,8 @@ const P = {
   worker: { id: 'worker', label: 'Notification worker', short: 'Worker' },
   provider: { id: 'provider', label: 'Email provider', short: 'Provider' },
   inbox: { id: 'inbox', label: 'Mina’s inbox' },
+  gateway: { id: 'gw', label: 'API gateway', short: 'Gateway' },
+  auth: { id: 'auth', label: 'Auth service', short: 'Auth' },
 };
 
 const dbChoices = [
@@ -241,6 +247,66 @@ export const scenarios: Record<string, ScenarioDef> = {
       });
       b.status('ui', 'done', 'has R17');
       return b.finish(`The same booking with activation bars. The browser waits from sending POST /repairs until 201 Created arrives. The API is busy handling the request, and inside that it waits ${p.db === '3000' ? '3 seconds' : `${dbMs} ms`} for Repair DB. The diagram is the same height whatever the database time.`);
+    },
+  },
+
+  // Figure 2's booking with the browser's 2-second limit drawn, and optionally a shorter limit on the API's wait.
+  nested: {
+    title: 'The browser’s 2-second limit',
+    params: [
+      { id: 'db', label: 'Repair DB takes', default: '3000', options: [{ value: '500', label: '500 ms' }, { value: '3000', label: '3 s' }] },
+      { id: 'api', label: 'API gives up after', default: 'none', options: [{ value: 'none', label: 'No limit' }, { value: '1500', label: '1.5 s' }] },
+    ],
+    build: p => {
+      const apiLimit = p.api === '1500';
+      const b = new Builder([P.ui, P.api, P.db], { bars: true, clock: true, strip: true, darkMs: 1000 });
+      b.pause(0.2);
+      b.note(['ui'], 'Gives up after 2 s', { T: 0.45 });
+      if (apiLimit) b.note(['api'], 'Gives up on Repair DB after 1.5 s', { T: 0.45, rows: 1.2 });
+      if (p.db === '500') {
+        b.call('ui', 'api', 'POST /repairs', '201 Created: R17', {
+          reqMs: 30, repMs: 30,
+          inner: () => b.call('api', 'db', 'INSERT repair request', 'COMMIT ok', { workMs: 500, workT: dbAnimT['500'] }),
+        });
+        b.status('ui', 'done', 'has R17');
+        return b.finish(`The browser’s note says it gives up after 2 seconds${apiLimit ? ', and the API’s says it stops waiting for Repair DB after 1.5 seconds' : ''}. The database answers in 500 ms, so the browser gets 201 Created for R17 after a little over half a second and no limit fires.`);
+      }
+      const ms0 = b.ms;
+      const post = b.msg('ui', 'api', 'POST /repairs', 'sync', { ms: 30 });
+      const apiT = b.T;
+      b.pause(0.12);
+      const ins = b.msg('api', 'db', 'INSERT repair request', 'sync', { ms: 1 });
+      const dbT = b.T;
+      if (apiLimit) {
+        // The API's limit fires first, so its error reaches a browser that is still listening.
+        b.pause(1.3, ms0 + 1530 - b.ms);
+        const apiGaveUp = b.note(['api'], 'Timeout after 1.5 s. Outcome unknown.', { tone: 'warn', rows: 1.6 });
+        b.bar('api', 'wait', ins.row, apiGaveUp.row, ins.occ[0].t0, apiGaveUp.occ[0].t0);
+        const err = b.msg('api', 'ui', '503 Service Unavailable', 'error', { ms: 30 });
+        b.bar('ui', 'wait', post.row, err.row, post.occ[0].t0, err.occ[0].t1);
+        b.bar('api', 'busy', post.row, err.row, apiT, err.occ[0].t0);
+        b.status('ui', 'error', '503 shown');
+        b.pause(0.6, ms0 + 3000 - b.ms);
+        const commit = b.msg('db', 'api', 'COMMIT ok, at 3 s', 'reply', { ms: 1 });
+        b.bar('db', 'busy', ins.row, commit.row, dbT, commit.occ[0].t0);
+        b.note(['api', 'db'], 'Nobody is waiting. R17 is stored anyway.', { tone: 'warn' });
+        return b.finish('The browser gives up after 2 seconds, and the API stops waiting for Repair DB after 1.5. The API’s limit fires first: it notes that the outcome is unknown and answers 503 Service Unavailable, which reaches the browser while it is still listening. The write still commits at 3 seconds, so R17 exists although Mina was shown an error.');
+      }
+      // The browser's limit is shorter than the work it waits for, so the work finishes after the browser has left.
+      b.pause(1.7, ms0 + 2000 - b.ms);
+      const timeoutT = b.T;
+      const gaveUp = b.note(['ui'], 'Timeout after 2 s. Shows an error.', { tone: 'warn', rows: 1.2 });
+      b.bar('ui', 'wait', post.row, gaveUp.row, post.occ[0].t0, timeoutT);
+      b.status('ui', 'gave up', 'error shown');
+      b.pause(0.5, ms0 + 3000 - b.ms);
+      const commit = b.msg('db', 'api', 'COMMIT ok, at 3 s', 'reply', { ms: 1 });
+      b.bar('api', 'wait', ins.row, commit.row, ins.occ[0].t0, commit.occ[0].t1);
+      b.bar('db', 'busy', ins.row, commit.row, dbT, commit.occ[0].t0);
+      b.pause(0.15);
+      const late = b.msg('api', 'ui', '201 Created: R17', 'reply', { ms: 30 });
+      b.bar('api', 'busy', post.row, late.row, apiT, late.occ[0].t0);
+      b.note(['ui', 'api'], 'Nobody is listening. R17 is stored.', { tone: 'warn' });
+      return b.finish('The browser’s note says it gives up after 2 seconds, but the database needs 3. The browser shows an error at 2 seconds. The write commits at 3 seconds and the API sends 201 Created for R17, which no browser is waiting to receive. The booking exists, and Mina was told it failed.');
     },
   },
 
@@ -290,8 +356,8 @@ export const scenarios: Record<string, ScenarioDef> = {
       const b = new Builder([P.ui, P.api, P.db, P.worker, P.provider], { bars: true, clock: true, strip: true, darkMs: 1000 });
       const send = (n: number) => {
         b.call('worker', 'db', 'Claim a job for 5 min', 'Job J9', { workMs: 3, workT: 0.15 });
-        b.call('worker', 'provider', 'POST /emails', p.case === 'down' ? '503 Unavailable' : '202 Accepted', { reqMs: 40, repMs: 40, workMs: 300, workT: 0.45, replyKind: p.case === 'down' ? 'error' : 'reply' });
-        if (p.case === 'down') b.status('provider', 'down', 'no email');
+        b.call('worker', 'provider', 'POST /emails', p.case === 'down' ? '503 Service Unavailable' : '202 Accepted', { reqMs: 40, repMs: 40, workMs: 300, workT: 0.45, replyKind: p.case === 'down' ? 'error' : 'reply' });
+        if (p.case === 'down') b.status('provider', 'down');
         else b.status('provider', n > 1 ? 'duplicate' : 'sent', `${n} email${n > 1 ? 's' : ''}`);
       };
       b.pause(0.2);
@@ -314,7 +380,7 @@ export const scenarios: Record<string, ScenarioDef> = {
       const start = 'The booking is stored with notification job J9 in one transaction and the browser gets R17 within about 70 ms. On its next poll, 0.7 seconds later, the worker claims J9 for 5 minutes.';
       return b.finish({
         ok: `${start} The provider accepts the email and the worker marks J9 sent.`,
-        down: `${start} The provider answers 503 Unavailable, and the worker records that J9 should be retried in 30 seconds. The browser’s part of the diagram is unchanged.`,
+        down: `${start} The provider answers 503 Service Unavailable, and the worker records that J9 should be retried in 30 seconds. The browser’s part of the diagram is unchanged.`,
         crash: `${start} The provider sends the email, but the worker crashes before marking J9 sent. Five minutes later the claim expires, a worker claims J9 again, and the provider sends a second email.`,
       }[p.case]!);
     },
@@ -346,18 +412,19 @@ export const scenarios: Record<string, ScenarioDef> = {
         b.pause(2.8, 10000 - b.ms);
       }
       const timeoutT = b.T;
-      const note = b.note(['worker'], 'Timeout after 10 s. Outcome unknown.', { tone: 'warn', rows: 1.2 });
+      const note = b.note(['worker'], 'Timeout after 10 s. Outcome unknown.', { tone: 'warn', rows: 1.6 });
       b.bar('worker', 'wait', req.row, note.row, req.occ[0].t0, timeoutT);
       b.status('worker', 'gave up', 'no reply');
       if (p.history === 'slow') {
         b.pause(1.2, 4000);
         const rep = b.msg('provider', 'worker', '202 Accepted, at 14 s', 'reply', { ms: 20 });
         b.bar('provider', 'busy', req.row, rep.row, req.occ[0].t1, rep.occ[0].t0);
+        b.note(['worker'], 'Nobody is waiting for this reply', { tone: 'warn' });
         b.pause(0.2, 200);
         b.msg('provider', 'inbox', 'Deliver email', 'async', { ms: 600 });
         b.status('inbox', 'delivered', '1 email');
       }
-      const said = { 'request-lost': 'The request never reaches the provider, so no email is sent.', 'reply-lost': 'The provider accepts the request and delivers the email, but its reply is lost on the way back.', slow: 'The provider takes 14 seconds. Its reply reaches the worker after the worker has stopped waiting, and the email is delivered.' }[p.history];
+      const said = { 'request-lost': 'The request never reaches the provider, so no email is sent.', 'reply-lost': 'The provider accepts the request and delivers the email, but its reply is lost on the way back.', slow: 'The provider takes 14 seconds. Its reply reaches the worker after the worker has stopped waiting, so nothing handles it, and the email is delivered.' }[p.history];
       return b.finish(`The worker sends POST /emails and waits. ${said} In every case the worker sees the same thing: no reply after 10 seconds.`);
     },
   },
@@ -398,7 +465,7 @@ export const scenarios: Record<string, ScenarioDef> = {
       const req2 = b.msg('worker', 'provider', `${label} (retry)`, 'sync', { ms: 20 });
       const t2 = b.T;
       b.pause(0.4, 300);
-      if (key && p.history === 'reply-lost') b.note(['provider'], 'Key repair-email-J9 seen before: send nothing, return the saved reply', { tone: 'good', rows: 1.3 });
+      if (key && p.history === 'reply-lost') b.note(['provider'], 'Key seen before: send nothing, return the saved reply', { tone: 'good', rows: 1.5 });
       const rep2 = b.msg('provider', 'worker', '202 Accepted', 'reply', { ms: 20 });
       b.bar('provider', 'busy', req2.row, rep2.row, t2, rep2.occ[0].t0);
       b.bar('worker', 'wait', req2.row, rep2.row, req2.occ[0].t0, rep2.occ[0].t1);
@@ -411,6 +478,38 @@ export const scenarios: Record<string, ScenarioDef> = {
       }
       const outcome = emails > 1 ? 'Mina receives two copies of the email.' : 'Mina receives one email.';
       return b.finish(`The first attempt ${p.history === 'request-lost' ? 'is lost before it reaches the provider' : 'reaches the provider, which sends the email, but the reply is lost'}. The worker times out after 10 seconds, waits 2 seconds and retries${key ? ' with the same idempotency key, repair-email-J9' : ''}. ${outcome}`);
+    },
+  },
+
+  // Figure 4's booking and email with the worker's poll moved. Only the 201 and the poll trade rows,
+  // so a parameter change slides them past each other instead of replaying.
+  order: {
+    title: 'The same messages in another order',
+    params: [{ id: 'poll', label: 'Worker polls', default: 'early', options: [{ value: 'early', label: 'Just after the commit' }, { value: 'late', label: '0.7 s later' }] }],
+    morph: true,
+    morphNote: p => p.poll === 'early'
+      ? 'The worker’s poll moves above the 201. Every lifeline keeps its own order, so this is the same interaction.'
+      : 'The 201 moves above the worker’s poll. Every lifeline keeps its own order, so this is the same interaction.',
+    build: p => {
+      const early = p.poll === 'early';
+      const b = new Builder([P.ui, P.api, P.db, P.worker, P.provider]);
+      const reply = () => { b.msg('api', 'ui', '201 Created: R17', 'reply'); b.pause(0.15); };
+      const poll = () => {
+        b.note(['worker'], early ? 'Polls just after the commit' : 'Next poll, 0.7 s later');
+        b.msg('worker', 'db', 'Claim a job for 5 min', 'sync'); b.pause(0.15);
+        b.msg('db', 'worker', 'Job J9', 'reply'); b.pause(0.15);
+      };
+      b.pause(0.2);
+      b.msg('ui', 'api', 'POST /repairs', 'sync'); b.pause(0.15);
+      b.msg('api', 'db', 'INSERT request + job J9', 'sync'); b.pause(0.15);
+      b.msg('db', 'api', 'COMMIT ok', 'reply'); b.pause(0.15);
+      if (early) { poll(); reply(); } else { reply(); poll(); }
+      b.msg('worker', 'provider', 'POST /emails', 'sync');
+      const start = 'The browser posts the booking, and the API commits R17 with job J9.';
+      const same = 'Each lifeline’s own messages come in the same order whichever way it is drawn; only the 201 and the worker’s poll trade rows.';
+      return b.finish(early
+        ? `${start} The worker polls just after the commit, so its claim and the reply Job J9 are drawn before the API’s 201 Created reaches the browser. Then the worker asks the provider to send the email. ${same}`
+        : `${start} The API replies 201 Created first. The worker polls 0.7 seconds later, claims J9 and asks the provider to send the email. ${same}`);
     },
   },
 
@@ -447,6 +546,57 @@ export const scenarios: Record<string, ScenarioDef> = {
     },
   },
 
+  scope: {
+    title: 'One crowded diagram, or two',
+    params: [{ id: 'view', label: 'Drawing', default: 'dense', options: [{ value: 'dense', label: 'Everything in one' }, { value: 'booking', label: 'Booking only' }, { value: 'email', label: 'Email only' }] }],
+    build: p => {
+      if (p.view === 'booking') {
+        const b = new Builder([P.ui, P.api, P.db]);
+        b.pause(0.2);
+        b.msg('ui', 'api', 'POST /repairs', 'sync'); b.pause(0.15);
+        b.msg('api', 'db', 'INSERT request + job J9', 'sync'); b.pause(0.15);
+        b.msg('db', 'api', 'COMMIT ok', 'reply'); b.pause(0.15);
+        b.msg('api', 'ui', '201 Created: R17', 'reply'); b.pause(0.3);
+        b.frame('ref', 'ui', 'db', [{ guard: 'Send the confirmation email', body: () => { b.pause(0.6); b.row += 0.45; } }]);
+        return b.finish('The booking on its own: the browser posts the request, the API stores it with job J9 and replies 201 Created. A ref frame at the bottom stands for the second diagram, which starts when the worker claims J9.');
+      }
+      if (p.view === 'email') {
+        const b = new Builder([P.db, P.worker, P.provider]);
+        b.pause(0.2);
+        b.frame('ref', 'db', 'provider', [{ guard: 'Booking writes job J9', body: () => { b.pause(0.6); b.row += 0.45; } }]);
+        b.pause(0.3);
+        b.msg('worker', 'db', 'Claim a job for 5 min', 'sync'); b.pause(0.15);
+        b.msg('db', 'worker', 'Job J9', 'reply'); b.pause(0.15);
+        b.msg('worker', 'provider', 'POST /emails', 'sync'); b.pause(0.15);
+        b.msg('provider', 'worker', '202 Accepted', 'reply'); b.pause(0.15);
+        b.msg('worker', 'db', 'Mark J9 sent', 'sync');
+        return b.finish('The email on its own: after a ref frame standing for the booking diagram, the worker claims J9, asks the provider to send the email and marks J9 sent.');
+      }
+      const b = new Builder([P.ui, P.gateway, P.auth, P.api, P.db, P.worker, P.provider]);
+      b.pause(0.2);
+      const m = (f: string, t: string, l: string, k: MsgKind = 'sync') => { b.msg(f, t, l, k, { T: 0.45 }); b.pause(0.08); };
+      m('ui', 'gw', 'POST /repairs');
+      m('gw', 'auth', 'Check token');
+      b.frame('alt', 'ui', 'db', [
+        { guard: '[token valid]', body: () => {
+          m('auth', 'gw', 'OK', 'reply');
+          m('gw', 'api', 'POST /repairs');
+          m('api', 'db', 'INSERT request + job J9');
+          m('db', 'api', 'COMMIT ok', 'reply');
+          m('api', 'gw', '201 Created: R17', 'reply');
+          m('gw', 'ui', '201 Created: R17', 'reply');
+        } },
+        { guard: '[token invalid]', ghost: true, body: () => { m('auth', 'gw', 'Invalid', 'error'); m('gw', 'ui', '401 Unauthorized', 'error'); } },
+      ]);
+      m('worker', 'db', 'Claim a job for 5 min');
+      m('db', 'worker', 'Job J9', 'reply');
+      m('worker', 'provider', 'POST /emails');
+      m('provider', 'worker', '202 Accepted', 'reply');
+      m('worker', 'db', 'Mark J9 sent');
+      return b.finish('One diagram holding the gateway, the auth check, the booking and the worker’s email: seven lifelines, an alt for a bad token, and thirteen messages on the valid path. The same facts appear as two focused diagrams under Booking only and Email only.');
+    },
+  },
+
   loop: {
     title: 'Polling in a loop',
     params: [{ id: 'passes', label: 'Scheduled on pass', default: '3', options: [{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }, { value: 'never', label: 'Never' }] }],
@@ -459,7 +609,7 @@ export const scenarios: Record<string, ScenarioDef> = {
         const last = !never && k === n - 1;
         b.msg('ui', 'api', 'GET /repairs/R17', 'sync', { ms: 30, T: 0.6 }); b.pause(0.1, 1);
         b.msg('api', 'db', 'SELECT status', 'sync', { ms: 1, T: 0.5 }); b.pause(0.1, 2);
-        b.msg('db', 'api', last ? 'scheduled' : 'received', 'reply', { ms: 1, T: 0.5 }); b.pause(0.1, 1);
+        b.msg('db', 'api', last ? 'status: scheduled' : 'status: received', 'reply', { ms: 1, T: 0.5 }); b.pause(0.1, 1);
         b.msg('api', 'ui', last ? '200: scheduled' : '200: received', 'reply', { ms: 30, T: 0.6 });
         b.pause(0.1);
         b.note(['ui'], 'Wait 2 s', { T: 0.7 });
@@ -497,12 +647,15 @@ export const scenarios: Record<string, ScenarioDef> = {
           b.msg('api', 'ui', '200: three slots', 'reply');
         } },
       ]);
+      // The note after the frame states the design; when the status never comes, it says what that means instead.
+      if (order === 'never') b.note(['ui'], 'Page not shown: still waiting for the status', { tone: 'warn' });
+      else b.note(['ui'], 'Show the page once both replies are in');
       const outcome = {
-        slots: 'The slots reply arrives first.',
-        status: 'The status reply arrives first.',
-        never: 'The slots reply arrives, but the status reply never does, so the status section never finishes.',
+        slots: 'The slots reply arrives first. A note after the frame says the page appears only once both replies are in.',
+        status: 'The status reply arrives first. A note after the frame says the page appears only once both replies are in.',
+        never: 'The slots reply arrives, but the status reply never does, so the status section never finishes. A warning note after the frame says the page is not shown while the browser still waits for the status.',
       }[order];
-      return b.finish(`A par fragment with two sections. The browser asks for the repair status and for free appointment slots without waiting between them. ${outcome} Inside each section the request still comes before its reply.`);
+      return b.finish(`A par fragment with two sections. The browser asks for the repair status and for free appointment slots without waiting between them. Inside each section the request still comes before its reply. ${outcome}`);
     },
   },
 };
@@ -516,7 +669,7 @@ export function defaults(def: ScenarioDef) {
 export interface Layout {
   W: number; H: number; narrow: boolean; font: number; small: number;
   xs: Record<string, number>; margin: number; spacing: number;
-  headW: number; headH: number; headLines: Record<string, string[]>;
+  headW: number; headH: number; headLines: Record<string, string[]>; stagger: boolean; headBlock: number;
   stripY: number; top: number; rowH: number;
 }
 
@@ -540,23 +693,44 @@ export function layout(s: Scenario, width: number): Layout {
   const font = narrow ? 11.5 : 13;
   const small = narrow ? 10.5 : 11.5;
   const n = s.participants.length;
-  const margin = Math.min(narrow ? 56 : 84, Math.max(34, W / (n * 2)));
-  const spacing = n > 1 ? (W - 2 * margin) / (n - 1) : 0;
+  let margin = Math.min(narrow ? 56 : 84, Math.max(34, W / (n * 2)));
+  let spacing = n > 1 ? (W - 2 * margin) / (n - 1) : 0;
   const xs: Record<string, number> = {};
-  s.participants.forEach((p, i) => { xs[p.id] = margin + i * spacing; });
-  const headW = Math.min(132, spacing - 8, 2 * margin - 4);
-  const maxChars = Math.max(5, Math.floor((headW - 10) / charW(font)));
+  const place = () => s.participants.forEach((p, i) => { xs[p.id] = margin + i * spacing; });
+  place();
+  let headW = Math.min(132, spacing - 8, 2 * margin - 4);
   const headLines: Record<string, string[]> = {};
   let maxLines = 1;
   // On a narrow stage a name that would wrap uses its short form, so headers stay one line.
-  for (const p of s.participants) { const label = p.short && (narrow ? wrap(p.label, maxChars).length > 1 : p.label.split(' ').some(w => w.length > maxChars)) ? p.short : p.label; headLines[p.id] = wrap(label, maxChars); maxLines = Math.max(maxLines, headLines[p.id].length); }
+  const fillHeads = () => {
+    const maxChars = Math.max(5, Math.floor((headW - 10) / charW(font)));
+    maxLines = 1;
+    for (const p of s.participants) { const label = p.short && (narrow ? wrap(p.label, maxChars).length > 1 : p.label.split(' ').some(w => w.length > maxChars)) ? p.short : p.label; headLines[p.id] = wrap(label, maxChars); maxLines = Math.max(maxLines, headLines[p.id].length); }
+  };
+  fillHeads();
+  // When even the short names don't fit side by side, widen the boxes and stagger them on two rows.
+  const overflows = () => s.participants.some(p => headLines[p.id].some(l => l.length * charW(font) + 10 > headW + 0.5));
+  const stagger = narrow && n > 2 && overflows();
+  // Staggered boxes are wider than the margin, so move the outer lifelines in until
+  // every box can sit centred on its own lifeline.
+  if (stagger) {
+    for (let i = 0; i < 4; i++) {
+      headW = Math.min(132, 2 * spacing - 14);
+      margin = Math.max(margin, headW / 2 + 2);
+      spacing = (W - 2 * margin) / (n - 1);
+    }
+    headW = Math.min(132, 2 * spacing - 14, 2 * margin - 4);
+    place();
+    fillHeads();
+  }
   const headH = 14 + maxLines * font * 1.2;
-  const stripY = headH + 8;
+  const headBlock = stagger ? 2 * headH + 4 : headH;
+  const stripY = headBlock + 8;
   const top = stripY + (s.strip ? small * 2.6 + (narrow ? 2 : 6) : 0) + (narrow ? 8 : 10);
   // Rows are order, not time, so a phone can pack them tighter without changing the meaning.
   const rowH = narrow ? 29 : 44;
   const H = Math.round(top + s.rows * rowH + (narrow ? 8 : 18));
-  return { W, H, narrow, font, small, xs, margin, spacing, headW, headH, headLines, stripY, top, rowH };
+  return { W, H, narrow, font, small, xs, margin, spacing, headW, headH, headLines, stagger, headBlock, stripY, top, rowH };
 }
 
 const rowY = (L: Layout, r: number) => L.top + (r + 0.5) * L.rowH;
@@ -634,7 +808,8 @@ function msgGeom(m: Msg, L: Layout, T: number) {
   const label = occ?.label ?? m.label;
   const est = label.length * charW(L.font);
   const lx = clamp((a + b) / 2, est / 2 + 3, L.W - est / 2 - 3);
-  return { x0, x, y, dir, p, visible: m.ghost ? T >= visibleFrom(m) : !!occ, label, lx, moving: !m.ghost && p > 0 && p < 1 };
+  // `current`: this occurrence has started and not yet ended, which includes the step that shows it.
+  return { x0, x, y, dir, p, visible: m.ghost ? T >= visibleFrom(m) : !!occ, label, lx, moving: !m.ghost && p > 0 && p < 1, current: !m.ghost && !!occ && T < occ.t1 };
 }
 
 function headPath(kind: MsgKind) {
@@ -649,7 +824,7 @@ function itemState(s: Scenario, L: Layout, it: Item, T: number, mk: Mark[]): Par
       const g = msgGeom(it, L, T);
       const headX = it.kind === 'lost' ? g.x + g.dir * 4 : g.x;
       return {
-        g: { opacity: g.visible ? (it.ghost ? 0.32 : 1) : 0, class: `seq-msg seq-${it.kind}${it.ghost ? ' seq-ghost' : ''}${g.moving ? ' is-moving' : ''}` },
+        g: { opacity: g.visible ? (it.ghost ? 0.32 : 1) : 0, class: `seq-msg seq-${it.kind}${it.ghost ? ' seq-ghost' : ''}${g.moving || g.current ? ' is-moving' : ''}` },
         line: { x1: r1(g.x0), y1: r1(g.y), x2: r1(it.kind === 'lost' ? g.x : g.x - g.dir * 2), y2: r1(g.y) },
         head: { transform: `translate(${r1(headX)},${r1(g.y)}) scale(${g.dir},1)` },
         packet: { cx: r1(g.x - g.dir * 7), cy: r1(g.y), opacity: g.moving ? 1 : 0 },
@@ -677,7 +852,8 @@ function itemState(s: Scenario, L: Layout, it: Item, T: number, mk: Mark[]): Par
     case 'note': {
       const vis = T >= it.occ[0].t0;
       const p = it.ghost ? 1 : clamp((T - it.occ[0].t0) / 0.3, 0, 1);
-      return { g: { opacity: vis ? (it.ghost ? 0.32 : p) : 0, class: `seq-note seq-note-${it.tone}${it.ghost ? ' seq-ghost' : ''}` } };
+      const cur = !it.ghost && it.occ.some(o => o.t0 <= T && T < o.t1);
+      return { g: { opacity: vis ? (it.ghost ? 0.32 : p) : 0, class: `seq-note seq-note-${it.tone}${it.ghost ? ' seq-ghost' : ''}${cur ? ' is-current' : ''}` } };
     }
     case 'gap': {
       const vis = T >= it.occ[0].t0;
@@ -727,10 +903,12 @@ export function renderSVG(s: Scenario, L: Layout, T: number, uid: string, aria: 
   for (const p of s.participants) {
     const x = L.xs[p.id];
     const lines = L.headLines[p.id];
-    out.push(`<line class="seq-life" x1="${r1(x)}" y1="${r1(L.headH + 2)}" x2="${r1(x)}" y2="${L.H - 6}"/>`);
-    out.push(`<rect class="seq-head" x="${r1(x - L.headW / 2)}" y="2" width="${r1(L.headW)}" height="${r1(L.headH)}" rx="3"/>`);
-    const y0 = 2 + L.headH / 2 - ((lines.length - 1) * L.font * 1.2) / 2 + L.font * 0.35;
-    out.push(`<text class="seq-head-text" text-anchor="middle">${lines.map((l, i) => `<tspan x="${r1(x)}" y="${r1(y0 + i * L.font * 1.2)}">${esc(l)}</tspan>`).join('')}</text>`);
+    const dy = L.stagger && s.participants.indexOf(p) % 2 ? L.headH + 4 : 0;
+    out.push(`<line class="seq-life" x1="${r1(x)}" y1="${r1(L.headH + dy + 2)}" x2="${r1(x)}" y2="${L.H - 6}"/>`);
+    const hx = Math.max(2, Math.min(L.W - L.headW - 2, x - L.headW / 2));
+    out.push(`<rect class="seq-head" x="${r1(hx)}" y="${2 + dy}" width="${r1(L.headW)}" height="${r1(L.headH)}" rx="3"/>`);
+    const y0 = 2 + dy + L.headH / 2 - ((lines.length - 1) * L.font * 1.2) / 2 + L.font * 0.35;
+    out.push(`<text class="seq-head-text" text-anchor="middle">${lines.map((l, i) => `<tspan x="${r1(hx + L.headW / 2)}" y="${r1(y0 + i * L.font * 1.2)}">${esc(l)}</tspan>`).join('')}</text>`);
   }
   // strip
   if (s.strip) {
@@ -853,9 +1031,11 @@ export function events(s: Scenario): Event[] {
     } else if (it.type === 'gap') {
       add(it.occ[0].t0, it.occ[0].t1, it.text);
     } else if (it.type === 'frame') {
+      // A frame event ends when the frame has faded in, so stepping to it shows the frame.
       const t = it.occ[0].t0;
+      const shown = it.occ[0].t1;
       if (it.op === 'loop') {
-        add(t, t, `loop fragment ${it.guard} begins, pass 1`, `loop ${it.guard}, pass 1`);
+        add(t, shown, `loop fragment ${it.guard} begins, pass 1`, `loop ${it.guard}, pass 1`);
         it.passes.slice(1).forEach((pt, i) => add(pt, pt, `Loop pass ${i + 2} begins`, `Pass ${i + 2}`));
         continue;
       }
@@ -863,17 +1043,30 @@ export function events(s: Scenario): Event[] {
       it.runs.forEach((r, i) => {
         const what = i === 0 ? `${it.op} fragment, section ${r.guard}` : `${it.op === 'par' ? 'and' : 'else'} section ${r.guard}`;
         const verb = it.op === 'par' ? 'begins' : r.skipped ? 'is skipped' : 'runs';
-        add(r.skipped ? t : r.t, r.skipped ? t : r.t, `${what} ${verb}`, `${it.op} ${r.guard} ${verb}`);
+        const t0 = r.skipped ? t : r.t;
+        add(t0, Math.max(t0, shown), `${what} ${verb}`, `${it.op} ${r.guard} ${verb}`);
       });
     }
   }
-  return list.sort((a, b) => a.t0 - b.t0 || a.t1 - b.t1);
+  // Order events by the moment a step shows them, and merge events shown at the same moment,
+  // so every step changes the drawing and says everything that has just appeared.
+  list.sort((a, b) => stopOf(a) - stopOf(b) || a.t0 - b.t0);
+  const merged: Event[] = [];
+  for (const e of list) {
+    const prev = merged[merged.length - 1];
+    if (prev && Math.abs(stopOf(prev) - stopOf(e)) < 1e-6) {
+      merged[merged.length - 1] = { t0: Math.min(prev.t0, e.t0), t1: Math.max(prev.t1, e.t1), text: `${prev.text}; ${e.text}`, short: `${prev.short}; ${e.short}`, repeat: prev.repeat && e.repeat };
+    } else merged.push(e);
+  }
+  return merged;
 }
+
+/** When a step shows this event: just before it ends, so the next event (often starting at that instant) hasn't begun. */
+export function stopOf(e: Event) { return Math.max(e.t0, Math.round((e.t1 - 0.002) * 1000) / 1000); }
 
 export function stops(s: Scenario): number[] {
   const set = new Set<number>([0]);
-  // Stop just before each event ends, so the next event (often starting at that instant) hasn't begun.
-  for (const e of events(s)) set.add(Math.max(e.t0, Math.round((e.t1 - 0.002) * 1000) / 1000));
+  for (const e of events(s)) set.add(stopOf(e));
   set.add(Math.round(s.duration * 1000) / 1000);
   return [...set].sort((a, b) => a - b);
 }

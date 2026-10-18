@@ -1,35 +1,11 @@
 # Writing references
 
 The reference is a piece of writing we can read, rather than a checklist to
-satisfy. For now, the closest combination is Sam Who, Bartosz Ciechanowski,
-and Julia Evans. The column-store essay is our first attempt at finding a
-voice from those influences. It is still something to revise together.
-
-## Read these alongside a draft
-
-[Sam Who — Load Balancing](https://samwho.dev/load-balancing/)
-
-Read the opening through “When round robin doesn't cut it.” The prose stays
-with the simulation: a request arrives, a server is busy, another request
-gets dropped. The explanation has someone guiding it, but the system itself
-provides most of the interest.
-
-[Bartosz Ciechanowski — Gears](https://ciechanow.ski/gears/)
-
-Read “Disc” and “Transmission.” He gives a small observation enough room to
-become an explanation, then changes the model. The transitions feel like
-continuing a thought rather than starting another item in an outline.
-
-[Julia Evans — How to teach technical concepts with cartoons](https://jvns.ca/teach-tech-with-cartoons/)
-
-Read “personify the characters,” “show a scene,” and her discussion of the
-Kubernetes cartoon. The voice is personal and unceremonious, even when the
-point is technically demanding. Her concern about the missing role of etcd
-is a useful example of being approachable without being vague.
-
-These are references for our own prose, not text to reproduce or identities
-to adopt. Reading the original passages matters more than the descriptions
-above.
+satisfy. We are building it in our own articles, anchored in a few pieces by
+Sam Who and Bartosz Ciechanowski that inspired the style. The
+`staycurrent-style` skill lists those pieces and what to learn from them. This
+document collects passages and revisions from our own work, and the user's
+responses to them, so later writers can see how the voice developed.
 
 ## An opening we're revising
 

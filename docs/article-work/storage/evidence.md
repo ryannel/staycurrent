@@ -187,7 +187,7 @@ Ownership split with Watching storage and The buffer pool applied; no new local 
 ### Changed claims
 | Claim | Basis |
 | --- | --- |
-| PostgreSQL starts a requested checkpoint at `max_wal_size / (1 + checkpoint_completion_target)` (about 540 MB at defaults); worst-case replay is close to `max_wal_size` | Reviewer's reading of `CalculateCheckpointSegments` in `xlog.c`; agrees with Watching's 540 MB. Not in the manual; the text says so. Worst case is arithmetic: trigger distance plus log written while the checkpoint runs. |
+| PostgreSQL starts a requested checkpoint at `max_wal_size / (1 + checkpoint_completion_target)` (about 540 MB at defaults); worst-case replay is close to `max_wal_size` | Reviewer's reading of `CalculateCheckpointSegments` in `xlog.c`; agrees with Watching's 540 MB. Not in the manual; the text says so. Worst case is arithmetic: trigger distance plus log written while the checkpoint runs. 18 Oct: the source rounds down to whole 16 MiB segments (33 at the defaults), and `XLogCheckpointNeeded` counts from the previous checkpoint's redo pointer and fires when a segment completes, so the real trigger is 512 to 528 MiB; the observed `distance=528459 kB` is 516 MiB. Checked against `REL_18_STABLE`. |
 | About 6 s (1 GB) and about 24 s (4 GB) at 169 MiB/s; about 48 s at half that rate; 4 GB trigger about 2.1 GB, a checkpoint every 75 s at 28 MB/s | Arithmetic from the local run, labelled as such |
 | 169 MiB/s is a best case (log mostly full-page images, warm OS cache); reboot or cold standby can be slower | Reviewer's note; not measured here |
 | 566 MiB (594 MB) of log, 3.35 s, 0.56 s end-of-recovery checkpoint; a run separate from Watching's | Unit corrected from the earlier "MB"; same local run |

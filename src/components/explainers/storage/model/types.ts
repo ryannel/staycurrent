@@ -7,6 +7,8 @@ export type Param = {
   label: string;
   options: { value: string; label: string }[];
   initial: string;
+  /** Buttons by default. A slider suits one quantity with ordered values. */
+  kind?: 'buttons' | 'slider';
 };
 
 /**

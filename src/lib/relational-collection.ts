@@ -101,6 +101,20 @@ export const relationalCollection: RelationalGroup[] = [
         "description": "Connect an index's structure to the queries it helps and the work it adds.",
         "scope": "Develop ordered lookups, ranges, composite keys, filtering, sorting, covering access and selectivity. Weigh table fetches, storage and writes, then verify an index choice.",
         "status": "published"
+      },
+      {
+        "slug": "indexing-queries",
+        "title": "Indexing common query patterns",
+        "description": "Choose the index for an order list, join, page of results, search, OR condition or queue, and see in the plan why a query that should use an index does not.",
+        "scope": "Measure order-by-limit, grouping and distinct values, join and foreign-key indexes, offset against keyset pages, conditions and prefixes an index cannot see through, OR and AND, and recurring shapes such as queues, soft deletes and tenants.",
+        "status": "draft"
+      },
+      {
+        "slug": "maintaining-indexes",
+        "title": "Maintaining indexes",
+        "description": "Keep indexes the right size, rebuild them safely, keep statistics current and remove the ones that cost more than they save.",
+        "scope": "Measure index bloat and rebuilds, compare each engine's locking during a rebuild, refresh statistics after bulk changes, and find duplicate, invalid and unused indexes.",
+        "status": "draft"
       }
     ]
   },

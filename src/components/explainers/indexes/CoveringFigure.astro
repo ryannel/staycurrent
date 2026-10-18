@@ -1,19 +1,25 @@
 ---
 import IndexFigure from './IndexFigure.astro';
 import Segmented from './Segmented.astro';
-const { number = 7 } = Astro.props;
+// `update` adds a third table state, an update to another order on page 3
+// after VACUUM. `scale` shows the history query's numbers on the 60,000-order
+// table. Both are off by default, as Indexes in PostgreSQL uses the figure.
+const { number = 7, update = false, scale = false } = Astro.props;
+const states = update
+ ? [{ value: 'false', label: 'Not vacuumed' }, { value: 'true', label: 'Vacuumed' }, { value: 'update', label: 'Then updated' }]
+ : [{ value: 'false', label: 'Before' }, { value: 'true', label: 'After' }];
 ---
-<IndexFigure tag="ix-covering-figure" number={number} title="Index-only scan and the visibility map">
+<IndexFigure tag="ix-covering-figure" number={number} title="Index-only scan and the visibility map" scale={scale}>
  <pre slot="query"><code>SELECT placed_at, total FROM orders
 WHERE customer_id = 42
   AND placed_at &gt;= '10 Jan'
 ORDER BY placed_at DESC LIMIT 2;</code></pre>
  <Fragment slot="params">
   <Segmented name="include" label="total in index" value="false" options={[{ value: 'false', label: 'No' }, { value: 'true', label: 'INCLUDE', code: true }]} />
-  <Segmented name="vacuumed" label="VACUUM" value="false" options={[{ value: 'false', label: 'Before' }, { value: 'true', label: 'After' }]} />
+  <Segmented name="vacuumed" label={update ? 'Table' : 'VACUUM'} value="false" options={states} />
  </Fragment>
- Leaf page 4 of the composite index, beside the table. The box by each page number is its visibility bit. Try all four combinations and watch the heap fetches.
- <span slot="fallback">Without total in the index, both rows must be fetched from the table. With INCLUDE (total) but before VACUUM, the scan still visits the table, because the visibility map bits are not set. After VACUUM, the scan answers from the index alone, with zero heap fetches.</span>
+ Leaf page 4 of the composite index, beside the table. The box by each page number is its visibility bit, ticked when set. {update ? 'Try each table state with total included, and watch the heap fetches.' : 'Try all four combinations and watch the heap fetches.'}
+ <span slot="fallback">Without total in the index, both rows must be fetched from the table. With INCLUDE (total) but before VACUUM, the scan still visits the table, because the visibility map bits are not set. After VACUUM, the scan answers from the index alone, with zero heap fetches.{update && ' After an update to order 19, which is also on page 3, that page’s bit is cleared, so the scan visits the table for order 21 only: one heap fetch.'}{scale && ' On the 60,000-order table, the history query read 13 pages with 10 heap fetches before VACUUM, 4 pages with none after it, and 5 pages with one heap fetch after an update to another order on the same page as one of its rows.'}</span>
 </IndexFigure>
 
 <script>
@@ -23,7 +29,10 @@ ORDER BY placed_at DESC LIMIT 2;</code></pre>
 
  const leaf = [...orders].sort(byCustomerDateDesc).slice(18, 24);
  const wanted = leaf.slice(0, 2);
- interface CoverFrame extends Frame { entry: number; step: 'start' | 'read' | 'check' | 'fetch' | 'skip' | 'done'; fetches: number[]; skipped: number[] }
+ // The update in the third state: another order on page 3, with order 21.
+ const changed = orders[18];
+ const NEW_TOTAL = 20;
+ interface CoverFrame extends Frame { entry: number; step: 'start' | 'update' | 'read' | 'check' | 'fetch' | 'skip' | 'done'; fetches: number[]; skipped: number[]; updated: boolean }
 
  class CoveringFigure extends IndexFigure<CoverFrame> {
   heap!: HeapPanel;
@@ -33,32 +42,44 @@ ORDER BY placed_at DESC LIMIT 2;</code></pre>
   vertical = false;
   wideAt = 560;
   get include() { return this.param('include') === 'true'; }
-  get vacuumed() { return this.param('vacuumed') === 'true'; }
+  get vacuumed() { return this.param('vacuumed') !== 'false'; }
+  get updated() { return this.param('vacuumed') === 'update'; }
+  /** Is this page's bit set at this point of the frames? */
+  visible(page: number, updated: boolean) { return this.vacuumed && !(updated && page === changed.page); }
   build(): CoverFrame[] {
-   const include = this.include, vacuumed = this.vacuumed;
-   const frames: CoverFrame[] = [{ entry: -1, step: 'start', fetches: [], skipped: [], hold: 1300,
+   const include = this.include, vacuumed = this.vacuumed, update = this.updated;
+   const frames: CoverFrame[] = [{ entry: -1, step: 'start', fetches: [], skipped: [], updated: false, hold: 1300,
     short: include ? 'The index holds total too.' : 'The index has no total.',
     note: include ? 'The index now carries total in every entry, so it holds every column this query uses.' : 'The index holds customer_id and placed_at. The query also wants total, which only the table has.' }];
+   if (update) frames.push({ entry: -1, step: 'update', fetches: [], skipped: [], updated: true, hold: 2400,
+    short: `Order ${changed.id} changes: page ${changed.page}’s bit is cleared.`,
+    note: `After VACUUM, every bit was set. Then UPDATE orders SET total = ${NEW_TOTAL} WHERE order_id = ${changed.id}. Order ${changed.id} belongs to customer ${changed.customer}, but it is on page ${changed.page}, so the change clears page ${changed.page}’s bit.` });
    const fetches: number[] = [], skipped: number[] = [];
    wanted.forEach((o, i) => {
-    frames.push({ entry: i, step: 'read', fetches: [...fetches], skipped: [...skipped], short: `Entry ${i + 1}: (42, ${dayLabel(o.day)}).`, note: `Entry ${i + 1}: (42, ${dayLabel(o.day)}).${include ? ` Its total, €${o.total}, is right there in the entry.` : ''}` });
+    const base = { entry: i, updated: update };
+    frames.push({ ...base, step: 'read', fetches: [...fetches], skipped: [...skipped], short: `Entry ${i + 1}: (42, ${dayLabel(o.day)}).`, note: `Entry ${i + 1}: (42, ${dayLabel(o.day)}).${include ? ` Its total, €${o.total}, is right there in the entry.` : ''}` });
     if (!include) {
      fetches.push(o.id);
-     frames.push({ entry: i, step: 'fetch', fetches: [...fetches], skipped: [...skipped], short: `Fetch ${ctid(o)} for total.`, note: `The entry has no total, so fetch row ${ctid(o)} from table page ${o.page} to read it: €${o.total}.` });
+     frames.push({ ...base, step: 'fetch', fetches: [...fetches], skipped: [...skipped], short: `Fetch ${ctid(o)} for total.`, note: `The entry has no total, so fetch row ${ctid(o)} from table page ${o.page} to read it: €${o.total}.` });
      return;
     }
-    frames.push({ entry: i, step: 'check', fetches: [...fetches], skipped: [...skipped], short: `Check page ${o.page}’s visibility bit.`, note: `Before trusting the entry, check page ${o.page}’s bit in the visibility map.` });
-    if (vacuumed) {
+    frames.push({ ...base, step: 'check', fetches: [...fetches], skipped: [...skipped], short: `Check page ${o.page}’s visibility bit.`, note: `Before trusting the entry, check page ${o.page}’s bit in the visibility map.` });
+    if (this.visible(o.page, update)) {
      skipped.push(o.id);
-     frames.push({ entry: i, step: 'skip', fetches: [...fetches], skipped: [...skipped], short: 'All-visible: skip the table.', note: `Page ${o.page} is marked all-visible: every row on it is visible to every transaction. The entry is enough, and the table is not touched.` });
+     frames.push({ ...base, step: 'skip', fetches: [...fetches], skipped: [...skipped], short: 'All-visible: skip the table.', note: `Page ${o.page} is marked all-visible: every row on it is visible to every transaction. The entry is enough, and the table is not touched.` });
     } else {
      fetches.push(o.id);
-     frames.push({ entry: i, step: 'fetch', fetches: [...fetches], skipped: [...skipped], short: `Bit not set: visit ${ctid(o)}.`, note: `Page ${o.page} is not marked all-visible, so the row might be too new, or already deleted, for this transaction. Visit ${ctid(o)} to check.` });
+     frames.push({ ...base, step: 'fetch', fetches: [...fetches], skipped: [...skipped], short: `Bit not set: visit ${ctid(o)}.`, note: update
+      ? `Page ${o.page}’s bit was cleared by the update, so the entry can’t be trusted on its own. Visit ${ctid(o)} to check, although order ${o.id} itself did not change.`
+      : `Page ${o.page} is not marked all-visible, so the row might be too new, or already deleted, for this transaction. Visit ${ctid(o)} to check.` });
     }
    });
-   frames.push({ entry: -1, step: 'done', fetches, skipped, hold: 2200,
+   frames.push({ entry: -1, step: 'done', fetches, skipped, updated: update, hold: 2200,
     short: `Heap fetches: ${fetches.length}.`,
-    note: !include ? 'Plan: Index Scan. Two entries, two table rows fetched.' : vacuumed ? 'Plan: Index Only Scan, Heap Fetches: 0. The answer came from the index alone.' : 'Plan: Index Only Scan, but Heap Fetches: 2. Covering the columns was not enough on its own: the visibility map had no bits set.' });
+    note: !include ? 'Plan: Index Scan. Two entries, two table rows fetched.'
+     : update ? 'Plan: Index Only Scan, Heap Fetches: 1. One change to page 3 sent one entry back to the table.'
+     : vacuumed ? 'Plan: Index Only Scan, Heap Fetches: 0. The answer came from the index alone.'
+     : 'Plan: Index Only Scan, but Heap Fetches: 2. Covering the columns was not enough on its own: the visibility map had no bits set.' });
    return frames;
   }
   draw(layout: Layout) {
@@ -81,19 +102,23 @@ ORDER BY placed_at DESC LIMIT 2;</code></pre>
    this.heap = heapPanel(svgRoot, this.vertical ? 4 : 4 + gridWidth + 40, this.vertical ? leafH + 26 : 2, { sub: (o) => `€${o.total}`, vm: true });
   }
   render(frame: CoverFrame) {
-   const include = this.include, vacuumed = this.vacuumed;
+   const include = this.include;
    this.tags.forEach((t) => t.setAttribute('opacity', include ? '1' : '0'));
-   this.heap.vm.forEach((bit) => setVm(bit, vacuumed));
+   this.heap.vm.forEach((bit, p) => setVm(bit, this.visible(p, frame.updated)));
+   const row = this.heap.cells.get(changed.id)!;
+   const sub = `€${frame.updated ? NEW_TOTAL : changed.total}`;
+   if (row.sub.textContent !== sub) row.sub.textContent = sub;
    const current = frame.entry >= 0 ? wanted[frame.entry] : undefined;
    this.heap.vm.forEach((bit, p) => bit.classList.toggle('ix-checking', Boolean(current) && (frame.step === 'check' || frame.step === 'skip' || (include && frame.step === 'fetch')) && current!.page === p));
    leaf.forEach((o, i) => {
     const done = frame.fetches.includes(o.id) || frame.skipped.includes(o.id);
     setCell(this.panel.cells.get(o.id), current?.id === o.id ? 'reading' : done ? 'found' : frame.step === 'done' && i < 2 ? 'found' : '');
    });
-   orders.forEach((o) => setCell(this.heap.cells.get(o.id), frame.fetches.includes(o.id) ? 'fetch' : wanted.some((w) => w.id === o.id) && frame.skipped.includes(o.id) ? 'dim' : ''));
+   orders.forEach((o) => setCell(this.heap.cells.get(o.id), frame.fetches.includes(o.id) ? 'fetch' : wanted.some((w) => w.id === o.id) && frame.skipped.includes(o.id) ? 'dim' : frame.updated && o.id === changed.id ? 'new' : ''));
    this.heap.pages.forEach((label, p) => label.setAttribute('data-state', frame.fetches.some((id) => orders[id - 1].page === p) ? 'read' : ''));
    syncPointers(this.overlay, frame.fetches.map((id) => [centre(this.panel.origin, this.panel.cells.get(id)!), centre(this.heap.origin, this.heap.cells.get(id)!)]), this.vertical);
-   this.counters([['plan', include ? 'Index Only Scan' : 'Index Scan'], ['heap fetches', frame.fetches.length, true], ['table pages touched', `${new Set(frame.fetches.map((id) => orders[id - 1].page)).size} of ${PAGES}`]]);
+   this.counters([['plan', include ? 'Index Only Scan' : 'Index Scan'], [frame.fetches.length === 1 ? 'heap fetch' : 'heap fetches', frame.fetches.length, true], ['table pages touched', `${new Set(frame.fetches.map((id) => orders[id - 1].page)).size} of ${PAGES}`]]);
+   this.scale(!include ? '13 pages, 10 of them table pages' : this.updated ? '5 pages, Heap\u00a0Fetches:\u00a01' : this.vacuumed ? '4 pages, Heap\u00a0Fetches:\u00a00' : '13 pages, Heap\u00a0Fetches:\u00a010', 'History query at 60,000 orders:');
   }
  }
  if (!customElements.get('ix-covering-figure')) customElements.define('ix-covering-figure', CoveringFigure);

@@ -1,0 +1,308 @@
+---
+import ArticleBody from '../../../../components/editorial/ArticleBody.astro';
+import TitleLine from '../../../../components/editorial/TitleLine.astro';
+import Base from '../../../../layouts/Base.astro';
+import Sql from '../../../../components/explainers/querying/Sql.astro';
+import experimentUrl from '../../../../../docs/article-work/indexing-queries/download.sql?url&no-inline';
+import '../../../../styles/explorables.css';
+import '../../../../styles/relational-design.css';
+
+const docs = 'https://www.postgresql.org/docs/18/';
+const mysql = 'https://dev.mysql.com/doc/refman/8.4/en/';
+const sqlite = 'https://www.sqlite.org/';
+const indexes = '/learn/databases/relational/indexes/';
+const pagination = '/learn/databases/relational/large-results/';
+const execution = '/learn/databases/relational/query-execution/';
+
+const orderList = `SELECT order_id, placed_at, total
+FROM orders
+WHERE customer_id = 42
+ORDER BY placed_at DESC
+LIMIT 20;`;
+const orderIndex = `CREATE INDEX orders_customer_placed
+ON orders (customer_id, placed_at DESC);`;
+const latestPerCustomer = `SELECT c.customer_id, latest.order_id
+FROM customers AS c
+CROSS JOIN LATERAL (
+  SELECT order_id
+  FROM orders AS o
+  WHERE o.customer_id = c.customer_id
+  ORDER BY placed_at DESC, order_id DESC
+  LIMIT 1
+) AS latest;`;
+const northJoin = `SELECT c.name, o.order_id, o.total
+FROM customers AS c
+JOIN orders AS o ON o.customer_id = c.customer_id
+WHERE c.region = 'north';`;
+const fkIndex = `CREATE INDEX orders_customer_id
+ON orders (customer_id);`;
+const feedIndex = `CREATE INDEX orders_feed
+ON orders (placed_at DESC, order_id DESC);`;
+const deepOffset = `SELECT order_id, placed_at, total
+FROM orders
+ORDER BY placed_at DESC, order_id DESC
+OFFSET 19980 LIMIT 20;`;
+const keysetPage = `SELECT order_id, placed_at, total
+FROM orders
+WHERE (placed_at, order_id) < ($1, $2)
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 20;`;
+const mixedBad = `-- ORDER BY placed_at DESC, order_id ASC, continuing after ($1, $2)
+WHERE placed_at < $1
+   OR (placed_at = $1 AND order_id > $2)`;
+const mixedGood = `WHERE placed_at <= $1
+  AND (placed_at < $1 OR order_id > $2)`;
+const prefixIndex = `CREATE INDEX accounts_email_prefix
+ON accounts (email text_pattern_ops);`;
+const cIndex = `CREATE INDEX accounts_email_c
+ON accounts (email COLLATE "C");`;
+const trigram = `CREATE EXTENSION pg_trgm;
+CREATE INDEX accounts_email_trgm
+ON accounts USING gin (email gin_trgm_ops);`;
+const orQuery = `SELECT order_id FROM orders
+WHERE customer_id = 42 OR order_id = 777;`;
+const unionQuery = `SELECT order_id FROM orders WHERE customer_id = 42
+UNION
+SELECT order_id FROM orders WHERE order_id = 777;`;
+const queueIndex = `CREATE INDEX jobs_queued
+ON jobs (created_at)
+WHERE state = 'queued';`;
+const claim = `SELECT job_id FROM jobs
+WHERE state = 'queued'
+ORDER BY created_at
+LIMIT 1;`;
+const softDelete = `CREATE UNIQUE INDEX accounts_live_email
+ON accounts (lower(email))
+WHERE deleted_at IS NULL;`;
+const tenantIndex = `CREATE INDEX events_tenant_created
+ON events (tenant_id, created_at DESC);`;
+---
+<Base title="Indexing common query patterns" description="Choose the index for an order list with a filter and a sort, a join or foreign key, a keyset page, a LIKE search, an OR condition or a queue, and see in the plan why a query that should use an index does not. Page counts are measured in PostgreSQL 18, with InnoDB and SQLite differences noted.">
+ <article class="visual-essay relational-design">
+  <header class="essay-header">
+   <p class="eyebrow">Databases and storage</p>
+   <h1>Indexing common query patterns</h1>
+   <TitleLine type="Companion" version="PostgreSQL 18, with InnoDB (MySQL 8.4) and SQLite comparisons" />
+  </header>
+<ArticleBody>
+
+  <p><a href={indexes}>Indexes</a> explains how a B-tree finds rows: its entries are kept in sorted order, so the database can jump to one place and read along from there. That one fact decides what an index can do for a query. It can find the entries for one value, read a run of neighbouring values, or hand rows back already in order. It cannot do any of those for a condition the sorted order says nothing about.</p>
+  <p>Most index questions in practice start from a query, not from the structure. The order list for one customer, filtered and sorted, with only the newest twenty shown. The page that follows it. A delete that has started taking seconds. A search box that matches the start of an email address. A condition joined with <code>OR</code>. Each is a different way of lining a query up with the order of the entries, and each has a way of failing without an error: the query still returns the right rows, only through a scan of the whole table.</p>
+  <p>This article takes those shapes in turn. For each it says what the index has to hold and in what order, what the plan shows when it works, and what quietly stops it working. The examples use the orders table from Indexes, with 60,000 orders over 1,000 customers, plus a <code>customers</code> table, a table of 60,000 accounts with email addresses, and, for the last section, a job queue and an event log. PostgreSQL 18 is the worked example and the source of every page count. InnoDB, MySQL’s default storage engine, and SQLite appear where they differ, and the text says when a statement about them comes from their documentation rather than a measurement. <a href="#run">Where the numbers come from</a> has the details.</p>
+  <p>One note on the numbers before they start. They come from PostgreSQL 18.6 running natively, where <a href={indexes}>Indexes</a> measured on PGlite, the WebAssembly build of 18.3 that runs in the site’s sandbox. The orders rows and their pages are the same; Indexes’ copy also has an <code>email</code> column. A few totals differ slightly. A full scan of the orders table reads 1,725 table pages, and a plan that also sorts or reads a small table reports a few more (1,728 and 1,732 below); every figure counts the pages of the whole plan, not just the biggest step.</p>
+
+  <section id="order-limit">
+   <h2>Filtering, sorting and limiting together</h2>
+   <p>The commonest query in an application is a list: the rows for one owner, newest first, one screenful at a time. For orders it looks like this:</p>
+   <Sql code={orderList} label="The order list for one customer" />
+   <p>Three parts of it can use an index. The equality on <code>customer_id</code> picks out one group of entries. The <code>ORDER BY</code> asks for a sequence. The <code>LIMIT</code> means the database needs only the first twenty rows of that sequence. If the index delivers entries already in that sequence, the database can read twenty of them and stop, and the other 40 of customer 42’s orders are never fetched.</p>
+
+   <h3 id="rule">When an index supplies the order</h3>
+   <p>An index on <code>(customer_id, placed_at DESC)</code> sorts its entries by customer, and inside each customer by time, newest first. Customer 42’s entries are therefore one contiguous run, already in the order the query wants. The rule that follows is the one in <a href={`${indexes}#composite`}>Composite indexes</a> restated for sorting: the index supplies the order when every column before the sort columns is fixed by an equality condition, and the sort columns follow in the same order as the <code>ORDER BY</code>.</p>
+   <Sql code={orderIndex} label="An index whose entries run in the order the list needs" />
+   <div class="table-scroll" role="region" tabindex="0" aria-labelledby="order-caption"><table><caption id="order-caption">Pages read by the order list for customer 42 (20 rows returned), with each index</caption><thead><tr><th>Index</th><th>Plan</th><th>Pages read</th></tr></thead><tbody>
+    <tr><td>None</td><td>Sequential scan, top-20 sort</td><td>1,728</td></tr>
+    <tr><td><code>(customer_id)</code></td><td>Bitmap heap scan of all 60 orders, then sort</td><td>62</td></tr>
+    <tr><td><code>(customer_id, placed_at DESC)</code></td><td>Index scan, stops after 20 rows, no sort</td><td>23</td></tr>
+   </tbody></table></div>
+   <p>The plain customer index already cuts the work from the whole table to 62 pages, because customer 42 has only 60 orders. What it cannot do is give them in order, so all 60 are fetched and sorted to keep 20. The composite index reads 3 index pages and 20 table pages. The gap between 62 and 23 is small here and grows with the size of the group: a customer with 50,000 orders would cost the first index all 50,000 fetches and the second still only 20. The two-part rule is the reason: the equality narrows the index to a run, and <code>LIMIT</code> is what makes it worth reading the run in order, because without a limit the database must read the whole run in either case.</p>
+   <p>Where the sort has no filter at all, the same idea gives a feed of the newest rows overall. An index on <code>(placed_at DESC, order_id DESC)</code> returned the newest 20 orders in 3 pages, all of them index pages, because the query read only columns the index holds. An index declared ascending works too, because the database can read a B-tree backwards; the measured plan read the same 3 pages. Direction matters only when the <code>ORDER BY</code> mixes directions, as below.</p>
+
+   <h3 id="breaks">What stops the index supplying the order</h3>
+   <p>The rule has conditions, and the conditions are where the plan quietly changes. Four cases come up regularly.</p>
+   <ul>
+    <li><strong>A column in the middle with no equality.</strong> With an index on <code>(customer_id, status, placed_at DESC)</code>, the order list above, which never mentions <code>status</code>, read 63 pages and sorted: customer 42’s entries are split by status, so within the customer they are not in time order. Adding <code>AND status = 'paid'</code> to the query fixes the entries to one status and the same index read 23. If the query does not always filter on the middle column, move it after the sort column, <code>(customer_id, placed_at DESC, status)</code>, which keeps the order and still lets the filter be checked from the index entry (26 pages).</li>
+    <li><strong>A range before the sort.</strong> A range condition on a column fixes a stretch of values, not one value, so the entries after that column are no longer in a single sequence. Put the equality columns first, then the sort column, and test any range on a later column as a filter.</li>
+    <li><strong>Mixed directions.</strong> <code>ORDER BY placed_at ASC, order_id DESC</code> needs entries ascending in one column and descending in the next. An index on <code>(customer_id, placed_at, order_id)</code> has them both ascending. PostgreSQL then did an incremental sort: it read the entries in order of <code>placed_at</code> and sorted only the groups of equal values, 24 pages against 23 for an index declared with <code>order_id DESC</code>. That is cheap because ties are rare. When the tied groups are large, declare the directions the query uses. MySQL 8.4 can read an index backwards, so it can serve a fully reversed <code>ORDER BY</code>, but for a mixed one its manual requires an index declared with matching directions or the exact reverse.</li>
+    <li><strong>Where NULLs sort.</strong> PostgreSQL treats NULL as larger than any value, so an ascending sort puts NULLs last and a descending one puts them first, and an index follows whatever order it was declared with. <code>NULLS FIRST</code> and <code>NULLS LAST</code> can be added to the index and the query. MySQL and SQLite treat NULL as smaller than any value; SQLite accepts <code>NULLS FIRST</code> and <code>NULLS LAST</code>, and MySQL has no such syntax. A query that asks for NULLs on the other side from its index gets a sort.</li>
+   </ul>
+   <p>When the index cannot supply the order, the plan says so. PostgreSQL shows a <code>Sort</code> node above the scan, MySQL shows <code>Using filesort</code> in <code>Extra</code>, and SQLite shows <code>USE TEMP B-TREE FOR ORDER BY</code>. A plan without that line is the sign that the index delivered the order.</p>
+   <p>InnoDB adds one convenience, according to its manual, which we did not run. Every entry in a secondary index carries the table’s primary key, so an index on <code>(customer_id, placed_at)</code> also orders entries by <code>order_id</code> within equal times, and a tie-breaking <code>ORDER BY placed_at, order_id</code> needs no extra column. In PostgreSQL the tie-break column goes into the index, as in the <code>order_id DESC</code> of the history index in Indexes.</p>
+   <p>Text sorts have a further condition: the index orders strings by its own collation, and serves an <code>ORDER BY</code> only when the query uses the same one. <a href="#like">Prefix searches with <code>LIKE</code></a> shows how that also decides whether a text index can be used for matching.</p>
+
+   <h3 id="grouping">Grouping, distinct values and the latest row per group</h3>
+   <p>The same ordered entries answer some questions about groups. A <code>GROUP BY customer_id</code> needs equal customers next to each other, and an index on <code>customer_id</code> provides that. When the index also holds every column the query reads, it can be counted from the index alone: <code>SELECT customer_id, count(*) ... GROUP BY customer_id</code> read the 52 pages of the customer index, in order. Adding <code>sum(total)</code> brought in a column the index lacks, and PostgreSQL went back to hashing every row of the table, 1,725 pages. The covering conditions are those of <a href={`${indexes}#covering`}>Covering indexes and index-only scans</a>.</p>
+   <p><code>SELECT DISTINCT customer_id FROM orders</code> is the same question without the count, and it follows the same rule: it needs equal values together, and the customer index supplies that. It read 52 pages through the index and 1,725 without it. MySQL has a further shortcut, the loose index scan, which hops from one distinct value to the next instead of reading every entry and shows <code>Using index for group-by</code> in <code>EXPLAIN</code>. Its manual restricts it to a single table, a leftmost prefix of the index, <code>MIN</code> and <code>MAX</code> as the only aggregates, and whole column values rather than a prefix; PostgreSQL 18 reads every entry.</p>
+   <p>A pattern that does better than grouping is “the latest row for each of several groups”, such as each customer’s newest order. The ordered index gives the newest order of one customer in a single descent, so the query asks for that once per customer:</p>
+   <Sql code={latestPerCustomer} label="The newest order of each customer, one index descent per customer" />
+   <p>With <code>(customer_id, placed_at DESC, order_id DESC)</code> in place, the 1,000 customers cost 3,008 pages, about three each. For the five customers in the <code>north</code> region it cost 23 pages. Without that index each of the five customers needed a scan and a sort of the whole table, 8,632 pages together. A <code>LIMIT 1</code> inside a lateral subquery is how to ask an index for the top row of every group. PostgreSQL’s <code>DISTINCT ON (customer_id)</code>, with the same ordering, is the alternative: it reads the index in order and keeps the first entry of each customer, which is every entry once. With the composite index above it read 299 pages for all 1,000 customers, a tenth of the lateral query, because the index holds every column the query returns. So use <code>DISTINCT ON</code> when most groups are wanted and the lateral form when only some are, as with the five north customers. MySQL has no <code>DISTINCT ON</code>, so the lateral form (MySQL supports <code>LATERAL</code> derived tables) is the one to use there.</p>
+  </section>
+
+  <section id="joins">
+   <h2>Joins and foreign keys</h2>
+   <p>A join matches rows of one table to rows of another on a column, and databases have three main ways to do it, which <a href={execution}>How a query runs</a> compares. Only one of them wants an index. In a <strong>nested loop</strong>, the database takes each row from one side, the outer side, and looks up its matches on the other, the inner side, with a fresh search for each. A search is cheap only if the inner column is indexed. A hash join and a merge join read both inputs once, so they do not need the join column indexed, though a merge join can use an index to avoid sorting.</p>
+
+   <h3 id="join-side">Which column needs the index</h3>
+   <p>The index goes on the column the database searches, which is the column of the table on the inner side of the loop. In a join between <code>customers</code> and <code>orders</code> that pairs each customer with their orders, one customer has many orders. Looking up a customer from an order uses the customer’s primary key, which is already indexed. Looking up orders from a customer uses <code>orders.customer_id</code>, which is not indexed unless someone created the index. So the rule is to index the foreign-key column on the many side, which is the column that nothing creates for you in PostgreSQL.</p>
+   <Sql code={northJoin} label="Five customers in one region with their orders" />
+   <p>The five <code>north</code> customers have 300 orders between them. With no index on <code>orders.customer_id</code>, PostgreSQL built a hash of the five customers and scanned the whole orders table, 1,732 pages. After <code>CREATE INDEX orders_customer_id ON orders (customer_id)</code> it chose a nested loop: it read the 7 pages of customers, and for each of the five customers searched the index and fetched that customer’s 60 orders, 317 pages in all.</p>
+   <Sql code={fkIndex} label="The index for the many side of the join" />
+   <p>The index does not help when the join touches most of the rows anyway. A report that joins every order to its customer reads all of both tables, and a hash join does that in one pass; a nested loop with one index search per order would be slower. The planner decides between the two from its estimates of how many rows the outer side produces, so what an index changes is the option available when few rows qualify. Check the plan for the join your query actually runs, as <a href={`${indexes}#check`}>Checking an index with EXPLAIN</a> shows, and look for the inner side reporting an index search with <code>loops</code> equal to the outer row count.</p>
+
+   <h3 id="foreign-keys">The foreign key that makes a delete slow</h3>
+   <p>A foreign key adds a hidden query. When a row in the referenced table is deleted, or its key changes, the database must check that no row in the referencing table still points at it. That check searches the referencing table for the old value. If <code>orders.customer_id</code> is not indexed, the search is a scan of the whole orders table, on every delete of a customer. PostgreSQL’s manual says so, and says that it does not create the index automatically.</p>
+   <p>We measured it by deleting a customer who has no orders, inside a transaction that we then rolled back. With the foreign-key index the delete read 3 pages of it and none of the orders table. Without it, the delete read all 1,725 pages of orders, to find nothing. The cost grows with the size of the referencing table, so it creeps up unnoticed: the same delete on a table a hundred times larger reads a hundred times as many pages.</p>
+   <p>The engines treat the index differently. InnoDB requires one and creates it if missing: its manual says that on the referencing table an index with the foreign key columns first, in the same order, is created automatically if none exists, and may be silently dropped later if you create another index that can enforce the constraint. SQLite’s manual says an index on the child key columns is not required but “almost always beneficial”, because without it each parent delete or key update scans the child table. We saw that on a 600,000-row child table of 3,503 pages: the parent delete took about 12 milliseconds without the index and under one with it, a rough laptop figure and not a benchmark.</p>
+   <p>Any index whose leading columns are the foreign key columns does the job. The composite index <code>(customer_id, placed_at DESC, order_id DESC)</code> from the order list also serves the foreign-key check: the delete read 4 pages of it. So the foreign-key index is often a by-product of the indexes the application’s queries already need, and a separate single-column index on the same column becomes redundant. Check for that before adding one. A foreign key over two columns wants an index that starts with those two columns, in the key’s order.</p>
+  </section>
+
+  <section id="paging">
+   <h2>Paging through an ordered list</h2>
+   <p><a href={pagination}>Pagination and large results</a> explains why a list needs a total order, what offset and keyset pagination promise while rows change, and when an export wants a snapshot. This section assumes that choice is made and asks what the database does for each page: which index serves it, what it costs at depth, and what the continuation condition must look like to use the index.</p>
+
+   <h3 id="page-index">The index for the first page and the next</h3>
+   <p>A page of a feed is the order list again, with a tie-break so the sequence is total. For a feed of every order, newest first, the index is the entries in exactly that sequence, <code>(placed_at DESC, order_id DESC)</code>; for one customer’s list, the same two columns after <code>customer_id</code>. Both columns of the sort are in the key, so the index delivers rows in the sequence the page uses, and a <code>LIMIT</code> reads only what it returns.</p>
+   <Sql code={feedIndex} label="An index in the order of the feed, with the tie-break" />
+   <p>With that index the first page of 20 read 4 pages: 3 of index and, because the newest orders sit together in this table, one of table. Without it PostgreSQL read all 1,725 pages for every page request and kept the top 20 in a sort, whatever page it served.</p>
+
+   <h3 id="offset-cost">What offset reads</h3>
+   <p>Offset pagination asks for the rows after the first <em>N</em>. The database has no way to jump to row <em>N</em> of a result: it walks the index entries in order and throws away the first <em>N</em>, and each discarded entry usually means a table page too, because the index does not hold the columns the page returns. PostgreSQL’s manual says the skipped rows “still have to be computed inside the server”.</p>
+   <Sql code={deepOffset} label="Page 1,000 of a feed with 20 rows per page" />
+   <div class="table-scroll" role="region" tabindex="0" aria-labelledby="offset-caption"><table><caption id="offset-caption">Pages read for one page of 20 rows of the feed, with the feed index in place</caption><thead><tr><th>Page requested</th><th>Offset</th><th>Keyset</th></tr></thead><tbody>
+    <tr><td>First</td><td>4</td><td>4</td></tr>
+    <tr><td>Page 1,000 (19,980 rows skipped)</td><td>654</td><td>4</td></tr>
+    <tr><td>Offset of 59,960</td><td>1,956</td><td>not applicable</td></tr>
+   </tbody></table></div>
+   <p>The last row reads more pages than the table has, 1,725, and that is correct: an index scan reads the index pages it walks as well as the table pages the entries point to. Skipping 59,960 entries meant about 1,700 table pages plus a few hundred index pages. Scanning the table and sorting reads 1,725 pages, so past some offset the index route is the more expensive one in pages. The planner chose it on its estimates, which is another reason to test a deep page and not only the first.</p>
+   <p>The deep offset page read 654 pages for the same 20 rows, and the cost keeps rising with the offset. The numbers understate real tables, because here orders were inserted in time order, so the rows being skipped sit side by side, about 35 to a page. On a table where neighbouring entries point to scattered rows, each skipped entry can cost its own page. The shape of the cost matters more than the figure: offset cost is proportional to depth, and a feed that visitors page through to the end, or a crawler that does, will find the deep pages.</p>
+
+   <h3 id="keyset-index">Keyset pages and the row comparison</h3>
+   <p>A keyset page starts from the last key the reader saw, so the database descends the index to that key and reads 20 entries forward. In PostgreSQL the continuation is a row comparison of the key columns:</p>
+   <Sql code={keysetPage} label="The next page after the last time and order ID the client received" />
+   <p>PostgreSQL turns <code>(placed_at, order_id) &lt; ($1, $2)</code> into a search condition on the index, so the plan shows it under <code>Index Cond</code>. The page after the 19,980th row read 4 pages, the same as the first. SQLite accepts the same row values and, in the version we ran (3.51.0), searched the index using the first column and checked the second as part of the scan. MySQL’s manual is less clear: its row-constructor page shows <code>(c2,c3) &gt; (1,1)</code> after an equality on <code>c1</code> using only the <code>c1</code> part of a three-column key, and gives the expanded form, <code>c2 &gt; 1 OR (c2 = 1 AND c3 &gt; 1)</code>, as the one that uses all three. In MySQL, write the continuation expanded and check <code>EXPLAIN</code> for the key length.</p>
+
+   <h3 id="keyset-traps">Mixed directions, NULL sort columns and the filter that scans</h3>
+   <p>A row comparison treats every column the same way, so it matches an index only when every sort column runs the same direction. If the feed is newest first and, within a time, lowest order ID first, there is no row comparison for it, and the expanded form takes its place:</p>
+   <Sql code={mixedBad} label="The expanded continuation that looks right and scans" />
+   <p>This is correct, and it was the slowest way to be correct: with an index on <code>(placed_at DESC, order_id ASC)</code> the plan was an index scan with the whole condition as a <code>Filter</code>, removing 19,980 entries before the first useful one, 654 pages, the same as an offset. The <code>OR</code> hides from the index the fact that every qualifying row has <code>placed_at</code> at or before the boundary. Add that fact as a plain range:</p>
+   <Sql code={mixedGood} label="The same continuation with a range the index can use" />
+   <p>Now the first condition goes under <code>Index Cond</code> and bounds the search, the original condition stays as a filter on the few rows with a tied time, and the page read 4 pages. The rule generalises to any number of columns: put the loosest bound on the leading column as a range the index can use, and keep the exact condition after it.</p>
+   <p>The other quiet failure is a sort column that allows NULL. Comparing anything with NULL gives unknown, so a row with a NULL <code>shipped_at</code> never satisfies <code>(shipped_at, id) &lt; ($1, $2)</code>. In a 20-row test where five rows had NULL, the comparison dropped all five. Either declare the sort column <code>NOT NULL</code>, or sort on a value that cannot be NULL such as <code>coalesce(shipped_at, 'infinity')</code> and index that expression, or write the NULL group out as its own case. The first is almost always right; a nullable sort key is usually a sign the list is really two lists.</p>
+   <p>Last, keep the pieces the page needs in the index key and nowhere else. A pagination index serves one filter and one order; the same list with a different sort needs its own index, which <a href={`${indexes}#design`}>Designing an index for a query</a> weighs against the write cost.</p>
+  </section>
+
+  <section id="conditions">
+   <h2>Conditions an index cannot see through</h2>
+   <p>An index holds the values of its columns, in order. A condition can use it only if the database can turn the condition into a position or a range in that order. Anything that changes the value before comparing it, or compares it in a different order from the index’s, leaves the database no position to jump to, and it reads the table. <a href={`${indexes}#ignored`}>When the database ignores an index</a> gives the checklist of causes. This section is the longer catalogue behind three of them, the wrapped column (<a href={`${indexes}#ignored-expression`}>The column is wrapped, converted or compared by pattern</a>), <a href={`${indexes}#ignored-like`}>prefix patterns and collation</a> and <a href={`${indexes}#ignored-or`}>an <code>OR</code> branch with no index</a>, with the numbers measured.</p>
+
+   <h3 id="bare-column">The column has to stand alone</h3>
+   <p>The indexed column must appear by itself on one side of the comparison. Wrap it in a function, arithmetic or a cast, and the database sees an expression whose values the index does not hold.</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-labelledby="sargable-caption"><table><caption id="sargable-caption">The same question written so that an index can and cannot answer it (PostgreSQL 18, 60,000 orders)</caption><thead><tr><th>Condition</th><th>Pages read</th><th>Why</th></tr></thead><tbody>
+    <tr><td><code>placed_at &gt;= '2026-02-01' AND placed_at &lt; '2026-02-02'</code>, index on <code>placed_at</code></td><td>49</td><td>A range of the stored values.</td></tr>
+    <tr><td><code>date_trunc('day', placed_at) = '2026-02-01'</code></td><td>1,725</td><td>The function’s result is not stored in the index.</td></tr>
+    <tr><td><code>customer_id = 42</code>, index on <code>customer_id</code></td><td>62</td><td>The stored value.</td></tr>
+    <tr><td><code>customer_id + 0 = 42</code></td><td>1,725</td><td>Arithmetic on the column.</td></tr>
+    <tr><td><code>customer_id::text = '42'</code></td><td>1,725</td><td>A cast of the column.</td></tr>
+    <tr><td><code>customer_id = 42::numeric</code></td><td>1,725</td><td>The integer column is cast to match the numeric value.</td></tr>
+    <tr><td><code>customer_id = 42::bigint</code></td><td>65</td><td>Integer and bigint share an operator family, so the column is not cast. The search touched a few more index pages than the integer form, but it is the same route.</td></tr>
+    <tr><td><code>customer_id &lt;&gt; 42</code> and <code>NOT IN (1, 2, 3)</code></td><td>1,725 each</td><td>Almost every row qualifies, so the index could not help.</td></tr>
+   </tbody></table></div>
+   <p>The remedy is to move the work to the other side of the comparison: compare the column with a range of values instead of comparing a function of the column with one value, and give the parameter the column’s own type. When the expression is the point, such as a case-insensitive match, index the expression itself and write the query with exactly that expression. <a href={`${indexes}#kinds`}>Indexes</a> shows that for <code>placed_at::date</code>.</p>
+   <p>The last row is about negation. A B-tree is searched for a value or a range, and “every value except 42” is two ranges at the two ends of the index, so a not-equal condition has no single place to start. It also usually keeps almost every row, which a scan handles at least as well. When the query really wants the rare rows, ask for them directly, <code>status = 'pending'</code>, or index them with a <a href="#queue">partial index</a>.</p>
+
+   <h3 id="types">Types, affinities and character sets have to agree</h3>
+   <p>A comparison between two types makes the database convert one of them. If the conversion applies to the indexed column, the index is out of the picture. The engines convert in different directions, so the surprise differs.</p>
+   <ul>
+    <li><strong>PostgreSQL</strong> compares an integer column with a bigint, or with a bare literal such as <code>'42'</code> whose type it works out from the column, through the index, as the table showed, but a numeric value forces the column up to numeric. It refuses outright to compare a text column with an integer, so the silent version of this mistake is mostly between numeric types, or through a driver that sends every parameter as numeric or text.</li>
+    <li><strong>MySQL</strong> converts in the way that costs the index. Its manual explains that a string column compared with a number cannot use its index, because a number such as 1 equals many strings, <code>'1'</code>, <code>' 1'</code> and <code>'00001'</code> among them. The same manual says that comparing two nonbinary string columns with different character sets, a <code>utf8mb4</code> column with a <code>latin1</code> one, precludes use of an index. That happens in a join between tables created years apart, and the plan shows <code>type: ALL</code> on the inner table.</li>
+    <li><strong>SQLite</strong> applies the column’s affinity to the value, so a <code>TEXT</code> column compared with the number 42 still searched its index in our test, and an expression on the column (<code>code + 0 = 42</code>) did not.</li>
+   </ul>
+   <p>For a join, the practical rule is the one MySQL’s manual states for any engine: declare joined columns with the same type, size and, for strings, the same character set and collation. It is also a data-quality rule, and costs nothing at design time.</p>
+
+   <h3 id="like">Prefix searches with <code>LIKE</code></h3>
+   <p>A search box that matches the start of a value, <code>WHERE email LIKE 'ab1%'</code>, should be a range read: all strings from <code>ab1</code> up to, but not including, <code>ab2</code>. Whether the database can turn the <code>LIKE</code> into that range depends on how the index orders strings, and an ordinary index in PostgreSQL often cannot.</p>
+   <p>A B-tree on text orders strings by a collation: a set of rules for which string comes first. Under a language collation, punctuation and case may be ignored on a first pass, so strings that share a prefix are not guaranteed to sit side by side. Only a collation that compares character by character, such as <code>"C"</code>, has the property the range needs. In PostgreSQL, the database default here was an ICU collation for American English, a common setup. The plain index was not used:</p>
+   <div class="table-scroll" role="region" tabindex="0" aria-labelledby="like-caption"><table><caption id="like-caption"><code>email LIKE 'ab1%'</code> on 60,000 accounts (13 matches) in a database with an English collation</caption><thead><tr><th>Index or query</th><th>Pages read</th></tr></thead><tbody>
+    <tr><td>No index</td><td>442</td></tr>
+    <tr><td>Default index on <code>(email)</code></td><td>442</td></tr>
+    <tr><td><code>(email text_pattern_ops)</code></td><td>16</td></tr>
+    <tr><td><code>(email COLLATE "C")</code></td><td>16</td></tr>
+    <tr><td><code>(lower(email) text_pattern_ops)</code>, query on <code>lower(email)</code></td><td>16</td></tr>
+    <tr><td>The same index, query with <code>ILIKE</code></td><td>442</td></tr>
+    <tr><td>Default index, <code>LIKE '%ab1%'</code> (156 matches)</td><td>442</td></tr>
+    <tr><td><code>gin (email gin_trgm_ops)</code>, <code>LIKE '%ab1%'</code></td><td>135</td></tr>
+   </tbody></table></div>
+   <p>PostgreSQL has two ways to give the index the right order. An operator class named <code>text_pattern_ops</code> compares strings character by character; its manual describes it as suited to <code>LIKE</code> when the database does not use the C locale. The index then serves <code>LIKE 'prefix%'</code> and equality, but not <code>&lt;</code>, <code>&gt;</code> or <code>ORDER BY</code> in the language’s order. The alternative is to declare the index with <code>COLLATE "C"</code>. The planner builds the range from the index’s collation, so a C-collated index served <code>LIKE</code> as written and the query needed no change. Choose that when you do not need the language order from this index.</p>
+   <Sql code={prefixIndex} label="An operator class for prefix matching under a language collation" />
+   <Sql code={cIndex} label="Or an index in the C collation" />
+   <p>If you also need the language order for sorting, keep both: an index can have one collation, and the default one still serves <code>ORDER BY</code> and ranges. A case-insensitive search needs the expression indexed, <code>lower(email)</code> with the pattern operator class, and every query must say <code>lower(email) LIKE ...</code>. <code>ILIKE</code> cannot use it.</p>
+   <p>A leading wildcard, <code>LIKE '%ab1%'</code>, has no prefix and no range, so no B-tree helps. PostgreSQL’s <code>pg_trgm</code> extension indexes every three-letter piece of each value in a GIN index and answers the search by combining those pieces; it read 135 pages instead of 442 for 156 matches, and the index took 471 pages against the B-tree’s 367. That is worth its size only for a search that needs it, and for natural-language search the full-text search covered in <a href="/learn/databases/relational/postgresql/full-text-search/">Full-text search in PostgreSQL</a> is the right tool.</p>
+   <p>The other engines have their own condition. MySQL’s manual says a <code>LIKE</code> is a range condition on a B-tree index when its argument is a constant string that does not start with a wildcard; the index’s collation decides case. A pattern that starts with a wildcard is not a range at all, so the index is scanned or ignored. SQLite is the strictest. Its <code>LIKE</code> is case-insensitive for ASCII by default, so the optimization applies only when the column’s index uses the <code>NOCASE</code> collation, or, after <code>PRAGMA case_sensitive_like=ON</code>, when it uses <code>BINARY</code>. In our test an ordinary SQLite index was ignored for <code>LIKE 'ab1%'</code>, and an index declared <code>COLLATE NOCASE</code> was used. Its other conditions are small: the pattern must not start with a digit or a minus sign unless the column has text affinity, and <code>GLOB</code>, which is always case-sensitive, uses an ordinary index.</p>
+   <h3 id="prefix-indexes">Long text keys and MySQL prefix indexes</h3>
+   <p>A text key is as wide as the text, and every entry stores it. MySQL puts a limit on that: an InnoDB index key prefix may be 3,072 bytes for tables in the <code>DYNAMIC</code> or <code>COMPRESSED</code> row format and 767 for <code>REDUNDANT</code> or <code>COMPACT</code>, and the manual says the limit scales down for smaller page sizes. A <code>TEXT</code> or <code>BLOB</code> column cannot be indexed without saying how much of it, and a <code>VARCHAR(255)</code> in <code>utf8mb4</code>, which can take four bytes a character, is where the byte limit starts to matter. The syntax is <code>INDEX (email(20))</code>, and the number counts characters for text columns, not bytes. PostgreSQL has a limit too, about a third of a page per entry, which an entry of a few kilobytes of text exceeds.</p>
+   <p>A prefix index trades accuracy for size. Per the manual, if the search value is longer than the prefix, the index excludes non-matching rows and MySQL checks the rest in the table. So a prefix index can narrow an equality or a <code>LIKE 'ab1%'</code> search, but it cannot cover a query, because the full value is not in the index, and the loose index scan above does not work on one. Choose a prefix long enough that few values share it. Comparing <code>count(DISTINCT email)</code> with <code>count(DISTINCT left(email, 20))</code> shows how much a prefix of 20 loses.</p>
+  </section>
+
+  <section id="combining">
+   <h2>Combining conditions with OR and AND</h2>
+   <p>A single B-tree answers a question about its leading columns. A query that combines conditions on different columns asks several questions at once, and the database has two ways to answer: one composite index that fits the whole condition, or several indexes whose answers are combined.</p>
+
+   <h3 id="or">OR</h3>
+   <p>An <code>OR</code> that compares the same column with several values, <code>customer_id = 42 OR customer_id = 43</code>, is an <code>IN</code> list, and the database treats it as one: PostgreSQL searched the customer index once per value (65 pages for two customers, 66 for three) and SQLite rewrites it to <code>IN</code> itself. An <code>OR</code> across different columns is a different matter. No single index is sorted by both conditions, so the database needs one index search for each side and then a way to merge the results.</p>
+   <Sql code={orQuery} label="One customer’s orders, or one order by ID" />
+   <p>PostgreSQL does this with a <strong>bitmap</strong> for each side, as in <a href={`${indexes}#combining`}>Combining indexes</a>: it searched the customer index and the primary key index, merged the two sets of row locations with a <code>BitmapOr</code> node, and fetched the rows once, 65 pages for 61 rows. MySQL’s plan for the same shape reports <code>index_merge</code> with <code>Using union(...)</code> in <code>Extra</code>, and SQLite reports <code>MULTI-INDEX OR</code>, which its manual describes as the exception to using one index per table. All three need an index for every branch, and all three decide by cost.</p>
+   <p>That last point is where <code>OR</code> hurts. If one branch has no index, the whole condition becomes a scan, because the database has to find that branch’s rows by reading the table anyway. <code>customer_id = 42 OR total = 19.99</code>, with <code>total</code> unindexed, read all 1,725 pages. And a branch that is indexed but not selective drags the plan with it: <code>customer_id = 42 OR status = 'pending'</code> matched 12,048 rows, a fifth of the table, and read 427 pages.</p>
+   <p>When the branches are better handled separately, write them separately. A <code>UNION</code> of the two queries lets each use its best index and removes duplicates, and a <code>UNION ALL</code> with a condition that excludes the overlap skips the removal. For the example above all three forms read about 66 pages, so the rewrite pays only when the optimizer chooses badly for the combined condition, and MySQL’s manual itself suggests distributing deeply nested <code>AND</code>/<code>OR</code> terms when an index merge goes wrong.</p>
+   <Sql code={unionQuery} label="The same question as two index searches joined by UNION" />
+
+   <h3 id="and">AND across separate indexes</h3>
+   <p>For <code>AND</code>, a composite index is usually the better answer, but two single-column indexes can answer it. PostgreSQL builds a bitmap from each and keeps the row locations in both with a <code>BitmapAnd</code> node; MySQL’s equivalent is <code>Using intersect(...)</code>. SQLite uses one index per table for an <code>AND</code> and tests the remaining conditions on the rows it fetches.</p>
+   <p>For customers 40 to 59 with a total between 20.00 and 22.00, indexes on <code>customer_id</code> and on <code>total</code> separately were combined with a <code>BitmapAnd</code> and read 20 pages for 140 rows. Either index alone would have read 96 and 53 pages, and a composite <code>(customer_id, total)</code> read 23. They are close, and the choice follows from what else the query needs:</p>
+   <ul>
+    <li>Several single-column indexes serve any pair of conditions, and a table with a dozen columns that users filter in any combination cannot have a composite index for each combination. A set of single-column indexes with bitmap combination is a reasonable design for that case, as it is for ad-hoc filter screens.</li>
+    <li>A composite index serves the combinations it was built for, and nothing else, but reads fewer pages when the conditions are combined with an equality on the leading column. It is also the only one of the two that can supply an order. A combined bitmap returns rows in table order, so an <code>ORDER BY</code> still needs a sort, and a <code>LIMIT</code> cannot stop early. The order list at the start of this article was 62 pages with a single-column index and 23 with the composite for that reason.</li>
+    <li>When a range filter and an equality are applied to one customer’s rows, as in customer 42 with a date range, the composite <code>(customer_id, placed_at)</code> read 17 pages where the customer index alone read 62, because the range is applied inside the index before any row is fetched.</li>
+   </ul>
+  </section>
+
+  <section id="shapes">
+   <h2>Shapes that recur: queues, soft deletes and tenants</h2>
+   <p>Three patterns come up in most applications, and each is a way of choosing which entries the index holds.</p>
+
+   <h3 id="queue">A queue of work</h3>
+   <p>A table of jobs has a state, and workers repeatedly claim the oldest job in the <code>queued</code> state. Almost every row is <code>done</code> and is never read again. An index on <code>(state, created_at)</code> carries an entry for every job ever run; a <a href={`${indexes}#kinds`}>partial index</a> carries only the queued ones.</p>
+   <Sql code={queueIndex} label="An index that holds only the jobs waiting to run" />
+   <Sql code={claim} label="Claim the oldest queued job" />
+   <p>With 600 queued jobs among 60,000, the claim query read 3 pages through the partial index and 4 through the full one, so the read side hardly differs. The difference is size and write cost: the partial index was 4 pages and the full index 234. Every insert and every state change writes into the large index, while the partial index is touched only when a job enters or leaves the queued state.</p>
+   <p>Two conditions must hold. The query has to imply the index’s condition, which means writing <code>state = 'queued'</code>: <code>state &lt;&gt; 'done'</code> says something close but not the same, and PostgreSQL read 1,164 pages and sorted. And the condition cannot be a parameter that is unknown when the plan is made. A prepared statement with <code>state = $1</code> and a generic plan scanned and sorted the table, because a plan that must work for any value cannot assume the partial index holds the right rows. The custom plans PostgreSQL makes for the first few executions did use it. Write the literal into the query, or check the plan with the same parameter mode the application uses, as <a href="/learn/databases/relational/postgresql/query-execution/#parameters">Planning and executing a query</a> explains. MySQL has no partial indexes, so there the choice is the full index or a separate small table of queued work.</p>
+
+   <h3 id="soft-delete">Uniqueness among the live rows</h3>
+   <p>A table that marks deleted rows instead of removing them breaks the usual unique constraint. If a deleted account’s email must be reusable by a new account, a unique index on <code>email</code> refuses it. The index should cover only the live rows, which a partial unique index does:</p>
+   <Sql code={softDelete} label="A unique index that ignores deleted rows" />
+   <p>We inserted an account, marked it deleted, and inserted a new account with the same address: it was accepted. A third insert with the address in a different case failed with a duplicate key error on <code>lower(email)</code>, because the index is on the lowercased value and the second account was live. The same pattern gives “one active subscription per customer” with a unique index on <code>customer_id</code> where <code>status = 'active'</code>. SQLite supports partial unique indexes. MySQL does not; the usual workaround there is a generated column that is NULL for deleted rows and the value otherwise, with a unique index on it, since a unique index allows several NULLs.</p>
+
+   <h3 id="tenants">Tenants and skewed data</h3>
+   <p>A multi-tenant table is filtered by a tenant in nearly every query, so the tenant is the equality column and goes first, with the sort or range column after it: <code>(tenant_id, created_at DESC)</code>. That is the same rule as for customers. What differs is skew. One large tenant can hold half the table while the other 500 share the rest.</p>
+   <Sql code={tenantIndex} label="The tenant first, then the sort column" />
+   <p>In a table of 60,000 events where tenant 1 owns half, the newest 20 events of the large tenant read 4 pages and of a small one 24, both reading 20 rows. The larger tenant’s rows are interleaved in the table, so the 20 rows share pages. Reading a tenant’s whole history shows the other side: the small tenant’s 120 events cost 124 pages through the index, and the large tenant’s 30,000 events caused a sequential scan of all 1,091 pages. That is the right plan, since half the table is in the answer, and it is why one query can have two plans depending on who asks. If an index on <code>created_at</code> alone were used instead, the large tenant would be fast, 3 pages, since its events appear every second row, but a small tenant’s newest 20 needed 210 pages as the scan walked through other tenants’ rows looking for them. The tenant belongs in the index.</p>
+   <p>Statistics decide which plan each tenant gets, and a skewed column needs fresh ones: <a href="/learn/databases/relational/slow-queries/">Understanding database performance</a> works through a stale statistics case. For tables that only grow in time order, such as logs, a BRIN index can replace the time index at a fraction of the size, which <a href="/learn/databases/relational/postgresql/indexes/#brin">Indexes in PostgreSQL</a> measures.</p>
+  </section>
+
+  <section id="run">
+   <h2>Where the numbers come from</h2>
+   <p>Every page count was taken on PostgreSQL 18.6 running natively on a laptop, not the PGlite build behind the numbers in Indexes, with <code>EXPLAIN (ANALYZE, BUFFERS)</code>, adding the shared buffers hit and read for the whole plan. The database used ICU collation for American English. The tables are generated: 1,000 customers, 60,000 orders (the table from Indexes), 60,000 accounts with hexadecimal email addresses, a queue of 60,000 jobs of which 600 are queued, and 60,000 events across 501 tenants with one holding half. The numbers are page counts, not timings, and they show what each index saves, not how fast anything runs. The delete timing for SQLite is the one exception, and is rough.</p>
+   <p><a href={experimentUrl} download="indexing-queries-experiment.sql">Download the experiment script</a> and run it with <code>psql -f indexing-queries-experiment.sql</code> in a scratch database. It builds the tables, defines a small <code>pages()</code> helper, and prints each measurement under a heading for the section it belongs to. Counts may differ slightly with a different version, collation or table layout.</p>
+   <p>No InnoDB or MySQL measurement was taken. What this article says about MySQL 8.4 comes from its manual, and where the manual is silent the text says so. SQLite plans were read with <code>EXPLAIN QUERY PLAN</code> in SQLite 3.51.0, the version on the test machine; other articles in this collection may name a newer release, and nothing here depends on the difference. The SQLite delete timing came from one run on a 600,000-row child table.</p>
+  </section>
+
+  <section class="essay-sources" id="further-reading">
+   <h2>Sources and further reading</h2>
+   <p>Checked on 17 October 2026 against the PostgreSQL 18, MySQL 8.4 and SQLite documentation.</p>
+   <ul>
+    <li><a href={`${docs}indexes-ordering.html`}>Indexes and ORDER BY</a> and <a href={`${docs}indexes-multicolumn.html`}>Multicolumn indexes</a>: when a B-tree supplies an order, and which conditions limit how much of it is read.</li>
+    <li><a href={`${docs}queries-limit.html`}>LIMIT and OFFSET</a> and <a href={`${docs}functions-comparisons.html#ROW-WISE-COMPARISON`}>Row-wise comparison</a>: why skipped rows still cost, and how the key pair is compared.</li>
+    <li><a href={`${docs}ddl-constraints.html#DDL-CONSTRAINTS-FK`}>Foreign keys</a>: why PostgreSQL leaves the referencing index to you.</li>
+    <li><a href={`${docs}indexes-opclass.html`}>Operator classes</a>, <a href={`${docs}indexes-collations.html`}>Indexes and collations</a> and <a href={`${docs}pgtrgm.html`}>pg_trgm</a>: <code>text_pattern_ops</code>, collations and trigram search.</li>
+    <li><a href={`${docs}indexes-bitmap-scans.html`}>Combining multiple indexes</a> and <a href={`${docs}indexes-partial.html`}>Partial indexes</a>: bitmap AND and OR, and the rule that the query must imply the index condition.</li>
+    <li><a href={`${mysql}column-indexes.html`}>Column indexes</a>, <a href={`${mysql}innodb-limits.html`}>InnoDB limits</a> and <a href={`${mysql}group-by-optimization.html`}>GROUP BY optimization</a>: index prefixes, the key length limits, and the loose index scan.</li>
+    <li><a href={`${mysql}order-by-optimization.html`}>ORDER BY optimization</a>, <a href={`${mysql}index-merge-optimization.html`}>Index merge</a>, <a href={`${mysql}row-constructor-optimization.html`}>Row constructor expressions</a>, <a href={`${mysql}range-optimization.html`}>Range optimization</a>, <a href={`${mysql}create-table-foreign-keys.html`}>Foreign key constraints</a> and <a href={`${mysql}mysql-indexes.html`}>How MySQL uses indexes</a>: the MySQL 8.4 rules this article quotes.</li>
+    <li><a href={`${sqlite}optoverview.html`}>The SQLite query optimizer overview</a> and <a href={`${sqlite}foreignkeys.html`}>SQLite foreign key support</a>: the <code>LIKE</code> conditions, the multi-index <code>OR</code>, and the child key index.</li>
+    <li><a href={indexes}>Indexes</a>: the structure and costs this article applies.</li>
+    <li><a href={pagination}>Pagination and large results</a>: what each pagination method promises while rows change.</li>
+    <li><a href={execution}>How a query runs</a>: the join algorithms behind the nested loop used here.</li>
+    <li><a href="/learn/databases/relational/postgresql/indexes/">Indexes in PostgreSQL</a>: operator classes, GIN, BRIN and concurrent builds.</li>
+   </ul>
+  </section>
+</ArticleBody>
+ </article>
+</Base>

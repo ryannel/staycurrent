@@ -226,7 +226,7 @@ const walSteps = (): Step<ServerState>[] => [
   { text: 'COMMIT appends a commit record for transaction 812. Nothing has reached the disk yet.', state: S({ sent: 'COMMIT', reply: { text: 'waiting…', kind: 'wait' }, buf: updated(), walBuf: [UPD, COMMIT] }) },
   { text: 'PostgreSQL writes the WAL buffers to the WAL file and asks the operating system to flush it to disk. It waits for the disk to confirm.', state: S({ sent: 'COMMIT', reply: { text: 'waiting…', kind: 'wait' }, buf: committed(), walDisk: [EARLIER, UPD, COMMIT], arrow: 'flush' }) },
   { text: 'Only now does the application hear COMMIT. The table file still says 20.00.', state: S({ sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: committed(), walDisk: [EARLIER, UPD, COMMIT] }) },
-  { text: 'Later, a checkpoint, PostgreSQL’s periodic write of dirty pages, writes page 12 to the table file. The page is clean again.', state: S({ sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: committed(false), disk: committed(false, 'buf'), walDisk: [EARLIER, UPD, COMMIT], arrow: 'write' }) },
+  { text: 'Later, one of PostgreSQL’s background processes writes page 12 to the table file. The page is clean again.', state: S({ sent: 'COMMIT', reply: { text: '← COMMIT', kind: 'ok' }, buf: committed(false), disk: committed(false, 'buf'), walDisk: [EARLIER, UPD, COMMIT], arrow: 'write' }) },
 ];
 
 export const walCommit: Scene<ServerState> = {

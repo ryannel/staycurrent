@@ -1,0 +1,138 @@
+---
+import IndexFigure from './IndexFigure.astro';
+import Segmented from './Segmented.astro';
+const { number = 12 } = Astro.props;
+---
+<IndexFigure tag="ix-leading-figure" number={number} title="A composite index searched without its first column">
+ <pre slot="query"><code data-sql>SELECT * FROM orders
+WHERE placed_at BETWEEN '20 Jan' AND '24 Jan';</code></pre>
+ <Segmented slot="params" name="cond" label="Condition on" value="date" options={[
+  { value: 'date', label: 'placed_at only' },
+  { value: 'both', label: 'customer_id and placed_at' },
+ ]} />
+ The tree from the range scan, now an index on <code>(customer_id, placed_at)</code>: each entry shows a customer above an order date. Table fetches are left out. Watch where the search starts and how far it reads.
+ <span slot="fallback">With a condition on placed_at only, the search has no customer_id to look for, so it starts at the first leaf page and tests every entry: all 36 entries on all six leaf pages, to find the five orders placed from 20 to 24 January, one each for customers 16, 27, 42, 64 and 79. With customer_id = 42 as well, it descends straight to leaf page 4, reads (42, 21 Jan), and stops at the next entry, (42, 5 Feb). On the 60,000-order table, a 30-minute window of orders read 234 pages through an index on (customer_id, placed_at), every leaf page of the index among them, and 5 pages through an index on placed_at. Naming customer 650 as well, whose one order falls in that window, read 4 pages through the first index.</span>
+</IndexFigure>
+
+<script>
+ import { IndexFigure, canvas, svg, type Frame, type Layout } from './player';
+ import { customerIndex, root, branches, slotFor, dayLabel, PAGE_ROWS } from './model';
+ import { indexPanel, indexWidth, panelHeight, setCell, readHead, moveHead, G, cellY, gridWidth, type IndexPanel } from './scene';
+
+ type Mode = 'date' | 'both';
+ type Phase = 'start' | 'root' | 'branch' | 'scan' | 'stop' | 'end';
+ interface LeadFrame extends Frame { phase: Phase; pos: number }
+ const FROM = 20, TO = 24, CUSTOMER = 42;
+ const inDates = (day: number) => day >= FROM && day <= TO;
+ const SQL: Record<Mode, string> = {
+  date: "SELECT * FROM orders\nWHERE placed_at BETWEEN '20 Jan' AND '24 Jan';",
+  both: "SELECT * FROM orders\nWHERE customer_id = 42\n  AND placed_at BETWEEN '20 Jan' AND '24 Jan';",
+ };
+
+ class LeadingFigure extends IndexFigure<LeadFrame> {
+  panel!: IndexPanel;
+  links: SVGPathElement[] = [];
+  head!: SVGRectElement;
+  get mode() { return this.param('cond') as Mode; }
+  /** Where the scan starts: the first entry, or the first (42, date ≥ 20 Jan). */
+  first(mode: Mode) {
+   return mode === 'date' ? 0 : customerIndex.findIndex((o) => o.customer === CUSTOMER && o.day >= FROM);
+  }
+  matches(mode: Mode, i: number) {
+   const o = customerIndex[i];
+   return inDates(o.day) && (mode === 'date' || o.customer === CUSTOMER);
+  }
+  build(): LeadFrame[] {
+   const mode = this.mode;
+   this.querySelector('[data-sql]')!.textContent = SQL[mode];
+   const frames: LeadFrame[] = [];
+   const first = this.first(mode);
+   if (mode === 'date') {
+    frames.push(
+     { phase: 'start', pos: -1, hold: 1800, short: 'No customer_id to look for.', note: 'The entries are sorted by customer_id first. The query gives no customer_id, so the search has no key to look for in the tree.' },
+     { phase: 'root', pos: -1, hold: 1300, short: 'Root page: take the first pointer.', note: 'Root page: with nothing to compare, the search takes the first pointer, towards the smallest customer_id.' },
+     { phase: 'branch', pos: -1, hold: 1300, short: 'Branch page: on to leaf page 1.', note: 'Branch page: the first pointer again, to leaf page 1. From here the only way to find the dates is to test every entry.' },
+    );
+    let found = 0;
+    customerIndex.forEach((o, i) => {
+     const crossed = i > 0 && i % PAGE_ROWS === 0;
+     const hit = inDates(o.day);
+     if (hit) found++;
+     const entry = `(${o.customer}, ${dayLabel(o.day)})`;
+     const lead = crossed ? `Follow the link to leaf page ${i / PAGE_ROWS + 1}. ` : '';
+     frames.push({ phase: 'scan', pos: i, quick: true, hold: hit ? 1100 : crossed ? 700 : 260,
+      short: hit ? `${entry}: a match.` : `${entry}: skip.`,
+      note: `${lead}Entry ${entry}: ${hit ? 'placed in range. A match.' : 'outside the dates. Test the next entry.'}` });
+    });
+    frames.push({ phase: 'end', pos: customerIndex.length, hold: 3000, short: `All 36 entries tested for ${found} matches.`,
+     note: `The scan reached the end of the last leaf page: all 36 entries on all six leaf pages tested, to find ${found} matches. They sit in five different customers’ runs, because the dates are sorted only within each customer.` });
+   } else {
+    const r = slotFor(root, CUSTOMER);
+    const b = slotFor(branches[r.child], CUSTOMER);
+    frames.push(
+     { phase: 'start', pos: -1, hold: 1500, short: 'Look for (42, 20 Jan).', note: 'Now the query fixes customer_id, so the search looks for (42, 20 Jan): customer 42’s first entry on or after 20 January.' },
+     { phase: 'root', pos: -1, hold: 1200, short: 'Root page.', note: 'Root page: 42 is not below 42, so follow the ≥ 42 pointer.' },
+     { phase: 'branch', pos: -1, hold: 1200, short: `Branch page: go to leaf page ${b.child + 1}.`, note: `Branch page: 42 falls in ${b.label}, so go to leaf page ${b.child + 1}.` },
+    );
+    for (let i = first; i < customerIndex.length; i++) {
+     const o = customerIndex[i];
+     const entry = `(${o.customer}, ${dayLabel(o.day)})`;
+     if (!this.matches(mode, i)) {
+      frames.push({ phase: 'stop', pos: i, hold: 2400, short: `${entry} is past the range: stop.`, note: `The next entry, ${entry}, is past 24 January. Customer 42’s entries are in date order, so nothing later can match: 3 index pages and 2 entries read, for 1 match.` });
+      break;
+     }
+     frames.push({ phase: 'scan', pos: i, hold: 1300, short: `${entry}: a match.`, note: `The search lands on ${entry}, the first entry at or after (42, 20 Jan). A match.` });
+    }
+   }
+   return frames;
+  }
+  draw(layout: Layout) {
+   const w = indexWidth(true) + 22;
+   const svgRoot = canvas(this.stage, w, panelHeight + 6, 'A B-tree index on customer_id and placed_at, with links between neighbouring leaf pages. Without a customer_id, the search starts at the first leaf page and reads every entry.', 1.3);
+   svgRoot.toggleAttribute('data-dates', true);
+   const heading = layout === 'narrow' ? '(customer_id, placed_at)' : 'leaf pages · (customer_id, placed_at)';
+   this.panel = indexPanel(svgRoot, 4, 2, customerIndex, { title: heading, tree: true, sub: (o) => dayLabel(o.day) });
+   this.links = [];
+   const x = this.panel.gridX + gridWidth + 4;
+   for (let r = 0; r < 5; r++) {
+    const y1 = cellY(r) + G.ch / 2, y2 = cellY(r + 1) + G.ch / 2;
+    const path = svg('path', { class: 'ix-sibling', d: `M ${x} ${y1} C ${x + 13} ${y1}, ${x + 13} ${y2}, ${x} ${y2}` }) as SVGPathElement;
+    this.panel.group.append(path);
+    this.links.push(path);
+   }
+   this.head = readHead(this.panel.group);
+  }
+  render(frame: LeadFrame) {
+   const mode = this.mode;
+   const order: Phase[] = ['start', 'root', 'branch', 'scan', 'stop', 'end'];
+   const at = order.indexOf(frame.phase);
+   const r = mode === 'date' ? root[0] : slotFor(root, CUSTOMER);
+   const b = mode === 'date' ? branches[0][0] : slotFor(branches[r.child], CUSTOMER);
+   this.panel.rootSlots.forEach((g, i) => g.setAttribute('data-state', at >= 1 && i === r.child ? 'chosen' : at === 0 ? 'reading' : ''));
+   this.panel.branchSlots.forEach((list, bi) => list.forEach((g, si) => g.setAttribute('data-state', at >= 2 && bi === r.child && branches[bi][si].child === b.child ? 'chosen' : '')));
+   const first = this.first(mode);
+   const firstLeaf = Math.floor(first / PAGE_ROWS);
+   const last = customerIndex.length - 1;
+   const currentLeaf = frame.pos >= 0 ? Math.floor(Math.min(frame.pos, last) / PAGE_ROWS) : at >= 2 ? b.child : -1;
+   this.panel.leafRows.forEach((rect, li) => rect.setAttribute('data-state', li === currentLeaf && frame.phase !== 'end' ? 'current' : li >= firstLeaf && (li < currentLeaf || (frame.phase === 'end' && li <= currentLeaf)) ? 'read' : ''));
+   this.links.forEach((path, li) => path.setAttribute('data-state', li >= firstLeaf && li < currentLeaf ? 'used' : ''));
+   let tested = 0, found = 0;
+   customerIndex.forEach((o, i) => {
+    const c = this.panel.cells.get(o.id);
+    const read = frame.pos >= 0 && i >= first && i <= frame.pos;
+    if (read) tested++;
+    if (read && this.matches(mode, i)) found++;
+    if (!read) setCell(c, '');
+    else if (i === frame.pos && frame.phase === 'scan') setCell(c, this.matches(mode, i) ? 'match' : 'reading');
+    else setCell(c, this.matches(mode, i) ? 'match' : 'reject');
+   });
+   const current = (frame.phase === 'scan' || frame.phase === 'stop') ? this.panel.cells.get(customerIndex[frame.pos].id)! : null;
+   moveHead(this.head, current ? [current.x, current.y] : null);
+   const leavesRead = at < 2 ? 0 : currentLeaf - firstLeaf + 1;
+   const pages = at < 1 ? 0 : at === 1 ? 1 : 2 + leavesRead;
+   this.counters([['index pages read', `${pages} of 9`], ['entries tested', tested], [found === 1 ? 'match' : 'matches', found, true]]);
+   this.scale(mode === 'date' ? 'every leaf page, 234 pages in all, for 30 rows; 5 pages with an index on placed_at' : '4 pages for customer 650’s one order in it', 'At 60,000 orders, a 30-minute window:');
+  }
+ }
+ if (!customElements.get('ix-leading-figure')) customElements.define('ix-leading-figure', LeadingFigure);
+</script>

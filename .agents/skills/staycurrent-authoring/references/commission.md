@@ -6,11 +6,17 @@ Keep it short enough that the central reader need stays visible.
 
 - **Reader and question:** starting knowledge, why they arrived, and the bounded
   question the article answers.
-- **Outcome:** what they should be able to explain, predict, diagnose, choose, or do.
-  A slightly different case can help reveal whether the idea transfers.
+- **Outcome:** what an expert practitioner can explain, predict, diagnose, choose or
+  do with these parts. A slightly different case can help reveal whether the idea
+  transfers.
+- **Parts and neighbours:** the parts of the collection's coverage map this article
+  owns, roughly what each needs (a mechanism with figures, a set of worked examples,
+  a sentence), and the neighbouring parts to link to rather than teach. The writer
+  may find the map wrong; ask them to report the change rather than work around it.
 - **Content job and scope:** field orientation, family introduction, explanation,
   practical work, comparison, product depth, or current assessment. Name tempting
-  adjacent topics that belong elsewhere.
+  adjacent topics that belong elsewhere, including neighbouring fields the example
+  touches but the subject doesn't need.
 - **Example and evidence:** the scenario or dataset, important invariants, claims
   requiring research, product/version boundaries, and commands to reproduce if any.
 - **Supporting media:** where the reader needs to see a relationship or vary an

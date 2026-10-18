@@ -4,11 +4,11 @@ Write plainly about what you understood, what made that understanding possible,
 and where it failed. Keep an observation distinct from a suggested repair. There
 is no prose score or sentence formula to satisfy.
 
-The project's broad writing references are
-[Sam Who's Load Balancing](https://samwho.dev/load-balancing/),
-[Bartosz Ciechanowski's Gears](https://ciechanow.ski/gears/), and
-[Julia Evans on teaching with cartoons](https://jvns.ca/teach-tech-with-cartoons/).
-They are examples of patient, concrete explanation, not voices to impersonate.
+The project's voice is inspired by
+[Sam Who's Memory Allocation](https://samwho.dev/memory-allocation/) and
+[Load Balancing](https://samwho.dev/load-balancing/), and by
+[Bartosz Ciechanowski's Gears](https://ciechanow.ski/gears/). They are examples of
+patient, concrete explanation built around a running model, not voices to impersonate.
 A blind comprehension test does not require opening them to learn the subject
 being tested; use only the supplied artifact for that interpretation.
 

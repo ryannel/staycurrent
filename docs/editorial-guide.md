@@ -105,8 +105,7 @@ explanation.
 
 Use Sam Who's controlled experiments and Ciechanowski's progressively built
 models as the principal format references. Learn from their pacing, generous
-space for the models, focused controls, and visible consequences. Julia Evans
-is the reference for concrete scenes and direct explanations. Make original
+space for the models, focused controls, and visible consequences. Make original
 assets and examples rather than copying their published work.
 
 Build a diagram as the explanation grows. Reuse the same rows, keys, requests,
@@ -263,5 +262,6 @@ Read on 2026-10-02.
   behaviour visible in the simulations.
 - [Bartosz Ciechanowski: Gears](https://ciechanow.ski/gears/) develops its
   explanation through small models the reader can inspect and manipulate.
-- [Julia Evans: How to teach technical concepts with cartoons](https://jvns.ca/teach-tech-with-cartoons/)
-  discusses concrete scenes and focused drawings as tools for explanation.
+- [Sam Who: Memory Allocation](https://samwho.dev/memory-allocation/) carries one
+  running model through the piece and lets the reader watch each behaviour before
+  naming it.

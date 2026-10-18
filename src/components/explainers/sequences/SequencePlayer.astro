@@ -2,13 +2,17 @@
 /*
  * One animated sequence diagram. The server renders the finished diagram for the
  * default settings, so the figure reads without JavaScript; the script adds playback.
+ * `source`, when given, is the figure's Mermaid text, kept in a closed disclosure so
+ * readers can copy it without it interrupting the reading.
  */
+import { Code } from 'astro:components';
 import { scenarios, defaults, layout, renderSVG, events, stops } from './sequence-model';
+import './async-scenarios';
 import '../../../styles/explorables.css';
 import './sequences.css';
 
-interface Props { scenario: string; n: number }
-const { scenario, n } = Astro.props;
+interface Props { scenario: string; n: number; source?: string; sourceLabel?: string }
+const { scenario, n, source, sourceLabel = 'Mermaid source' } = Astro.props;
 const def = scenarios[scenario];
 if (!def) throw new Error(`Unknown sequence scenario: ${scenario}`);
 const s = def.build(defaults(def));
@@ -55,15 +59,26 @@ const ticks = stops(s);
       <summary>Messages in order, as text</summary>
       <ol data-transcript>{ev.map(e => <li>{e.text}</li>)}</ol>
     </details>
+    {source && (
+      <details class="seq-transcript seq-source">
+        <summary>{sourceLabel}</summary>
+        <Code code={source} lang="mermaid" themes={{ light: 'github-light', dark: 'github-dark' }} />
+      </details>
+    )}
   </figure>
 </seq-player>
 
 <script>
-  import { scenarios, defaults, layout, renderSVG, updateSVG, events, stops, clockAt, formatMs } from './sequence-model';
-  import type { Scenario, Layout, Event } from './sequence-model';
+  import { scenarios, defaults, layout, renderSVG, updateSVG, events, stops, stopOf, clockAt, formatMs } from './sequence-model';
+  import './async-scenarios';
+  import type { Scenario, Layout, Event, Item, Msg, Note } from './sequence-model';
 
   // How long a line of narration stays up during playback: about 230 words a minute.
   const holdFor = (text: string) => 900 + text.length * 45;
+  // Items that sit on a row, and a key that finds the same item in a rebuilt scenario.
+  const rowed = (it: Item): it is Msg | Note => it.type === 'msg' || it.type === 'note';
+  const keyOf = (it: Msg | Note) => it.type === 'msg' ? `${it.from}>${it.to}:${it.label}` : `note:${it.over.join(',')}`;
+  const MORPH_MS = 900;
 
   class SeqPlayer extends HTMLElement {
     connectedCallback() {
@@ -90,11 +105,20 @@ const ticks = stops(s);
       let T = 0, width = 0, raf = 0, timer = 0, lastFrame = 0;
       let playing = false, target: number | null = null, touched = false, resumeOnReturn = false;
       let shown = '', shownAt = 0, holdUntil = 0;
+      let morphEnd: (() => void) | null = null;
+      // `stepT[k]` is when step k is shown. Events are already in that order, and the last step is the
+      // finished drawing, so every step, including the last, looks different from the one before.
+      let stepT: number[] = [];
+      let firstT0 = 0;
 
       const build = () => {
         s = def.build(params);
         ev = events(s);
         st = stops(s);
+        stepT = [];
+        ev.forEach((e, i) => stepT.push(Math.max(i ? stepT[i - 1] : 0, stopOf(e))));
+        if (stepT.length) stepT[stepT.length - 1] = Math.max(stepT[stepT.length - 1], s.duration);
+        firstT0 = Math.min(...ev.map(e => e.t0));
         scrub.max = String(s.duration);
         ticks.innerHTML = st.map(t => `<span style="left:${(t / s.duration) * 100}%"></span>`).join('');
         transcript.replaceChildren(...ev.map(e => { const li = document.createElement('li'); li.textContent = e.text; return li; }));
@@ -106,7 +130,12 @@ const ticks = stops(s);
         stage.innerHTML = renderSVG(s, L, T, uid, aria);
         svg = stage.querySelector('svg');
       };
-      const stepAt = () => { let k = -1; ev.forEach((e, i) => { if (e.t0 <= T + 1e-6) k = i; }); return k; };
+      // The step being shown or played towards: none before anything starts, then the first step not yet passed.
+      const stepAt = () => {
+        if (!ev.length || T + 1e-6 < firstT0) return -1;
+        const k = stepT.findIndex(t => t >= T - 1e-6);
+        return k < 0 ? ev.length - 1 : k;
+      };
       const setPlayLabel = () => {
         const atEnd = T >= s.duration - 1e-3;
         playText.textContent = playing ? 'Pause' : atEnd ? 'Replay' : 'Play';
@@ -124,7 +153,40 @@ const ticks = stops(s);
         scrub.setAttribute('aria-valuetext', k < 0 ? 'Start' : `Step ${k + 1} of ${ev.length}`);
         setPlayLabel();
       };
+      // Finish a row morph at once, so nothing is left halfway between two drawings.
+      const finishMorph = () => { const end = morphEnd; morphEnd = null; end?.(); };
+      // Show the whole new drawing, sliding each item that changed row from where it was in `from`.
+      const morph = (from: Scenario) => {
+        const was = new Map<string, number>();
+        for (const it of from.items) if (rowed(it)) was.set(keyOf(it), it.row);
+        const moves = s.items.filter(rowed).flatMap(it => {
+          const a = was.get(keyOf(it));
+          return a !== undefined && a !== it.row ? [{ it, a, b: it.row }] : [];
+        });
+        T = s.duration;
+        const note = def.morphNote?.(params);
+        const done = () => {
+          moves.forEach(m => { m.it.row = m.b; });
+          render(); draw();
+          if (note) { now.textContent = note; shown = note; }
+        };
+        if (motion.matches || !moves.length) { done(); return; }
+        const start = performance.now();
+        const step = (time: number) => {
+          const p = Math.min(1, (time - start) / MORPH_MS);
+          if (p >= 1) { morphEnd = null; done(); return; }
+          const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+          moves.forEach(m => { m.it.row = m.a + (m.b - m.a) * e; });
+          render(); draw();
+          raf = requestAnimationFrame(step);
+        };
+        morphEnd = () => { cancelAnimationFrame(raf); done(); };
+        moves.forEach(m => { m.it.row = m.a; });
+        render(); draw();
+        raf = requestAnimationFrame(step);
+      };
       const stop = () => {
+        finishMorph();
         playing = false; target = null;
         cancelAnimationFrame(raf); clearTimeout(timer);
         now.setAttribute('aria-live', 'polite');
@@ -153,9 +215,33 @@ const ticks = stops(s);
         if (T >= end - 1e-6) { stop(); return; }
         raf = requestAnimationFrame(tick);
       };
-      const nextStop = () => st.find(t => t > T + 1e-3) ?? s.duration;
-      const prevStop = () => [...st].reverse().find(t => t < T - 1e-3) ?? 0;
+      // The step on show: -1 at the start, k when paused on step k, null when paused between steps.
+      const shownStep = () => {
+        if (T < 1e-3) return -1;
+        if (stepT.length && T >= stepT[stepT.length - 1] - 1e-3) return stepT.length - 1;
+        const k = stepT.findIndex(t => Math.abs(t - T) < 1e-3);
+        return k < 0 ? null : k;
+      };
+      const nextStep = () => {
+        const k = shownStep();
+        return k !== null ? k + 1 : stepT.findIndex(t => t > T);
+      };
+      const prevStep = () => {
+        const k = shownStep();
+        if (k !== null) return k - 1;
+        let j = -1;
+        stepT.forEach((t, i) => { if (t < T) j = i; });
+        return j;
+      };
+      // Show step k, or the start for k < 0. Past the last step there is nothing more to show.
+      const goStep = (k: number, animate: boolean) => {
+        if (k >= ev.length) { stop(); return; }
+        if (k < 0) { stop(); T = 0; draw(); return; }
+        if (animate && stepT[k] > T + 1e-3) { play(stepT[k]); return; }
+        stop(); T = stepT[k]; draw();
+      };
       const play = (until: number | null = null) => {
+        finishMorph();
         cancelAnimationFrame(raf); clearTimeout(timer);
         if (T >= s.duration - 1e-3) T = 0;
         playing = until === null;
@@ -163,13 +249,14 @@ const ticks = stops(s);
         holdUntil = 0;
         now.setAttribute('aria-live', playing ? 'off' : 'polite');
         if (motion.matches) {
-          // Reduced motion: jump from step to step instead of animating.
+          // Reduced motion: jump from event to event instead of animating.
           const jump = () => {
-            T = until ?? nextStop();
+            if (until !== null) { T = until; draw(); stop(); return; }
+            const k = nextStep();
+            if (k >= ev.length) { T = s.duration; draw(); stop(); return; }
+            T = stepT[k];
             draw();
-            if (!playing || T >= s.duration - 1e-3) { stop(); return; }
-            const k = stepAt();
-            timer = window.setTimeout(jump, k >= 0 ? holdFor(ev[k].short) : 900);
+            timer = window.setTimeout(jump, holdFor(ev[k].short));
           };
           jump();
           return;
@@ -188,9 +275,11 @@ const ticks = stops(s);
         if (btn.dataset.param) {
           if (params[btn.dataset.param] === btn.dataset.value) return;
           stop();
+          const before = s;
           params = { ...params, [btn.dataset.param]: btn.dataset.value! };
           selectParams();
           build();
+          if (def.morph) { morph(before); return; }
           T = motion.matches ? s.duration : 0;
           render(); draw();
           if (!motion.matches) play();
@@ -198,8 +287,8 @@ const ticks = stops(s);
         }
         const act = btn.dataset.act;
         if (act === 'play') { if (playing) stop(); else play(); }
-        if (act === 'next') play(nextStop());
-        if (act === 'back') { stop(); T = prevStop(); draw(); }
+        if (act === 'next') goStep(nextStep(), true);
+        if (act === 'back') goStep(prevStep(), false);
         if (act === 'reset') {
           stop();
           params = defaults(def);
@@ -215,9 +304,8 @@ const ticks = stops(s);
       });
       scrub.addEventListener('keydown', e => {
         if (!['ArrowRight', 'ArrowUp', 'ArrowLeft', 'ArrowDown'].includes(e.key)) return;
-        e.preventDefault(); touched = true; stop();
-        T = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? nextStop() : prevStop();
-        draw();
+        e.preventDefault(); touched = true;
+        goStep(e.key === 'ArrowRight' || e.key === 'ArrowUp' ? nextStep() : prevStep(), false);
       });
 
       build();

@@ -1,238 +1,142 @@
 ---
 name: staycurrent-authoring
-description: Commission, research, write, and implement Stay Current articles or article batches, including their supporting media and independent review. Use for substantive article creation or revision, not ordinary brainstorming or a small copy edit.
+description: Write or substantially revise a Stay Current article against its brief and the collection's coverage map, including its examples, media, evidence, verification and independent review. Use for substantive article creation or revision, not brainstorming or a small copy edit.
 ---
 
-# Help the reader understand something they can use
+# Teach an expert's understanding at the least cost to the reader
 
-Take responsibility for the finished explanation. The reader should come away able
-to reason about the subject, with enough understanding to recognise a similar
-problem elsewhere. Choose the argument, examples, media and working process that
-serve that outcome. These references give context for your judgement; they are not
-an article template or a sequence to reproduce.
+You are responsible for a finished explanation: one an intelligent reader, new to its
+subject, can follow from start to finish and come away able to use. Each article is
+one stretch of a collection's route (see `staycurrent-planning`) and shares its aim.
+Take the reader as close to an expert practitioner's understanding of the parts you
+own as the subject allows, at the least cost in reading time and effort. Spend the
+reader's time where they would otherwise get something wrong or be unable to decide,
+and nowhere else.
 
-Choose references for the decisions in front of you. The linked material offers
-context when useful; it is not a reading assignment to repeat for every article.
+Quick is not the same as compressed. A clear explanation read once costs less than a
+terse one read twice, and a missing step costs more than the sentence that would have
+supplied it. What the reader can do afterwards is the measure; length and section
+counts are not.
 
-## Find the article's job
+The brief tells you who the reader is, why they came, which parts of the coverage map
+you own, and which neighbouring parts to link to rather than teach. How to explain them
+is yours to decide. If there's no brief, write one in `docs/article-work/<slug>/` first;
+the [commission examples](references/commission.md) show what helps.
 
-Use `docs/site-direction.md` and `docs/content-structure.md` to locate the work in
-the publication. A brief should make the reader, central question and useful stopping
-point clear. [Commission examples](references/commission.md) show how much context
-can help another agent without deciding the explanation for it. Keep a concise
-record in `docs/article-work/<slug>/` or an existing equivalent; expand it where
-the work warrants it.
+## Work out what the expert needs
 
-When extending an existing guide or collection, inspect comparable published
-sections and the pages that link into them. Carry forward useful conventions for
-section roles, heading hierarchy, collection names and onward-link wording so the
-addition fits the surrounding site. The style skill's field-guide example shows
-why a newly completed collection should not acquire a different kind of entrance
-label merely because it now includes more material. Let differences in reader
-purpose or actual content justify departures, and make consequential departures
-clear in the brief. This comparison should inform the new work, not expand it into
-an unrelated site-wide rewrite.
+Before reading this article's existing outline or draft, if it has one, ask what an expert practitioner in this
+subject can do, then what each of those abilities needs. Keep going until every part is
+something a sentence, a section or a set of examples can teach; "a sentence" and "leave
+it out" are ordinary answers. Do this before you see an outline, or the outline will
+define what counts as complete.
 
-The brief gives the author a reader to write for: what brought this person here,
-what they already understand, and what understanding would make the article useful.
-This matters at the opening as much as at the end. A supporting article may be
-someone's first encounter with its subject. Give the author room to find a beginning
-that establishes the idea and makes the example worth following.
+The subject sets the depth, not the article type or the length of its neighbours. A
+mechanism usually needs explanation, a figure and its consequences: the Storage article
+needed the log, checkpoints, torn pages and point-in-time recovery, because an expert
+predicts and decides with them. A practice is usually learned fastest from worked
+examples, the common cases and the corner cases, each with a short note on why. In
+October 2026 the sequence-diagram articles explained in prose what an expert knows from
+having seen it drawn, and grew to four articles where light writing and a set of
+examples would have done. The reading time shown under each existing article gives a
+sense of what a given scale costs the reader.
 
-In the Indexes revision recorded in `docs/writing-style.md`, a customer looking up
-orders was a clear situation, but it did little to introduce indexing. Explaining
-the stored entries and their references to rows gave the same example a purpose:
-the reader could see how grouped entries help find scattered orders. The useful
-outcome was that understanding, rather than a particular opening scene or paragraph
-structure. A brief can name the understanding sought while leaving the writer free
-to discover how to convey it.
+Attention should be even across the article; length shouldn't. When one section is much
+fuller than its neighbours, ask which side is wrong before evening them out. Cutting the
+Storage article's full point-in-time recovery section to match thinner neighbours was
+the wrong repair; the neighbours needed the same attention.
 
-For a main deep dive with supporting articles, identify what new investigation
-each child offers. A direct entrant needs orientation; a continuing reader needs
-a reason to proceed. Preserve the main article’s promised explanation, but
-question repeated setup and implementation that obscure the child’s distinct job.
-The collection revisions in `docs/writing-style.md` show both choices.
+Stay inside the subject. The asynchronous sequence-diagram article drifted into how
+brokers deliver messages, which an expert at drawing them doesn't need. When a general
+article uses one product as its worked example, say where other major products differ in
+ways that change the reader's prediction or decision. The first general Storage article
+described PostgreSQL's heap and VACUUM as if every relational database worked that way;
+`docs/content-structure.md` records the rule that came from it. Where you place those
+differences matters as much as naming them. When the rewrite added one per paragraph,
+each mechanism was told in a stop-start rhythm. Explain the mechanism once, then gather
+the differences that change a decision in a short paragraph or a small table, as
+Storage's table of where old row versions live does.
 
-That distinction still leaves room for depth. Saying that a join connects tables
-does little until the reader can see what answer the connection produces. The
-revised introduction follows a product ID to “Blue mug, 2”. Seek the explanatory
-step that makes the idea useful, rather than adding more topics to sound complete.
+If the work shows the map was wrong, with a part missing, misplaced, or deeper or
+shallower than planned, make the sensible decision and report it in your handoff as a map
+change. That report is how separately written articles stay complete together.
 
-The design series exposed another distinction: a subject can appear in the brief
-and the prose without being taught. We chose integer, decimal and timestamp columns,
-then relied on the reader understanding types in the next article. The missing
-explanation was what those choices meant and how to make them. When an argument
-depends on earlier learning, read the actual predecessor passage. A planned page
-or a familiar term is not that learning. Work backwards from the decisions the
-reader should be able to make, and supply the understanding those decisions need;
-this often calls for a small bridge rather than another article.
+## Build the explanation in the order the reader needs it
 
-## Break the subject down until every part gets its due
+Start where the reader is. The opening should tell a newcomer what the thing is, what
+it's for and when they'd reach for it, then make the first example worth following. In
+October 2026 an Indexes opening defined the index by its contents and moved straight to
+page counts. It never said what an index is for, and nine reviews passed it. A companion
+may be someone's first encounter with its subject, so give a direct entrant enough
+orientation without re-teaching what its parent owns.
 
-Coverage comes from a working process. Start with the topic and ask what someone
-needs from it to do professional work: the mechanisms they must be able to predict,
-the decisions it informs, how it fails and how they would see that in a running
-system. Each answer is a subtopic. Then take each subtopic in turn and ask the same
-questions of it. What does a reader need from this part? Does it have parts of its
-own? How much depth does it need before the reader can use it? Keep going until each
-part is something a paragraph, a section or an article can teach well.
+At each transition, ask what question the reader is now ready to ask, and answer that
+one. A pagination draft defined its subject, then taught ordering without saying why
+pages need an order, and the reader felt dropped into the middle. When an argument relies
+on an earlier article, read the actual passage: a planned page or a familiar term is not
+understanding the reader has.
 
-Derive this tree from the subject, the reader and the promised outcome before
-looking at an existing outline or draft. Otherwise the outline defines what counts
-as complete, and its omissions disappear. These are questions about this subject,
-not mandatory sections for every article.
+Show what an idea produces. Following a product ID through a join to "Blue mug, 2"
+taught more than saying that joins connect tables. Where the map names the collection's
+running example, reuse it with its names and identifiers. Give each example what the reader
+needs to interpret it: the starting records, which value goes in which column, who sends
+each statement and who acts on its reply. Where a lesson shows a design failing, give the
+reader a way to finish the decision. `docs/writing-style.md` records the revisions behind
+these, and the [depth and experiments reference](references/depth-and-experiments.md)
+shows how a correct example can stop one consequence too soon.
 
-The tree then shows where each part belongs. A small part may be a sentence inside
-its parent's explanation. A larger one earns a section or a subsection, and
-sometimes a figure or a worked example that carries it better than prose. A part
-that needs an investigation of its own, serves readers who would arrive for it
-directly, or would swamp its parent's argument may belong in its own article. Use
-`staycurrent-planning` for that decision, and verify that an existing destination
-actually teaches what the reader needs. Record parts you leave out on purpose, and
-why. Keep the tree and these decisions in the brief so a reviewer can test them.
-The tree says what each part needs, not the order to teach it in; the argument
-decides that. A narrow brief does not excuse a title or introduction that promises
-more.
+Headings name what the reader is about to learn; the style skill covers them. Build the
+heading tree from the assembled page, read it as a map of the argument, and compare it
+with your breakdown. A part may be taught under a broader heading, buried, merely named
+or missing, and each needs a different repair.
 
-Attention should be uniform; length should not. One topic may need a paragraph and
-its neighbour several subsections and a figure. Judge each part by whether the
-reader comes away able to use it, never by matching the sections around it. In
-October 2026 the Storage article's point-in-time recovery section grew into a full
-explanation with its own subsections and figure. Next to it, the other sections
-read as thin. Cutting it back to match them was the wrong repair: the user asked
-for every topic to get that kind of attention, which meant returning to the tree
-for each one. When depth looks uneven, ask which side is under-served before
-evening anything out.
+Use media where it saves the reader work they would otherwise do in their head: a figure
+for a relationship or an order in time, code and a result for exact instructions, an
+experiment when varying an input teaches more than describing it. For a mechanism, the
+prose carries the explanation and the figure lets the reader see it. For a practice,
+the worked examples carry the lesson and the prose says briefly what each one shows and
+why. Either way, a reader who can't see a figure should still be able to follow the
+text. See the [teaching-aid examples](references/teaching-aids.md) and
+`docs/illustration-style.md`.
 
-## Develop the argument and its support
+Use `staycurrent-research` for the evidence behind consequential claims, and keep a
+general principle, a particular implementation and an invented teaching example
+distinguishable. Write in the house voice of `staycurrent-style`.
 
-Use `staycurrent-style` and read the original writing references alongside the
-draft. `docs/writing-style.md` records passages and revisions worth considering.
-Give the thought room to develop, including in headings, captions and supporting
-copy. A polished summary of a mechanism is not necessarily an explanation of it.
-Revisit working headings against the finished sections: drafting prompts can survive
-after the argument changes. Use the style skill's heading guidance to name what the
-reader is about to learn, then read the heading into its opening paragraph.
-Build the heading tree from the assembled draft, including supporting components,
-and compare it with the article's actual argument and contents navigation. Group
-related examples where that makes their purpose clear, and introduce the change
-from explaining a concept to following its worked cases. A list of locally accurate
-headings can still leave the reader without a useful map of the article.
-Compare that map with the topic tree in the brief: given the subject,
-are there explanations a reader would expect that have no clear home? Check the
-body before diagnosing a gap. A topic may be well taught under a broader heading,
-buried where readers cannot find it, merely named, or genuinely absent. Repair the
-appropriate problem: the label or grouping, the explanation, or an overbroad promise.
-Necessary understanding belongs in this article; a substantial further investigation
-may belong in a linked article. Verify that any such destination exists and answers
-the question, and keep planned coverage visibly distinct from available teaching.
+## Check the finished page
 
-The pagination draft defined its subject, then began teaching ordering without
-explaining why pages need a sequence. The user still felt dropped into the middle
-of the topic. A definition had not supplied the reason for the next decision.
-Consider what question the reader is ready to ask at each transition, and whether
-the next explanation answers it. Sometimes the missing step is motivation;
-sometimes it is how to derive an answer or why an earlier lesson still applies.
-More opening prose alone will not repair gaps later in the argument.
+For substantive work, have independent subagents review it through `staycurrent-review`,
+including an uncued first reading. Scale the review to the work: a light, example-led
+article may need only a fresh reader and a technical check, while a new deep dive needs
+more. Resolve their findings with evidence and your own
+judgement. A first reading also shows where the reader held too much in memory or wanted
+to try a variation, which may call for a figure or an experiment, and where curiosity
+points to onward reading. Take a substantial new article idea back to the map rather
+than writing it. Fold each repair in where the reader needs it rather than appending
+another warning, and read the revised piece continuously before the final editorial
+reading.
 
-Consider what the reader needs to interpret an example as well as its main lesson.
-Our constraints examples used valid SQL, but positional INSERT values left readers
-to guess which number belonged to which column. An explicit column list and a short
-explanation could remove that obstacle without becoming a SQL tutorial. Give the
-reader the records and starting state needed to derive a result before showing it;
-setup hidden in an optional disclosure cannot supply facts the main path needs.
-Make a reset explicit when later examples return to an earlier state. Likewise,
-showing why an attempted design fails is useful, but a practical lesson should give
-the reader a way to finish the decision. Our JSON example explained why its check
-still allowed values that broke its query; it needed a dependable alternative to
-complete that thought. Choose the amount of resolution that fits the article's job.
+Inspect the rendered page in light and dark, at desktop and phone widths, exercise the
+controls that matter, and run `pnpm build`. These checks answer different questions from
+review: an accurate figure can still have unreadable phone labels, and a passing build
+says nothing about the argument.
 
-Place the reader inside the example's running system. Before a sequence of commands,
-establish who sends them, where they run, what state persists between them, and who
-uses each response to decide what happens next. A query returning no rows, a rejected
-statement and a lost reply can require different application branches even when
-all three prevent the happy path. Show the branch that matters to the lesson;
-comments and a later complete script cannot supply an execution setting the reader
-needed earlier. Application code, a query editor and an interactive terminal can all
-be useful viewpoints. Choose one deliberately and explain a switch when it occurs.
-The transaction revision in `docs/writing-style.md` records why this mattered.
+The page shell keeps articles alike without anyone keeping them in step. `TitleLine`
+writes the line under the title and the reading time; its type is one of the five in
+`src/lib/article-types.ts`, and a Companion names the deep dive it extends. The type
+names the article's role, not its size: a short article that fully teaches its subject
+is still a deep dive. `ArticleBody`
+places the contents list after the opening and builds it from the `<h2>`s. Every article
+ends with "Sources and further reading", each entry saying why to read it. The site check
+in `scripts/check-site/` reports departures, and its README explains each rule. Match
+neighbouring pages' section roles, names and link wording unless the content gives a
+reason to differ.
 
-For a collection with practical lessons, read the
-[depth and experiments reference](references/depth-and-experiments.md). It follows
-the PostgreSQL rebuild and the later relational review: a capability the deep dive
-promises to teach needs an explained mechanism and a consequential decision;
-a runnable example needs an observable outcome. It also helps choose between a real engine, a local model and
-a worksheet for a service that cannot run inside this website.
+## Hand off
 
-Use `staycurrent-research` for the evidence behind consequential claims. Keep the
-difference between a family principle, a particular implementation, and an invented
-teaching example intelligible. A general article that uses one product as its worked
-example can still teach that product by accident: the relational Storage article
-described PostgreSQL's heap, VACUUM and fsync settings as if they were how
-relational databases store data. Ask which parts of each explanation another
-major engine would do differently, and say so where the difference matters to
-the reader's prediction or decision. `docs/content-structure.md` records that case. Further reading should offer a useful next step,
-with a short explanation of what a source contributes.
-
-Choose media where it reduces work the reader would otherwise do in their head.
-The [teaching-aid examples](references/teaching-aids.md) explain why the relational
-introduction gained a small SQL result, an index route and a locking timeline, while
-its interactive checkout remained a separate article. Other subjects may need a
-different balance. The prose should remain a complete explanation, and an experiment
-should make sense to someone encountering it on its own.
-
-Follow `docs/illustration-style.md` for the established visual language: restrained
-technical sketches, readable labels, matching light and dark views, and a clear
-distinction between pictures and controls. Choose generated artwork or code-native
-drawing according to what must be shown accurately. Use the imagegen skill when
-generating artwork. Review the assembled figure, not just its unlabeled asset.
-
-## Learn from the finished page
-
-For substantial work, use independent subagents through `staycurrent-review`.
-Choose perspectives that can challenge the explanation, and preserve an uncued
-first reading. Have that reader record questions while moving through the assembled
-article, before judging it as a whole; the review skill's
-[first-reading guidance](../staycurrent-review/references/first-reading.md) explains
-the intended evidence. Use those observations to repair the learning sequence,
-including questions that were answered only after the reader needed the answer.
-The same reading can reveal where the reader is carrying too much in memory,
-wants to test a variation, or is ready for a deeper investigation. Use those signals
-to choose supporting media and useful onward reading. Keep necessary explanation
-in the current article; take substantial new article ideas through planning rather
-than treating every interesting question as another page to produce.
-Reviewers should expose consequential weaknesses, not generate work
-by asking for every related subject. Resolve their findings with evidence and your
-own editorial judgement; choose another explanation or medium when the current
-one keeps failing to communicate.
-
-Integrate review repairs into the author's explanation. A useful qualification can
-become awkward when appended as another warning or summary; put it where the reader
-needs it and reconnect the surrounding paragraphs. Before the final editorial
-reading, read the revised piece continuously, including its headings and captions.
-Keep concrete reasoning that already works rather than rewriting every sentence
-to demonstrate that a style pass happened.
-
-For website work, inspect the rendered result in light and dark, at desktop and
-phone widths. Exercise the controls that matter and verify examples appropriately.
-Run the repository's `pnpm build`. These checks answer different questions from
-editorial review: an accurate illustration can still have unreadable phone labels,
-and a successful build says nothing about the argument.
-
-The page shell is shared so articles look alike without anyone keeping them in
-step. `TitleLine` writes the line under the title and calculates the reading time
-from the finished page. Its type is one of the five in `src/lib/article-types.ts`:
-Introduction, Deep dive, Companion, Worked example or Assessment. A companion
-names the deep dive it extends. An article ends with "Sources and further
-reading", where documentation and related articles each get a line saying why
-to read them; a sandbox lesson belongs in the section it exercises. `ArticleBody` places the contents list after the opening
-and builds it from the `<h2>`s. The site check in `scripts/check-site/` reports
-where a page departs from that shape; its README explains each rule and why it
-exists.
-
-Carry authorised work through repair and verification without requiring routine
-human sign-off. Leave a useful handoff: what changed, what was checked, and any real
-uncertainty. The brief, evidence and review notes should let a later agent understand
-important decisions without recreating the whole investigation. Keep records
-proportionate to the work. Distinguish a ready draft from publication; review alone
-does not authorise a commit, deployment or feed entry.
+Carry authorised work through repair and verification without waiting for routine human
+sign-off. The handoff says what changed, what was checked, any changes to the coverage map
+and any real uncertainty. Keep the brief, evidence and review notes in
+`docs/article-work/<slug>/`, in proportion to the work, so a later agent can follow the
+important decisions. A ready draft is not publication: review doesn't authorise a commit,
+deployment or feed entry.

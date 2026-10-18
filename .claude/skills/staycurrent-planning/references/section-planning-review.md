@@ -17,9 +17,10 @@ who already knows why two titles differ cannot show whether the titles communica
 that difference unaided. The style skill's context-free reference supports that role
 without disclosing article histories.
 
-The collaboration tool normally inherits the conversation when it forks an agent.
-Use `fork_turns="none"` for the fresh reader and supply only the proposal, audience
-and context-free voice reference. A role label alone does not remove inherited context.
+Make sure the fresh reader's agent doesn't inherit the planning conversation (with
+Codex's collaboration tool, fork with `fork_turns="none"`), and supply only the
+proposal, audience and context-free voice reference. A role label alone does not
+remove inherited context.
 
 ## What the relational reviews changed
 

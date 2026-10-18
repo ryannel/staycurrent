@@ -16,8 +16,10 @@ Read `docs/content-structure.md` when planning coverage. Use
 `.claude/skills/staycurrent-planning/` for collections and reader journeys,
 `.claude/skills/staycurrent-authoring/` for substantive article creation and
 `.claude/skills/staycurrent-review/` for independent review and repair. These skills
-explicitly call for reviewer subagents. Keep family coverage distinct from the
-scope of one article, and keep the shared distributed-systems idea parked.
+explicitly call for reviewer subagents. Each collection keeps one coverage map in `docs/coverage/`;
+briefs point into it and handoffs report changes to it. Keep family coverage
+distinct from the scope of one article, and keep the shared distributed-systems
+idea parked.
 Agent review can complete a draft without routine human editing; it does not
 authorise publication.
 

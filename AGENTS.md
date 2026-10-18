@@ -16,8 +16,10 @@ Read `docs/content-structure.md` when planning coverage. Use
 `.agents/skills/staycurrent-planning/` for collections and reader journeys,
 `.agents/skills/staycurrent-authoring/` for substantive article creation and
 `.agents/skills/staycurrent-review/` for independent review and repair. These skills
-explicitly call for reviewer subagents. Keep family coverage distinct from the
-scope of one article, and keep the shared distributed-systems idea parked.
+explicitly call for reviewer subagents. Each collection keeps one coverage map in `docs/coverage/`;
+briefs point into it and handoffs report changes to it. Keep family coverage
+distinct from the scope of one article, and keep the shared distributed-systems
+idea parked.
 Agent review can complete a draft without routine human editing; it does not
 authorise publication.
 
@@ -31,6 +33,12 @@ intact when saving article work.
 
 ```bash
 pnpm install
-pnpm build          # the only check: every page must build
+pnpm build          # builds every page, then runs the site check
+pnpm check          # the site check in full: every issue, by rule
+pnpm test           # the site check's own tests
 pnpm dev            # http://localhost:4321
 ```
+
+The site check (`scripts/check-site/`) tests shared structure, not prose: the
+title line, contents placement, sources section, figure labels, links and
+theme-safe CSS. Rules at `error` fail the build and block the deploy.

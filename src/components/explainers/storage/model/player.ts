@@ -67,6 +67,14 @@ class StorageFigure extends HTMLElement {
     this.querySelectorAll<HTMLButtonElement>('button[data-param]').forEach(button => {
       button.addEventListener('click', () => this.setParam(button.dataset.param!, button.dataset.value!));
     });
+    this.querySelectorAll<HTMLInputElement>('input[data-param-range]').forEach(input => {
+      const param = this.scene.params?.find(p => p.id === input.dataset.paramRange);
+      if (!param) return;
+      input.addEventListener('input', () => {
+        const option = param.options[Number(input.value)];
+        if (option && option.value !== this.params[param.id]) this.setParam(param.id, option.value);
+      });
+    });
 
     new ResizeObserver(() => {
       const width = Math.round(this.stage.clientWidth);
@@ -109,6 +117,13 @@ class StorageFigure extends HTMLElement {
     this.params = { ...this.params, [id]: value };
     this.querySelectorAll<HTMLButtonElement>(`button[data-param="${id}"]`).forEach(button => {
       button.setAttribute('aria-pressed', String(button.dataset.value === value));
+    });
+    const option = this.scene.params?.find(p => p.id === id)?.options.find(o => o.value === value);
+    this.querySelectorAll<HTMLInputElement>(`input[data-param-range="${id}"]`).forEach(input => {
+      if (option) input.setAttribute('aria-valuetext', option.label);
+    });
+    this.querySelectorAll<HTMLOutputElement>(`output[data-param-output="${id}"]`).forEach(output => {
+      if (option) output.textContent = option.label;
     });
     this.steps = this.scene.steps(this.params);
     this.range.max = String(this.steps.length - 1);

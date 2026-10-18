@@ -5,109 +5,135 @@ description: >
   project docs, and replies. Use when drafting or revising prose in this project.
 ---
 
-# Develop a voice through examples
+# Write so the reader's effort goes into the idea
 
-For a blind comprehension or isolated-media review, use
-[the context-free voice reference](references/blind-review-voice.md) in place of
-the article histories below. It supplies house context without revealing what the
-reader is expected to understand.
+**For a blind comprehension or isolated-media review**, use
+[the context-free voice reference](references/blind-review-voice.md) instead of this
+skill. The examples below describe past articles and would give away what you're there
+to test.
 
-For other writing, use `docs/writing-style.md` to choose relevant references.
-Read original passages when developing the voice; Sam Who, Bartosz Ciechanowski
-and Julia Evans offer different examples to draw on. A bounded edit may need only
-one of them or a useful house passage, rather than another reading of the whole
-catalogue. The document also follows revisions to our column-store and relational
-articles. Their value is in seeing how an explanation develops, not extracting a
-sentence pattern to reuse.
+We want an intelligent reader to feel that someone who understands the subject is
+helping them see it. Plain language can carry difficult reasoning, and it keeps the
+reader's effort on the idea rather than on the prose; at the level of sentences, that is
+most of what keeping their reading cost low means. Give a thought enough room to become
+clear, and let the next thought follow from it. Clear is not the same as short: a step
+left out costs the reader more than the sentence that would have supplied it. There is
+no prose score, prescribed sentence length or vocabulary list. Choose the register and
+rhythm that fit the subject.
 
-We want an intelligent reader to feel that someone understands the subject and is
-helping them see it. Plain language can carry difficult reasoning. Give a thought
-enough room to become clear, and let the next thought follow from it. Choose the
-register and rhythm that fit the subject; there is no prose score, prescribed
-sentence length or vocabulary list.
+## Where the voice comes from
 
-A teaching article welcomes someone who knows why the subject interests them but
-may not yet know how to think about it. A useful opening gives that interest some
-substance: the reader begins to understand the idea and why the next question
-matters. An example can do much of this work when its details have a clear purpose.
-The revised Indexes opening in `docs/writing-style.md` shows one approach. It
-begins with what an index is for, finding rows without searching the whole table,
-then says what it holds and how grouped entries locate scattered orders. The user
-preferred that introduction to the earlier customer story, which made the task
-concrete but left the subject largely unexplained. A later rebuild kept the
-contents and lost the purpose: it opened by defining a B-tree index as "a separate,
-sorted copy of one or more columns" and moved on to page counts. Nine reviewers
-passed it. The user, on first reading, did not: it "doesn't open with anything on
-what an index actually is or what they are for." Naming what a thing is made of
-does not yet introduce it, and saying what a subject is for gives away nothing the
-article sets out to show. Draw on the reasoning in the example; another subject may
-need a different beginning.
+We are building a house style in our own articles. Its reference articles are Sequence
+diagrams (`src/pages/learn/drawing-systems/sequences.astro`), and Indexes and Storage and
+durability (`src/pages/learn/databases/relational/`). The user chose them as the pages to
+copy for structure, tone and figures, and in October 2026 they had a style pass against
+the pieces below and independent review. Reviewers named these passages as the clearest
+examples:
 
-Read headings, decks, captions and controls as part of the writing. Judge how they
-help someone follow the piece, alongside the argument and the relationships between
-its parts. A heading should help the reader anticipate the section's subject,
-question or development from what they know at that point. Name the thought the
-section actually develops; an instruction to the writer such as “start with” can
-conceal that subject. When a heading refers to “the rule” or “the problem,” consider
-whether the reader can identify the referent without reconstructing the author's
-intention after reading. The test is meaning in context, not whether the same word
-appears below. Plain topic labels, questions and explanatory headings can all work.
-Where a section teaches an established technique, its familiar name can orient the
-reader better than an instruction describing part of it. Heading levels should also
-show which explanations belong together. Give a sequence of worked cases a clear
-purpose and an introduction where the reader enters it; isolated scene labels do
-not establish that relationship by themselves. Read the title and heading tree as
-a promise of coverage too: clear labels cannot compensate for a missing explanation,
-and a broad title should not imply depth that the article does not supply.
-The worked passages in the writing reference offer context for those
-decisions without prescribing how every section should be titled. A caption can
-finish a thought rather than append another defence of it: retain qualifications
-that change a plausible reading of the picture, and question those that merely
-repeat its already clear scope. The caption revisions in the writing reference
-show that distinction in context.
+- Sequence diagrams: the opening; the two paragraphs after Figure 5, where three cases
+  the reader has watched become a drawing rule; and the end of "Synchronous and
+  asynchronous messages", where short sentences carry a chain of consequences.
+- Indexes: the opening; column order in a composite index (`#composite`), where the
+  reader counts entries before the rule is stated; the visibility map (`#covering`),
+  which runs break, fix, new cost; and the HOT update (`#writes`).
+- Storage and durability: from Figure 4 to the naming of the write-ahead log; the row
+  versions opening and the table after Figure 3; and the backups opening, which builds
+  point-in-time recovery from mechanisms the reader already has.
 
-Consistency across the site helps readers recognise what kind of reading or action
-comes next. Compare equivalent sections, collection entrances and onward links
-with their neighbours. Use consistent names, heading levels and structural roles
-where they serve the same purpose. A guide's choices should answer its framing
-question, and each section should develop the choice the reader came to understand.
-Different subjects can need different explanations without changing those roles.
+They stay revisable. Where one drifts from the pieces below, the pieces win.
+`docs/writing-style.md` records passages and revisions from our own work.
 
-The field guide exposed this when the relational link said “An introduction to
-relational databases” while the equivalent object-storage link advertised “the
-complete collection and sandbox”. The latter described the latest production work
-rather than matching the reader's next step. “An introduction to object storage”
-restores that relationship. Use the destination's actual role to choose its label;
-an introduction, practical exercise and product comparison should remain
-distinguishable. Keep useful uniformity without forcing identical paragraphs or
-copying an existing pattern that misrepresents the content.
+The style is anchored in a few pieces of writing that inspired it. Read them in full when
+developing the voice, or when our own articles seem to have drifted from it:
 
-Read connected paragraphs as writing, even when their meaning is clear. Notice
-when the prose repeatedly announces a lesson, replaces a concrete action with an
-abstraction, stretches a metaphor, or ends each paragraph with a polished verdict.
-Judge the cumulative effect in context; none of these is a banned construction.
-A useful edit names what happens and lets the reasoning develop. It need not make
-the sentences shorter, remove technical terms, or add a chatty voice.
+- Sam Who, [Memory Allocation](https://samwho.dev/memory-allocation/). One running model,
+  a small grid of memory, carries the whole piece. Every few paragraphs a simulation lets
+  the reader watch something happen, and the next paragraph names what they saw.
+- Bartosz Ciechanowski, [Gears](https://ciechanow.ski/gears/), from "Disc" through
+  "Strings Attached". A small observation gets room to become an explanation, then the
+  model changes one thing, and each transition continues the thought.
+- Sam Who, [Load Balancing](https://samwho.dev/load-balancing/) and
+  [Queueing](https://encore.dev/blog/queueing), for more of the same approach: each
+  technique arrives as the answer to behaviour the reader has just watched fail.
 
-Depth can stay easy to follow when the prose follows the consequences of a concrete
-change. Explain what the reader needs to predict the next state, then let that state
-raise the next question. The later relational review added the valid purchase lost
-by an earlier restore target and the work needed to recover it. That continuation
-taught more than another list of recovery features would have. Keep such reasoning
-in the main path when the article's promise depends on it.
+The user loved Sam Who's animated explanations and wants that here. They liked
+Ciechanowski's explanations but not his introductions. They didn't like Julia Evans's
+style, and found Ilya Grigorik's long sentences hard to read.
 
-When a passage feels strained, try a direct alternative beside the original and
-read both with their neighbours. Keep the version that carries the thought more
-naturally while preserving the mechanism, example and necessary conditions.
-`docs/writing-style.md` records the body-text revision that prompted this guidance;
-its replacements remain candidates for the user's judgement.
+Learn the structure from these pieces, not their sentences. One running model carries the
+page, and each section changes one thing in it. The reader watches the behaviour first,
+and the term arrives as the name for what they saw. A simple version fails, a fix
+follows, and then the fix's own cost. Numbers are exact and systems are real. Verdicts are
+plain. A mechanism is put in words, then a formula if it needs one, then what the formula
+means. A section ends when its point is made, and the next opens from where the reader
+now is. Sentences and paragraphs are short: Sam Who's sentences average about 15 words
+and Ciechanowski's about 20, and both average 40 to 45 words a paragraph. These are
+calibration, not targets. In October 2026 paragraph length was the larger gap: Storage's
+paragraphs averaged 90 words, each carrying several steps of reasoning that the reader had
+to separate. Animations are frequent and anchor the text rather than decorate it; the
+[teaching-aid examples](../staycurrent-authoring/references/teaching-aids.md) describe how
+they work.
 
-Examples from the site remain revisable. Preserve the user's actual response and
-the reason for a change; agent approval does not turn a passage into a permanent
-house standard. Develop original prose informed by the human references, rather
-than adopting an author's identity or reproducing their language.
+Don't copy their wording, personas, dialogue characters, exclamation marks or metaphors,
+and don't adopt an author's identity. Our reader also skims, which these tutorials don't
+plan for, so headings use the field's own terms and each section's first sentence names
+its subject or follows from the last. Examples from this site stay revisable: record the
+user's actual response and the reason for a change, because an agent's approval doesn't
+make a passage a house standard.
 
-For how writing and media work together, consult the relevant examples in
-`docs/editorial-guide.md` and the visual conventions in
-`docs/illustration-style.md`. `staycurrent-authoring` and `staycurrent-review`
-carry production and review guidance; this skill is about writing judgement.
+## Give the opening substance
+
+A teaching article welcomes someone who knows why the subject interests them but may not
+yet know how to think about it. A useful opening gives that interest substance: the
+reader learns what the thing is and what it's for, and sees why the next question
+matters. The revised Indexes opening moves from what an index contains to how grouped
+entries find scattered orders, then to the choices that arrangement creates. The user
+preferred it to an earlier customer story, which made the task concrete but left the
+subject unexplained. Another subject may need a different beginning.
+
+## Let one thought lead to the next
+
+Depth stays easy to follow when the prose follows the consequences of a concrete change.
+Explain what the reader needs to predict the next state, then let that state raise the
+next question. The relational review followed a valid purchase lost by an earlier restore
+target into the work of recovering it, which taught more than another list of recovery
+features would have.
+
+Read connected paragraphs as writing, even when their meaning is clear. Notice when the
+prose keeps announcing a lesson, swaps a concrete action for an abstraction, stretches a
+metaphor or ends every paragraph on a polished verdict. None of these is banned; judge
+the cumulative effect. When a passage strains, write a direct alternative beside it and
+read both with their neighbours. Keep the one that carries the thought more naturally
+while keeping the mechanism, the example and any condition the reader needs.
+
+Accuracy review leaves a particular residue: sentences that record where a fact came from
+or how sure we are. Each is added for a good reason, but by October 2026 Storage carried
+eight of them ("in the source, not in the manual", "an observation, not a benchmark",
+"inferred from how the documentation presents it"), and together they read as hedging.
+Keep a qualification that changes what the reader would do, say it once in a clause where
+it matters, and put the rest in the sources section or the article's notes.
+
+## Treat headings, captions and controls as writing
+
+A heading should let the reader anticipate the section's subject from what they know at
+that point. Name the thought the section develops. A note to the writer, such as "start
+with", or a referent like "the rule" that only makes sense afterwards, hides it, while a
+familiar technical name often orients best. Heading levels show which explanations
+belong together, and a run of worked cases needs a stated purpose where the reader
+enters it. Read the title and heading tree as a promise of coverage, too. A caption can
+finish a thought: keep a qualification that changes a plausible reading of the picture,
+and drop one that only repeats its scope.
+
+## Keep equivalent things consistent across the site
+
+Readers recognise what kind of reading comes next from consistent names, heading levels
+and section roles, so compare equivalent sections, collection entrances and onward links
+with their neighbours. Label a destination by its actual role: the field guide once
+offered "An introduction to relational databases" beside "the complete collection and
+sandbox" for object storage, describing recent production work rather than the reader's
+next step. Let different subjects keep the differences they need. The site writes in
+British spelling with sentence-case headings.
+
+`docs/editorial-guide.md` and `docs/illustration-style.md` cover how writing and media
+work together. `staycurrent-authoring` and `staycurrent-review` carry production and
+review; this skill is about writing judgement.

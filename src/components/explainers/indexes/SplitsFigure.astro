@@ -1,0 +1,140 @@
+---
+import IndexFigure from './IndexFigure.astro';
+const { number = 10 } = Astro.props;
+---
+<IndexFigure tag="ix-splits-figure" number={number} title="The same keys, inserted in order and at random">
+ <pre slot="query"><code>-- top: order_id 1, 2, 3 … 75 (an auto-increment key)
+-- bottom: the same 75 values, shuffled (like random UUIDs)</code></pre>
+ Each box is one leaf page with room for 16 entries. The shading shows how full it is, and the tick marks the one slot InnoDB tries to keep free. The fill levels follow InnoDB’s documented figures; the keys are invented. Play it and watch the bottom row split.
+ <span slot="fallback">Two indexes receive the same 75 keys. Keys in order always go at the end: each page fills to 15 of its 16 slots, then the next key starts a new page, so the keys end on 5 pages, each 15/16 full. Keys in random order land on whichever page covers their value. When that page is full it splits, and half its entries move to a new page beside it. After six splits the same keys take 7 pages, each between 8 and 15 of 16 slots full. On the 60,000-order table, PostgreSQL’s primary key took 166 pages with the keys inserted in order and about 225 with the same keys inserted at random.</span>
+</IndexFigure>
+
+<script>
+ import { IndexFigure, canvas, svg, type Frame } from './player';
+
+ const KEYS = 75, SLOTS = 16, FULL = 15;
+ const BOX_W = 36, BOX_H = 24, GAP = 6, ROW_H = 76, LEFT = 4, MAX_BOXES = 8;
+
+ // A fixed shuffle, so the bottom row splits the same way every time.
+ const shuffled = (() => {
+  let x = 32;
+  const next = () => { x = (x * 1664525 + 1013904223) >>> 0; return x / 2 ** 32; };
+  const keys = Array.from({ length: KEYS }, (_, i) => i + 1);
+  for (let i = keys.length - 1; i > 0; i--) { const j = Math.floor(next() * (i + 1)); [keys[i], keys[j]] = [keys[j], keys[i]]; }
+  return keys;
+ })();
+
+ interface Page { id: number; keys: number[] }
+ interface Row { pages: { id: number; count: number }[]; active: number[] }
+ interface SplitFrame extends Frame { inserted: number; rows: [Row, Row]; splits: number }
+
+ class SplitsFigure extends IndexFigure<SplitFrame> {
+  groups: { group: SVGGElement; boxes: Map<number, SVGGElement> }[] = [];
+  build(): SplitFrame[] {
+   let nextId = 0;
+   const seq: Page[] = [{ id: nextId++, keys: [] }];
+   const rnd: Page[] = [{ id: nextId++, keys: [] }];
+   let splits = 0;
+   const frames: SplitFrame[] = [];
+   const snap = (inserted: number, seqActive: number[], rndActive: number[], f: Omit<Frame, never>) => frames.push({
+    inserted, splits,
+    rows: [
+     { pages: seq.map((p) => ({ id: p.id, count: p.keys.length })), active: seqActive },
+     { pages: rnd.map((p) => ({ id: p.id, count: p.keys.length })), active: rndActive },
+    ],
+    ...f,
+   });
+   snap(0, [], [], { hold: 1800, short: 'Two empty indexes, one page each.', note: 'Two indexes, one empty leaf page each. The top one will receive the keys 1 to 75 in order. The bottom one receives the same 75 keys in a shuffled order.' });
+   for (let n = 0; n < KEYS; n++) {
+    const k = n + 1;
+    // Keys in order: always the last page; a full last page is left as it is.
+    let seqNew = false;
+    if (seq[seq.length - 1].keys.length >= FULL) { seq.push({ id: nextId++, keys: [] }); seqNew = true; }
+    seq[seq.length - 1].keys.push(k);
+    // Random keys: the page whose range covers the key; a full page splits in half.
+    const r = shuffled[n];
+    const i = rnd.findIndex((p, idx) => idx === rnd.length - 1 || r < rnd[idx + 1].keys[0]);
+    let split = false;
+    if (rnd[i].keys.length >= FULL) {
+     const all = [...rnd[i].keys, r].sort((a, b) => a - b);
+     rnd.splice(i, 1, { id: rnd[i].id, keys: all.slice(0, all.length / 2) }, { id: nextId++, keys: all.slice(all.length / 2) });
+     split = true;
+     splits++;
+    } else {
+     rnd[i].keys.push(r);
+     rnd[i].keys.sort((a, b) => a - b);
+    }
+    const seqActive = [seq.length - 1];
+    const rndActive = split ? [i, i + 1] : [i];
+    const notes: string[] = [];
+    if (seqNew) notes.push(`Top: the last page holds 15 entries, so key ${k} starts a new page at the end. The full page is left as it is.`);
+    if (split) notes.push(`Bottom: key ${r} belongs on page ${i + 1}, which is full. It splits: half its entries move to a new page beside it, and both halves are left about half full.`);
+    const shorts: string[] = [];
+    if (seqNew) shorts.push(`Top: key ${k} starts a new page.`);
+    if (split) shorts.push(`Bottom: key ${r} splits a full page in two.`);
+    if (n === KEYS - 1) break;
+    snap(n + 1, seqActive, rndActive, notes.length
+     ? { quick: true, hold: 1300, short: shorts.join(' '), note: notes.join(' ') }
+     : { quick: true, hold: 130, short: `Key ${n + 1} of ${KEYS}.`, note: `Top: key ${k} goes at the end of the last page. Bottom: key ${r} goes on page ${i + 1}, the page whose range covers it.` });
+   }
+   const fill = (pages: Page[]) => Math.round((KEYS / (pages.length * SLOTS)) * 100);
+   snap(KEYS, [], [], { hold: 3000,
+    short: `In order: ${seq.length} pages. At random: ${rnd.length} pages.`,
+    note: `All 75 keys are in. In order they fill ${seq.length} pages, each 15/16 full. At random they take ${rnd.length} pages after ${splits} splits, filled between 1/2 and 15/16 and ${fill(rnd)}% full on average, against ${fill(seq)}%. Every scan of the bottom index reads more pages for the same keys.` });
+   return frames;
+  }
+  draw() {
+   const width = LEFT + MAX_BOXES * (BOX_W + GAP) + 4;
+   const root = canvas(this.stage, width, ROW_H * 2 + 4, 'Two rows of index leaf pages. The top row receives keys in order and fills each page almost completely; the bottom row receives the same keys at random and splits pages, leaving them between half and nearly full.', 1.45);
+   const labels: [string, string][] = [['Keys in order', 'auto-increment'], ['Keys at random', 'shuffled, like random UUIDs']];
+   this.groups = labels.map(([name, detail], r) => {
+    const group = svg('g', { class: 'ix-mini-row' }) as SVGGElement;
+    group.style.transform = `translate(${LEFT}px, ${r * ROW_H + 2}px)`;
+    const label = svg('text', { x: 0, y: 12, class: 'ix-tag' }, name);
+    label.append(svg('tspan', { class: 'ix-label-small', dx: 6 }, detail));
+    group.append(label);
+    root.append(group);
+    return { group, boxes: new Map() };
+   });
+  }
+  render(frame: SplitFrame) {
+   frame.rows.forEach((row, r) => {
+    const { group, boxes } = this.groups[r];
+    const keep = new Set(row.pages.map((p) => p.id));
+    for (const [id, g] of boxes) if (!keep.has(id)) { g.remove(); boxes.delete(id); }
+    row.pages.forEach((page, i) => {
+     let g = boxes.get(page.id);
+     const x = i * (BOX_W + GAP);
+     if (!g) {
+      g = svg('g', { class: 'ix-mini', 'data-state': '' }) as SVGGElement;
+      g.append(svg('rect', { class: 'ix-mini-page', x: 0, y: 0, width: BOX_W, height: BOX_H, rx: 2 }));
+      const fill = svg('rect', { class: 'ix-mini-fill', x: 2, y: 2, width: BOX_W - 4, height: BOX_H - 4 }) as SVGRectElement;
+      fill.style.transformOrigin = '2px 2px';
+      fill.style.transform = 'scaleX(0)';
+      g.append(fill);
+      const tick = 2 + ((BOX_W - 4) * FULL) / SLOTS;
+      g.append(svg('path', { class: 'ix-mini-tick', d: `M ${tick} 1 V ${BOX_H - 1}` }));
+      g.append(svg('text', { class: 'ix-mini-count', x: BOX_W / 2, y: BOX_H + 14, 'text-anchor': 'middle' }, ''));
+      // A new page appears where it will sit; later pages slide right to make room.
+      g.style.transition = 'none';
+      g.style.transform = `translate(${x}px, 20px)`;
+      group.append(g);
+      void g.getBoundingClientRect();
+      g.style.transition = '';
+      boxes.set(page.id, g);
+     }
+     g.style.transform = `translate(${x}px, 20px)`;
+     (g.children[1] as SVGRectElement).style.transform = `scaleX(${page.count / SLOTS})`;
+     const count = g.querySelector('text')!;
+     const label = `${page.count}/${SLOTS}`;
+     if (count.textContent !== label) count.textContent = label;
+     g.setAttribute('data-state', row.active.includes(i) ? 'writing' : '');
+    });
+   });
+   const [seq, rnd] = frame.rows;
+   this.counters([['keys inserted', frame.inserted], ['pages, in order', seq.pages.length], ['pages, at random', rnd.pages.length, true], ['splits, at random', frame.splits]]);
+   this.scale('primary key, 166 pages with keys in order, about 225 at random');
+  }
+ }
+ if (!customElements.get('ix-splits-figure')) customElements.define('ix-splits-figure', SplitsFigure);
+</script>
