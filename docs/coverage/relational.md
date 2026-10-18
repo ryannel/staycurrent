@@ -1,289 +1,921 @@
-# Relational databases: coverage map
+# Relational databases: proposed coverage map
 
-One map for the relational collection (`src/lib/relational-collection.ts`). Each part has
-one home: an article and section, or an explicit status (a sentence where used, a link to
-another field or series, parked, or left out for a stated reason). Layers follow
-`docs/article-work/depth-derivation-2026-10-17/consolidate.md`: 1 model, 2 working
-mechanism, 3 expert cases, 4 product specifics; lookup material is marked reference.
+Revised field allocation, 18 October 2026. **Proposal for user discussion.**
+The [independent derivation](../planning/databases-depth-2026-10-18/relational-proposal.md)
+and [ability breakdown](../planning/databases-depth-2026-10-18/relational-abilities.md)
+preserve the reasoning before coordination. The allocation here, including the
+coordination notes, supersedes that first proposal. See the
+[independent challenge](../planning/databases-depth-2026-10-18/review-records.md)
+and [decisions](../planning/databases-depth-2026-10-18/synthesis-decisions.md).
+No article, route or publication status changes through this map.
 
-Running example: the repair shop's orders table (`orders`, customer 42, P7 at page 12),
-as used across Indexes and Storage and durability.
 
-The [proposed whole-collection structure](#proposed-whole-collection-structure),
-added on 18 October 2026, maps the remaining families for discussion. Its new
-coverage is proposed, not an assertion that the existing pages already teach it.
-The detailed Indexes and Storage maps below retain authority over their parts.
+18 October 2026. Planning only. Read alongside
+`relational-abilities.md`, which was saved before this page allocation. Existing
+articles, routes and publication states were not consulted and are not changed.
+The page IDs below are new: RL76–RL132. RL01–RL75 identify teachable units in the
+abilities file. Distinct ranges keep both kinds of reference unambiguous.
 
-## Indexes
+## What the collection promises
 
-Written 18 October 2026 from `derived/indexes-consolidated.md`, corrected by
-`derived/indexes-comparison.md` and the pages as they stood after the style pass. Work
-note: `docs/article-work/indexes/restructure-2026-10-18.md`.
+An engineer can design and query relational data correctly, protect invariants
+under concurrent requests, choose performance changes from evidence, operate a
+live service, and recover it. Two substantial implementation branches connect
+those abilities to actual systems: PostgreSQL for a conventional server and
+CockroachDB for distributed relational work. Taking every branch is optional.
+The collection promises practitioner judgement within these boundaries, not
+administration expertise in every SQL product.
 
-Running example: the 60,000-order table (`index_orders`, one order a minute from
-1 January 2026, 1,000 customers in turn) and the history query, customer 42's ten newest
-orders since 1 February. PostgreSQL 18 is the worked engine, measured in PGlite;
-InnoDB (MySQL 8.4), SQL Server and SQLite are named where they change a prediction or
-decision. Every measured number goes through `docs/article-work/indexes/verify.mjs`.
+The derivation yields **54 teaching pages**: 26 general relational pages,
+five distributed relational pages, 13 PostgreSQL pages and ten CockroachDB
+pages. The general pages form seven reader-journey groups. These counts describe
+the result, not a target or a commission to write all the pages immediately.
+There is no additional counted product overview or sandbox article: navigation
+belongs in the collection entrance, and experiments belong with their lesson.
 
-Articles (slug, type):
+The cost of 54 destinations needs explicit scrutiny. Most readers follow a task
+path and one implementation branch. Each page below earns its boundary through a
+distinct investigation, a directly sought problem, or a different execution
+environment. A short page is acceptable when it completes a real task. Equally,
+the same investigation must not be split merely to make its neighbours similar.
+The most contestable boundaries are named after the page allocation.
 
-- **D** `indexes`, Indexes, deep dive. Structure, what an index serves, the three fates
-  of a condition, where rows live, when a scan wins, covering, variants, write cost and
-  key choice, reading a plan and the one-query design recipe. A reader who stops here
-  can predict index use and make the everyday call.
-- **Q** `indexing-queries`, Indexing queries: diagnosis and patterns, companion to D.
-  Plan vocabulary across engines, "why isn't my index used?", and worked query shapes.
-  Readers arrive with a slow query.
-- **M** `maintaining-indexes`, Maintaining indexes, companion to D, short. The index
-  set over time: measuring, rebuilding, building safely, dropping and rolling out.
-  Readers arrive asking "can I drop this?" or "why is this index so big?".
+## How to read the allocations
 
-The plan's single companion is kept as two: the diagnosis and the operations questions
-come from different readers at different moments, and a merged page would bury the
-diagnosis under operations (work note, Decisions).
+Each unit has exactly one full teaching home below. After each unit ID comes the
+section that owns it. Entry needs are concepts, not mandatory page visits: a
+direct entrant gets the few local sentences needed to start. Product pages link
+to general explanations rather than reproducing them, while fully teaching the
+product mechanism, commands, measurements and limits they own.
 
-| Part | Layer | Home | Needs |
-|---|---|---|---|
-| The model: a sorted copy with a way back to each row; it helps only when the conditions and order line up from its first column and few enough rows match; the planner decides from estimates; every index costs writes | 1 | D opening | Paragraphs |
-| The full scan an index replaces; pages as the unit of work (reminder, Storage owns pages) | 1–2 | D `#scan` | Figure 1 |
-| Index entries and row locations; heap and TID | 2 | D `#entries`, `#heap` | Figure 2 |
-| Clustered tables in outline; SQL Server clusters by default | 2 | D `#key-order` | Paragraphs |
-| B-tree pages, fanout and depth by table size | 2 | D `#btree` | Figure 3, measured depth table |
-| Range scans, linked leaves, `IN`, order for free | 2 | D `#range` | Figure 4 |
-| Second descent through a clustered table; key in every secondary entry; engine differences | 2 | D `#clustered` | Figure 5, engine table |
-| Selectivity, the three routes, correlation, no fixed percentage, value not column | 2 | D `#selectivity` | Figure 6, measured results |
-| Composite indexes, leftmost prefix, equality before range, skip scan | 2 | D `#composite` | Figure 7, history table |
-| What a condition can do: narrow the scan, be checked in the index, be checked at the row; the bare-column rule in brief | 2 | D `#fates` | Paid-only query and its Filter line; link to Q's catalogue |
-| Indexes and `ORDER BY`: direction, NULLs, collation, `LIMIT` | 2 | D `#order` | Bulleted rules |
-| Combining indexes: bitmap AND/OR, MySQL index merge, SQLite | 2 | D `#combining` | Measured examples |
-| Covering, `INCLUDE`, visibility map; InnoDB, SQLite and SQL Server differences; status as a trailing key column | 2 | D `#covering`, `#status-last` | Figure 8, engine table, measured pair (15 against 5 pages) |
-| Partial, expression and unique indexes; SQL Server's one NULL; foreign key index (short); join use | 2 | D `#kinds` | Examples, engine table |
-| Write cost, write-ahead log volume, HOT, InnoDB secondary updates | 2 | D `#writes` | Figure 9 |
-| Page splits; index fill factor (Indexes owns it; table fill factor is Storage's) | 2 | D `#splits` | Figure 10 |
-| Primary key choice for a clustered table; UUIDv7 | 2 | D `#key-choice` | List |
-| Deleted rows and bloat, InnoDB merge threshold | 2 | D `#deleted-rows` | Figure 11 |
-| Building after a bulk load; building without blocking writes; pruning, in brief | 2–3 | D `#upkeep` | Paragraph and links to M |
-| Reading a plan for index use (PostgreSQL) | 2 | D `#check` | Plan excerpt; link to Q `#plans` |
-| Designing an index for one query; extend before adding | 2 | D `#design` | Steps and table |
-| Designing an index set for a workload: one composite serving several queries, a partial index for the odd one | 2 | D `#workload` | Four-query worked example |
-| Where a B-tree stops; other index types | 2 | D `#types` | Short problem-first list linking each type's home; the PostgreSQL comparison table moved out |
-| Plan vocabulary across PostgreSQL, MySQL, SQLite and SQL Server | Ref | Q `#plans` | Table |
-| Why isn't my index used: symptom table | 3 | Q `#diagnosis` | Table |
-| The column has to stand alone: functions, arithmetic, casts, negation, date truncation | 3 | Q `#bare-column` | Measured table |
-| Types and collations: PostgreSQL numeric casts, MySQL string-number comparison, SQLite affinity, SQL Server `nvarchar` parameters, `LIKE` prefixes | 3 | Q `#types`, `#like` | Engine notes |
-| The leading column has no condition | 3 | Q `#leading` | Figure (LeadingFigure), measured |
-| An `OR` with an unindexed branch; `UNION` rewrite | 3 | Q `#or` | Paragraph |
-| The condition matches too much; forcing a plan in each engine | 3 | Q `#too-much` | Measured, hints per engine |
-| Statistics that no longer match the data | 3 | Q `#stale` | Measured pair of tables; schedules link to query-execution |
-| Parameters: generic plans, partial and filtered indexes under parameters, the catch-all predicate | 3 | Q `#parameters` | Measured catch-all; SQL Server notes |
-| Proving the index can be used | 3 | Q `#prove` | Ordered checklist |
-| `ORDER BY` with `LIMIT`: the rule, what breaks it, the walk-the-wrong-index trap, latest row per group | 3 | Q `#order-limit` | Measured (33 against 1,892 pages, then 4) |
-| Joins and foreign keys; InnoDB locks every scanned row without a fitting index | 3 | Q `#joins`, `#innodb-locks` | Measured delete; MySQL locking quote |
-| Paging through an ordered list (pointer) | 3 | Q `#paging`, two paragraphs | Link; mechanics in Pagination |
-| Work queues, soft delete, tenants, case-insensitive lookup, optional filters (MySQL prefix indexes cut) | 3 | Q `#shapes` | Worked examples with engine notes |
-| Why indexes grow and stay grown; InnoDB and SQLite | 3 | M `#why` | Measured 1M-row table |
-| Measuring size and density per engine | 3 | M `#measure` | Queries |
-| When to rebuild: measure, don't schedule; rebuild gains often from statistics; options per engine | 3 | M `#rebuild` | Paragraphs, engine table |
-| Building on a live table; replicas | 3 | M `#build` | Engine notes, SQL Server editions |
-| Unused, duplicate and invalid indexes; usage-counter caveats; missing-index suggestions; trial drops (MySQL invisible, SQL Server disable) | 3 | M `#drop` | Queries, caveats |
-| Rolling out an index change | 3 | M `#rollout` | Steps |
-| Corrupt indexes and integrity checks | 3 | M `#integrity` | Short |
-| Statistics refresh schedules per engine, `ANALYZE` after bulk loads | — | **How a query runs** `#refresh` | Received from M; Q `#stale` and M `#when-rebuild` link it |
-| Paging mechanics: offset cost, keyset reaching the index, mixed directions, NULL sort keys | — | **Large results** `#page-cost` | Received from Q |
-| `REINDEX CONCURRENTLY` locks and leftovers, bloat measurement with `pgstattuple`, free-space reuse timing, deduplication and bottom-up deletion, `text_pattern_ops`, `COLLATE "C"`, `pg_trgm` | 4 | **Indexes in PostgreSQL** | Received from M and Q |
-| Page and row layout, row cost, large values, table fill factor and HOT free space | — | **Storage and durability** | Storage owns; D links `storage/#fill-factor` and `#pages` |
-| Join algorithms, cost estimation, plan reading in general | — | **How a query runs** | Links |
-| Online schema change procedure | — | **Changing a schema** | Link from M |
-| GIN, GiST, BRIN, vector, full text | 4 | PostgreSQL series and their articles | Links from D `#types` |
-| Shared distributed-systems idea | — | Parked | — |
+“Execute” describes a future teaching requirement. No experiments were run for
+this plan. Small relational result exercises can execute in a browser SQL
+environment, labelled with its implementation. Native sessions, files and
+independent cluster nodes are required where the property depends on them.
+Every native exercise needs a seeded start, observed result, meaningful changed
+condition, reset/cleanup and a record of the version and settings used.
 
-## Storage and durability
+## Choose the service — 1 page
 
-Written 18 October 2026 from `derived/storage-consolidated.md`, corrected by
-`derived/storage-comparison.md` and the pages as they stood after the style pass. Work
-note: `docs/article-work/storage/restructure-2026-10-18.md`.
+### RL76 — Relational databases: introduction and choices
 
-Running example: the shop's `products` table, P7 (a blue mug) on page 12 at `ctid`
-(12,3), priced 20.00 and raised to 22.00 by one `UPDATE`. PostgreSQL 18 is the worked
-engine; InnoDB (MySQL 8.4), SQL Server and SQLite are named where they change a
-prediction or decision.
+- **Outcome and sections:** state the service's contract before choosing an
+  engine. RL01 — relations and transaction boundaries; RL02 — workload and
+  failure budgets; RL03 — embedded, server and distributed choices; RL46 —
+  self-hosted and managed responsibility.
+- **Entry and teaching:** programming knowledge only. First explain what relations and transactions give an application, using a small read and change; then derive requirements for
+  the workshop service, then compare SQLite, PostgreSQL, MySQL, SQL Server, distributed SQL
+  and a non-relational alternative under stated conditions. Include an evaluation
+  worksheet, compatibility proof and exit/restore questions.
+- **Changed case and decision:** change from a local application to many writers,
+  then add region survival. The reader can shortlist an architecture and explain
+  what a managed service still requires. Requirements and choice stay together
+  because feature comparison without a workload cannot settle the decision.
 
-Articles (slug, type):
+## Design facts and guarantees — 4 pages
 
-- **S** `storage`, Storage and durability, deep dive. Rows, pages, memory, versions,
-  the log, the commit, recovery and the durability choice: the consolidated plan's
-  articles 1 and 2 in one page, because *Indexes* holds table organisation and key
-  choice, which was most of article 1's extra length.
-- **C** `checkpoints-and-the-log`, Checkpoints, torn pages and the log, companion to S
-  (was `watching-storage`). The operator's cases: checkpoint costs, torn pages, trusting
-  the flush, the log as a resource, recovery time, incidents and a signals reference.
-- **B** `buffer-pool`, The buffer pool, companion to S, slimmed. Working set, the two
-  caches, sizing, warm-up after a restart or failover.
+### RL77 — Relations, keys and normalisation
 
-Layer: 1 model, 2 working mechanism, 3 expert cases, 4 product specifics, R reference.
+- **Outcome and sections:** turn domain rules into an explainable schema.
+  RL04 — entities and cardinality; RL05 — identity and key choices; RL06 —
+  dependencies, update anomalies and deliberate duplication.
+- **Entry and teaching:** a table is enough. Build customers, sessions, orders
+  and order lines; execute changes that expose contradictory duplicated facts.
+  Keep normalisation beside the anomaly that gives it purpose.
+- **Changed case and decision:** an order must retain its agreed price after a
+  catalogue update. The reader can separate independent facts and justify each
+  retained copy. Historical querying gets its own investigation in RL80.
 
-### Storage and durability (S)
+### RL78 — Values, missing data and equality
 
-| Part | Layer | Home | Needs |
-|---|---|---|---|
-| The model: pages, memory, heap or clustered, versions kept, log first, flush per commit, replay from a checkpoint, written twice, storage must honour the flush, one machine only, loss against corruption | 1 | S opening | Paragraphs |
-| Pages as the unit of storage and I/O; page sizes by engine; line pointers and row address | 2 | S `#pages` | Mechanism, Figure 1 (page fill) |
-| Row cost across engines (PostgreSQL 24 + 4 bytes, InnoDB 5-byte header + 13 bytes of transaction fields, SQL Server 4-byte header + null bitmap + 2-byte slot, SQLite varint header + 2-byte cell pointer); estimating rows per page; measuring real size | 2 | S `#row-size` | Short mechanism, overhead table |
-| Large values out of line (TOAST at about 2 kB; InnoDB DYNAMIC 20-byte pointer and the half-page row limit; SQL Server 8,060-byte row, row-overflow and LOB pages; SQLite overflow chains); cost of `SELECT *`; updates that leave the large value alone | 2 | S `#large-values` | Short mechanism, engine table |
-| Heap or clustered table, at the level of "which one, and where Indexes explains it" | 2 | S `#pages`, one paragraph | Sentence and link |
-| Table organisation by key, secondary indexes carrying the key, primary key choice, random against time-ordered keys | 2 | **Indexes** (`#heap`, `#key-order`, `#key-choice`) | Link from S |
-| Which indexes an update writes, per engine | 2 | S `#pages` (summary); HOT itself in **Indexes** `#writes` | Paragraph |
-| Buffer pool, hits, reads, eviction; crash empties it | 2 | S `#buffers` | Mechanism, Figure 2 |
-| Working set, two caches (OS cache against bypass), sizing knee, memory budget, starting points per engine | 2–3 | B `#holds`, `#two-caches`, `#sizing` | Paragraphs, modelled sizing table |
-| Scans pushing hot pages out; which bulk reads are fenced off | 3 | B `#scans` | Paragraph |
-| Cold cache after restart or failover; saving and reloading the pool | 3 | B `#cold` | Paragraphs |
-| Where old versions live (PostgreSQL table, InnoDB undo, SQL Server version store in tempdb or PVS, SQLite journal or WAL) and what a long transaction costs | 2 | S `#versions` | Mechanism, Figure 3, engine table |
-| Why versions exist and who sees them | 2 | **Isolation and snapshots** | Reminder sentence in S |
-| Space reused, rarely returned; table fill factor and the free space HOT uses; rewrites and their costs | 3 | S `#fill-factor` | Paragraphs |
-| Index fill factor and page splits | 3 | **Indexes** `#splits` | Link from S |
-| Dirty pages and why commit can't write pages | 2 | S `#dirty` | Figure 4 |
-| Write-ahead rule, LSN, each engine's log; who writes dirty pages | 2 | S `#wal`, `#writers` | Figures 5, 6 |
-| The flush and its price; group commit; batching | 2 | S `#commit-wait`, `#group-commit` | Measured table, Figure 7 |
-| Binary log; SQLite rollback journal and WAL mode | 2 | S `#records`, `#sqlite-modes` | Paragraphs |
-| Crash recovery: redo from a checkpoint, page LSN test; failures and what each keeps | 2 | S `#recovery` | Figure 8 |
-| Checkpoints in brief: what they bound | 2 | S `#recovery` (paragraph) | Paragraph |
-| Unfinished transactions: PostgreSQL invisible, InnoDB background undo, SQL Server undo proportional to the longest transaction unless ADR (always on in Azure SQL) | 2 | S `#unfinished` | Paragraphs |
-| Recovery time: what the outage includes; measured replay | 2 | S `#recovery-time` (short); detail in C `#restart` | Paragraph |
-| What recovery cannot repair | 2 | S `#cannot-repair` | List |
-| The promise assumes the storage honours a flush | 2 | S `#flush` | Figure 9 (flush path), paragraph |
-| Choosing how durable a commit is: settings across engines (PostgreSQL, InnoDB, SQLite, SQL Server delayed durability), loss against corruption, `sync_binlog`, kinds of data | 2 | S `#settings` | Figure 10, settings table, decision table |
-| Corner cases of relaxed commits: visible before durable; planned SQL Server shutdown loses delayed-durable commits; immediate PostgreSQL shutdown counts as a crash | 3 | S `#relaxed-commits` | Short paragraphs |
-| What can lose a committed change, gathered | 2 | S `#loss` | Table (reference) |
-| Replicas, failover data loss | 2 | **Replication and failover** | Sentence in S `#loss` |
-| A commit whose reply was lost | 2 | **Handling conflicts and uncertain outcomes** | Sentence in S `#loss` |
-| Point-in-time recovery: a running copy as a crashed disk, archiving, replay and stopping early, timelines, MySQL and SQLite | 2 | **Backups and recovery** `#pitr` (moved whole from S, with its figure) | Paragraph and link in S `#loss` |
+- **Outcome and sections:** choose values whose comparisons mean what the
+  application intends. RL07 — money, units, time, text and collation; RL08 —
+  NULL, absence and three-valued predicates.
+- **Entry and teaching:** simple SELECT syntax is supplied locally. Execute
+  exact money, repeated local-time, case/collation and NULL cases. A compact
+  value/predicate display exposes the result rather than a type catalogue.
+- **Changed case and decision:** a query for unpaid orders begins excluding rows
+  after a NULL enters a subquery. The reader can choose a representation and
+  repair its predicates. Equality and missingness belong together because both
+  alter keys, joins and filters before physical optimisation matters.
 
-### Checkpoints, torn pages and the log (C)
+### RL79 — Constraints and tenant boundaries
 
-| Part | Layer | Home | Needs |
-|---|---|---|---|
-| Reminder: three problems pages-written-later leave | 1–2 | C opening | Paragraph |
-| Checkpoint costs: rounds against continuous; replay, page writes and full-page images | 3 | C `#checkpoints` | Mechanism, Figure 1 (checkpoints model) |
-| Checkpoint calibration by engine (PostgreSQL 5 min / 1 GB / 0.9, InnoDB redo capacity, SQL Server 60-second indirect target, SQLite 1,000 pages) | 3 (4) | C `#checkpoint-settings` | Reference table |
-| Sizing between checkpoints from a recovery-time target | 3 | C `#choosing-interval` | Method, measured cycle (Figure 2), 1 GB against 64 MB evidence |
-| Checkpoint symptoms and what to change | 3 | C `#checkpoint-symptoms` | Reference table |
-| Torn pages: guards per engine, SQL Server detects only | 3 | C `#torn-pages` | Figure 3, engine table |
-| What one change writes, tallied | 3 | C `#write-cost` | Short worked tally |
-| Checksums: detection, not repair | 3 | C `#checksums` | Paragraph |
-| Trusting the flush: layers, power-loss protection, cloud volumes, fsync failure, network file systems, testing, flush time as the commit floor | 3 | C `#trust`, `#testing` | Layers table, paragraphs |
-| The log as a resource: volume, what holds it per engine (incl. SQL Server log backups and `log_reuse_wait_desc`), a full log disk, the failing-archive experiment | 3 | C `#log-volume` | Retention table, recorded experiment |
-| Recovery time and long transactions at restart, per engine | 3 | C `#restart` | Measured replay, paragraphs |
-| Four incidents | 3 | C `#incidents` | Worked diagnoses |
-| Signals by engine | R | C `#summary` | Reference table |
+- **Outcome and sections:** make rules hold for every writer. RL09 — column,
+  row, reference and transaction invariants; RL11 — tenant-scoped identities,
+  references and access paths.
+- **Entry and teaching:** schema and keys. Translate booking rules into
+  constraints; let a second writer bypass the application; then attempt a
+  cross-tenant reference. Demonstrate the cross-row rule a CHECK cannot settle.
+- **Changed case and decision:** two individually valid reservations exhaust
+  one shared capacity. The reader can place each rule in a constraint,
+  authorisation layer or concurrency protocol. This page defines the obligation;
+  RL90 and RL91 own its concurrent enforcement.
 
-### Product series and other homes
+### RL80 — History, correction and deletion
 
-| Part | Home |
-|---|---|
-| Clock sweep, buffer rings, `pg_buffercache` reading, usage counts as a working-set gauge, `pg_prewarm`, huge pages, `effective_cache_size` | PostgreSQL series: *Inside PostgreSQL* `#eviction` (with the four-policy figure) |
-| Checkpoint log line, `pg_stat_checkpointer`, writers in `pg_stat_io`, `max_wal_size` trigger rule and worst-case replay figure | PostgreSQL series: *WAL, checkpoints, and recovery* `#reading-checkpoints`, `#max-wal-size` |
-| WAL flush timing in `pg_stat_io`, wait events | PostgreSQL series: *WAL, checkpoints, and recovery* `#wal-flush-timing` |
-| Reading a restart: startup lines and end-of-WAL messages | PostgreSQL series: *WAL, checkpoints, and recovery* `#reading-restart` |
-| HOT, autovacuum, freezing, retained-snapshot diagnosis | PostgreSQL series: *Row versions, transactions, and vacuum* |
-| Hit rate: where each engine counts it and how it misleads | *Understanding database performance* `#hit-rate` |
-| Synchronous standby levels (the old Storage Figure 14) | *Replication and failover* `#acknowledgements` teaches the table; the figure's scene stays in the shared model, unused, until that page adopts it |
-| Column storage | Column-stores essay |
-| Compression, encryption at rest, LSM engines, eviction algorithms beyond a paragraph, allocation structures | Left out of this article. Proposed field homes: A03 for column compression, F08 for encryption policy, B08 for volume encryption, F04 for LSM. Other eviction/allocation internals remain reference material. |
+- **Outcome and sections:** RL10 — current state, business history, dated facts,
+  corrections and retention. Preserve the answer to “what did we agree then?”
+  without treating every update as a complete event-sourcing programme.
+- **Entry and teaching:** schema design. Compare overwritten prices, copied
+  order facts and valid-time records; follow a correction and a deletion through
+  foreign keys, archived data and backup retention.
+- **Changed case and decision:** a backdated correction changes a report that
+  was already sent. The reader can choose what history must be stored and define
+  what deletion can actually promise. Time changes the meaning of a fact, which
+  earns a separate page from normalisation's update-anomaly investigation.
 
-## Proposed whole-collection structure
+## Query and change the right rows — 5 pages
 
-18 October 2026. Part of the [field proposal](../databases-and-storage-plan.md).
-See the [field map conventions](databases-and-storage.md#map-conventions).
-This is a page and section plan for discussion, before independent planning review
-or article commissions. The detailed maps above remain the mechanism breakdown for
-R12–R16 and R28, with PostgreSQL recovery material at PG05.
+### RL81 — Joins and the meaning of a result row
 
-Reader outcomes: model facts and enforce invariants; construct correct queries;
-predict concurrency and index behaviour; diagnose work and waits; choose capacity
-and distribution; evolve, protect and recover the data; compare implementations.
-The general explanations use PostgreSQL as a worked engine and distinguish
-consequential InnoDB, SQL Server and SQLite differences. Product machinery belongs
-in the eleven-page PostgreSQL branch.
+- **Outcome and sections:** RL12 — relational questions and essential SELECT;
+  RL13 — grain, multiplicity and join fan-out; RL14 — absence and exclusion.
+  Produce the intended answer before making it faster.
+- **Entry and teaching:** small tables. Execute joins, pre-aggregations, EXISTS
+  and anti-joins with expected result rows visible beside the query.
+- **Changed case and decision:** a second payment per order doubles reported
+  revenue; moving a predicate loses unbooked sessions. The reader can defend
+  each intermediate row's meaning. These cases stay together because they all
+  fail when the reader loses track of what one row represents.
 
-Running example: the shop's orders, customer 42 and blue mug P7; P7 is on page 12
-for the storage trace. Preserve `index_orders` and its 60,000-row history-query
-dataset for the measured index explanations. Do not force that synthetic table
-into schema-design or analytical examples when it hides their actual problem.
+### RL82 — Aggregates, windows and ordered results
 
-Base: `/learn/databases/relational/`. Prerequisites below are conceptual; each
-direct entrant gets a brief orientation rather than a compulsory reading list.
+- **Outcome and sections:** RL15 — grouped summaries, per-row windows, frames,
+  ties and top-per-group results.
+- **Entry and teaching:** result grain. Execute daily totals, customer rankings
+  and running bookings on one dataset; animate how grouping collapses rows and
+  a window retains them.
+- **Changed case and decision:** two orders share a timestamp and a default
+  frame gives a different running total. The reader can select grouping or a
+  window and specify ordering/frame semantics. The changed output needs a
+  focused sequence of examples that would interrupt the joins page.
 
-| ID | Proposed page and role | Owned sections and reader outcome | Teaching form | Entry needs; onward homes | Existing material / destination |
-| --- | --- | --- | --- | --- | --- |
-| R01 | Relational databases — introduction | Tables and records; identity and references; queries and constraints; transactions; engine and deployment; useful workloads and limits. Understand what the system is for before tracing an operation. | Small related tables and one read/change, with visible results. | No SQL assumed. R02/R06/R09; R31 for selection. | Existing collection entrance `/learn/databases/relational/`. |
-| R02 | Designing your data — deep dive | Facts and identity; keys and relationships; cardinality; normalisation; intentional copies and history; ownership; design changes. Represent the shop without inconsistent shared facts. | Work a schema through duplication, an update anomaly and a deliberate snapshot. | R01-level model. R03/R04/R05. | Existing `modelling/`; `normalisation/` remains an alias. |
-| R03 | Types, missing values and time — practical guide | Integer/decimal/float and units; text and collation; NULL and absent facts; identifiers; timestamps, zones and intervals; business history and temporal constraints. Choose representations that preserve meaning. | Wrong total, missing value and daylight-saving cases; engine contrasts after each mechanism. | Basic rows. R04 owns constraints; PG11 owns range/PostGIS implementation. | New `types-and-time/`. |
-| R04 | Constraints in depth — deep dive | NOT NULL, checks and uniqueness; references and delete/update actions; NULL behaviour; deferred enforcement; race-free invariants and limits of cross-row rules. Place rules at the enforceable boundary. | Two clients violate an application-only check; constraints resolve or expose the remaining decision. | R02; brief transaction reminder. R09–R11 own isolation and retries. | Existing `constraints/`. |
-| R05 | Tables and JSON — deep dive | Stable relational facts and varying attributes; nested updates; query/index boundaries; validation; write contention; when a document store earns another system. Choose a mixed representation. | P7 variants queried and updated in two designs. | R02/R03; D02 for document aggregates; PG08 for syntax/index machinery. | Existing `tables-and-documents/`. |
-| R06 | Querying your data — deep dive | SELECT/filter/order; joins and row multiplication; grouping and HAVING; subqueries/EXISTS; set operations; NULL/three-valued logic. Predict the result before optimising it. | Tiny input tables beside exact query outputs, including empty and duplicate cases. | R01; SQL notation taught locally. R07/R08/R30. | Existing `query-results/`. |
-| R07 | How a query runs — deep dive | Parse/plan/execute; scan/join/aggregate/sort operators; estimates and actual rows; statistics, correlations and refresh; memory/spill and parallelism. Read a plan as work rather than as a score. | Follow one query through operators; change skew and statistics; real plan measurements. | R06; R12 owns index structure, PG02 owns PostgreSQL planner details. | Existing `query-execution/`; keep `#refresh`. |
-| R08 | Pagination and large results — practical guide | Total order and ties; offset work; keyset cursors and mixed/null keys; concurrent changes; stable exports; streaming and transaction lifetime. Return a bounded, usable result. | Next-page traces and a concurrent insertion; inspect the plan and connection lifetime. | R06; R12/R13 for index access. | Existing `large-results/`; keep `#page-cost`. |
-| R09 | Transactions and concurrency — deep dive | Atomic work and commit; application transaction boundaries; locks and waiting; conditional updates; multi-statement invariants; avoid external I/O while holding resources. Make one purchase correct. | Two buyers, one remaining mug; connection-labelled statements and responses. | R01/R04; R10/R11 for anomalies and outcomes. | Existing `transaction-boundaries/`; `concurrent-updates/` remains an alias. |
-| R10 | Isolation and snapshots — deep dive | Statement/transaction views; row versions; lost updates; write skew; phantoms; serialisation; locking reads; choosing an isolation level. Predict the anomaly that remains. | Histories on two connections, with actual engine results and contrasts. | R09; R15 owns physical version storage, PG04 owns vacuum. | Existing `isolation/`. |
-| R11 | Handling conflicts and uncertain outcomes — practical guide | Deadlocks and serialization failures; retry whole units; backoff and deadlines; lost commit replies; operation identity and deduplication; external effects and the database outbox boundary. Finish the decision after failure. | Commit succeeds but reply is lost; retry with a stable purchase ID; inspect resulting state. | R09/R10; F05 owns transporting a copy, messaging mechanisms remain elsewhere. | Existing `conflicts-and-retries/`. |
-| R12 | Indexes — deep dive | Owns the detailed Indexes map above: ordered copies, page lookup, selectivity, composite order, covering, write cost and index-set design. | Preserve measured history query and progressive figures; verify numbers again when changing examples. | Basic query; short page reminder. R13/R14; PG03 for implementation. | Existing `indexes/`; reference article, still revisable. |
-| R13 | Indexing queries: diagnosis and patterns — companion to R12 | Owns Q in the detailed map: plan vocabulary, unusable conditions, estimates, parameters and worked query shapes. Distinguish a bad access path from a cheap scan. | Measured query/result/plan pairs and a changed condition. | R12 or a local reminder; R08 owns pagination mechanics, R07 statistics schedules. | Existing `indexing-queries/`. |
-| R14 | Maintaining indexes — companion to R12 | Owns M in the detailed map: size/density, rebuild decisions, safe builds, unused indexes and rollout. Improve an index set without interrupting the application. | Before/after measurement and an operational change case. | R12; R24 owns general live-change procedure; PG03 owns product details. | Existing `maintaining-indexes/`. |
-| R15 | Storage and durability — deep dive | Owns S in the detailed map: page/row cost, buffers, versions, dirty pages, WAL, commit/group commit, crash recovery and durability choices. | Preserve P7/page 12 trace, failure states and recorded measurements. | R01 and a short transaction reminder. R16/R28 for depth; PG05 for product procedures; R23 owns PITR. | Existing `storage/`; reference article, still revisable. |
-| R16 | The buffer pool — companion to R15 | Owns B above: working set, OS cache, scan interference, memory budget and cold restart/failover. Choose and diagnose cache capacity. | Vary working-set size; distinguish modelled work from server measurement. | R15; R17 owns misleading hit-rate diagnosis, PG01 owns clock sweep. | Existing `buffer-pool/`. |
-| R17 | Understanding database performance — practical guide | Establish symptom and interval; workload baselines; query work against waits; CPU, I/O, locks, logs and spills; plans, skew and statistics; hit-rate traps; verify the repair under load. Find the limiting work. | One incident with measurements that rule out competing explanations. | R07-level operators supplied locally; R13/R16/R18 and B06 for deeper diagnosis. | Existing `slow-queries/`. |
-| R18 | The database work behind an application request — practical guide | Connection establishment/pools and budgets; ORM SQL; N+1; batching; prepared statements; timeouts and cancellation; overload and transaction leaks. Count and bound request work. | Trace one endpoint to SQL statements, waits and connection occupancy. | R06/R09; R11 owns ambiguous effects; F07 whole-system load tests. | Existing `request-cost/`. |
-| R19 | Reporting on operational data — deep dive | Report grain and correct totals; workload interference; read replicas and stale reports; summary tables/materialised results; refresh and invalidation; deciding when to separate analysis. | Same report with multiplied rows, a summary and a lagged replica. | R06; R30 owns SQL patterns, A02 analytical models, F05 copy protocols. | Existing `reporting/`. |
-| R20 | Scaling a relational database — deep dive | Evidence for a limit; reduce work; capacity and headroom; larger server, replicas, partitions and shards; bottlenecks that move; workload/cost comparison. Choose the next capacity move. | Compare designs under one measured workload with skew and a failed node. | R17; R21/R22/R34 own mechanisms; B05 hardware limits. | Existing `scaling/`. |
-| R21 | Replication and failover — deep dive | Physical/logical copies in outline; send/flush/replay; synchronous acknowledgement; lag and read routing; promotion and fencing; RPO/RTO; split writers and tests. Explain which accepted work survives promotion. | One change through replicas and a partition; include the retained acknowledgement figure. | R15; PG06 commands/positions; R35 owns consensus ranges. | Existing `replicas-and-failover/`; retain `#acknowledgements`. |
-| R22 | Partitioning and sharding — deep dive | Local pruning and maintenance; distribution keys and co-location; hot shards; cross-shard constraints/queries; ID allocation; online movement and routing. Distinguish table partitions from separate writers. | Shop tenants placed and moved; inspect query fan-out and a skewed tenant. | R07/R20; PG07 implementations; R36 distributed commit. | Existing `partitioning-and-sharding/`. |
-| R23 | Backups and recovery — practical guide | Logical/physical/base backups; log chain and PITR; restore target; application reconciliation; corruption and validation; off-site/isolated copies; restore time and drills. Prove a usable recovery. | Restore before a bad delete, then recover a later valid purchase; record actual drills separately from models. | R15; B07 snapshots; F08 recovery access and deletion policy. | Existing `backup-and-restore/`; retain moved PITR explanation and anchors. |
-| R24 | Changing a schema while the application runs — practical guide | Locks and online DDL; expand/contract compatibility; batched backfills and completion; indexes and constraints; deploy order; rollback and replicas. Migrate without a hidden mixed-version gap. | Two app versions, an interrupted backfill and a final validation query. | R02/R09; R14 index procedure, F06 cross-store migration. | Existing `schema-changes/`. |
-| R25 | Controlling access — practical guide | Roles, grants and ownership; application identities; row/column policies; tenant escape cases; auditing; secrets and transport; testing privileged paths. Express the boundary in the engine. | Role/action tests with a tenant leak and a backup operator. | F08's policy is summarised locally; R29 tenant architecture. | Existing `access-control/`. |
-| R26 | When should you add another system? — comparison | Search, documents, analytics, cache and specialised retrieval demands; credible existing-engine baseline; duplication, freshness and operations. Decide when an additional store earns its cost. | Several shop pressures, each compared with staying in the relational engine. | R01-level understanding. F02/F07 evaluate, F05 maintains copies; family introductions explain alternatives. | Existing `adding-another-system/`. |
-| R27 | Retention and deletion — practical guide | Row lifecycle, history/archive and partition retirement; deletion work and tombstones; references and derivatives; erasure during restore; retention verification. Remove the right data without breaking recovery. | One customer removed across live rows, reports and a restored backup. | R02/R23; F08 policy, F05 propagation, R28 cleanup mechanics. | Existing `data-lifecycle/`. |
-| R28 | Checkpoints, torn pages and the log — companion to R15 | Owns C above: checkpoint/restart tradeoff, torn pages, checksums, flush path, log retention and incidents. Diagnose the work deferred by commit. | Recorded checkpoint/log incidents and a signals table, linked to actual engine evidence. | R15; R14 index maintenance, PG04 version cleanup; B07 lower-layer protection. | Existing `checkpoints-and-the-log/`. |
-| R29 | Sharing a database between tenants — practical guide | Shared table/schema/database choices; tenant keys and constraints; identity propagation; row isolation and privileged paths; noisy neighbours; per-tenant export/restore/movement. Defend a tenancy boundary. | Two tenants with a join leak, a hot tenant and a restore request. | R02/R25; R22 movement, F08 policy. | New `tenants/`. |
-| R30 | SQL for histories and analytical questions — practical guide | Window partitions/frames; ranking and running totals; latest row per group; recursive queries and termination; interval overlap and gaps; exact result checks. Choose a query shape and predict its result. | Small input/output cases with ties and missing periods; plans where work changes the choice. | R06. R19 owns report architecture, A09 time-series modelling, G03 path semantics. | New `analytical-queries/`; reuse existing scattered SQL where sound. |
-| R31 | Choosing a relational database — comparison | SQL Server, MySQL, PostgreSQL and SQLite for contrasting workloads; transactions, deployment, recovery, extensions and operating effort; editions/services and licensing evidence. Choose candidates, not a universal winner. | Same workload and failure requirements across alternatives, with dated evidence. | R01/F02; R32 embedded, R34 distributed, PG01 implementation depth. | Existing `product-comparison/`. |
-| R32 | Running an embedded database — deep dive | In-process engine and file ownership; SQLite concurrency/journal modes; local durability and backup; multiple processes; application rollout; when a server is needed. Distinguish SQLite operational choices from server defaults. | Two writers and a reader; safe backup and deployment on an actual local engine. | R01; R15 owns general recovery, B02/B03 file semantics. | New `embedded/`; existing `embedded-databases` alias still points to R31 until route work is separately commissioned. |
-| R33 | The last blue mug — worked example | Synthesis only: schema/invariants, query/index, purchase transaction, lost reply and post-restore reconciliation. Apply the mechanisms without becoming another full explanation of them. | One coherent purchase through normal and failed outcomes; link to the precise teaching homes. | R02/R09/R11/R12; enough context for a direct reader to choose the deeper link. | Existing `checkout/`. |
-| R34 | Distributed SQL — introduction | Why distribute a relational engine; ranges and replicas; SQL execution across locations; atomic changes; latency, availability and placement; alternatives to distributing writes. Choose whether the branch is needed. | One purchase whose records begin together and then span regions. | R01; R35/R36/R37. | Existing `/learn/databases/distributed-sql/`; preserve entrance. |
-| R35 | Replicated ranges and distributed reads — deep dive | Partition/range ownership; replicated log and quorum; leader/lease authority; read timestamps and safe stale reads; quorum loss; moving/splitting ranges. Predict a read during delay or failure. | Small range state machine, message trace and failed leader; contrast actual CockroachDB/Spanner contracts. | R34; F03 vocabulary supplied locally. Shared distributed-systems programme stays parked. | New `distributed-sql/replication/`. |
-| R36 | Transactions across machines — deep dive | Participants and coordination; atomic commitment separate from replication; contention and distributed deadlocks; isolation/retries; lost coordinator; uncertainty and outcome recovery. Trace a cross-range invariant. | Transfer with durable participant states, crash points and eventual outcome; measured native behaviour where feasible. | R09/R10/R35. R11 retry identity is reminded, not re-taught. | New `distributed-sql/transactions/`. |
-| R37 | Locality, capacity and operating distributed SQL — practical guide and comparison | Placement and multi-region promises; cross-region query cost; hot ranges; index locality; schema/backfill work; surviving a region; recovery and cost; choosing CockroachDB/Spanner against single-writer alternatives. | Same workload with different placement and failure requirements; current engine/service boundaries. | R34–R36 as needed. R31 for general engine choice, F07 evaluation. | New `distributed-sql/locality-and-operations/`. |
-| R38 | Routine maintenance and safe upgrades — practical guide | Space/version cleanup; statistics and integrity checks; headroom; scheduling work without exhausting capacity; minor/major engine changes; extension/replica compatibility; rollback and rehearsal. Build an operating routine from observed needs. | Maintenance backlog during a busy interval, then an upgrade rehearsal with application validation. | R14/R23/R28; PG04/PG05/PG11 own PostgreSQL procedures. Avoid a universal tuning schedule. | New `maintenance-and-upgrades/`; preserve the existing `maintenance` alias until route work is commissioned. |
-| PG01 | Inside PostgreSQL — product deep dive | Processes, connections, shared/private memory; relation files; clock sweep and rings; buffer inspection and sizing controls. Relate resource usage to architecture. | Inspect a real server and follow the shared P7 trace; retain cache-policy figure. | R15/R16; PG02/PG04/PG05. | Existing `postgresql/architecture/`. |
-| PG02 | Planning and executing a PostgreSQL query — product deep dive | PostgreSQL statistics and estimates; joins/sort/hash/spill; prepared generic/custom plans; parallelism; EXPLAIN observations. Diagnose implementation-specific execution. | Versioned plans under changed skew and memory; verify actual execution. | R07/R13; do not duplicate general operator teaching. | Existing `postgresql/query-execution/`. |
-| PG03 | Indexes in PostgreSQL — product deep dive | B-tree implementation and maintenance; concurrent builds/leftovers; GIN/GiST/BRIN and operator classes; collation/patterns; extension index boundary. Match method and operator to work. | Real plans, build failures and usage/size observations. | R12–R14; PG09/PG10 own full-text and vectors. | Existing `postgresql/indexes/`. |
-| PG04 | Row versions, transactions and vacuum — product deep dive | Tuple visibility; HOT; snapshots and retained versions; vacuum/autovacuum; freezing/wraparound; bloat measurement; long-reader incidents. Explain and repair retained work. | Inspect version lifecycle and a blocked-cleanup experiment on a real server. | R10/R15; PG06 slots may retain work but owns replication. | Existing `postgresql/row-versions/`. |
-| PG05 | WAL, checkpoints and recovery — product deep dive | WAL locations and records; writers/checkpointer; checkpoint logs/statistics and size triggers; flush timing; startup logs; policy/backup commands. Diagnose the server's durability machinery. | Actual logs and statistics; preserve measured records and validate version boundaries. | R15/R28; PG06 owns synchronous standby behaviour. | Existing `postgresql/recovery/`. |
-| PG06 | Following a change to another PostgreSQL server — product deep dive | Physical/logical replication; send/write/flush/replay positions; sync modes; slots/retention; promotion/fencing; schema and subscription limits. Operate an actual replication path. | Multi-server trace and lost-acknowledgement/failover cases; model labels remain explicit. | R21; F05 owns general derived-copy protocol. | Existing `postgresql/replication/`. |
-| PG07 | Where distributed PostgreSQL work runs — product deep dive | Native partitions; application shards; Citus/FDW boundaries; co-location, pushdown, constraints and movement; operating dependencies. Distinguish implementation choices. | Query and transaction placement with versioned extension/service evidence. | R22; R34 is the different distributed-SQL design. | Existing `postgresql/sharding/`. |
-| PG08 | JSON queries in PostgreSQL — product deep dive | json/jsonb representation; correlated array predicates; SQL/JSON row production; GIN and expression matching; update costs. Query what the model actually means. | P7 variants with wrong and correct correlated predicates and plans. | R05/D03; do not re-teach aggregate design. | Existing `postgresql/json/`. |
-| PG09 | Full-text search in PostgreSQL — product deep dive | Configurations/lexemes/positions; queries and phrases; weighted ranking; indexed filtered retrieval; update path and limits. Use the built-in facilities deliberately. | Real text/vector output, relevance cases and plans. | S02/S03 vocabulary supplied locally; S08 owns evaluation method. | Existing `postgresql/full-text-search/`. |
-| PG10 | Vector search in PostgreSQL — product deep dive | pgvector data and distances; exact/HNSW/IVF implementation; filtered candidate behaviour; iterative scans; build/update costs and memory. Test implementation recall and access controls. | Exact baseline and filtered native comparisons with pinned extension version. | S05/S06; R25 permissions; dated assessment remains separate. | Existing `postgresql/vector-search/`. |
-| PG11 | Types and extensions in PostgreSQL — product deep dive | Extension privileges/lifecycle/upgrade; ranges and exclusion; PostGIS geometry/geography and spatial indexes; operator/type dependencies. Choose and operate an extension with its consequences. | Temporal conflict and spatial query examples executed in the correct extension environment. | R03/R04; full GIS and extension development remain outside scope. | Existing `postgresql/extensions/`. |
+### RL83 — Pagination and consistent exports
 
-### Tools and existing aliases
+- **Outcome and sections:** RL16 — total ordering, keyset cursors, offsets and
+  the lifetime of an export snapshot.
+- **Entry and teaching:** filtering and ordering. Step through pages while
+  another writer inserts and changes records; compare a cursor with and without
+  a unique tie-breaker. Use real sessions for snapshot claims.
+- **Changed case and decision:** a long export misses an order moved across its
+  cursor boundary. The reader can choose navigation versus a stable export and
+  specify the consistency/cost contract. This earns direct entry because the
+  failure can survive otherwise correct SQL and adequate indexes.
 
-The existing SQL sandbox (`sandbox/`) and setup/practice page (`practice/`) remain
-two tool destinations outside the article count. Map each useful lesson to the
-owning article and distinguish PGlite, local server, extension and multi-server
-execution. A new page does not automatically need a new sandbox lesson.
+### RL84 — Updates, upserts and bulk imports
 
-The aliases in `src/lib/relational-collection.ts`, plus `normalisation/` and
-`concurrent-updates/`, remain compatibility routes, not additional articles.
-Historical counts in earlier plans are not this proposal's inventory.
+- **Outcome and sections:** RL17 — conditional atomic writes, affected rows,
+  conflict handling, bulk loading and rejected input.
+- **Entry and teaching:** predicates and constraints. Execute capacity updates
+  and import duplicate, malformed and out-of-order records. Compare overwrite,
+  ignore and version-conditional conflict contracts.
+- **Changed case and decision:** an older import overwrites a corrected booking.
+  The reader can define each write's precondition and failure result. Keep batch
+  ingestion here as a write contract; RL100 owns proving a live backfill complete.
 
-### Boundaries and changes to discuss
+### RL85 — SQL at the application boundary
 
-R38 owns the operating routine and upgrade rehearsal; R28 keeps its checkpoint/log
-argument. The proposed types, SQL patterns, tenancy, maintenance and embedded pages
-have independent reader questions; their boundaries should be challenged before
-commissioning.
+- **Outcome and sections:** RL18 — parameter binding, generated SQL, driver and
+  ORM behaviour, result lifetimes and transaction scope.
+- **Entry and teaching:** ordinary read/write SQL. Trace one request through
+  a small driver example and generated ORM statements; count round trips and
+  inspect a returned error without a framework survey.
+- **Changed case and decision:** a list endpoint gains N+1 reads; a streamed
+  result escapes its transaction. The reader can inspect the SQL actually sent,
+  bind values safely and place the boundary deliberately. The network/client
+  contract warrants a separate home from SQL's result semantics.
 
-Existing generic pages need cross-engine checks. PostgreSQL's worked examples
-must not silently define relational databases. Product comparisons require fresh
-version/edition/service evidence; this plan establishes no product ranking.
+## Make query work affordable — 3 pages
+
+### RL86 — Indexes and access paths
+
+- **Outcome and sections:** RL19 — B-tree search, composite order, range bounds,
+  covering and write cost; RL20 — expressions, partial predicates, inverted and
+  coarse-range alternatives.
+- **Entry and teaching:** queries and predicates. Count visited entries, fetched
+  rows and index updates in one model; change one predicate, column order or
+  data distribution. Native examples are labelled implementations.
+- **Changed case and decision:** a selective lookup becomes a broad scan and
+  the extra index slows writes. The reader can propose an index from the
+  workload and reject one whose maintenance exceeds its saved work. Keep access
+  alternatives here; product operator classes and physical limits have their own homes.
+
+### RL87 — Query execution and bad plans
+
+- **Outcome and sections:** RL21 — scans, physical joins, sorting, grouping and
+  retained state; RL22 — estimates, skew, correlation and reused plans.
+- **Entry and teaching:** joins and indexes. Move rows through two candidate
+  plans, locate the first bad estimate, and compare remedies. A readable plan
+  view matters more than a large raw-output table.
+- **Changed case and decision:** a small-tenant plan spills or repeats a remote
+  lookup for a very large tenant. The reader can separate a bad access path from
+  a bad estimate and choose the next measurement. Execution and estimation stay
+  together because the estimate matters through the work it selects.
+
+### RL89 — Table partitioning and data lifecycle
+
+- **Outcome and sections:** RL24 — partition pruning, key choice, enforcement,
+  partition count and lifecycle changes.
+- **Entry and teaching:** keys, predicates and indexes. Split dated sessions,
+  show visited partitions, then attach/drop a partition and revisit uniqueness.
+- **Changed case and decision:** a lookup lacks the partition key and touches
+  every partition. The reader can distinguish a lifecycle benefit from a query
+  benefit and assess its enforcement cost. This is table partitioning inside a
+  database; RL105 owns distributing data between write authorities.
+
+## Concurrency and durable application work — 5 pages
+
+### RL90 — Transactions and isolation
+
+- **Outcome and sections:** RL25 — commit, rollback, visibility and external
+  effects; RL26 — snapshots, anomalous histories and invariant-driven isolation.
+- **Entry and teaching:** a capacity rule and two requests. Run histories for
+  lost updates, write skew and inserts into a predicate; name guarantees after
+  the reader sees which results remain possible.
+- **Changed case and decision:** two valid local decisions jointly oversell a
+  session. The reader can choose an isolation/protection contract and identify
+  which work must be retried. Keep transaction meaning and isolation in one
+  argument; implementation-specific behaviour is never inferred from its label.
+
+### RL91 — Locks, contention and deadlocks
+
+- **Outcome and sections:** RL27 — resources protected, row/predicate scope,
+  acquisition order, wait cycles and safe abort handling.
+- **Entry and teaching:** transaction boundaries. Use independent clients to
+  compare an atomic update, row lock and deliberately ordered multi-row lock;
+  render the waiting graph beside the evidence.
+- **Changed case and decision:** no matching row exists to lock; reversing
+  resource order creates a deadlock. The reader can choose a protection that
+  covers the invariant and recognise the cost of contention. Native scheduling
+  and absent-row protection deserve more than an isolation-level footnote.
+
+### RL92 — Row versions, storage and cleanup
+
+- **Outcome and sections:** RL28 — version visibility and reader horizons;
+  RL33 — heap/clustered layouts, large values, free space and amplification.
+- **Entry and teaching:** a transaction snapshot. Follow an update through
+  versions, index references and reuse; compare a PostgreSQL heap with a bounded
+  InnoDB clustered/undo example, without teaching either product's commands.
+- **Changed case and decision:** a long reader retains old versions after many
+  updates and deleting rows does not shrink the file. The reader can explain
+  why logical data size and physical work diverge. Versioning and layout stay
+  together because visibility alone does not explain the resulting storage cost.
+
+### RL93 — Retries when a commit reply is missing
+
+- **Outcome and sections:** RL29 — known aborts, ambiguous acknowledgements,
+  stable operation identity, result lookup and bounded backoff.
+- **Entry and teaching:** commit and error handling. Trace and execute a client
+  state machine; drop the reply after commit and inspect the database before
+  replaying the purchase.
+- **Changed case and decision:** the database committed but the caller timed
+  out. The reader can distinguish a safe transaction retry from an operation
+  requiring reconciliation. This is an application protocol with its own state,
+  so it earns a full page beyond the isolation discussion.
+
+### RL94 — Outboxes and database-backed jobs
+
+- **Outcome and sections:** RL30 — atomic durable intent, relay restart and
+  duplicate effects; RL31 — job claims, leases, expiry and overlapping workers.
+- **Entry and teaching:** transactions, retries and identifiers. Begin with an
+  order and its durable work row, then let an independent worker send or process
+  it; crash before and after the effect. Separate the outbox and job sections.
+- **Changed case and decision:** a worker returns after its lease expired. The
+  reader can define replay-safe effects and the authority needed to exclude stale
+  workers. Keep these patterns together because both manage durable work outside
+  one transaction; broker delivery internals and a full queue product stay outside.
+
+## Durability, copies and recovery — 4 pages
+
+### RL95 — Write-ahead logs and crash recovery
+
+- **Outcome and sections:** RL32 — dirty pages, record ordering, flush,
+  acknowledgement, checkpoints and recovery.
+- **Entry and teaching:** transactions and pages. A stepped model crashes at
+  each ordering boundary and replays only justified records; native demonstrations
+  make narrower claims about the selected engine/settings.
+- **Changed case and decision:** a weaker acknowledgement survives a process
+  crash but loses data after a wider failure. The reader can describe the
+  durability domain and why checkpoint work affects recovery. Storage layout
+  supplies context, but this crash-ordering investigation earns a separate page.
+
+### RL96 — Backup, restore and reconciliation
+
+- **Outcome and sections:** RL34 — logical/physical copies, log chains and
+  recovery targets; RL35 — restore acceptance, missing dependencies, RPO and RTO.
+- **Entry and teaching:** committed history and write-ahead recovery. Choose a
+  recovery target, restore into an isolated destination and reconcile useful
+  orders written after it. Specify a native rehearsal and application checks.
+- **Changed case and decision:** a missing log segment or unavailable key makes
+  an apparently complete backup unusable. The reader can defend a recovery
+  contract from a drill. Keep acceptance beside restore mechanics; counting
+  successful backup jobs is not an independent recovery lesson.
+
+### RL97 — Replicas, lag and read routing
+
+- **Outcome and sections:** RL36 — shipping, durable receipt, replay,
+  acknowledgement policies and session-visible freshness.
+- **Entry and teaching:** commit and recovery. Advance a write across two
+  servers and route a following read; compare asynchronous and synchronous
+  promises without calling every synchronous policy equivalent.
+- **Changed case and decision:** the replica holds the log but has not applied
+  the purchase. The reader can choose a read route and acknowledgement contract
+  for a stated failure budget. Failure authority and promotion move to RL98 so
+  the replication argument is not buried under cluster control.
+
+### RL98 — Failover and fencing
+
+- **Outcome and sections:** RL37 — uncertain detection, promotion authority,
+  client routing, old-primary exclusion and rejoining.
+- **Entry and teaching:** replicas and lag. Disconnect a primary from its
+  controller while some clients can still reach it; trace who can authorise
+  writes before and after promotion. A model teaches authority, a native drill
+  validates the chosen deployment's behaviour.
+- **Changed case and decision:** the former primary returns with divergent
+  writes. The reader can evaluate a failover design and its manual recovery
+  steps. This failure can destroy correctness even with perfect replication,
+  which earns a separate investigation.
+
+## Change and operate the service — 4 pages
+
+### RL100 — Live schema changes and backfills
+
+- **Outcome and sections:** RL39 — overlapping application versions, blocking
+  and rewrite costs; RL40 — restartable batches, concurrent writers and a
+  proof of completion.
+- **Entry and teaching:** constraints, transactions and workload budgets. Run
+  expand/backfill/validate/contract through two client versions and an interrupted
+  batch. Native DDL behaviour is labelled by engine and release.
+- **Changed case and decision:** a tiny ALTER queues behind a long transaction;
+  a short backfill batch is followed by newly eligible rows. The reader can
+  sequence a compatible change and establish its completion condition. The
+  backfill belongs with the schema transition whose invariant it establishes.
+
+### RL102 — Connections, overload and capacity
+
+- **Outcome and sections:** RL42 — pools, active work, admission and deadlines;
+  RL44 — storage/log growth, memory, I/O, replica and recovery headroom.
+- **Entry and teaching:** query work and transaction lifetime. Follow a bounded
+  queue into the database, estimate capacity from measured rates, and vary active
+  concurrency rather than only increasing connections.
+- **Changed case and decision:** retained logs fill disk; a larger pool worsens
+  tail latency. The reader can set resource budgets and test the limiting
+  resource. Keep rate, concurrency and headroom together because capacity is the
+  amount of safe work admitted, not just the machine's nominal size.
+
+### RL103 — Diagnosing a database incident
+
+- **Outcome and sections:** RL43 — separate waiting, CPU, I/O, replication and
+  storage pressure; test a reversible intervention and establish recovery.
+- **Entry and teaching:** transactions and query work. Offer an incident entrance
+  with a small evidence set and a branching investigation; reveal misleading
+  symptoms only after the reader makes a prediction.
+- **Changed case and decision:** terminating a blocker exposes queued work and
+  causes a second overload. The reader can choose the next observation and
+  assess an intervention's cost. A directly sought incident entrance earns its
+  page; product monitoring commands are taught in their implementation homes.
+
+### RL104 — Database access and least privilege
+
+- **Outcome and sections:** RL45 — authentication, roles, ownership, tenant
+  enforcement, transport, query safety and protected backup access.
+- **Entry and teaching:** schema and application boundaries. Derive roles from
+  app/migration/backup tasks and test both permitted and denied actions. Explain
+  credential rotation and the limits of encryption without a compliance survey.
+- **Changed case and decision:** an application has correct row filters but
+  credentials that bypass its intended boundary. The reader can define and
+  verify a privilege model. Cross-cutting trust deserves one general home; exact
+  PostgreSQL bypass rules and CockroachDB node identity remain product teaching.
+
+## Distribute relational work — 5 pages
+
+### RL105 — Sharding and distributed SQL
+
+- **Outcome and sections:** RL47 — scale-up, replicas, application sharding and
+  distributed SQL; RL48 — partition keys, routing, colocation, indexes and skew.
+- **Entry and teaching:** keys, indexes and one transaction. Route tenant orders
+  in alternative layouts and count cross-partition work, then grow one tenant.
+- **Changed case and decision:** a single hot seat counter remains serialised
+  after adding nodes. The reader can decide whether distributing writes solves
+  the actual limit and choose a first partitioning strategy. Partition choice
+  stays with the distribution decision; table partitioning remains RL89.
+
+### RL106 — Transactions across partitions
+
+- **Outcome and sections:** RL49 — replicated partition authority, multi-partition
+  commit, durable decisions and abandoned-transaction resolution.
+- **Entry and teaching:** transactions, replicas and partition keys, recalled
+  through a two-partition order. Step the commit through coordinator loss and
+  one unreachable partition; distinguish quorum replication from atomic commit.
+- **Changed case and decision:** one partition remains healthy while the other
+  cannot participate. The reader can explain the lost availability and choose
+  transaction boundaries with their network cost. This mechanism warrants its
+  own investigation; consensus proofs and a shared distributed-systems course stay parked.
+
+### RL107 — Time, snapshots and distributed reads
+
+- **Outcome and sections:** RL50 — current versus historical reads, clock
+  uncertainty, safe read times and snapshot meaning across partitions.
+- **Entry and teaching:** snapshots and replicated partitions. Trace a booking
+  read against a deliberately old timestamp, then require a current invariant.
+  Use Spanner's external-consistency approach as a bounded contrast, with its
+  actual clock assumptions rather than a universal clock story.
+- **Changed case and decision:** a cheap nearby report read is reused to approve
+  a booking and oversells. The reader can choose a freshness contract and know
+  when time coordination enters latency. Product read syntax belongs below.
+
+### RL108 — Regional placement and survival
+
+- **Outcome and sections:** RL51 — local reads/writes, cross-region invariants,
+  failure domains, data placement and survival requirements.
+- **Entry and teaching:** replicated partitions and distributed transactions.
+  Place regional tenants and global workshop information, count required
+  coordination paths, then remove a region. Distinguish locality from a complete
+  residency assurance that also includes copies, metadata and backups.
+- **Changed case and decision:** a local booking must now update a global quota.
+  The reader can defend a placement/survival design and its healthy-case latency.
+  Geographic choices earn their own page because they change both failure and
+  performance contracts without changing the SQL schema.
+
+### RL109 — Rebalancing and cluster change
+
+- **Outcome and sections:** RL52 — range movement, re-replication, headroom,
+  staged versions and interacting failures.
+- **Entry and teaching:** distributed placement. Follow a node addition, planned
+  removal and unexpected loss with foreground requests continuing; model work
+  explicitly, then require a native cluster exercise for implementation claims.
+- **Changed case and decision:** adding nodes raises tail latency while data
+  moves. The reader can budget a topology change and distinguish node count
+  from quorum safety. This operation has different evidence and failure modes
+  from transaction execution and regional design, which earns another home.
+
+## PostgreSQL implementation — 13 pages
+
+### RL110 — PostgreSQL processes, pages and row versions
+
+- **Outcome and sections:** RL53 — sessions, backends, buffers, files, heap and
+  index boundaries; RL54 — tuple visibility, updates and HOT.
+- **Entry and teaching:** row versions and storage, with a local one-paragraph
+  refresher. Inspect a seeded native server and follow an update from backend
+  through tuple and index evidence.
+- **Changed case and decision:** adding an indexed column to an update changes
+  its physical work. The reader can explain that path and choose what to inspect.
+  These internals stay together because the update makes the process/page model
+  useful; vacuum's separate operational lifecycle follows in RL111.
+
+### RL111 — PostgreSQL vacuum and transaction age
+
+- **Outcome and sections:** RL55 — dead versions, visibility maps, autovacuum,
+  freeze horizons, blockers and reusable space.
+- **Entry and teaching:** PostgreSQL versions. Hold an old snapshot while
+  updating a table; inspect cleanup and transaction-age evidence before changing
+  maintenance settings. Compare reuse with a blocking rewrite.
+- **Changed case and decision:** a slot or long transaction prevents expected
+  progress. The reader can diagnose the horizon and choose a safe intervention.
+  Cleanup and transaction-age safety need a full operational investigation; they
+  cannot be implied by a correct explanation of visibility.
+
+### RL112 — PostgreSQL index methods and operators
+
+- **Outcome and sections:** RL56 — native B-tree, GIN, GiST and BRIN use,
+  operator compatibility, index-only conditions and maintenance cost.
+- **Entry and teaching:** generic access paths. Execute justified candidates
+  over seeded ordered, sparse and containment workloads, inspect native plans
+  and include their update work. This is selection, not an exhaustive method catalogue.
+- **Changed case and decision:** correlation disappears or updates remove
+  index-only benefits. The reader can select a method and compatible operators
+  from measured work. Native capability and maintenance deserve their own home
+  beyond the general search mechanism.
+
+### RL113 — Reading and repairing PostgreSQL plans
+
+- **Outcome and sections:** RL57 — native EXPLAIN evidence, buffers, statistics,
+  extended statistics and prepared-plan behaviour.
+- **Entry and teaching:** generic plan reasoning. Execute a skewed-tenant query,
+  locate its estimate error, inspect native evidence and test narrowly justified
+  remedies with reproducible results.
+- **Changed case and decision:** a prepared query changes plan behaviour for a
+  large tenant. The reader can choose the next native measurement and verify
+  a remedy. Keep statistics and prepared plans together because they meet in
+  the same concrete diagnosis; shared operator teaching remains RL87.
+
+### RL114 — PostgreSQL JSON and structured alternatives
+
+- **Outcome and sections:** RL58 — JSONB representation, operators, indexing,
+  update cost, columns, arrays/ranges and extension boundaries.
+- **Entry and teaching:** types and indexes. Query a flexible workshop payload,
+  promote an often-tested property to a column and compare plans and updates.
+  Arrays, ranges and extensions are conditional alternatives, not promised full tutorials.
+- **Changed case and decision:** a small payload change causes substantial
+  stored-value work or a provider lacks an extension. The reader can decide
+  which facts deserve ordinary columns and which need flexibility. The entire
+  investigation concerns one representation choice, not a list of PostgreSQL features.
+
+### RL115 — PostgreSQL WAL, checkpoints and durability
+
+- **Outcome and sections:** RL59 — native write/flush settings, checkpoints,
+  recovery work and relevant storage assumptions.
+- **Entry and teaching:** general crash ordering. Inspect WAL/checkpoint evidence
+  and run a documented isolated restart drill. Separate process restart
+  observations from power-loss claims the exercise cannot establish.
+- **Changed case and decision:** weaker acknowledgement improves latency while
+  changing loss exposure; checkpoint work shifts a tail. The reader can defend
+  settings by failure domain. Native settings require a full home; the general
+  write-ahead model remains RL95.
+
+### RL116 — Restoring PostgreSQL to a recovery target
+
+- **Outcome and sections:** RL60 — base backups, archives, targets, timelines,
+  missing WAL and application acceptance.
+- **Entry and teaching:** PostgreSQL WAL and the general recovery contract.
+  Execute an isolated base-plus-WAL restore, intentionally break the archive,
+  then restore before a destructive change and reconcile a valid later order.
+- **Changed case and decision:** promotion creates another timeline or a target
+  loses useful commits. The reader can build and test a complete restore path.
+  Recovery has its own execution environment and acceptance result, so it stays
+  separate from WAL internals and physical standby operation.
+
+### RL117 — PostgreSQL physical replicas and promotion
+
+- **Outcome and sections:** RL61 — streaming positions, slots, synchronous
+  policies, replay, promotion and the explicit external fencing boundary.
+- **Entry and teaching:** generic replicas/failover plus PostgreSQL WAL. Use
+  independent native servers to create lag, interrupt a replica and promote a
+  candidate; show client routing and how the old writer is excluded.
+- **Changed case and decision:** a disconnected slot retains logs or a required
+  standby stalls acknowledgement. The reader can configure a stated policy and
+  assess failure behaviour. Keep native replication and promotion together:
+  their shared configuration is more useful than a second nearly identical setup lesson.
+
+### RL118 — PostgreSQL logical replication and change feeds
+
+- **Outcome and sections:** RL62 — publications, initial copies, replica
+  identity, subscriber restart, retained logs and schema coordination.
+- **Entry and teaching:** generic snapshot-plus-stream handover. Execute a
+  selective initial copy, update/delete, schema evolution and subscriber outage.
+  Inspect the state required at both ends.
+- **Changed case and decision:** new schema or sequence state leaves a
+  subscriber unsuitable for replacement. The reader can choose a logical feed
+  and define its missing responsibilities. Native logical replication earns a
+  separate page because its contract and failures differ from physical recovery.
+
+### RL119 — PostgreSQL schema changes under load
+
+- **Outcome and sections:** RL63 — lock evidence, concurrent builds, invalid
+  indexes, constraint validation, version-specific rewrites and backfill controls.
+- **Entry and teaching:** general expand/contract and PostgreSQL monitoring.
+  Execute a blocked ALTER, failed concurrent index build and validated change
+  while an old client and a new client remain active.
+- **Changed case and decision:** an interrupted build leaves an object that
+  exists but is not usable as intended. The reader can sequence and recover a
+  real change. Product lock/rewrite behaviour needs its own operating lesson;
+  generic compatibility and completion proofs remain RL100.
+
+### RL120 — Operating and diagnosing PostgreSQL
+
+- **Outcome and sections:** RL64 — native activity/lock views, logs, workload
+  statistics, spills, memory evidence and pool-mode assumptions.
+- **Entry and teaching:** general incident and capacity reasoning. Diagnose a
+  blocker, a spill and connection pressure on a native seeded server; validate
+  one justified intervention in each case.
+- **Changed case and decision:** transaction pooling breaks session-dependent
+  code or cancellation releases an overload. The reader can obtain trustworthy
+  evidence and assess the side effect of acting. This is the product interface
+  to operations, not a repeat of a generic incident checklist.
+
+### RL121 — PostgreSQL roles, policies and privileged code
+
+- **Outcome and sections:** RL65 — native roles/ownership, grants, search paths,
+  row policies and bypass conditions.
+- **Entry and teaching:** general privilege model and tenant invariants. Execute
+  permitted and denied actions using application, migration and tenant roles;
+  test privileged-function lookup assumptions.
+- **Changed case and decision:** an owner or elevated role bypasses the expected
+  row boundary. The reader can implement and test a native privilege design.
+  Exact bypass and name-resolution rules earn a product home because plausible
+  generic advice otherwise creates a false security guarantee.
+
+### RL122 — Upgrading and migrating PostgreSQL
+
+- **Outcome and sections:** RL66 — dump/restore, pg_upgrade, logical cutover,
+  extension/binary compatibility, collations and post-upgrade acceptance.
+- **Entry and teaching:** general cutover plus native recovery. Choose a path
+  from downtime and compatibility requirements, execute a small rehearsal and
+  test clients, extensions, restored data and rollback stages.
+- **Changed case and decision:** the binary upgrade succeeds but an extension
+  or changed collation invalidates application assumptions. The reader can
+  choose a supported upgrade path and its validation. This concerns an entire
+  running installation, earning separation from ordinary DDL.
+
+## CockroachDB implementation — 10 pages
+
+### RL123 — CockroachDB keys, ranges and replication
+
+- **Outcome and sections:** RL67 — SQL-to-key encoding, primary/secondary
+  indexes, ranges, replicas, leases and request routing.
+- **Entry and teaching:** partitioned relational data and replicas. Start an
+  explicitly version-pinned native cluster, inspect range placement and follow
+  primary/secondary lookups and a range split.
+- **Changed case and decision:** sequential inserts concentrate activity despite
+  spare nodes. The reader can explain the request path and locate a hotspot.
+  This is the branch's implementation entrance; it does not promise to cover its
+  transactions, queries or recovery inside one overview.
+
+### RL124 — CockroachDB transactions and retries
+
+- **Outcome and sections:** RL68 — intents, transaction records, timestamps,
+  contention, resolution and automatic/client retry boundaries.
+- **Entry and teaching:** generic multi-partition commit and safe retry. Execute
+  conflicting transactions across ranges, inspect error/results and run a client
+  that retries the whole required unit without repeating external effects.
+- **Changed case and decision:** returned results make an automatic retry
+  impossible. The reader can implement the retry contract and diagnose its
+  contention cost. Native commit/retry behaviour needs an independent mechanism
+  and programming lesson beyond key routing.
+
+### RL125 — CockroachDB isolation and follower reads
+
+- **Outcome and sections:** RL69 — chosen isolation, current reads, historical
+  reads and timestamp/retention boundaries.
+- **Entry and teaching:** generic snapshot/freshness contracts. Run a report
+  and reservation check with current and historical read forms; record the
+  selected release's exact behaviour and supported isolation options.
+- **Changed case and decision:** a nearby historical result is reused for a
+  current booking decision. The reader can choose a native read contract. This
+  short direct entrance earns its page because report readers need not first
+  inspect write coordination internals; merge it with RL124 only if testing
+  proves that context cost exceeds the independent read journey.
+
+### RL126 — CockroachDB query work and hot ranges
+
+- **Outcome and sections:** RL70 — distributed physical operators, remote
+  lookups, secondary-index work, key/index design and locality evidence.
+- **Entry and teaching:** generic plans and CockroachDB routing. Execute a
+  distributed plan, inspect remote work, vary keys/indexes and measure foreground
+  latency and contention under the same workload.
+- **Changed case and decision:** scattering writes damages ordered-read cost.
+  The reader can select a measured query/key change rather than assume nodes
+  remove contention. Keeping tuning separate from the architecture entrance
+  leaves room for a real failed change and its repair.
+
+### RL127 — CockroachDB table locality and region survival
+
+- **Outcome and sections:** RL71 — native table localities, regional identities,
+  survival goals, placement and supporting system dependencies.
+- **Entry and teaching:** generic regional tradeoffs and native ranges. Build
+  regional and global data, inspect placement, then execute a permitted isolated
+  failure drill. Separate emulated network timing from genuine regional measurements.
+- **Changed case and decision:** region survival increases coordination; a
+  cross-region transaction misses the local fast path. The reader can configure
+  a native requirement and verify what it actually protects. Placement's own
+  contract and cluster topology earn a dedicated page.
+
+### RL128 — Operating and securing a CockroachDB cluster
+
+- **Outcome and sections:** RL72 — range health, capacity, relocation,
+  decommission and quorum incidents; RL75 — client/node identity and SQL privileges.
+- **Entry and teaching:** native ranges and the general privilege model. Build
+  a secure repeatable test cluster, test denied access, then lose/rejoin a node
+  and attempt a planned removal. Observe health and foreground work.
+- **Changed case and decision:** a secure new node cannot join, or relocation
+  cannot finish for lack of capacity. The reader can distinguish trust failure,
+  capacity pressure and lost authority. Security stays with cluster operation
+  because identity is part of establishing and changing native membership;
+  general security reasoning is not retaught.
+
+### RL129 — CockroachDB backup and recovery
+
+- **Outcome and sections:** RL73 — backup scope, incremental/history choices,
+  dependencies, jobs, supported destinations and restore acceptance.
+- **Entry and teaching:** the general recovery contract and native cluster
+  boundaries. Execute a full/incremental backup and isolated restore, introduce
+  a missing dependency, and check application invariants and restore time.
+- **Changed case and decision:** a table restore is technically successful but
+  misses an object or identity the service needs. The reader can select scope
+  and prove a usable recovery. Recovery gets its own environment and pass/fail
+  result; it is not buried in the cluster operation page.
+
+### RL130 — CockroachDB schema jobs under load
+
+- **Outcome and sections:** refined unit RL74a owns descriptor/schema changes,
+  asynchronous job progress, online backfill, concurrent callers and compatibility.
+- **Entry and teaching:** one local SQL table and a small job-state diagram.
+  Execute a pinned schema/backfill job under live requests, inspect progress,
+  interrupt the supported stage and follow its documented recovery path.
+- **Changed case and decision:** a job is delayed or fails while callers still
+  use the old shape. Choose whether to wait, cancel, repair or defer the next
+  application release; verify rows, constraints and caller compatibility.
+- **Why a page:** schema jobs have a distinct state machine and incident entrant.
+  Cluster version transitions and authority transfer are different investigations.
+
+### RL131 — Upgrading a CockroachDB cluster
+
+- **Outcome and sections:** refined unit RL74b owns supported version transitions,
+  mixed binaries, feature/version finalisation, compatibility and rollback gates.
+- **Entry and teaching:** local diagram of live nodes and replicas; supply the
+  actual selected source/target version procedure rather than a generic checklist.
+  Rehearse a staged native upgrade, interrupt it at a supported point, inspect
+  version/job/replica state and validate application traffic before finalisation.
+- **Changed case and decision:** a node cannot rejoin or a version/feature gate
+  closes the assumed downgrade path. Choose pause, forward repair, supported
+  rollback or restore from evidence, then verify the service's recovery contract.
+- **Why a page:** a blocked schema job does not teach binary coexistence or the
+  last reversible upgrade step. RL128 retains steady cluster operation and node
+  identity; it links here instead of absorbing a second long change procedure.
+
+### RL132 — Moving a SQL application to CockroachDB
+
+- **Outcome and sections:** refined unit RL74c owns native SQL/type/constraint/
+  transaction compatibility, client retry changes, copy/catch-up and migration
+  acceptance. FD05 owns the generic authority-cutover proof.
+- **Entry and teaching:** a small existing SQL application and explicit source
+  contract. Rehearse a native compatibility test, data round-trip and migration,
+  including changed retry paths and inspected final records.
+- **Changed case and decision:** protocol-compatible clients run while one SQL
+  behaviour or invariant changes, or new writes cannot be represented in the
+  old engine. Repair the application/representation or reject the move; identify
+  the last reversible point and reconcile any later accepted work.
+- **Why a page:** migrating an application's contract is an independently sought
+  question. It requires neither memorising every schema job nor silently treating
+  an upgrade exercise as proof of cross-engine compatibility.
+
+## Paths and entrances
+
+The order above is a useful shelf, not a required 55-page sequence. Each path
+supplies small missing prerequisites locally and links to full homes for depth.
+
+- **New application:** RL76 → RL77 → RL78 → RL79 → RL81 → RL84 → RL90 →
+  RL93. Add the product execution pages as the service is built. History,
+  summaries and flexible data enter when those requirements appear, not before.
+- **Wrong answers:** enter RL81 for duplicate/missing rows, RL78 for value/NULL
+  meaning, RL82 for summaries, or RL83 for changing pages/exports. Correctness
+  comes before the performance branch.
+- **Slow endpoint:** RL87 → RL86 when access is the cause → FD06 to validate;
+  then RL113 for PostgreSQL or RL126 for CockroachDB. RL102 supplies the
+  concurrency budget when a good individual query fails under load.
+- **Concurrent correctness:** RL79 → RL90 → RL91 or RL93 as the history demands;
+  RL94 only when effects or workers leave the transaction. The distributed route
+  continues through RL106 and RL124, not through a generic ACID checklist.
+- **Recovery owner:** RL95 → RL96 → RL116 or RL129. RL97/RL98 and RL117 cover
+  availability copies and promotion; they never stand in for a restore drill.
+- **Live change:** RL100 → RL119 for PostgreSQL schema changes or RL130 for CockroachDB schema jobs. Installed-version changes enter RL122 (PostgreSQL) or RL131 (CockroachDB). Whole-store authority transfer enters FD05, then RL122 or RL132 for the actual implementation.
+- **Distribution decision:** RL105 → RL106 → RL107 → RL108; test against the
+  actual workload before taking RL123–RL130. RL109 and RL128 cover the operation
+  that a successful schema/query demonstration alone cannot prove.
+- **Current incident:** enter RL103, then the product's operation page. These
+  need local reminders and a compact evidence path; do not make a person read
+  the collection from the beginning while a service is down.
+
+## Boundary decisions and excluded expansion
+
+The largest scope choice is to include distributed relational expertise inside
+this collection. A user choosing relational data can legitimately need distributed
+writes, global constraints and region survival. Calling these another field would
+leave that engineering choice unfinished. The shared distributed-systems programme
+stays parked: the five general distributed pages explain only the coordination
+needed for database design, then the implementation branch makes it concrete.
+
+PostgreSQL is selected for mechanism and operating depth, not because prior
+project work must survive. Its 13 pages are specific investigations, from tuple
+updates through recovery and privileges. CockroachDB is selected because it gives
+one inspectable distributed relational implementation, not because it needs a
+matching number of pages. Its ten pages take native routing, transactions,
+reads, querying, placement, operation, restore and change seriously. It is a
+bounded initial branch; it does not cover every cloud service tier or internal
+implementation optimisation.
+
+MySQL/InnoDB remains a credible comparison in RL76, RL92, RL90 and RL100. Its
+clustered layout, undo/locking behaviour and operation-specific DDL conditions
+stop PostgreSQL examples becoming false universal rules. SQLite remains a
+credible embedded choice, including its suitability for server-side applications
+when writes can queue. Spanner supplies a credible regional/time-semantics
+alternative in RL107/RL108; app sharding remains a credible choice in RL105.
+Each comparison needs conditions and primary evidence. None is presented as a
+complete product education on one page. Full MySQL, SQLite, Spanner, SQL Server,
+Oracle, Aurora or YugabyteDB branches need separate ability derivations and are
+outside this initial commission.
+
+SQL grammar reference and rare language features are external reference. Views,
+CTEs, generated values, stored code and triggers can receive local sentences or
+worked examples where they support a mapped decision; there is no encyclopaedic
+feature tour. Privileged stored code is taught to the depth needed for RL121's
+trust failure. If production work requires a separate substantial programmability
+ability, add it explicitly rather than hide it in an index or SQL primer.
+
+General storage devices, broker internals, search ranking, columnar execution,
+stream processors, full event sourcing and specialist ledger accounting stay
+outside. PostgreSQL JSON is taught as a storage/query choice, not permission to
+turn the relational branch into a complete document/search/spatial collection.
+Other planned fields do not become prerequisites.
+
+## Where independent challenge can change the page boundaries
+
+- **RL78, values and missingness:** there are several kinds of exactness, but
+  short counterexamples may teach them coherently. Split temporal modelling only
+  if actual exercises reveal an independent ability beyond type/equality choices.
+- **RL83, pagination:** a directly sought correctness problem warrants entry of
+  its own, but it might become a bounded section in a query page if it can retain
+  both concurrency and export consequences without burying their distinction.
+- **RL94, outboxes and jobs:** shared durable-work machinery saves prerequisites,
+  but a full job scheduler is excluded. If the worker-lease/fencing mechanism
+  cannot fit without confusing the outbox contract, split them; do not omit it.
+- **RL104 and native security:** the general home owns the privilege reasoning.
+  Product pages must teach exact bypass, trust and command behaviour, never copy
+  the general checklist to inflate the branch.
+- **RL125, follower reads:** it has a distinct report-reader entrance. It is the
+  strongest candidate for merging with RL124 if the native lesson is short and
+  the combined transaction/read story remains easy to enter.
+- **RL128, secure operation:** it has two owned units because native identity is
+  part of joining and changing a cluster. A separate security page becomes
+  justified if the tested SQL-role or certificate rotation cases substantially
+  displace quorum/capacity diagnosis. Do not cut those operating cases instead.
+- **RL130–RL132, change tasks:** independent review separated schema jobs, native
+  upgrades and SQL application migration. Each must retain its own interruption,
+  validation and rollback outcome; none is a complete release/reference manual.
+
+## Evidence and commissioning gates
+
+These primary sources were browsed for planning on 18 October 2026. They bound
+scope; they are not substitutes for later verification of article examples.
+The docs links named `stable` must be pinned to a release before commissioning.
+No benchmark, restore or failure drill was run in this planning task.
+
+| Source | Consequence for this plan | Later verification |
+| --- | --- | --- |
+| [PostgreSQL 18 isolation](https://www.postgresql.org/docs/18/transaction-iso.html) | Names alone are insufficient; RL90 needs actual histories and product labels | Reproduce selected histories with independent clients and fixed settings |
+| [PostgreSQL 18 vacuum](https://www.postgresql.org/docs/18/routine-vacuuming.html) | RL111 needs cleanup, visibility and age safety, not just reclaiming disk | Observe blockers, reuse and age evidence in the pinned engine |
+| [PostgreSQL index-only scans](https://www.postgresql.org/docs/18/indexes-index-only-scans.html) | Native covering claims belong in RL112 and depend on visibility evidence | Change updates/visibility state and inspect actual heap work |
+| [PostgreSQL physical standby](https://www.postgresql.org/docs/18/warm-standby.html) | RL117 must separate receipt/replay and acknowledgement policy | Independent-server lag/promotion with explicit fencing |
+| [PostgreSQL logical restrictions](https://www.postgresql.org/docs/18/logical-replication-restrictions.html) | RL118 must not imply a logical subscriber is automatically a complete replacement | Reproduce relevant schema/sequence/identity limitations |
+| [PostgreSQL row policies](https://www.postgresql.org/docs/18/ddl-rowsecurity.html) | RL121 must test bypass conditions | Use actual roles, ownership and denied requests |
+| [PostgreSQL pg_upgrade](https://www.postgresql.org/docs/18/pgupgrade.html) | RL122 needs binary/extension compatibility and application acceptance | Rehearse a pinned source/target version pair |
+| [MySQL 8.4 clustered indexes](https://dev.mysql.com/doc/refman/8.4/en/innodb-index-types.html) | RL92 needs a credible contrasting physical layout | Verify secondary lookup and key-size examples in the chosen release |
+| [MySQL 8.4 online DDL](https://dev.mysql.com/doc/refman/8.4/en/innodb-online-ddl-operations.html) | RL100 cannot equate “online” with no blocking/rebuild | Use exact operation and release conditions |
+| [SQLite appropriate uses](https://www.sqlite.org/whentouse.html) | RL76 compares embedding and writer concurrency, not “toy” versus “real” databases | Verify current concurrency and deployment assumptions; avoid stale traffic heuristics |
+| [Spanner time and external consistency](https://docs.cloud.google.com/spanner/docs/true-time-external-consistency) | RL107 includes a real alternative to one generic clock mechanism | Check which transactions and reads receive which guarantee |
+| [CockroachDB transaction layer](https://docs.cockroachlabs.com/docs/stable/architecture/transaction-layer) and [developer basics](https://www.cockroachlabs.com/docs/stable/developer-basics.html) | RL124/RL125 need implementation-specific isolation and client handling | Pin release, reproduce returned errors and automatic/client retry boundaries |
+| [CockroachDB multi-region](https://docs.cockroachlabs.com/docs/stable/multiregion-overview) | RL127 needs explicit localities, survival goals and supporting dependencies | Inspect real placement and chosen failure cases; do not infer guarantees from labels |
+| [CockroachDB backup overview](https://docs.cockroachlabs.com/docs/stable/backup-and-restore-overview) | RL129 needs scope, supported storage, history and actual restore acceptance | Pin support matrix, credentials, job behaviour and isolated restored service |
+| [CockroachDB licensing](https://docs.cockroachlabs.com/docs/stable/licensing-faqs) | Native multi-node lessons have a real licence/telemetry/expiry feasibility question | Choose a lawful reproducible environment before promising readers an unqualified local exercise |
+
+CockroachDB's branch is the major decision needing discussion. The browsed
+licensing documentation distinguishes single-node development from multi-node
+use and describes grace/telemetry conditions. A single-node demonstration cannot
+replace the promised distributed failures. Before article commissioning, prove
+that the intended reader can run the selected multi-node release in a bounded
+exercise, or explicitly commission another distributed product's abilities and
+re-derive that branch. Do not silently substitute a browser simulation.
+
+The other uncertainty is deployment architecture. The implementation branch
+must name its selected deployment and version; newer disaggregated/cloud
+architectures cannot inherit every self-hosted assumption. This affects source
+verification and experiments, not the need for transaction, placement, recovery
+and operation abilities.
+
+## Allocation audit and handoff
+
+Every RL01–RL75 unit has one full home. Coordination moves RL23 to FD06, RL38 to FD04 and RL41 to FD05; their full shared investigations are linked rather than repeated. The original broad CockroachDB
+operation/recovery unit was decomposed before page assignment into RL72 and
+RL73; change/migration is RL74, and native identity/privileges is RL75. This
+prevents operation and recovery becoming one nominal product section.
+
+Shared teaching homes follow the coordinated field map. Eventual public route
+names remain a later implementation decision. The first isolated derivation did not read the other collections or use an
+existing inventory to justify scope or count. The independent challenge and
+coordination repairs are recorded below and in the linked review. Next work is
+user discussion of scope, native branches and connected production journeys.
+Article production, route changes and publication remain uncommissioned.
+
+## Shared homes after coordination
+
+RL23 (reproducible workload evaluation) belongs to **FD06**. RL38 (snapshot,
+change positions, replay and retained history) belongs to **FD04**. RL41
+(authority cutover and rollback) belongs to **FD05**. These moves retire the
+first proposal's RL88, RL99 and RL101 destinations; they do not remove the
+relational or native cases needed by the remaining articles.
+
+The relational query/transaction, replication and backup mechanisms remain here.
+Shared vocabulary at FD03 supplies context rather than another full derivation of
+relational isolation. Family-specific cases at DC57, K03 and CA-A06 must state
+their own invariant and atomic boundary instead of retelling these SQL histories.
+
+## Review repairs: native execution and entrances
+
+RL90, RL91 and RL93 explicitly own native PostgreSQL reservation, absent-row/
+deadlock and uncertain-commit exercises respectively, alongside their labelled
+general histories. Pin server and driver; show statements, connection/role, error
+branch, request identity and final state. Contrasts with InnoDB, SQL Server and
+SQLite change the prediction rather than interrupting every explanatory step.
+RL110 provides the reusable native fixture, independent-client setup, reset and
+cleanup resources, not an extra setup article.
+
+RL94's stale-worker case must finish at the authority that rejects the late
+effect. A lease expiry alone does not complete the safety argument. RL128 retains
+node identity and joining as part of cluster operation, with a direct denied-action
+access test and bounded privilege/rotation procedure.
+
+The review decomposes original RL74 into RL74a (schema jobs), RL74b (cluster
+upgrade) and RL74c (SQL application migration), owned by RL130, RL131 and RL132.
+These are the three precise parts of the formerly broad unit, not three claims
+to own the same subject. The initial derivation remains unchanged as evidence.

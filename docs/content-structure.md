@@ -3,7 +3,7 @@
 The [18 October field proposal](databases-and-storage-plan.md) and its
 [page tree](databases-and-storage-page-tree.md) develop the whole Databases and
 storage section against the current skills. They are steps 1 and 2 of the new
-planning commission, for discussion before independent review or writing. Their
+planning commission, independently challenged and revised for discussion before writing. Their
 coverage maps extend this document's content jobs; they do not replace current
 publication status or commission the proposed articles.
 

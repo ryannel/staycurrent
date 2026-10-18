@@ -107,7 +107,7 @@ artwork follows the theme, and interactive controls are distinct from static dat
 
 The [coverage structure](docs/content-structure.md) guides new commissions.
 The [Databases and storage proposal](docs/databases-and-storage-plan.md) maps the
-whole field and its proposed pages for discussion; it does not change which
+whole field after independent collection derivations and review. It is for discussion before writing and does not change which
 articles are available. The [page tree](docs/databases-and-storage-page-tree.md)
 provides a shorter view of that proposal.
 `staycurrent-planning` develops collections; `staycurrent-authoring` develops

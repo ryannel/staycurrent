@@ -1,129 +1,112 @@
-# Databases and storage: field coverage map
+# Databases and storage: revised field coverage map
 
-18 October 2026. Proposed teaching homes for discussion, from steps 1 and 2 of
-the [section plan](../databases-and-storage-plan.md). This map owns field-wide
-teaching and boundaries; each linked collection map owns its internal breakdown.
-The proposal has not had independent planning review. No new page is commissioned
-or published by appearing here.
+18 October 2026. **Proposal for discussion**, independently re-derived after the
+first plan was rejected. Each collection starts from a practitioner's abilities,
+then allocates teachable units to pages and sections. No existing article count
+sets its depth. The [section plan](../databases-and-storage-plan.md) explains the
+whole structure; the [page tree](../databases-and-storage-page-tree.md) lists titles.
 
-## Map conventions
+The nine collection maps are the authoritative proposed allocations. Initial
+abilities, first proposals, independent reviews and coordination decisions live
+under [the derivation record](../planning/databases-depth-2026-10-18/README.md).
+Those first artifacts preserve evidence; where coordination changes a home,
+the final coverage map governs. Planning does not commission articles, claim
+that proposed exercises have run, create routes or change publication status.
 
-IDs are stable references for discussion, not a reading sequence. Each table row
-is one proposed article; the named sections in its coverage cell divide its
-teaching responsibility. Titles and section names are provisional. `New` means
-there is no equivalent destination; `existing` identifies material to assess and
-revise, not a passed depth review. An existing draft remains a draft. Article
-roles follow reader needs; they are not mandatory page lengths.
+## Audience, depth and page boundaries
 
-Each collection states its running example and the tasks its reader should be
-able to perform. The forms column says what must be visible or reproducible:
-traces expose state changes; worked cases expose decisions; measurements need a
-real implementation and recorded conditions; variations may use a bounded model.
-An implementation page owns product-specific commands, settings and exceptions.
+An intelligent engineer new to the subject should reach the understanding needed
+to make its engineering decisions and operate the selected implementation.
+Expertise in every vendor's product, implementing every engine and a prerequisite
+distributed-systems course are different scopes. Each map states its limits.
 
-Paths in backticks are proposed destinations, not available-reading links.
-Unqualified slugs append to the collection's base. A row with an absolute path
-preserves an existing route outside that base. The entry pages and product pages
-are included in article counts; tools and historical aliases are listed apart.
+A unit receives the form its consequence needs: a sentence, exact worked output,
+a mechanism with figures, or a native exercise. A page earns its boundary through
+an independent investigation, a direct reader question or work that would bury
+its parent's argument. Counts follow those boundaries. No collection is required
+to match another, and a larger count does not establish better teaching.
 
-## Shared understanding and decisions
+Introductions explain what the system is, what it is for and when to use it before
+requirements worksheets or product comparisons. Small notation and prerequisites
+are taught where needed. A direct entrant must not pay for a long prerequisite
+journey simply to understand the first example.
 
-Running example: a repair shop sells blue mug P7 to customer 42, stores photographs,
-keeps device D17's readings, and builds reports and searchable manuals. These are
-different demands the guide can compare, not a requirement to deploy every store.
+## Collection entrances
 
-Reader outcome: specify those demands, interpret a store's promises, choose what
-to investigate, and evaluate a change without losing ownership of the data.
+| Collection | Distinct practitioner work | Proposed depth map |
+| --- | --- | --- |
+| Relational | Facts and SQL meaning; constraints/concurrency; access/execution; durable operation; distribution; selected conventional and distributed implementations | [Relational map](relational.md) |
+| Documents | Aggregate boundaries and growth; nested query/index meaning; writes and client observations; evolution; a full selected MongoDB path | [Document map](documents.md) |
+| Key-value and wide-column | Keyed contracts, ordered groups and query-shaped copies; distinct DynamoDB and Cassandra mechanisms/operation; direct entry to shared in-memory machinery | [Keyed map](key-value-and-wide-column.md) |
+| Analytics and time series | Meaningful aggregates; physical/query work; corrected copies; shared tables; samples/windows; maintained results; selected executable branches | [Analytics map](analytics.md) |
+| Search and vectors | Corpus/representation; lexical and approximate retrieval; pipeline eligibility and ranking; judged quality; lifecycle and serving operation | [Search map](search.md) |
+| Graphs | Entity/assertion meaning; path semantics and cost; changing graphs; analytics; RDF semantics; separate Neo4j and Jena implementation paths | [Graph map](graphs.md) |
+| Caches and in-memory stores | Source coherence; misses/admission; accepted state and atomic work; survival/recovery; one shared Redis implementation path | [In-memory map](caching.md) |
+| Object storage | Named-byte contracts; transfers/integrity; concurrent requests; application protocols; authority/delivery; lifecycle/recovery; S3 implementation | [Object map](object-storage.md) |
+| Files and block storage | File/namespace correctness; application persistence; filesystem recovery; volume/device budgets; sharing, integrity and restoration; selected Linux/cloud paths | [File and volume map](files-and-block-storage.md) |
 
-Base for new destinations: `/learn/databases/`.
+These are overlapping approaches and reader jobs, not exclusive product bins.
+Distributed relational work stays inside relational. Time-series and maintained
+analytical results have their own entrances inside analytics. RDF has a separate
+graph route; it is no longer a comparison paragraph that pretends to supply that
+expertise. Keyed and wide-column readers enter separate paths without reading
+every implementation first.
 
-| ID | Proposed page and role | Owned sections and reader outcome | Teaching form | Entry needs; onward homes | Existing material / destination |
+## Pages derived from the tasks
+
+| ID | Page and reader outcome | Owned units/sections | Concrete change or failure | Teaching form and prerequisites | Why a page |
 | --- | --- | --- | --- | --- | --- |
-| F01 | Databases and storage — field guide | What storage does; records, bytes and queries; transactional, analytical and retrieval work; overlapping approaches; starting designs and reasons to reconsider. Recognise a useful family entrance. | Small records and contrasting operations; one system assembled only as needs arise. | No database knowledge. Onward to F02 or any collection entrance. | Existing `choosing/`; retain route. |
-| F02 | Describing a storage workload — practical guide | Access-pattern inventory; data size and growth; distribution and hot items; concurrency; latency percentiles and throughput; freshness; recovery targets; operating constraints. Produce a workload brief with uncertainties. | Three worked briefs: checkout, device history and analytical report; small unit and capacity calculations. | F01-level vocabulary, supplied locally. F03, F07 and family comparisons. | New `workloads/`. |
-| F03 | What a read and a successful write promise — deep dive | Atomicity, isolation and durability as separate questions; one-copy and replicated observations; stale and read-your-writes reads; consistency scope; missing replies and retry identity; failure and recovery targets. Interpret a concrete API contract without deriving every protocol. | Trace one record through two clients, a delayed copy and a lost reply; contrast guarantees on the same history. | Understand read and write. R09–R11 own transaction mechanisms, R21 leader failover, K06 quorum conflict cases, O04 object requests. | New `read-and-write-guarantees/`. |
-| F04 | Log-structured storage and compaction — deep dive | Buffer and log; sorted immutable runs; read and range lookup; Bloom filters; flush; merge policies; version reconciliation and tombstones; read, write and space amplification; backpressure. Predict which work accumulates and what a policy trades. | Follow P7 updates through runs; vary overwrite rate and merge policy; count work in a labelled model. | A short reminder of ordered access supplied here; R12 is the B-tree contrast. K07 and S09 own store-specific maintenance. | New `log-structured-storage/`. |
-| F05 | Keeping a derived copy correct — deep dive | Source of truth; snapshot plus change stream; capture position and retention; identity and ordering; retries and deletion; backfill/live overlap; lag and reconciliation; rebuilding and schema compatibility. Design a repairable copy. | P7 revision 7/8, a late update, a missed delete and a resumed backfill; source/target checkpoints. | Basic read/write vocabulary. F06 owns cutover; R26 owns whether to add a system; A06/S09/O09 apply this to their stores. | New `derived-copies/`; existing outbox and copy material informs it. |
-| F06 | Moving data between stores — practical guide | Compatibility inventory; type and identifier mapping; copy and catch-up; validation; traffic shadowing; authority cutover; rollback window and divergent writes; retiring old copies. Plan a migration that can prove completion. | One shop migration with count, value and invariant checks; failed cutover and repair. | F05's copy model; explain briefly for direct entrants. R24 owns live schema changes within a database. | New `data-migrations/`. |
-| F07 | Evaluating a storage design — practical guide | Credible baseline; representative distributions and queries; load generation; latency and errors under saturation; warm/cold behaviour; maintenance and failure tests; cost and operating effort; decision record. Design a fair test and say what it cannot establish. | Compare two designs for one workload; spot a misleading benchmark; cost the full path. | F02. Family comparisons provide candidates, B06 owns volume measurements, S08 owns relevance judgements. | New `evaluating-storage/`. |
-| F08 | Protecting data through its lifetime — practical guide | Ownership and least privilege; tenant boundaries; encryption and key lifecycle; audit records; retention; deletion across replicas, derivatives and backups; recovery access; testing the controls. Turn policy into verifiable storage behaviour. | Track one customer's record through four copies and a restore; role/action matrix. | No security specialism assumed. R25/R27, O06/O10 and B08 own interface-specific controls; F05 owns propagation. | New `data-protection/`; does not provide legal or compliance advice. |
+| FD01 | Databases and storage: understand what kinds of systems are available and which problem to investigate | Records/bytes/queries; exact/ranked/path/analytical work; model/layout/deployment/role; overlapping families and modest starting designs | A catalogue needs both a purchase invariant and ranked discovery; one family name cannot answer both | Small operations with actual input/output; no database knowledge | The field entrance must orient rather than compress the mechanisms of every family. |
+| FD02 | Describe the workload: turn an application's needs into a testable design brief | Workload access/invariant/size/skew/concurrency/freshness/recovery/location/operating units from the ability map | A few tenants dominate writes and latency; an average hides them | Three worked briefs with units and changed distributions; local vocabulary from FD01 | An engineer arrives to specify needs before comparing products or reading internals. |
+| FD03 | Read and write promises: interpret an interface's guarantees | Atomic scope, visibility, durability, replica/failure scope, missing responses and retry identity | A request commits but the caller times out; a stale replica misses the accepted change | Trace one record and two clients; separate histories from product/protocol details | One shared vocabulary helps all collections; deriving every protocol here would be an expensive detour. |
+| FD04 | Keep a derived copy correct: design a copy that can be rebuilt and reconciled | Source ownership/revision; snapshot/live boundary; order/duplicates/deletes; checkpoints/retention; backfill; repair and schema changes | Old revision arrives late, deletion is missed, capture expires while the copy catches up | One continuous source/target trace plus a reconciliation procedure; brief local contract reminder | Copy completeness and repair form an investigation independent of a target store's indexing machinery. |
+| FD05 | Move between stores: switch authority without losing later work | Compatibility; copy/catch-up; validation; mixed application versions; cutover; rollback and divergence; retirement | Reads are switched back after new writes have reached only the replacement | Work through migration states and acceptance checks; local FD04 reminder | Authority transfer and rollback deserve their own endpoint rather than burying the copy mechanism. |
+| FD06 | Evaluate a storage design: test the full candidate against a credible baseline | Representative workload; distributions and load; correctness/quality; sustained/warm/cold; overload/maintenance/recovery; costs and reproducibility | Fast isolated queries lose under ingestion or recovery; the client becomes the benchmark bottleneck | Worked evaluation record, misleading test and defensible decision; FD02's brief explained locally | An independently useful practice, shared by comparisons without repeating test methodology. |
+| FD07 | Protect and retire data across stores: retain control through copies and recovery | Privilege/tenancy; sensitive derivatives; encryption/key recovery; audit; retention; erasure; restored state | A backup restore reintroduces a deleted record and its obsolete search permissions | One person's data and authority tracked through primary, derived and backup copies | Cross-store ownership cannot be established by any one product's permission page. |
 
-## Collection entrances and complete maps
 
-| Reader's job | Coverage home | Why it is a collection |
+## Shared ownership after coordination
+
+| Derived part | One full home | What remains in the collection |
 | --- | --- | --- |
-| Keep related records correct and query them flexibly | [Relational databases](relational.md#proposed-whole-collection-structure) | Representation, execution and correctness require several connected mechanisms and operational practices. |
-| Store and evolve records with nested, varying structure | [Document databases](documents.md) | Aggregate boundaries shape reads, updates, indexes and distribution. |
-| Serve known keys and ordered groups at scale | [Key-value and wide-column stores](key-value-and-wide-column.md) | Access paths, distribution, write promises and maintenance must be designed together. |
-| Analyse large histories, events and time series | [Analytics and time series](analytics.md) | Layout, execution, ingestion and correction determine both results and cost. |
-| Retrieve and rank useful candidates | [Search and vector retrieval](search.md) | Retrieval quality and filtering need distinct evaluation alongside storage behaviour. |
-| Query paths through connected records | [Graph databases](graphs.md) | Path semantics and expansion costs differ from simply storing references. |
-| Reuse answers or use an in-memory data structure | [Caches and in-memory stores](caching.md) | Freshness, memory pressure, misses and recovery are the design. |
-| Store, publish and deliver named bytes | [Object storage](object-storage.md) | Request semantics and application lifecycle replace assumptions about files and transactions. |
-| Work through files or supply a database's volume | [Filesystems and block storage](files-and-block-storage.md) | File semantics and volume persistence have their own guarantees and failure cases. |
+| Reproducible whole-workload evaluation, relational RL23 | FD06 | Relational plan diagnosis, search quality/ANN load tests at SR20, and filesystem-specific safe I/O tests at FS-G14 apply the method to distinct evidence. |
+| Snapshot/change boundary, generic replay and copy completeness: RL38, DC22, KV09, ANU27 and SRU42's transport part | FD04 | DC58 owns copied document facts/deletion; AN12 owns semantic control totals/lineage; SR21 owns indexing jobs/partial work and SR23 compatible search generations. Native tokens/APIs remain in their product branches. |
+| Whole-store authority transfer/rollback: RL41 and KV12's shared proof | FD05 | RL100/DC59 native schema compatibility; D11/C17 actual keyed model changes; RL122/RL132 native engine migration; OB-A16 namespace/metadata/URL compatibility. |
+| Graph loading GR22 | FD04 owns its generic transport protocol; GR-A09 owns graph-specific endpoint/order/deletion reconciliation | The graph application must demonstrate dangling/missing endpoints and stale edge resurrection, not retell a general connector tutorial. |
+| Cache coherence, general admission and source load | CA-A02, CA-A04 and CA-A03 respectively | Redis client tracking at CA-A12 has its own boundary; HTTP object delivery is OB-A09/OB-S05. |
+| Redis units derived in the keyed review | CA-A11–CA-A17, with common decisions at CA-A02/CA-A03/CA-A06 | There is one implementation branch, reached by two role-specific routes. The keyed map gives the exact unit reconciliation. |
+| Relational B-tree access, isolation and WAL | RL86, RL90/RL91 and RL95 | Other collections supply local context and teach their distinct array, graph, file or request contracts. PostgreSQL details remain native. |
+| Compaction/read amplification in a named engine | Cassandra C03/C04/C08, search SR22/SR32 and analytics AN07/AN34–AN38 each own their distinct mechanisms | No extra generic log-structured-storage prerequisite is imposed. A writer must not turn one engine's merge/deletion mechanism into a universal promise. |
+| Multi-file generation publication versus table commits | OB-A06 owns arbitrary application release/reader/reclamation protocol; AN17–AN22 own table/catalogue/schema/delete semantics | S3 resource recognition is OB-S01; it does not repeat a general Iceberg or vector curriculum. |
+| Vector representation/index/quality | SR09–SR20 | Existing pgvector and S3-vector reading is candidate implementation/reference material; no fragment becomes the new general home by being available. |
+| Cross-store protection/retirement policy | FD07 | Every interface still teaches actual enforcement and failure: cache revocation, search side channels, raw analytical-file access, object delegation, SQL policies and filesystem path/key boundaries. |
 
-Distributed SQL belongs to the relational map. Time-series work belongs to the
-analytics map; keyed histories belong to the key-value map. Product examples can
-appear in more than one collection, but substantial shared teaching has one home.
+A named unit with several originally bundled obligations may be refined into named
+parts during coordination. For example, keyed KV18 separates source/fill coherence
+from miss-load protection; relational RL74 separates schema jobs, cluster upgrade
+and SQL migration. Each refined part has one home. First derivations remain intact
+and the refinement is recorded in the final map and decision record.
 
-## Ownership at the joins
+## Scope that remains explicit
 
-| Part | Full teaching home | Other pages supply only what their own reader needs |
-| --- | --- | --- |
-| Pages, dirty buffers, write-ahead log and local crash recovery | R15; R16 owns buffer sizing and PG05 owns PostgreSQL recovery procedures | F04 introduces its own buffer/log context; B02 owns filesystem persistence rather than re-teaching database recovery. |
-| B-tree structure, clustered/heap lookup, covering and write cost | R12; preserved detailed Indexes map | D04 and PG03 teach product-specific access paths; K04 teaches an alternate keyed arrangement. |
-| LSM, sorted runs, Bloom filters and compaction | F04 | K07, A12 and S09 explain their actual engine's maintenance and consequences. |
-| Common copy/rebuild protocol and source ownership | F05 | Family ingestion and replication pages explain their contracts and local failure cases. A replica and a derived index remain distinct. |
-| Transactions, snapshots and relational concurrency | R09–R11 | F03 orients; D05, K05 and O04 show the actual unit and API of their own atomic operation. |
-| Single-leader relational replication and promotion | R21 | R35 teaches consensus over ranges; K06 teaches its own consistency and conflict model. |
-| Immutable dataset generation and manifest publication | O05 | A08 owns table snapshots, catalog commits and table maintenance, not an arbitrary application manifest. |
-| Column layout and encoding | A03 at the existing column-stores route | R19 introduces analytical pressure; A12 owns ClickHouse's implementation. |
-| Analytical admission, resource isolation and workload recovery | A15 | A12/A13 supply implementation procedures; F07 owns general evaluation, A14 compares responsibility and cost. |
-| Time windows, series identity, event time and downsampling | A09–A11 | K02/K03 own the placement of device history; observability signal collection is outside this field. |
-| Lexical retrieval, vectors, filtered ANN and quality evaluation | S02–S08 | PG09/PG10 and O14 own PostgreSQL and S3 implementations; the dated assessment is separate. |
-| Object authority, signed requests and validation | O06 | F08 frames policy; S10 owns search-result permission enforcement. |
-| Spatial and temporal values | R03 for representation; PG11 for PostgreSQL ranges/PostGIS; S04 for geo filtering; A09 for event time | Introductions link when needed. No general GIS course is implied. |
-| Database connections, pooling, ORMs and application query work | R18 | Family implementation pages teach their clients' distinctive semantics; API design is outside this field. |
-| Storage throughput, latency, queue depth and physical failure domains | B05–B07 | F07 owns the whole-system evaluation; R15 owns what a database asks a flush to do. |
-| Cross-store retention and access policy | F08 | Family operation pages own actual enforcement; R27 owns relational retention mechanics. |
-
-## Deliberate boundaries
-
-| Area | Status and local treatment |
+| Scope | Status |
 | --- | --- |
-| Shared distributed-systems programme | Parked. Teach the database mechanisms needed for R21/R35/R36/K06; do not commission a general clocks, consensus or coordination series. |
-| Messaging and stream processing | Planned other field. F05/A06/O09 explain enough ordering, replay and idempotency for a storage pipeline; broker internals, delivery protocols and general stream processors remain there. |
-| AI application engineering | Planned other field. S05/S08 teach embedding compatibility, source preparation and retrieval evaluation. Model training, prompting, generation and full RAG applications remain there. |
-| Observability | Planned other field. A09–A11 own storage and querying of time series. Instrumentation, tracing systems and alert design remain elsewhere. |
-| SQL reference and administration reference | Link to versioned manuals. Teach worked query shapes and diagnostic procedures; do not reproduce every statement, setting, system view or error code. |
-| RDF and knowledge graphs | G01 contrasts property graphs, triples and reasoning; G07 compares when the distinction changes the job. A full ontology, SPARQL and inference series is deferred until a reader journey justifies it. |
-| Spatial databases | Practical representation, indexes and queries in R03/PG11/S04. Full GIS, raster processing and coordinate-system engineering deferred. |
-| Scientific arrays, media-specific databases and HPC storage | Mention at F01's boundary where appropriate; defer specialist query models and parallel I/O. They serve a different practitioner scope from the core application and analytical workloads here. |
-| Database implementation and formal proofs | Mechanisms needed to predict behaviour are included. Writing an engine, proving consensus and implementing query optimisers are outside the route. |
-| Offline synchronisation and local-first applications | D09 owns revision conflicts, replication and deletion for a document store; R32 owns embedded operation. A full CRDT/synchronisation programme is deferred, with necessary conflict cases taught locally. |
-| Storage hardware and distributed filesystem internals | B05/B07 own device, volume and fault-domain choices. Firmware, flash translation layers, erasure-coding implementation and a full Ceph/ZFS internals series are reference links unless a concrete decision needs a short explanation. |
-| Licensing, prices, service limits and capability changes | Evidence to check in each comparison or implementation commission, with dates and conditions. No fixed ranking or current recommendation is established by this map. |
-| Dated assessments | Separate from durable teaching. Retain the Postgres vector assessment and revisit its evidence when commissioned; do not invent an updates feed. |
+| Selected product operation | Fully planned only for the named initial branches. A comparison with SQL Server, MySQL, SQLite, Couchbase, Firestore, Bigtable, managed warehouses, OpenSearch, Valkey or OpenZFS does not confer operator expertise there. |
+| Embedded and transactional key-value alternatives | Conditional exits/comparisons in keyed and relational selection. A RocksDB/FoundationDB/coordination-store implementation branch requires its own ability derivation. |
+| RDF and SPARQL | In scope at graph-family depth with a Jena TDB2/Fuseki path. Full ontology engineering, every OWL profile and graph ML remain outside the stated practitioner route. |
+| Spatial and scientific specialist work | Practical value/index boundaries remain locally explained; existing PostGIS reading remains available candidate reference. Full GIS/raster/scientific-array/HPC storage curricula are deferred, not silently claimed complete. |
+| Managed warehouse, maintained-SQL service and offline-document operation | Credible selection alternatives with explicit boundaries. Full Snowflake/BigQuery, Materialize/RisingWave and offline-sync product operation are not represented by the selected native branches. |
+| Other fields | Messaging delivery/broker internals, instrumentation, model training and AI generation stay in their planned fields. Storage-local replay, source ordering and retrieval preparation are taught where needed. |
+| General distributed systems | Parked. Database-local coordination, replication, fencing and recovery are taught only to support their named database decisions. |
+| Reference manuals and implementation curricula | Link for complete SQL/API/setting catalogues, firmware, full filesystem/engine development and formal proofs. A needed practical case cannot be dismissed as reference merely to keep a page short. |
+| Assessments, tools and aliases | Separate from the explanatory page count. Current SQL/object tools, dated vector assessment and compatibility aliases retain their actual status and purpose. |
+| Publication | Unchanged. These maps are a revised plan for discussion; they do not authorise rewriting or publishing their articles. |
 
-## Evidence used to check the scope
+## Source and execution status
 
-The outcome breakdown sets the scope. These primary sources were inspected on
-18 October 2026 to challenge the proposed
-topic boundaries. They are starting points for later article research, not
-verification of every proposed explanation or current product advice.
-
-- [PostgreSQL manual contents](https://www.postgresql.org/docs/current/index.html): query, concurrency, operations and internals coverage.
-- [MongoDB embedding](https://www.mongodb.com/docs/manual/data-modeling/embedding/): aggregate boundaries and atomic document work.
-- [DynamoDB modelling building blocks](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/data-modeling-blocks.html): keyed groups, tenancy, sparse indexes, expiry and write distribution.
-- [ClickHouse materialised views and projections](https://github.com/ClickHouse/clickhouse-docs/blob/main/docs/data-modeling/projections/2_materialized-views-versus-projections.md): alternative layouts and maintained results need distinct treatment.
-- [Elasticsearch search documentation](https://www.elastic.co/docs/solutions/search): ingestion, retrieval approaches, ranking and application paths.
-- [Neo4j getting started](https://neo4j.com/docs/getting-started/): graph representation and query entry points.
-- [Apache Iceberg specification](https://iceberg.apache.org/spec/): table metadata, snapshots and evolution as a layer above objects.
-- [CockroachDB architecture](https://docs.cockroachlabs.com/docs/stable/architecture/overview): separate distributed execution, transaction and storage questions.
-- [Amazon S3 overview](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html): byte-storage operations and the distinction between S3 resource types.
-- [Linux VFS overview](https://cdn.kernel.org/doc/html/latest/filesystems/vfs.html): file operations, namespaces and persistence hooks.
-
-The existing reading inventories, article-work records and the three house
-reference articles supply local context. Proposed product pages still require
-versioned primary evidence and appropriate execution before they can be ready
-drafts. No full technical or independent planning review has been performed here.
+Primary-source scope checks are recorded per derivation. They establish planning
+distinctions and reveal version/deployment questions. Later briefs must pin actual
+server, client, extension, edition and service modes, record what ran, and check
+all consequential claims. No benchmark, failure drill, restore or hosted request
+has been run for this planning task. Native environment access is part of
+commissioning each exercise, not a reason to imply that a browser model executes it.
