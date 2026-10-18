@@ -27,8 +27,20 @@ We are building a house style in our own articles. Its reference articles are Se
 diagrams (`src/pages/learn/drawing-systems/sequences.astro`), and Indexes and Storage and
 durability (`src/pages/learn/databases/relational/`). The user chose them as the pages to
 copy for structure, tone and figures, and in October 2026 they had a style pass against
-the pieces below and independent review. Reviewers named these passages as the clearest
-examples:
+the pieces below and independent review.
+
+Before drafting or substantially revising an article, read all three in full, on the
+rendered pages (`pnpm dev`, http://localhost:4321) so you can step through the figures,
+or in the page source and its components if no server is running. An excerpt
+shows how a sentence or a paragraph works, but the style also lives in what a passage
+can't show: how an opening sets up the model, how often figures arrive and how each one
+changes the last, how engine differences are gathered after the mechanism, and how
+sections end and hand on. Three subjects of different depth (a shallow notation, a
+mechanism with measurements, a deep mechanism with failure cases) show which choices
+belong to the house and which to the subject. A caption or a one-paragraph edit can
+lean on the passages below instead.
+
+Reviewers named these passages as the clearest examples, worth rereading closely:
 
 - Sequence diagrams: the opening; the two paragraphs after Figure 6 in "Ordering and
   gaps", where two timings the reader has watched become the rule that a diagram
