@@ -1,0 +1,149 @@
+topic: Transaction protocols for multi-row invariants
+title: Protecting rules across several rows
+brief: >-
+  Design and justify complete transaction protocols when a rule depends on a
+  changing set of rows. Start from the parent's isolation model and fixed-set
+  serialisable repair, then extend its two-depot reserve rule to depot creation,
+  removal and reassignment. Develop a stable guard-row protocol and a conditional
+  aggregate-counter protocol, revisit serialisable execution for the changing
+  predicate, and compare their safety, contention and maintenance costs. Use
+  PostgreSQL 18 as the executable reference; require precise write participation,
+  snapshot timing, lock order and abort handling, with deterministic two-session
+  histories. Own the database protocol; leave request idempotency, ambiguous
+  client outcomes and external effects to application engineering.
+heading:
+  - title: Make the changing set part of the rule
+    brief: >-
+      Link the parent's isolation explanation and complete fixed-set serialisable
+      repair as prerequisites, recapping only the proof obligation. Keep its two
+      depots with one available unit each, requiring at least one unreserved unit
+      across an active reserve group. Define non-negative per-depot units, group
+      identity, active membership and the sum over current members. State the
+      empty-set result explicitly: zero violates an active group's minimum; group
+      creation must install sufficient reserve atomically, and group retirement
+      is an explicit lifecycle operation rather than deletion of the last depot.
+      A protocol must preserve the rule from a valid committed state and must
+      reject an invalid change even when it runs alone.
+    heading:
+      - title: List every change that can alter the proof
+        brief: >-
+          Build one small participation table for reservation and release, depot
+          insertion and deletion, unit correction, and movement between groups.
+          Include administrative SQL, bulk imports, cascades, routines and background
+          jobs. Distinguish changes that reduce reserve from positive insertions
+          that cannot alone break this lower-bound rule; nevertheless membership
+          changes must obey any chosen guard or counter-maintenance protocol.
+          Use a reservation racing deletion of the other depot as the first new
+          counterexample. Locking only the rows a writer will change leaves their
+          shared decision unprotected; do not assert that every carefully proved
+          all-contributor locking strategy is necessarily unsafe for this
+          particular monotone rule.
+  - title: Give the rule a stable row to lock
+    brief: >-
+      Introduce one permanent reserve-group row as the coordination identity for
+      all its depots, independent of whether any depot query returns rows. In
+      PostgreSQL READ COMMITTED, acquire that exact row FOR UPDATE, verify that it
+      exists and is active, then start a separate statement to read the member sum,
+      make the decision and change members before committing. Hold the guard until
+      commit or rollback. Prove the serial order at guard acquisition: the fresh
+      post-acquisition statement sees the preceding holder's commit and all
+      participating writers are excluded until this decision finishes. Present a
+      complete reservation and deletion SQL pair, with creation, release and
+      correction as concise variations of the same protocol.
+    heading:
+      - title: Acquire the guard before taking the deciding snapshot
+        brief: >-
+          Contrast the passing READ COMMITTED sequence with two failures: reading
+          the sum before acquiring the guard, and reusing a REPEATABLE READ snapshot
+          established before another holder commits. A guard that is merely locked,
+          without being changed, does not refresh an old transaction snapshot.
+          Do not combine guard acquisition and aggregate reading in one statement
+          whose snapshot may precede a lock wait. Reject a missing guard instead of
+          continuing after an empty locking result; create guards through a unique
+          key and an explicit creation transaction, with members referring to them.
+          Keep guard keys stable and prohibit guard deletion while the group lives.
+      - title: Make every route into the set use the same gate
+        brief: >-
+          Require insertion, deletion, reassignment and direct changes to take the
+          same guard. For cross-group work, determine the guards, acquire them in
+          ascending stable key order, then lock or change depot rows in a consistent
+          order and revalidate membership; restart if discovery no longer describes
+          the protected set. Explain that row locks protect existing tuples, not a
+          general predicate or an absent guard, and that skipping locked rows cannot
+          produce a trustworthy total. A transaction-scoped advisory lock is an
+          alternative coordination identity only with universal key agreement and
+          participation; show how one bypass defeats it. Explain the enforcement
+          boundary through restricted write privileges and vetted database entry
+          points, leaving deployment mechanics to application engineering.
+  - title: Turn the aggregate decision into one conditional change
+    brief: >-
+      Remodel the group row to store total_available, protected by NOT NULL and a
+      local CHECK enforcing the active-group minimum. State a second invariant:
+      this stored total equals the sum of depot units. A local CHECK cannot by
+      itself establish that equality across tables. Use a conditional arithmetic
+      UPDATE of the group total for each proposed delta, inspect the returned row,
+      and apply the matching depot delta in the same transaction; zero rows means
+      missing group or rejected reserve and requires explicit interpretation.
+      Show complete reservation and deletion examples, validating the depot's
+      current contribution under protection, applying signed deltas rather than
+      overwriting with a stale computed total, and rolling both changes back on
+      any failed precondition.
+    heading:
+      - title: Prove the counter stays equal to its members
+        brief: >-
+          Reuse the participation table to account for insertion, deletion, release,
+          corrections and reassignment; acquire group rows before member rows using
+          the same cross-group order as the guard protocol. Reject missing or changed
+          targets without committing an unmatched counter delta. Protect counter
+          initialisation with the same writer exclusion used for ongoing changes;
+          contrast a locked backfill with an unsafe live SUM followed by an overwrite.
+          Use restricted write access through a single vetted database API for the
+          reference protocol, and discuss trigger centralisation as an alternative
+          whose statement, cascade and multi-row behaviour also needs proof. Include
+          rollback between the counter and depot changes and a reconciliation query
+          that detects drift. Repair drift only while excluding relevant writers;
+          reconciliation is diagnosis, not concurrency protection.
+  - title: Reuse serialisability for a changing predicate
+    brief: >-
+      Extend the parent's proof without another isolation tutorial: each writer
+      must run a correct SERIALIZABLE transaction that reads the relevant current
+      group membership and reserve before deciding, including removals and moves.
+      Show the reservation-versus-deletion history under snapshot isolation and its
+      serialisable rejection or restart. Explain how insertion changes the read
+      predicate and why PostgreSQL dependency tracking can cover rows not returned
+      by the earlier read without acting as a blocking gap lock. A positive insertion
+      alone need not conflict or abort; do not turn every membership change into a
+      claimed anomaly. Mark mixed isolation or bypass writers as outside this proof.
+      After serialization failure or deadlock, roll back the whole transaction and
+      repeat membership discovery, reads and business decision; reject now-invalid
+      work rather than mechanically replaying the requested decrement. Keep the
+      parent's error taxonomy and bounded retry policy by reference.
+  - title: Choose with evidence from hostile two-session histories
+    brief: >-
+      End with one compact comparison of serialisable execution, stable guards and
+      conditional counters: explicit safety assumptions, hot-group concurrency,
+      read work, retry or waiting costs, and the extra maintenance invariant of a
+      counter. Guards order a group's participating writes; counters avoid repeated
+      aggregate reads but retain a shared write point; serialisability keeps the
+      rule near the query while requiring restart handling. Link schema integrity,
+      client integration and wait diagnosis to their owners. Add a named engine
+      contrast only if verified primary documentation reveals a contract changing
+      one of these proofs; a product table is unnecessary.
+    heading:
+      - title: Reproduce each failure and its repaired history
+        brief: >-
+          Plan one resettable PostgreSQL 18 worksheet with two named sessions,
+          explicit statement barriers, lock-wait release steps and bounded harness
+          timeouts rather than timing sleeps. Capture statements, values, waits,
+          SQLSTATEs and commit or rollback status. Pair unsafe and safe histories
+          for reservation versus deletion, guard snapshot timing, missing-guard or
+          advisory-lock bypass, and counter drift through an omitted membership
+          path. Include concurrent depot insertion while a guard is held, deletion
+          of the last positive member, ordered cross-group work, and a forced abort
+          between counter and depot changes. Assert both minimum reserve and counter
+          equality where applicable after every committed history, then restart an
+          aborted transaction with a fresh decision. Allow documented alternative
+          serialization victims instead of promising an exact abort location.
+          Distinguish illustrative histories planned here from observed native runs
+          to be recorded during writing, with server version and settings; passing
+          schedules test the implementation but do not replace the written proof.

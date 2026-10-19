@@ -3,6 +3,17 @@
 Planning only, from a fresh [commission](commission.md). The user will review the
 complete tree before any articles are written.
 
+## Stopped run
+
+Stopped at the user's request after the expertise-target issue was identified.
+The snapshot contains 28 article nodes: nine expanded after local reviews and
+19 deeper stubs. Other saved drafts and reviews remain as evidence, with their
+original assignment contexts. Those passes do not establish that the proposed
+depth fits the corrected global target.
+
+This run is not an input to the fresh fan-out run in
+`../relational-fanout-2026-10-19/`. It will not be resumed.
+
 The root breakdown worker received only the commission and current skill paths.
 It plans the root's headings and contextual child stubs, and manages independent
 practitioner and adversarial-editor reviews before returning. Each child then
@@ -75,10 +86,17 @@ authority assumptions, made migration detail single-owned and reused one
 guarantee worksheet across the parent and deeper cases. See
 [`a07-relational-data-across-servers/repairs.md`](a07-relational-data-across-servers/repairs.md).
 
-The root and all seven immediate child articles are now reviewed. Their current
-proposal totals 28 article nodes, of which 20 are still deeper stubs awaiting
-their own reviewed breakdowns. This is an expansion checkpoint, not the finished
-tree or the whole-tree review outcome.
+At the first-level checkpoint, the root and all seven immediate child articles
+were reviewed. The proposal contained 28 article nodes, with 20 deeper stubs
+awaiting their own reviewed breakdowns. This was an expansion checkpoint, not
+the finished tree or the whole-tree review outcome.
+
+Normalisation is the first fully reviewed deeper article: six main headings,
+one method subsection and no further children. Repairs corrected the formal
+1NF example, moved its assumptions before key calculations, merged a repeated
+definition and reused the existing synthesis counterexample. Both independent
+reviews and final technical/editorial rechecks passed; see
+[`a08-normalising-relational-schemas/repairs.yaml`](a08-normalising-relational-schemas/repairs.yaml).
 
 Workers with saved drafts may be suspended while queued for review, then resume
 their own review/repair loops. This releases capacity for independent reviewers;
