@@ -1,12 +1,16 @@
 /** Keep older bookmarks at the replacement passage, without changing its headings. */
 export const relationalSectionAliases: Record<string, Record<string, string>> = {
   "RL76": {
-    "tables": "follow-one-booking-through-the-tables",
-    "relationships": "follow-one-booking-through-the-tables",
-    "queries": "follow-one-booking-through-the-tables",
-    "transactions": "make-acceptance-one-database-decision",
-    "scaling": "choose-where-the-database-runs",
-    "choice": "choose-where-the-database-runs"
+    "tables": "tables-keys-and-joins",
+    "relationships": "tables-keys-and-joins",
+    "queries": "tables-keys-and-joins",
+    "scaling": "distributed-sql-and-regional-failures",
+    "choice": "choosing-an-implementation",
+    "follow-one-booking-through-the-tables": "tables-keys-and-joins",
+    "make-acceptance-one-database-decision": "transactions",
+    "choose-where-the-database-runs": "embedded-databases-and-database-servers",
+    "compare-actual-implementations-against-the-same-job": "choosing-an-implementation",
+    "turn-the-choice-into-a-small-acceptance-trial": "choosing-an-implementation"
   },
   "RL77": {
     "relationships": "keys-express-identity-and-allowed-references",

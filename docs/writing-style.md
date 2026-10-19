@@ -507,3 +507,19 @@ It passed nine independent reviews. The user's words on reading the live page:
 > This is the deep dive into indexes but it doesn't open with anything on what an
 > index actually is or what they are for. For my understanding why did all the
 > many review rounds find that acceptable?
+
+## Published collection rejected, 19 October 2026
+
+After publication of the relational rewrite, the user said the writing style had
+“completely degraded”. They requested a fresh agent to read the three chosen
+example articles and rewrite the introduction. When the coordinator added a
+long staged prompt, the user corrected it:
+
+> No, wtf. Just tell it to read the 3 example articles and use that as the
+> reference writing and teaching style. Then tell it to rewrite the article.
+> That's it
+
+The first agent was stopped and a fresh agent received only that instruction,
+with the article paths. The [work record](article-work/relational-introduction-style-2026-10-19/brief.md)
+preserves the exact prompt and reference revision. This rewrite is a trial, not
+a user-approved house reference.

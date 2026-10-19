@@ -51,3 +51,13 @@ gap in numbering.
 
 The release workflow deploys the publication commit. Its GitHub Actions result and
 the live collection are checked after push before the delivery is reported complete.
+
+
+## Subsequent introduction rewrite
+
+The user rejected the published writing style and commissioned a fresh-agent
+rewrite of the introduction using only the three original example articles as
+its writing and teaching references. That single-page change and its new review
+are recorded in [the rewrite brief](../relational-introduction-style-2026-10-19/brief.md).
+The registry preserves the previous publication's hashes and reviews separately
+from the rewritten introduction's current source and review.
