@@ -150,15 +150,14 @@ site section or a replacement for article-local sources.
 a parked idea. Explaining a necessary database mechanism does not activate that
 programme. Its eventual home and scope need a separate decision.
 
-## Production order
+## Production workflow, 19 October 2026
 
-Establish this coverage map and validate the authoring/review workflow before
-commissioning a broad batch. Start with a bounded relational piece that exercises
-the intended teaching quality, then use its results to improve the skills. Choose
-the next comparison or PostgreSQL piece because it answers a reader need, rather
-than automatically filling all positions in this map.
+Use `staycurrent-orchestrate` for the requested planning and writing stages.
+`staycurrent-breakdown` plans one article and returns child briefs for recursion;
+`staycurrent-write` follows the three fixed example articles; and
+`staycurrent-review` provides the appropriate independent perspectives. The
+orchestrator maintains the complete tree and reconciles corpus-wide changes.
 
-The production entry point is `staycurrent-authoring`; independent review uses
-`staycurrent-review`. House voice remains example-led in `staycurrent-style`, and
-technical evidence follows `staycurrent-research`. Review completion makes a draft
-ready for an editorial decision; publication is separately authorised.
+The earlier coverage reasoning above remains historical context. It does not
+add instructions to these skills or authorise writing every proposed article.
+Review completion does not authorise publication.

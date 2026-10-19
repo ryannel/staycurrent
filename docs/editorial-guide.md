@@ -230,8 +230,9 @@ An example or chain of mechanisms can help the author see a possible argument;
 leave room to discover a better one while writing. For an existing article,
 preserve valuable evidence and reconsider the material in light of its purpose.
 
-The independent production workflow is defined in `staycurrent-authoring` and
-`staycurrent-review`. Begin with whether the commissioned outcome is achieved.
+The current production workflow is defined in `staycurrent-orchestrate`,
+`staycurrent-breakdown`, `staycurrent-write` and `staycurrent-review`. The notes
+below record earlier editorial work.
 Use the following questions where they apply to that outcome:
 
 - Can a reader explain why each major mechanism exists before learning its
@@ -247,7 +248,7 @@ explanation that introduces its ideas in the wrong order; a useful structure
 also needs prose that carries the thought between its parts.
 The [writing references](writing-style.md) collect the author passages and
 draft excerpts we're using to develop the voice.
-Sources and publication authorisation remain governed by the research skill.
+Source checks and publication authorisation follow `AGENTS.md`.
 Routine drafting, agent review, and repair do not require a human read-through.
 Unresolved material issues stay visible in the article record; a build or an
 agent approval does not establish that the explanation is correct.

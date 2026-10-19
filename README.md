@@ -114,20 +114,27 @@ agents, the limits of human oversight and the editorial disclaimer.
 `AiDisclosure.astro` supplies the footer icon; `AiTextDisclosure.astro` supplies
 the text link through `TitleLine.astro` and directly where there is no title line.
 
-The [editorial guide](docs/editorial-guide.md), [writing references](docs/writing-style.md)
-and [illustration style](docs/illustration-style.md) record what we have learned.
-The column-store essay and relational articles are working examples. Supporting
-artwork follows the theme, and interactive controls are distinct from static data.
+Four skills in `.agents/skills/`, mirrored in `.claude/skills/`, define production:
+`staycurrent-orchestrate`, `staycurrent-breakdown`, `staycurrent-write` and
+`staycurrent-review`. They take an intelligent newcomer to expert practitioner,
+optimising useful understanding against reader time and effort. The orchestrator
+builds and reviews the recursive article tree, then assigns article writers;
+workers complete their own review and repair loops. Article and heading nodes
+use the singular `heading` list and `nested_article` child stubs.
 
-The [coverage structure](docs/content-structure.md) guides new commissions.
-The [Databases and storage proposal](docs/databases-and-storage-plan.md) maps the
-whole field after independent collection derivations and review. It is for discussion before writing and does not change which
-articles are available. The [page tree](docs/databases-and-storage-page-tree.md)
-provides a shorter view of that proposal.
-`staycurrent-planning` develops collections; `staycurrent-authoring` develops
-articles; `staycurrent-review` provides independent challenge. House skills live
-in `.agents/skills/`, mirrored in `.claude/skills/`. Keep the review notes, source
-records and runnable SQL under `docs/article-work/` with the articles they support.
+The three chosen writing and teaching examples are fixed at their pre-rewrite
+revision in `src/reference-articles/`: Sequence diagrams, Indexes, and Storage and
+durability. To read their interactive pages, run
+`STAYCURRENT_REFERENCE_PREVIEW=1 pnpm dev` and open `/review/examples/sequences/`,
+`/review/examples/indexes/` or `/review/examples/storage/`. The preview routes are
+excluded from normal builds. Source import paths and internal links are adapted
+for their new locations; the explanations and figures are preserved.
+
+Earlier skills are preserved in `docs/history/skills-before-2026-10-19/`. The
+[editorial guide](docs/editorial-guide.md), [writing history](docs/writing-style.md),
+[illustration notes](docs/illustration-style.md) and earlier coverage proposals
+remain records of their work, rather than automatic additions to a worker's prompt.
+Keep source evidence, runnable examples and review results under `docs/article-work/`.
 
 Interactive model checks remain beside their models in `src/lib/explainers/`.
 The repository's required check is `pnpm build`; use focused example or model
