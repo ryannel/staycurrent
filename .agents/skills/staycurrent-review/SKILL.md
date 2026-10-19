@@ -9,7 +9,7 @@ Review each piece against the original commissioned topic, brief and expertise g
 - **Tree or corpus:** three independent subagents, checking completeness and depth; structure, overlap and adversarial consolidation; and teaching and flow.
 - **Article or article batch:** two independent subagents, a practitioner for correctness, coverage and practical judgement and a writing/teaching reviewer for prose, animations and interaction.
 
-For a batch, assess every assigned article and return findings by article; recheck repairs without repeating unchanged work. Planning reviews judge scope, decisions and boundaries rather than unwritten prose or implemented figures.
+For a batch, assess every assigned article and return findings by article; recheck repairs without repeating unchanged work. Planning reviews judge scope, decisions and boundaries rather than unwritten prose or implemented figures. Article reviews use the parent, sibling and child plans to check gradual exposure: the parent teaches a useful high-level answer, and the deeper article owns its detail.
 
 The adversarial editor challenges each article and section's reading and navigation cost. Propose concrete cuts, merges or child articles to fold into parent sections, stating what useful understanding would be lost; seek the smallest coherent corpus that still meets the practitioner goal.
 

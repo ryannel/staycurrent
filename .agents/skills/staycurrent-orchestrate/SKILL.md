@@ -21,7 +21,7 @@ Give the complete tree and original commission to three fresh independent review
 
 ## Write and review the articles
 
-Fan out fresh writers with each article's topic, title, brief and own headings; child briefs and link locations; parent and neighbouring context; known destinations; and the original commission's topic, brief and expertise goal:
+Fan out fresh writers with each article's topic, title, brief and own headings; child briefs and planned headings with their contextual link locations; parent and neighbouring scopes; known destinations; and the original commission's topic, brief and expertise goal:
 
 > Apply [staycurrent-write](../staycurrent-write/SKILL.md) to this article plan and context. Return the article for orchestrator-managed batched review, with any proposed tree changes.
 
