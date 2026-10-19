@@ -1,5 +1,10 @@
 # Relational replacement collection: final handoff
 
+**Current collection status: repair required.** The user's subsequent reading
+exposed a gap in interactive teaching tools. [The reopened review](review/learning-tools-gap.md)
+supersedes the readiness judgement below; the following is the preserved delivery
+account at `7562536`.
+
 19 October 2026. **All 54 articles are ready as drafts**: 31 family and
 distributed investigations, 13 PostgreSQL articles and ten CockroachDB articles.
 The commission covers writing, practical work and review. Publication remains a

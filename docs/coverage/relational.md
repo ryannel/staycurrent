@@ -944,3 +944,11 @@ All 54 articles are now ready as drafts after independent article and collection
 review, native execution and rendered checks. The [final production handoff](../article-work/relational-rewrite-2026-10-19/handoff.md)
 records the delivered coverage and remaining experiment limits; the registry
 pins each final source and its review. Publication remains separate.
+
+### Learning-tools review reopened
+
+After delivery, the user's reading exposed insufficient interactive teaching
+support compared with Indexes. The [follow-up review](../article-work/relational-rewrite-2026-10-19/review/learning-tools-gap.md)
+supersedes the blanket ready-as-draft judgement above. Coverage allocation and
+native evidence remain useful; the collection needs a substantive learning-tools
+pass and proportional independent review before acceptance.

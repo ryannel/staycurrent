@@ -68,9 +68,10 @@ and four new lessons, is recorded in `docs/article-work/relational-depth-review/
 Review alone does not
 authorise publication of a new commission.
 
-The 19 October relational replacement commission has 54 reviewed drafts in
+The 19 October relational replacement commission has 54 drafts in
 `src/drafts/relational/`. Its [handoff](docs/article-work/relational-rewrite-2026-10-19/handoff.md)
-records native worksheets, review and coverage changes. Run
+records native worksheets, review and coverage changes. Subsequent user review
+reopened collection acceptance for missing interactive learning support. Run
 `RELATIONAL_DRAFT_PREVIEW=1 pnpm dev --host 127.0.0.1 --port 4323` and open
 `/review/relational/` to read them. Normal builds exclude those routes; this
 commission does not publish replacements.
