@@ -1,0 +1,146 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import WindowFigure from '../../components/relational-next/a16/WindowFigure.astro';
+import {setup,total,latest,ranking,filtering,shares,running,moving,history,previous,exercise} from '../../components/relational-next/a16/queries.mjs';
+import experimentUrl from '../../components/relational-next/a16/experiment.sql?url&no-inline';
+const headings=[
+ ['decide-what-one-result-row-represents','Decide what one result row represents'],
+ ['separate-the-input-partition-and-two-kinds-of-order','Separate the input, partition and two kinds of order'],
+ ['choose-one-latest-row-or-preserve-tied-winners','Choose one latest row or preserve tied winners'],
+ ['filter-after-the-calculation-when-the-question-requires-it','Filter after the calculation when the question requires it'],
+ ['keep-a-whole-group-denominator-for-shares','Keep a whole-group denominator for shares'],
+ ['make-running-and-moving-frames-explicit','Make running and moving frames explicit'],
+ ['compare-with-the-previous-event-or-previous-period','Compare with the previous event or previous period'],
+ ['check-the-calculation-at-its-boundaries','Check the calculation at its boundaries']
+];
+---
+
+<p>A shop report needs each item’s sales beside the shop’s total. An account history needs each event beside the amount accumulated so far. A latest-status query needs the newest event for every account. In each case, the calculation reaches into related rows while keeping the detail needed for the answer.</p>
+<p>A <strong>window calculation</strong> adds that result to each input row. The important choices are which rows enter the calculation, which belong together, how they are ordered and which of them contribute at the current row. A short query can get any of those choices wrong and still return plausible numbers.</p>
+<p>This follows <a href="/review/relational-next/sql/#compare-rows-while-keeping-their-detail">Working with SQL’s first window query</a> and its <a href="/review/relational-next/sql/#checkable-stages">named query stages</a>. We will use two small fixtures and <strong>PostgreSQL 18.6</strong>. All reported SQL results were checked on that native server. The figures calculate explanatory models of the same rows; their steps explain meaning, rather than showing the engine’s execution.</p>
+
+<nav aria-label="In this article"><ol>{headings.map(([id,title])=><li><a href={`#${id}`}>{title}</a></li>)}</ol></nav>
+
+<section aria-labelledby="decide-what-one-result-row-represents">
+ <h2 id="decide-what-one-result-row-represents">Decide what one result row represents</h2>
+ <p>The ledger records signed changes for two accounts. Positive amounts add units; negative amounts remove them. A null amount is an event whose amount is unknown. These are changes, so subtracting consecutive amounts later will compare event sizes, not calculate an account balance change.</p>
+ <table><caption>The complete ledger; all timestamps are in January 2026, UTC</caption><thead><tr><th>Account</th><th>Event</th><th>Time</th><th>Amount</th></tr></thead><tbody>
+  <tr><td>A</td><td>1</td><td>1 Jan, 09:00</td><td>10</td></tr>
+  <tr><td>A</td><td>2</td><td>2 Jan, 09:00</td><td>NULL</td></tr>
+  <tr><td>A</td><td>3</td><td>2 Jan, 09:00</td><td>20</td></tr>
+  <tr><td>A</td><td>4</td><td>4 Jan, 09:00</td><td>−5</td></tr>
+  <tr><td>A</td><td>5</td><td>4 Jan, 09:00</td><td>0</td></tr>
+  <tr><td>B</td><td>6</td><td>3 Jan, 09:00</td><td>7</td></tr>
+ </tbody></table>
+ <p>Before writing SQL, predict a report with one row per event and the account’s total known amount beside it. A’s known contributions are 10 + 20 − 5 + 0 = 25; B’s are 7. Expect six rows: five carrying 25, one carrying 7. A’s total is incomplete because event 2’s amount is unknown. Calling 25 its balance would assert something the data cannot establish.</p>
+ <p><code>GROUP BY entity</code> would instead produce two rows, one per account. That is useful for account totals, but loses the individual events. Add <code>OVER (...)</code> to SUM to retain each event:</p>
+ <Sql code={total} label="Retain six events while calculating two account totals" />
+ <p>The second fixture has one row per shop, item and recorded day. North’s item A has 10 on 1 January, 20 on 2 January, 40 on 4 January and 50 on 5 January. No row records 3 January. On 4 January, North also records B:40, C:20 and D:10; South records E:0. North’s total that day is 110, with A and B tied for largest sales. South is a singleton group with a zero total.</p>
+ <details><summary>Create both fixtures in a fresh exercise session</summary><Sql code={setup} label="Temporary ledger and sales tables, with every fixture row" /></details>
+ <p>Run the setup once per session; its temporary tables disappear when you disconnect. Use the parent’s disposable-database workflow and inspect the answering server with <code>SELECT version();</code>. The setup fixes the reporting clock to UTC. In psql, <code>\pset null 'NULL'</code> makes missing output visible. The <a href={experimentUrl} download="related-rows.sql">complete SQL worksheet</a> includes the queries below.</p>
+ <p>Windows preserve the rows supplied to them. If a join has repeated an event, its amount may contribute repeatedly. If sales began as order lines, first prepare one checked subtotal per shop, item and day. <a href="/review/relational-next/joins-and-aggregation/">Joining and summarising data</a> establishes that input grain; a window cannot repair it afterwards.</p>
+</section>
+
+<section aria-labelledby="separate-the-input-partition-and-two-kinds-of-order">
+ <h2 id="separate-the-input-partition-and-two-kinds-of-order">Separate the input, partition and two kinds of order</h2>
+ <p>The rows supplied by FROM, joins and WHERE form the window’s input; grouping and HAVING also take effect before window calculations. Within that input, <code>PARTITION BY entity</code> gives each account a separate set of related rows. Omit PARTITION BY and every input row belongs to one partition.</p>
+ <p>Figure 1 marks the partition used for the current event. Advance to event 6, then reverse the display order. Follow the event identities: their totals stay attached to the same rows.</p>
+ <WindowFigure scene="partition" number={1} />
+ <p>There are two different ordering decisions. <code>ORDER BY</code> inside OVER defines the order used by a calculation: newest event first for selection, or oldest first for a running total. The final query’s ORDER BY defines how the answer is presented. A window order alone does not promise the result’s display order.</p>
+ <p>For example, <code>ROW_NUMBER() OVER (PARTITION BY entity ORDER BY happened_at DESC, event_id DESC)</code> numbers each account’s newest event first. A final <code>ORDER BY entity, event_id</code> can display those numbered events in ascending ID order. Neither clause replaces the other.</p>
+ <p>Rows equal on <em>all</em> window ordering expressions are <strong>peers</strong>. With happened_at alone, A’s events 2 and 3 are peers, as are 4 and 5. Adding the unique event_id removes those ties. We will need that for a repeatable event sequence, but leave ties intact when equal sales should receive an equal rank.</p>
+</section>
+
+<section aria-labelledby="choose-one-latest-row-or-preserve-tied-winners">
+ <h2 id="choose-one-latest-row-or-preserve-tied-winners">Choose one latest row or preserve tied winners</h2>
+ <p>Suppose the account page wants exactly one latest event per account. <code>ROW_NUMBER</code> assigns positions from 1 within each partition. Order by descending timestamp, then descending ID, and keep position 1:</p>
+ <Sql code={latest} label="One latest event per account with an explicit tie rule" />
+ <p>The answer is <code>A → event 5, amount 0</code> and <code>B → event 6, amount 7</code>. Events 4 and 5 share the newest timestamp for A. The larger ID wins because we chose it, not because an ID proves which event happened later. If the application needs causal or business sequence, store that fact and use it. For all events at the latest timestamp, rank by timestamp alone and retain rank 1.</p>
+ <p>Top sellers introduce a different tie policy. Number North’s four items by descending sales, using item to choose a repeatable order within a tie. Then rank the same rows using sales alone:</p>
+ <Sql code={ranking} label="Compare row position, rank with gaps and rank without gaps" />
+ <p>North’s positions are 1, 2, 3, 4; its ranks are 1, 1, 3, 4; its dense ranks are 1, 1, 2, 3. In Figure 2, compare a cutoff of two under each rule. Then inspect C’s row.</p>
+ <WindowFigure scene="rank" number={2} />
+ <p>Two rows keeps A and B here. Rank ≤ 2 also keeps A and B: those tied winners occupy the first two positions, so the next rank is 3. Dense rank ≤ 2 keeps A, B and C: it selects the top two <em>distinct sales values</em>. Switch to <em>One row</em>, then <em>Rank = 1</em>, to see the fixed-count difference at the first tie: one row keeps A alone, whereas rank 1 keeps A and B.</p>
+ <p>Choose the policy in the question: exactly N items, everyone tied at a competition cutoff, or the top N distinct values. Adding item to RANK’s window order would make A and B unequal and destroy the intended sales tie. Put item only in the final display order when equal sales must stay peers.</p>
+ <p>Our timestamp and sales keys cannot be null. For a nullable “completed at” key where an unknown time must not win, PostgreSQL needs <code>ORDER BY completed_at DESC NULLS LAST, event_id DESC</code>; descending order otherwise puts nulls first. Decide missing-value placement explicitly before transferring the query to another dialect.</p>
+</section>
+
+<section aria-labelledby="filter-after-the-calculation-when-the-question-requires-it">
+ <h2 id="filter-after-the-calculation-when-the-question-requires-it">Filter after the calculation when the question requires it</h2>
+ <p>The latest-event query uses the parent’s CTE technique because the position does not exist when that same SELECT’s WHERE filters its input. Calculate position inside; test it outside. In PostgreSQL, window calls belong in the SELECT list or ORDER BY, not WHERE.</p>
+ <p>Now ask for accounts whose latest event has a positive amount. A’s latest amount is zero, so only B should remain. That differs from asking for the latest positive event for each account: A then returns its older event 3. Move the condition in Figure 3, and watch which rows receive a position.</p>
+ <WindowFigure scene="filter" number={3} />
+ <Sql code={filtering} label="The two locations of amount > 0 answer different questions" />
+ <p>Some dialects, including BigQuery, provide <code>QUALIFY</code> to filter window results directly. PostgreSQL 18 does not; the outer-query form is our baseline. The spelling does not remove the need to choose which conditions apply before the calculation.</p>
+ <p>A report boundary creates the same problem with history. A wants the known cumulative amount at each event on 4 January. Calculating from its complete ledger gives 25 at events 4 and 5. Removing earlier dates first gives −5 at both. The report’s visible period is narrower than the history its values need:</p>
+ <Sql code={history} label="Calculate with history, then restrict the displayed reporting period" />
+ <p>A filter on one whole account can go into this calculation’s input without removing rows from that account’s partition. A date filter cuts through its history. For a bounded moving frame, retain enough earlier input to cover the frame’s lower boundary; for a cumulative total, retain its whole required history or supply a separately established opening value.</p>
+</section>
+
+<section aria-labelledby="keep-a-whole-group-denominator-for-shares">
+ <h2 id="keep-a-whole-group-denominator-for-shares">Keep a whole-group denominator for shares</h2>
+ <p>North’s sales on 4 January are 40, 40, 20 and 10. Each item’s share needs its own numerator and the same 110 denominator. Partition by both shop and day, because this question compares items within one shop on one day. Omitting day in a multi-day input would calculate a different share.</p>
+ <Sql code={shares} label="Show each item's numerator, complete denominator and percentage" />
+ <p>Figure 4 places the denominator next to every numerator. Switch to <em>Ordered by item</em>. Only the OVER clause changes; follow what happens to A’s denominator.</p>
+ <WindowFigure scene="share" number={4} />
+ <p>With no window order, SUM uses the whole partition. Adding <code>ORDER BY item</code> introduces an ordered frame: its default runs from the partition start through the current item’s peers. A then divides 40 by 40 and appears to contribute 100%. B divides by 80, C by 100, D by 110. These are different denominators, so those percentages cannot be added as shares of one shop-day.</p>
+ <p>Leave ordering out of a whole-group aggregate. If a calculation genuinely needs an order and a whole-partition frame together, write <code>ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING</code> explicitly. An order used solely to display the items belongs at the end of the query.</p>
+ <p>South’s zero total produces a null percentage through NULLIF: the share is undefined, not zero. Sales are non-null, non-negative amounts in this fixture. If amounts can be missing, decide whether to show a share of known sales, mark the group incomplete, or reject the report. SUM silently skipping unknown amounts does not choose a completeness policy for you. <a href="/review/relational-next/sql-values/#check-the-arithmetic-before-trusting-the-amount">Getting SQL values right</a> covers the division’s types and missing-value handling.</p>
+ <p>North’s mathematical shares sum to 100% because each numerator appears once and the common denominator is exactly their sum. Check the computed sum within the division’s retained precision. The rounded values 36.36, 36.36, 18.18 and 9.09 total <strong>99.99%</strong>. Keep the unrounded invariant separate from display rounding. If only the two winning items are displayed, they still use 110 when the question asks for their share of the whole shop. Calculate the denominator before removing other items.</p>
+</section>
+
+<section aria-labelledby="make-running-and-moving-frames-explicit">
+ <h2 id="make-running-and-moving-frames-explicit">Make running and moving frames explicit</h2>
+ <p>A partition identifies related rows. A <strong>frame</strong> selects the rows within that partition that contribute to the current aggregate result. A running total needs the start of the partition through the current event. Write that frame explicitly, with a complete event order:</p>
+ <Sql code={running} label="Compare one-event-at-a-time totals with the default timestamp frame" />
+ <p>Step to event 2 in Figure 5, then switch to the timestamp-only default. Watch event 3 enter the frame even though the current row is still event 2.</p>
+ <WindowFigure scene="frame" number={5} />
+ <p>The explicit ROWS calculation gives A <code>10, 10, 30, 25, 25</code>. Its timestamp-and-ID order makes each row’s position unambiguous. The timestamp-only calculation gives <code>10, 30, 30, 25, 25</code>: PostgreSQL’s default ordered frame includes the current row’s entire peer group. Events 2 and 3 advance together. Merely writing ROWS while leaving their order tied would still leave which event comes first unspecified.</p>
+ <p>SUM ignores event 2’s null amount. The result remains a running total of known contributions, not a complete account balance. If the application requires a complete value, track missing contributions alongside the sum, for example <code>COUNT(*) OVER (...) − COUNT(amount) OVER (...)</code>, with exactly the same partition, order and frame.</p>
+ <p>For sales, “last three” needs another decision. At North A’s 5 January row, the last three recorded days are 2, 4 and 5: 20 + 40 + 50 = 110. The current date and two dates before it are 3, 4 and 5; only 4 and 5 have recorded sales, giving 90.</p>
+ <Sql code={moving} label="A row-count frame and an inclusive date-distance frame" />
+ <p>In Figure 6, inspect 4 January first: 2 January sits exactly on the date frame’s included lower boundary. Then advance to 5 January and compare the two choices.</p>
+ <WindowFigure scene="moving" number={6} />
+ <p><code>ROWS BETWEEN 2 PRECEDING AND CURRENT ROW</code> counts recorded rows. <code>RANGE BETWEEN INTERVAL '2 days' PRECEDING AND CURRENT ROW</code> measures the difference in the day ordering value. In PostgreSQL, an offset RANGE frame requires exactly one ordering expression; a date or timestamp ordering key takes an interval offset. Numeric ordering keys use an appropriate numeric offset. Check your dialect before copying this spelling.</p>
+ <p>Both opening frames are partial: 1 January has just its own 10. Neither frame creates 3 January. If “three-day average” means three calendar dates with confirmed zero sales on a missing date, prepare one row per date, join the recorded sales and apply the agreed zero-fill policy first. An average over only the recorded 4 and 5 January rows would be 45; including a confirmed zero on 3 January makes it 30. Missing reports are not automatically confirmed zeroes. Use <a href="/review/relational-next/joins-and-aggregation/">joins</a> to prepare the input and <a href="/review/relational-next/sql-values/#calculate-reporting-boundaries-in-the-intended-clock">the intended reporting calendar</a> to derive its dates.</p>
+</section>
+
+<section aria-labelledby="compare-with-the-previous-event-or-previous-period">
+ <h2 id="compare-with-the-previous-event-or-previous-period">Compare with the previous event or previous period</h2>
+ <p><code>LAG(amount)</code> brings the previous row’s amount alongside the current one, using the partition and window order. For A, use the same timestamp-and-ID sequence as its event total. Carry the preceding event’s non-null identity too, so an absent row can be distinguished from a row with a missing amount:</p>
+ <Sql code={previous} label="Compare event amounts while preserving the identity of the preceding event" />
+ <p>Figure 7 follows that preceding row. At event 1, change the absent-row default to zero. Then advance to event 3 and try the same change.</p>
+ <WindowFigure scene="lag" number={7} />
+ <p>Event 1 has previous_id NULL because there is no preceding event. Event 3 has previous_id 2 and previous_amount NULL because event 2 exists but its amount is unknown. The third LAG argument supplies a value only when the requested row is absent. It leaves event 2’s present null unchanged. <code>COALESCE(LAG(amount) OVER (...), 0)</code> would erase that distinction, replacing both kinds of null.</p>
+ <p>For A’s events 1 through 5, the ordinary changes are <code>NULL, NULL, NULL, −25, 5</code>. Event 4’s amount −5 is 25 below event 3’s 20. Event 5’s zero is 5 above −5. PostgreSQL 18 does not implement LAG’s <code>IGNORE NULLS</code> option; it respects the preceding row even when that value is null. A frame clause does not turn LAG into a previous-non-null search.</p>
+ <p>On North A’s sales rows, LAG at 4 January sees 2 January’s 20. It is the previous <em>recorded row</em>, not the previous calendar day. To compare with 3 January, prepare complete calendar input or join explicitly to that date. Choose how an absent report should appear before subtracting. Moving the date filter before LAG would also remove the predecessor needed at the report’s opening boundary.</p>
+</section>
+
+<section aria-labelledby="check-the-calculation-at-its-boundaries">
+ <h2 id="check-the-calculation-at-its-boundaries">Check the calculation at its boundaries</h2>
+ <p>Finish with one combined report: on 4 January, return every item tied for highest sales in each shop, its share of that complete shop-day, and its recorded sales total over that date and the two dates before it. Predict the answer before opening the query.</p>
+ <p>The input is one shop-item-day row. Ranking and shares partition by shop and day; moving sales partitions by shop and item. Equal sales remain tied for rank. The date-distance frame includes both boundaries. The final date and winner filter must follow all three calculations: it must preserve earlier days for the moving total and losing items for the denominator.</p>
+ <details><summary>Show the complete report query</summary><Sql code={exercise} label="Tied winners with whole-shop shares and preserved moving history" /></details>
+ <table><caption>Expected rows, then observed on PostgreSQL 18.6; day is 4 January 2026 throughout</caption><thead><tr><th>Shop</th><th>Item</th><th>Sales</th><th>Shop total</th><th>Percent</th><th>Three-day total</th></tr></thead><tbody>
+  <tr><td>North</td><td>A</td><td>40</td><td>110</td><td>36.36</td><td>60</td></tr>
+  <tr><td>North</td><td>B</td><td>40</td><td>110</td><td>36.36</td><td>40</td></tr>
+  <tr><td>South</td><td>E</td><td>0</td><td>0</td><td>NULL</td><td>0</td></tr>
+ </tbody></table>
+ <p>A’s moving total is 20 from the included 2 January boundary plus 40 from 4 January. B has just its one recorded row. South’s only item is a winner even with zero sales, but its share is undefined. Two North winners correctly represent only part of the shop’s sales: their shares should not sum to 100%.</p>
+ <p>Keep these cases when adapting the query: the singleton and zero denominator; tied sellers; tied event times; an event with unknown amount; a missing calendar date; and a report opening that still needs earlier rows. The verification also reinserted both fixtures in reverse order and obtained the same explicitly ordered results. That checks the complete orderings used here; it does not make an incomplete order reliable merely because a small run happens to repeat it.</p>
+ <p>Compare identities and exact intermediate values before rounded presentation. For example, check the 110 denominator beside both North winners and the moving values 10, 30, 60, 90 under the date frame. A correct row count would miss a denominator calculated after filtering or a moving total calculated without history. Give every checked result a final ORDER BY.</p>
+ <p>These checks establish the meaning of the tested answers. For a large ledger or reporting workload, take the resulting query and representative data to <a href="/review/relational-next/performance/">Understanding and improving database performance</a>. Correct frames and filters do not by themselves establish an acceptable execution cost.</p>
+</section>
+
+<section class="essay-sources" aria-labelledby="sources">
+ <h2 id="sources">Sources and further reading</h2>
+ <p>Checked on 20 October 2026. The invented fixtures and reported query results were verified on native PostgreSQL 18.6, with UTC session time zone and C database locale. The seven figures are logical models checked against those results. No other database engine was measured.</p>
+ <ul>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/tutorial-window.html">Window Functions</a>: input rows, partitions, window order and filtering through a subquery.</li>
+  <li><a href="https://www.postgresql.org/docs/18/functions-window.html">Window Functions reference</a>: row numbering, the two rank definitions, LAG defaults, peer groups and PostgreSQL’s null handling.</li>
+  <li><a href="https://www.postgresql.org/docs/18/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS">Window Function Calls</a>: the default frame and offset RANGE requirements; <a href="https://www.postgresql.org/docs/18/sql-select.html">SELECT</a> and <a href="https://www.postgresql.org/docs/18/queries-order.html">Sorting Rows</a> for clause placement, logical stages and final ordering.</li>
+  <li><a href="https://www.postgresql.org/docs/18/functions-aggregate.html">Aggregate Functions</a>: SUM and COUNT with missing inputs. <a href="https://www.postgresql.org/docs/18/functions-conditional.html">Conditional Expressions</a> defines NULLIF.</li>
+  <li>Google BigQuery, <a href="https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#qualify_clause">QUALIFY clause</a>: an alternative spelling for filtering window results in that dialect.</li>
+  <li>On this site: <a href="/review/relational-next/sql/">Working with SQL</a>, <a href="/review/relational-next/joins-and-aggregation/">Joining and summarising data</a>, <a href="/review/relational-next/sql-values/">Getting SQL values right</a> and <a href="/review/relational-next/query-composition/">Composing larger SQL queries</a>.</li>
+ </ul>
+</section>

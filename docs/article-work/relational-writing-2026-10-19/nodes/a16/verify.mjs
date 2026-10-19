@@ -1,0 +1,74 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {writeFileSync} from 'node:fs';
+import * as q from '../../../../../src/components/relational-next/a16/queries.mjs';
+import {state,scenes,render,holdFor} from '../../../../../src/components/relational-next/a16/model.mjs';
+const bin='/opt/homebrew/Cellar/postgresql@18/18.6_1/bin/';
+const db='rel3_a16_run1';
+const args=['-h','127.0.0.1','-p','57319','-U','staycurrent'];
+const clean=s=>s.replace(/^--.*$/gm,'').trim().replace(/;$/,'');
+const queries=Object.fromEntries(['total','latest','ranking','shares','running','moving','history','previous','exercise'].map(k=>[k,clean(q[k])]));
+queries.after=clean(q.filtering.split(';')[0]);
+queries.before=clean(q.filtering.split(';')[1]);
+queries.wrongHistory=queries.history.replace('FROM ledger AS l','FROM ledger AS l WHERE happened_at >= TIMESTAMPTZ \'2026-01-04 00:00+00\'');
+queries.orderedShare=`SELECT item, sales, SUM(sales) OVER (PARTITION BY shop, day ORDER BY item) AS denominator FROM sales WHERE shop='North' AND day=DATE '2026-01-04' ORDER BY item`;
+queries.previousDay=`SELECT day, sales, LAG(sales) OVER (ORDER BY day) AS previous_sales FROM sales WHERE shop='North' AND item='A' ORDER BY day`;
+queries.shareInvariant=`WITH t AS (SELECT sales,SUM(sales) OVER () AS denominator FROM sales WHERE shop='North' AND day=DATE '2026-01-04') SELECT SUM(sales) AS numerator_sum,MAX(denominator) AS denominator,abs(SUM(100*sales/denominator)-100)<0.000000000001 AS unrounded_agrees,SUM(round(100*sales/denominator,2)) AS rounded_sum FROM t`;
+queries.average=`SELECT (40::numeric+50)/2 AS recorded_average, (0::numeric+40+50)/3 AS calendar_average`;
+queries.missingCount=`SELECT event_id, COUNT(*) OVER w - COUNT(amount) OVER w AS missing FROM ledger WHERE entity='A' WINDOW w AS (ORDER BY happened_at,event_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY event_id`;
+const wrap=(k,sql)=>`SELECT '${k}:' || COALESCE(jsonb_agg(t)::text,'[]') FROM (${sql}) AS t;`;
+const reverse=`CREATE TEMP TABLE ledger_copy AS SELECT * FROM ledger; TRUNCATE ledger; INSERT INTO ledger SELECT * FROM ledger_copy ORDER BY event_id DESC;
+CREATE TEMP TABLE sales_copy AS SELECT * FROM sales; TRUNCATE sales; INSERT INTO sales SELECT * FROM sales_copy ORDER BY shop DESC,item DESC,day DESC;`;
+const script=`SELECT 'runtime:'||row_to_json(t)::text FROM (SELECT version(),current_database(),current_setting('TimeZone') AS timezone,(SELECT datcollate FROM pg_database WHERE datname=current_database()) AS locale,current_setting('server_version_num') AS version_num,current_setting('default_transaction_isolation') AS isolation) t;
+${q.setup}\n${Object.entries(queries).map(([k,s])=>wrap(k,s)).join('\n')}\n${reverse}\n${Object.entries(queries).map(([k,s])=>wrap('reverse_'+k,s)).join('\n')}`;
+execFileSync(bin+'createdb',[...args,db],{encoding:'utf8'});
+try {
+ const output=execFileSync(bin+'psql',[...args,'-d',db,'--no-psqlrc','-qAt','-v','ON_ERROR_STOP=1'],{input:script,encoding:'utf8'});
+ writeFileSync(new URL('./native-results.txt',import.meta.url),output);
+ const results=Object.fromEntries(output.trim().split('\n').map(line=>{const i=line.indexOf(':');return [line.slice(0,i),JSON.parse(line.slice(i+1))];}));
+ const r=results;
+ assert.equal(r.runtime.version_num,'180006');
+ assert.deepEqual(r.total.map(x=>x.known_total),[25,25,25,25,25,7]);
+ assert.deepEqual(r.latest.map(x=>[x.entity,x.event_id,x.amount]),[['A',5,0],['B',6,7]]);
+ assert.deepEqual(r.ranking.map(x=>[x.position,x.competition_rank,x.distinct_rank]),[[1,1,1],[2,1,1],[3,3,2],[4,4,3],[1,1,1]]);
+ assert.deepEqual(r.shares.map(x=>[x.shop_total,x.percent]),[[110,36.36],[110,36.36],[110,18.18],[110,9.09],[0,null]]);
+ assert.deepEqual(r.running.map(x=>x.event_total),[10,10,30,25,25,7]);
+ assert.deepEqual(r.running.map(x=>x.timestamp_total),[10,30,30,25,25,7]);
+ assert.deepEqual(r.moving.map(x=>x.last_three_rows),[10,30,70,110]);
+ assert.deepEqual(r.moving.map(x=>x.three_day_total),[10,30,60,90]);
+ assert.deepEqual(r.history.map(x=>x.known_total),[25,25]);
+ assert.deepEqual(r.wrongHistory.map(x=>x.known_total),[-5,-5]);
+ assert.deepEqual(r.previous.map(x=>[x.previous_id,x.previous_amount,x.change,x.absent_defaults_to_zero]),[[null,null,null,0],[1,10,null,10],[2,null,null,null],[3,20,-25,20],[4,-5,5,-5],[null,null,null,0]]);
+ assert.deepEqual(r.after.map(x=>x.event_id),[6]);
+ assert.deepEqual(r.before.map(x=>x.event_id),[3,6]);
+ assert.deepEqual(r.exercise.map(x=>[x.shop,x.item,x.sales,x.shop_total,x.percent,x.three_day_total]),[['North','A',40,110,36.36,60],['North','B',40,110,36.36,40],['South','E',0,0,null,0]]);
+ assert.deepEqual(r.orderedShare.map(x=>x.denominator),[40,80,100,110]);
+ assert.equal(r.previousDay[2].previous_sales,20);
+ assert.deepEqual(r.shareInvariant,[{numerator_sum:110,denominator:110,unrounded_agrees:true,rounded_sum:99.99}]);
+ assert.deepEqual(r.average,[{recorded_average:45,calendar_average:30}]);
+ assert.deepEqual(r.missingCount.map(x=>x.missing),[0,1,1,1,1]);
+ for(const k of Object.keys(queries))assert.deepEqual(r['reverse_'+k],r[k],`Reverse insertion order: ${k}`);
+ // Compare displayed model values with independently observed native results.
+ assert.deepEqual(state('partition','forward',5).rows.map(x=>x.cells[3]),r.total.map(x=>x.known_total));
+ assert.deepEqual(state('partition','reverse',5).rows.map(x=>x.cells[1]),[6,5,4,3,2,1]);
+ assert.deepEqual(state('rank','row',3).rows.map(x=>x.cells.slice(2)),r.ranking.slice(0,4).map(x=>[x.position,x.competition_rank,x.distinct_rank]));
+ for(const [option,field] of [['rows','event_total'],['range','timestamp_total']])assert.deepEqual(state('frame',option,4).rows.map(x=>x.cells[3]),r.running.slice(0,5).map(x=>x[field]));
+ for(const [option,field] of [['rows','last_three_rows'],['range','three_day_total']])for(let step=0;step<4;step++)assert.equal(Number(state('moving',option,step).result.match(/= (\d+)/)[1]),r.moving[step][field]);
+ assert.deepEqual(state('share','whole',3).rows.map(x=>Number(x.cells[3].replace('%',''))),r.shares.slice(0,4).map(x=>x.percent));
+ assert.deepEqual(state('share','ordered',3).rows.map(x=>x.cells[2]),r.orderedShare.map(x=>x.denominator));
+ assert.deepEqual(state('lag','null',4).rows.map(x=>x.cells[4]),r.previous.slice(0,5).map(x=>x.change===null?'NULL':String(x.change)));
+ assert.match(state('filter','after',2).result,/6\./);
+ assert.match(state('filter','before',2).result,/3, 6/);
+ assert.match(state('rank','row1',3).result,/keeps A \(1 row\)/);
+ assert.match(state('rank','rank1',3).result,/keeps A, B \(2 rows\)/);
+ assert.match(state('rank','dense1',3).result,/keeps A, B \(2 rows\)/);
+ assert.match(state('rank','dense',3).result,/keeps A, B, C \(3 rows\)/);
+ let states=0;
+ for(const [scene,def] of Object.entries(scenes))for(const [option] of def.options)for(let i=0;i<def.steps;i++){
+  const s=state(scene,option,i);assert.equal(s.rows.every(row=>row.cells.length===s.columns.length),true);assert.ok(render(s).includes('<table>'));assert.ok(holdFor(s)>=2000);states++;
+ }
+ writeFileSync(new URL('./verification.txt',import.meta.url),`PASS: native PostgreSQL 18.6 queries, independently expected results, reverse insertion order, figure/native comparisons, and ${states} figure states.\nDatabase ${db} removed after verification.\n`);
+ console.log(`PASS: ${Object.keys(queries).length} native result sets in both insertion orders; ${states} figure states.`);
+} finally {
+ execFileSync(bin+'dropdb',[...args,db],{encoding:'utf8'});
+}
