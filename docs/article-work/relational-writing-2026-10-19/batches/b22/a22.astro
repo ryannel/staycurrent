@@ -1,0 +1,164 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import RecoveryFigure from '../../components/relational-next/a22/RecoveryFigure.astro';
+import rehearsalUrl from '../../components/relational-next/a22/rehearse.mjs?url&no-inline';
+const schema=`CREATE TABLE order_operations (
+  tenant_id bigint NOT NULL,
+  customer_id bigint NOT NULL,
+  kind text NOT NULL,
+  request_key text NOT NULL,
+  fingerprint text NOT NULL,
+  order_id uuid REFERENCES orders(order_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  result jsonb NOT NULL,
+  PRIMARY KEY (tenant_id, customer_id, kind, request_key)
+);`;
+const claim=`BEGIN ISOLATION LEVEL READ COMMITTED;
+SET LOCAL lock_timeout = '100ms'; -- illustrative policy
+
+INSERT INTO order_operations
+  (tenant_id, customer_id, kind, request_key,
+   fingerprint, order_id, result)
+VALUES ($1, $2, 'place-order', $3, $4, $5, $6)
+ON CONFLICT (tenant_id, customer_id, kind, request_key)
+DO NOTHING
+RETURNING order_id;
+
+-- If one row returned: this transaction owns the claim.
+-- Make the business changes and finalise the retained result.
+-- COMMIT only when both are complete.
+
+-- If zero rows returned: a SEPARATE next statement reads
+-- the retained fingerprint and result under the same scope.
+-- Compare the fingerprint; do not repeat the business change.
+-- End this read-only duplicate attempt before responding.`;
+---
+
+<p>A request can fail to return an answer even though its database transaction committed. Repeating the request blindly can then place a second order. Refusing every repeat leaves the customer unable to discover the first one. Safe recovery needs evidence about the transaction and a durable identity for the operation the customer intended.</p>
+<p>Mina is ordering a mug and two packets of tea, the request from <a href="/review/relational-next/applications/">Building applications around a relational database</a>. The API reserves stock, records the order and returns its identifier. Here the ordinary successful path is already understood; the next request arrives after a timeout, a conflict or a missing response. PostgreSQL 18.6 and node-postgres <code>pg</code> 8.23.1 provide the concrete examples.</p>
+
+<nav class="contents" aria-label="Contents"><p>Contents</p><ol>
+ <li><a href="#separate-the-request-from-the-operation">Separate the request from the operation</a></li>
+ <li><a href="#spend-one-deadline-across-the-whole-request">Spend one deadline across the whole request</a><ol><li><a href="#establish-what-each-timeout-actually-limits">Establish what each timeout actually limits</a></li><li><a href="#keep-retries-inside-the-remaining-budget">Keep retries inside the remaining budget</a></li></ol></li>
+ <li><a href="#choose-the-next-action-from-outcome-evidence">Choose the next action from outcome evidence</a><ol><li><a href="#repeat-the-complete-logical-transaction-when-required">Repeat the complete logical transaction when required</a></li></ol></li>
+ <li><a href="#make-the-operation-identity-part-of-the-data-contract">Make the operation identity part of the data contract</a><ol><li><a href="#define-the-key-and-the-request-it-identifies">Define the key and the request it identifies</a></li><li><a href="#commit-the-claim-business-change-and-result-together">Commit the claim, business change and result together</a></li><li><a href="#return-a-retained-result-and-define-its-lifetime">Return a retained result and define its lifetime</a></li></ol></li>
+ <li><a href="#resolve-an-outcome-that-the-caller-did-not-receive">Resolve an outcome that the caller did not receive</a></li>
+ <li><a href="#test-the-failure-windows-around-commit">Test the failure windows around commit</a></li>
+</ol></nav>
+
+<h2 id="separate-the-request-from-the-operation">Separate the request from the operation</h2>
+<p>An <strong>operation</strong> is Mina’s intention to place this one order. A <strong>request</strong> is one attempt to communicate that intention to the API. A <strong>transaction attempt</strong> is one execution of its database work. The API may retry an aborted transaction inside one request; Mina may send another request after the first one stops answering. Neither should silently become a second order.</p>
+<p>Give the operation an identifier, K7, before its first request. Keep that identifier when a request is repeated. Give transport requests and transaction attempts their own diagnostic identifiers so a trace can distinguish them. The diagrams shorten order identifiers to 103; the executable fixture uses UUIDs.</p>
+<p>Play Figure 1 to its end, then compare all three histories. The caller receives no response in every case. The database and API cards show why that observation alone cannot choose the next action.</p>
+<RecoveryFigure scene="outcome" number={1} />
+<p>The API can know that no database work was sent, or that the server confirmed an abort, even when Mina sees only a timeout. It can also know that order 103 committed but fail to deliver that answer. A lost database commit reply introduces another uncertainty: the API itself may not know whether the order exists.</p>
+<p>The <a href="/review/relational-next/transactions/">transaction branch</a> supplies atomic commit, abort and the concurrency rules behind the order. Those guarantees apply to database changes. They do not make a response arrive, and rolling back a later transaction cannot undo an earlier committed order.</p>
+
+<h2 id="spend-one-deadline-across-the-whole-request">Spend one deadline across the whole request</h2>
+<p>A <strong>deadline</strong> is the latest time at which the synchronous request should finish. Establish it at admission using an elapsed-time clock. Before each stage, calculate the time remaining. Validation, admission waiting, pool acquisition, SQL, retry backoff, transaction completion and response delivery all spend the same allowance.</p>
+<p>Reserve time for completion and cleanup before starting database work. A useful rule is <code>stage allowance = min(stage cap, remaining time − completion reserve)</code>. Stop before the stage if that leaves too little time for useful work. The reserve is planning headroom; it cannot guarantee that the network, storage or cleanup finishes on time.</p>
+<p>Figure 2 gives the whole request 800 ms, of which 150 ms is reserved for completion and response. Compare a short pool wait with a long one at the same step. Watch how waiting changes whether a write should begin.</p>
+<RecoveryFigure scene="budget" number={2} />
+<p>Starting an 800 ms statement timeout after spending 550 ms reaching the database would disregard the request’s deadline. Starting another attempt after every stage times out compounds the mistake. Recalculate the allowance at each boundary, including before COMMIT, and keep a bounded owner for any completion that outlives the caller.</p>
+
+<h3 id="establish-what-each-timeout-actually-limits">Establish what each timeout actually limits</h3>
+<p>A timeout’s name is not its scope. The <a href="/review/relational-next/connections/#cancellation-is-a-cleanup-sequence">connection-lifetime article</a> demonstrates a <code>pg</code> query timeout returning while PostgreSQL is still executing. It owns cancellation, rollback, draining and disposal. For recovery, the consequence is that the early rejection supplies no confirmed transaction outcome.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Timeout scope in the concrete PostgreSQL and pg case"><table><thead><tr><th>Limit</th><th>What its clock covers</th><th>What it tells recovery</th></tr></thead><tbody>
+ <tr><td>Application deadline</td><td>The request stages the application includes, starting at admission.</td><td>The caller should stop waiting. Database completion still needs evidence.</td></tr>
+ <tr><td><code>pg connectionTimeoutMillis</code></td><td>A pool acquisition wait; also connection establishment under the client’s configuration.</td><td>If this request never obtained a client or sent SQL, it started no transaction. It says nothing about an earlier K7 request.</td></tr>
+ <tr><td><code>pg query_timeout</code></td><td>The driver’s query wait, beginning at its query call; not pool acquisition or the whole transaction.</td><td>The observed read timeout had no SQLSTATE and left the server active. Even a timeout on a COMMIT call would leave its outcome unresolved.</td></tr>
+ <tr><td>PostgreSQL <code>statement_timeout</code></td><td>Server command processing, starting at command arrival, with protocol-specific boundaries.</td><td>An observed cancellation error identifies a failed command. It is not an end-to-end request deadline.</td></tr>
+ <tr><td>PostgreSQL <code>lock_timeout</code></td><td>Each individual lock-acquisition wait.</td><td>A conflict wait exceeded its allowance; classify the transaction and clean it up before another attempt.</td></tr>
+ <tr><td>PostgreSQL <code>transaction_timeout</code></td><td>Time in an explicit or implicit transaction; expiry terminates its session. Prepared transactions are excluded.</td><td>An observed termination must be interpreted with the operation phase. This is a server backstop, not a pool or response timeout.</td></tr>
+</tbody></table></div>
+<p>COMMIT deserves its own completion allowance and outcome handling. In our bounded check, a deferred trigger made COMMIT take about 305 ms despite a transaction-local <code>statement_timeout</code> of 40 ms; COMMIT returned success and the row existed. That observation does not establish every commit-time timeout interaction. It does establish that this setting did not enforce our caller’s deadline. The PostgreSQL <a href="https://www.postgresql.org/docs/18/runtime-config-client.html">timeout documentation</a> defines server scopes; verify the actual completion path as well.</p>
+<p>Sending cancellation and receiving confirmation that the command failed are different observations. A connection loss or cancellation racing with COMMIT can leave the outcome unknown. Hand connection safety to its owner; preserve the operation identity, phase and evidence for the recovery decision.</p>
+
+<h3 id="keep-retries-inside-the-remaining-budget">Keep retries inside the remaining budget</h3>
+<p>A <strong>retry</strong> is another attempt to complete the same operation after a failure that the policy permits repeating. Give one layer ownership of retries and an explicit total-attempt cap. Include acquisition, execution, bounded backoff and completion in the deadline calculation. Count the original attempt in the cap.</p>
+<p>After a confirmed retryable abort, wait for a bounded, randomly varied delay: <strong>jitter</strong> spreads callers that would otherwise retry together. Release scarce resources before the delay. Stop when another useful attempt cannot fit; do not borrow again merely to discover that the deadline has ended. Admission limits still apply to retries.</p>
+<p>Inspect driver, transaction-helper, framework and caller retry policies together. Three attempts at each of three nested layers can produce 27 database attempts. A local cap of three is insufficient if another layer repeats the whole call. Keep the stable operation identity through every permitted layer. An expired deadline is a stopping condition, not proof that repeating a write is safe.</p>
+
+<h2 id="choose-the-next-action-from-outcome-evidence">Choose the next action from outcome evidence</h2>
+<p>Record what was sent and what was confirmed. Useful phases include acquisition, transaction open, business statements complete, COMMIT possibly sent, commit confirmed and response delivered. Record server SQLSTATE separately from a driver or transport error, and retain cleanup errors separately from the original error. A successful INSERT is evidence of a statement result, not of commit.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Choosing a recovery action from observed evidence"><table><thead><tr><th>Evidence for this attempt</th><th>Classification</th><th>Next action</th></tr></thead><tbody>
+ <tr><td>No SQL was sent</td><td>This attempt did not begin database work.</td><td>Start only if admission and remaining budget allow; use K7’s claim protocol because an earlier request may exist.</td></tr>
+ <tr><td>Invalid request, forbidden action, or a recognised permanent constraint failure such as <code>23514</code></td><td>The request needs rejection or correction.</td><td>Return the appropriate result after cleanup; repeating unchanged input is not a remedy.</td></tr>
+ <tr><td>Server <code>40001</code> serialisation failure or <code>40P01</code> deadlock victim</td><td>Confirmed transaction failure, potentially retryable.</td><td>End the failed transaction, then repeat its complete logical body under policy and budget.</td></tr>
+ <tr><td><code>57014</code> during business execution; failed transaction reports <code>25P02</code></td><td>The command failed; this explicit transaction cannot continue normally.</td><td>End the failed transaction. Diagnose the limit or cancellation; do not automatically retry the same slow work.</td></tr>
+ <tr><td><code>55P03</code> during this example’s claim wait</td><td>The wait failed; another K7 attempt may still commit.</td><td>End this attempt and resolve K7 or re-enter the same claim protocol within policy.</td></tr>
+ <tr><td>COMMIT completion confirmed, HTTP response missing</td><td>Known success at the API.</td><td>Return the retained result; do not execute the business change again.</td></tr>
+ <tr><td>Driver timeout, connection loss or incomplete reply while COMMIT may have reached the server</td><td>Unknown operation outcome.</td><td>Look up K7 and reconcile through the claim protocol. A transient-looking error does not authorise a fresh order.</td></tr>
+</tbody></table></div>
+<p>Classify the particular constraint as well as its code. A <code>23505</code> unique violation might identify a duplicate operation key, an invalid business identifier or a transaction race. It is not a universal retry instruction. PostgreSQL’s <a href="https://www.postgresql.org/docs/18/errcodes-appendix.html">error-code catalogue</a> identifies conditions; the operation contract supplies their business meaning.</p>
+
+<h3 id="repeat-the-complete-logical-transaction-when-required">Repeat the complete logical transaction when required</h3>
+<p>A serialisation retry must repeat the reads and decisions that determined the writes, using fresh transaction state. Preserve Mina’s intended items and K7. Re-read current stock and prices where the contract depends on them, and recalculate the result. Reusing an UPDATE value calculated before the abort can defeat the reason for retrying.</p>
+<p>Figure 3 uses a smaller transaction to expose that mistake. Two callers intend to increment a counter. A commits first; B receives <code>40001</code>. At the end, switch between repeating B’s read and reusing B’s old decision.</p>
+<RecoveryFigure scene="replay" number={3} />
+<p>The native run observed B read 0, receive <code>40001</code>, then read 1 in a new transaction and commit 2. The stale-decision path is illustrative. PostgreSQL explicitly requires a <a href="https://www.postgresql.org/docs/18/mvcc-serialization-failure-handling.html">complete transaction retry</a>, including the logic choosing statements and values.</p>
+<p>Keep external calls out of this retry body. Rolling back the transaction cannot recall a fulfilment request already accepted elsewhere. Commit the intent to do that work and let its separate recovery protocol handle it, as <a href="/review/relational-next/background-work/">background work and events</a> explains. Savepoints can isolate some statement failures in PostgreSQL; do not generalise this complete-retry rule into a claim that every statement error in every engine aborts all transaction work.</p>
+
+<h2 id="make-the-operation-identity-part-of-the-data-contract">Make the operation identity part of the data contract</h2>
+<p>An operation is <strong>idempotent</strong> under a stated contract when repeating it has the same promised business effect as performing it once. For this order API, matching repeats return the same committed order result rather than reserve stock again. The guarantee covers the relational order, items and reservation in one database transaction. It does not by itself cover a later external fulfilment call.</p>
+<p>A key in a header is only an input to that contract. The database must arbitrate concurrent claims, bind the key to the intended request, commit the business change and result together, and keep the evidence for the period it promises. Otherwise two API instances can both say “I have not seen K7” and create two orders.</p>
+
+<h3 id="define-the-key-and-the-request-it-identifies">Define the key and the request it identifies</h3>
+<p>Scope K7 to the authenticated tenant, customer and operation kind. In this design <code>(tenant_id, customer_id, kind, request_key)</code> is unique. Take tenant and customer values from verified authority. An operation lookup must authorise the requester just as an order lookup does; possession of a key is not permission to see its result.</p>
+<p>Require the caller to retain and reuse K7 for this one order. A new key means a new operation, even when the cart looks identical. Two deliberately separate mug orders need two keys; a retry of the first needs its old key.</p>
+<p>Store a <strong>request fingerprint</strong>, a digest of a canonical representation of the meaningful input. Here that includes API contract version, product identifiers, quantities, delivery choice and any price-acceptance terms. Canonicalisation makes equivalent values produce the same representation: for example, sort item identifiers if item order has no meaning. Raw JSON bytes differ when property order changes.</p>
+<p>Exclude per-attempt trace identifiers and timestamps that do not change intent. Preserve the equivalence rules across API versions, or keep enough version information to compare an old request correctly. The native fixture uses a small fixed, ordered item representation and SHA-256; it is not a general JSON canonicalisation library. If K7 arrives with another fingerprint, reject the reuse explicitly. Do not return the old success as though it answered the changed request.</p>
+
+<h3 id="commit-the-claim-business-change-and-result-together">Commit the claim, business change and result together</h3>
+<p>The operation table stores the scope, key, fingerprint, business identifier and promised result. The sketch assumes an existing UUID-keyed orders table. Allocate the proposed order identifier before claiming; an accepted result can already name it. The deferred foreign key permits the claim to precede the order insert, while requiring the referenced order to exist at commit.</p>
+<Sql code={schema} label="Minimal operation evidence, retained beside the order" />
+<p>Begin one transaction, insert the claim and use its returned-row count to choose the path. Only the transaction that inserted the claim may make the business changes. It finalises the result before commit; if it aborts, the claim and changes disappear together. The SQL below shows the arbitration boundary rather than a complete order handler. The <a href="/review/relational-next/transactions/">order transaction’s stock checks and concurrency rules</a> still apply inside it.</p>
+<Sql code={claim} label="Claim protocol outline; $1 to $6 are bound application values" />
+<p>In PostgreSQL at <code>READ COMMITTED</code>, an insert with <code>ON CONFLICT DO NOTHING</code> can wait for a conflicting transaction and then insert nothing even though that transaction’s row was absent from the insert’s original snapshot. Read the retained row in a <em>separate next statement</em>, with a fresh snapshot. Do not hide the insert and fallback lookup inside one statement and assume the lookup must see the winner. Higher isolation levels require their own verified conflict and retry handling.</p>
+<p>Figure 4 follows two requests with K7. Step to B’s empty lookup, then to its claim wait. At the end compare A committing, A rolling back, changed input and a bounded wait.</p>
+<RecoveryFigure scene="claim" number={4} />
+<p>If A commits, B’s claim inserts nothing; B reads the committed result and compares fingerprints. If A rolls back, B can become the claimant and create the order. If B’s conflict wait expires, B ends its failed attempt. A may still commit. None of those branches gives B permission to invent K8.</p>
+<p>For expected business rejection, decide whether the operation promises to replay that result too. To make “out of stock” a retained outcome, keep the claim and rejection result in the same transaction with no order identifier or reservation. Use the transaction’s normal decision path, or a verified savepoint around partial business work, to remove any partial changes before retaining rejection. A database exception must not be caught and followed by an attempted commit of a failed transaction. The executable fixture below exercises accepted results; rejection retention needs its own business-path tests.</p>
+
+<h3 id="return-a-retained-result-and-define-its-lifetime">Return a retained result and define its lifetime</h3>
+<p>Retain the stable response fields or enough committed data to reconstruct the response you promise. “Order 103 accepted; fulfilment pending” is an operation result. A per-attempt request identifier, timing or connection error is a diagnostic. Keep them separately so replaying the business result does not pretend to replay a transport attempt.</p>
+<p>Distinguish the original placement result from the order’s current status. If the order later ships or is cancelled, replaying its original acceptance does not mean it remains pending now. Supply a separately authorised order-status lookup when the caller wants the current state.</p>
+<p>Publish the retry and lookup window. Include delayed clients, queued requests and the time needed to reconcile unresolved work when choosing retention. Do not remove evidence needed by active supported requests. Figure 5 removes the only operation record while leaving its order; compare the result of a late repeat.</p>
+<RecoveryFigure scene="expiry" number={5} />
+<p>Deleting the record can permit a second order under the same old key. A <strong>tombstone</strong>, a retained identity marking the key as already used, can reject a late repeat after the full response has been removed. It cannot return a response no longer reconstructable. If the business rule forbids duplicate execution for longer than the API’s replay window, keep an appropriate durable business identity for that longer period.</p>
+<p>Define what happens beyond the window: reject an expired identity where it remains recognisable, require deliberate new intent, or explicitly permit reuse. A bare client timestamp cannot prove that a previously unknown key is an expired operation. Never promise indefinite duplicate protection after deleting its only evidence.</p>
+
+<h2 id="resolve-an-outcome-that-the-caller-did-not-receive">Resolve an outcome that the caller did not receive</h2>
+<p>After a lost commit reply, look up K7 through an authoritative path with suitable visibility. In this direct PostgreSQL example that means a fresh query on the primary, scoped and authorised as before. A matching committed record supplies the result. A fingerprint mismatch is a request error. An asynchronous replica’s missing row may simply be lag.</p>
+<p>A missing primary row is also inconclusive while A may still be in flight, as Figure 4 showed. Re-enter through the <em>same atomic claim protocol</em>. Its unique constraint will wait for A, discover A’s committed result, or allow a new claimant after A aborts. Do not use “lookup returned nothing” as permission for an unprotected order insert. Bound the claim wait and each lookup; preserve K7 when that resolution budget ends.</p>
+<p>If resolution outlives the synchronous request, expose a stable, authorised status identity for K7 and a documented unresolved response. Track unresolved operation identities, request fingerprints and last known phase so a reconciliation process can find them after a process crash. That record says “investigate this operation”, not “the order committed”. Give the resolver an owner, bounded attempts and an escalation path; do not leave an abandoned promise as the recovery system.</p>
+<p>Work intentionally allowed to outlive its caller needs a bounded execution lifecycle as well as that discoverable result. A synchronous API can instead require the caller to retry K7 through the same claim protocol. If the API promises asynchronous acceptance, persist the accepted intent before acknowledging it; <a href="/review/relational-next/background-work/">durable background work</a> supplies that lifecycle.</p>
+<p>This example never commits a separate pending claim. Doing so would create another recovery problem: who may take it over when its worker disappears? An expired caller deadline or claim lease does not prove that the original worker has stopped. Before introducing takeover, define how an old worker is prevented from making a late conflicting change. The relational result also cannot settle an external service’s unknown outcome; the background-work article owns that boundary.</p>
+
+<h2 id="test-the-failure-windows-around-commit">Test the failure windows around commit</h2>
+<p>Test the selected driver and database together in a disposable environment. Assert committed business effects and retained results, as well as bounded attempts and eventual resolution. An HTTP error alone cannot establish any of those properties. Use the <a href="/review/relational-next/connections/#prove-cleanup-across-failures-and-shutdown">connection-lifetime checks</a> to verify every client is returned or disposed of after the operation’s decision.</p>
+<p>The <a href={rehearsalUrl} download="request-recovery.mjs">downloadable recovery rehearsal</a> ran with Node 24.16.0, <code>pg</code> 8.23.1 and PostgreSQL 18.6. Install the pinned driver, set <code>PG_ADMIN_URL</code> to a disposable server and run <code>node request-recovery.mjs</code>; the file documents the optional driver-module override. Its administrative connection must be able to create its fresh database and signal its own test sessions. The rehearsal removes that database and closes its sessions.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Observed native recovery exercise"><table><thead><tr><th>Injected case</th><th>Observed evidence and assertion</th></tr></thead><tbody>
+ <tr><td>Exhaust a one-client pool</td><td>Acquisition timed out, its waiter was removed and this attempt started no transaction.</td></tr>
+ <tr><td>Cancel execution; expire server statement limit</td><td>Both returned <code>57014</code>; the explicit transaction then returned <code>25P02</code>. After rollback neither probe row existed.</td></tr>
+ <tr><td>Expire a driver query wait; expire a server transaction</td><td>The driver read timeout left <code>pg_sleep</code> active. Separately, transaction termination returned <code>25P04</code> and the uncommitted row was absent.</td></tr>
+ <tr><td>Force a serialisation failure</td><td><code>40001</code>, then a complete fresh transaction read the new value and committed 2. Total B attempts: two.</td></tr>
+ <tr><td>Overlap matching and conflicting inputs</td><td>The preliminary lookup found no row; the second claim waited. After A committed, matching input recovered A’s order and changed input was classified as conflict.</td></tr>
+ <tr><td>Bound the conflicting claim wait</td><td>B received <code>55P03</code>; A later committed. Same-key recovery returned A’s order without a second effect.</td></tr>
+ <tr><td>Let an attempt outlive its caller</td><td>The caller’s 20 ms wait ended while the bounded owner continued. A lookup then found nothing; after commit a repeat returned the same order.</td></tr>
+ <tr><td>Cut the database connection around COMMIT</td><td>Before forwarding COMMIT: no retained record. After intercepting the server’s COMMIT completion: one retained record. Both clients received the same connection error; same-key recovery completed or returned the one order.</td></tr>
+ <tr><td>Suppress delivery after a known commit</td><td>The application-side model withheld its result; repeating the operation returned the same order identifier.</td></tr>
+ <tr><td>Repeat near the retention boundary</td><td>Before explicit cleanup, the same order returned. Deleting the operation record admitted a new order while the original remained.</td></tr>
+</tbody></table></div>
+<p>The loopback TCP proxy parses the actual PostgreSQL messages. In its first case it withholds COMMIT before forwarding; in its second it withholds the server’s COMMIT completion from the client. A separate connection checks the operation table. The test harness therefore knows more than the failed client: its controlled injection and independent database evidence distinguish the histories. The connection error alone still does not.</p>
+<p>The delivery-suppression and retention-deletion cases are small application fault models, not a deployed HTTP service or a wall-clock cleanup scheduler. The fixture uses a minimal order row to isolate operation arbitration; test real stock reservations, items, retained rejections, authorisation and response reconstruction in the complete handler. These finite checks do not prove every network, cancellation or failover interleaving. The figures use invented schedules and budgets; the table records the executions actually observed.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 20 October 2026. The concrete claims use the versions above with direct, non-pipelined connections. Other drivers, proxies and engines need their own outcome and visibility checks.</p>
+<ul>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/runtime-config-client.html">Client connection defaults</a>, <a href="https://www.postgresql.org/docs/18/libpq-cancel.html">Cancelling queries</a> and <a href="https://www.postgresql.org/docs/18/protocol-flow.html">Message flow</a>: timeout scope, cancellation dispatch and transaction completion evidence.</li>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/errcodes-appendix.html">Error codes</a> and <a href="https://www.postgresql.org/docs/18/mvcc-serialization-failure-handling.html">Serialisation failure handling</a>: error classification and complete retries.</li>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a>, <a href="https://www.postgresql.org/docs/18/sql-insert.html">INSERT</a> and <a href="https://www.postgresql.org/docs/18/index-unique-checks.html">Index uniqueness checks</a>: conflict waiting, statement snapshots and the claim protocol’s arbitration.</li>
+ <li>node-postgres: <a href="https://node-postgres.com/apis/client">Client API</a> and <a href="https://node-postgres.com/apis/pool">Pool API</a>: configured query and acquisition limits, errors and ownership.</li>
+ <li>Continue with <a href="/review/relational-next/connections/">Managing connections and transaction lifetimes</a> for cleanup, and <a href="/review/relational-next/background-work/">Connecting transactions to background work and events</a> for effects beyond this transaction.</li>
+</ul>
