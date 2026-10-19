@@ -1,0 +1,315 @@
+{
+  "database": "rel3_a17_run1",
+  "setup": "CREATE TEMP TABLE change_orders (\n tenant_id integer NOT NULL,\n order_id integer NOT NULL,\n status text NOT NULL DEFAULT 'open'\n   CHECK (status IN ('open', 'cancelled')),\n note text,\n PRIMARY KEY (tenant_id, order_id)\n);\nCREATE TEMP TABLE stock (\n tenant_id integer NOT NULL,\n sku text NOT NULL,\n available integer NOT NULL CHECK (available >= 0),\n PRIMARY KEY (tenant_id, sku)\n);\nCREATE TEMP TABLE receipts (\n receipt_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n tenant_id integer NOT NULL,\n order_id integer NOT NULL,\n external_ref text NOT NULL,\n amount numeric(10,2) NOT NULL CHECK (amount > 0),\n UNIQUE (tenant_id, external_ref),\n FOREIGN KEY (tenant_id, order_id)\n   REFERENCES change_orders (tenant_id, order_id)\n);\nCREATE TEMP TABLE change_lines (\n tenant_id integer NOT NULL,\n order_id integer NOT NULL,\n line_no integer NOT NULL,\n PRIMARY KEY (tenant_id, order_id, line_no),\n FOREIGN KEY (tenant_id, order_id)\n   REFERENCES change_orders (tenant_id, order_id) ON DELETE CASCADE\n);\nCREATE TEMP TABLE deliveries (\n tenant_id integer NOT NULL, sku text NOT NULL,\n units integer NOT NULL CHECK (units > 0)\n);\nINSERT INTO change_orders (tenant_id, order_id, status, note) VALUES\n (1,101,'open',NULL), (1,102,'open','fragile'),\n (1,105,'cancelled',NULL), (2,101,'open',NULL);\nINSERT INTO stock VALUES (1,'P7',5), (1,'P8',2), (2,'P7',9);\nINSERT INTO receipts (tenant_id, order_id, external_ref, amount)\n VALUES (1,101,'bank-1',15);\nINSERT INTO change_lines VALUES (1,101,1), (1,101,2), (1,105,1);\nINSERT INTO deliveries VALUES (1,'P7',2), (1,'P7',3), (1,'P9',4);",
+  "cases": [
+    {
+      "name": "version",
+      "sql": "SHOW server_version;",
+      "expected": [
+        "18.6 (Homebrew)"
+      ],
+      "stdout": "18.6 (Homebrew)\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "target",
+      "sql": "BEGIN;\nSELECT tenant_id, order_id, status\nFROM change_orders\nWHERE tenant_id = 1 AND order_id = 101 AND status = 'open';\nUPDATE change_orders SET status = 'cancelled'\nWHERE tenant_id = 1 AND order_id = 101 AND status = 'open'\nRETURNING tenant_id, order_id, status;\n-- (1, 101, cancelled); UPDATE 1\nROLLBACK;SELECT status FROM change_orders WHERE tenant_id=1 AND order_id=101;",
+      "expected": [
+        "1|101|open",
+        "1|101|cancelled",
+        "open"
+      ],
+      "stdout": "1|101|open\n1|101|cancelled\nopen\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "scope",
+      "sql": "SELECT count(*) FROM change_orders WHERE order_id=101; SELECT count(*) FROM change_orders WHERE tenant_id=1 AND status='open'; SELECT count(*) FROM change_orders; SELECT count(*) FROM change_orders WHERE note=NULL; SELECT count(*) FROM change_orders WHERE tenant_id=1 AND note IS NULL;",
+      "expected": [
+        "2",
+        "2",
+        "4",
+        "0",
+        "2"
+      ],
+      "stdout": "2\n2\n4\n0\n2\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "inserts",
+      "sql": "BEGIN;\nINSERT INTO change_orders (tenant_id, order_id)\nVALUES (1,107), (1,108)\nRETURNING tenant_id, order_id, status, note;\n-- Two rows: open, NULL.\nINSERT INTO receipts (tenant_id, order_id, external_ref, amount)\nVALUES (1,107,'bank-2',12), (1,108,'bank-3',8)\nRETURNING receipt_id, tenant_id, external_ref, amount;\nROLLBACK;",
+      "expected": [
+        "1|107|open|",
+        "1|108|open|",
+        "2|1|bank-2|12.00",
+        "3|1|bank-3|8.00"
+      ],
+      "stdout": "1|107|open|\n1|108|open|\n2|1|bank-2|12.00\n3|1|bank-3|8.00\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "default",
+      "sql": "INSERT INTO change_orders(tenant_id,order_id,status) VALUES (1,107,DEFAULT) RETURNING status;",
+      "expected": [
+        "open"
+      ],
+      "stdout": "open\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "explicit-null",
+      "sql": "INSERT INTO change_orders(tenant_id,order_id,status) VALUES (1,107,NULL);",
+      "expected": [],
+      "stdout": "",
+      "stderr": "ERROR:  23502: null value in column \"status\" of relation \"change_orders\" violates not-null constraint\nDETAIL:  Failing row contains (1, 107, null, null).\nSCHEMA NAME:  pg_temp_1\nTABLE NAME:  change_orders\nCOLUMN NAME:  status\nLOCATION:  ReportNotNullViolationError, execMain.c:2219\n",
+      "exit_code": 3,
+      "passed": true
+    },
+    {
+      "name": "insert-empty",
+      "sql": "WITH added AS (INSERT INTO stock SELECT tenant_id,sku,units FROM deliveries WHERE false RETURNING *) SELECT count(*) FROM added;",
+      "expected": [
+        "0"
+      ],
+      "stdout": "0\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "source-update",
+      "sql": "BEGIN;\nSELECT tenant_id, sku, COUNT(*) AS source_rows\nFROM deliveries GROUP BY tenant_id, sku HAVING COUNT(*) > 1;\n-- (1, P7, 2).\nWITH incoming AS (\n SELECT tenant_id, sku, SUM(units)::integer AS units\n FROM deliveries GROUP BY tenant_id, sku\n)\nUPDATE stock AS s SET available = s.available + i.units\nFROM incoming AS i\nWHERE s.tenant_id = i.tenant_id AND s.sku = i.sku\nRETURNING s.tenant_id, s.sku, s.available;\n-- (1, P7, 10). P9 has no target, so UPDATE does not insert it.\nROLLBACK;",
+      "expected": [
+        "1|P7|2",
+        "1|P7|10"
+      ],
+      "stdout": "1|P7|2\n1|P7|10\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "ambiguous-source-observation",
+      "sql": "BEGIN;\n-- Wrong source contract: P7 matches two delivery rows.\nUPDATE stock AS s SET available = s.available + d.units\nFROM deliveries AS d\nWHERE s.tenant_id = d.tenant_id AND s.sku = d.sku\nRETURNING s.tenant_id, s.sku, s.available;\n-- Our run returned 7 for P7, not the required 10.\nROLLBACK;",
+      "expected": [
+        "1|P7|7"
+      ],
+      "stdout": "1|P7|7\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "guard",
+      "sql": "BEGIN;\nUPDATE stock SET available = available - 3\nWHERE tenant_id = 1 AND sku = 'P7' AND available >= 3\nRETURNING tenant_id, sku, available;\n-- (1, P7, 2); UPDATE 1\nUPDATE stock SET available = available - 3\nWHERE tenant_id = 1 AND sku = 'P7' AND available >= 3\nRETURNING tenant_id, sku, available;\n-- No rows; UPDATE 0.\nROLLBACK;",
+      "expected": [
+        "1|P7|2"
+      ],
+      "stdout": "1|P7|2\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "missing-stock",
+      "sql": "WITH changed AS (UPDATE stock SET available=available-3 WHERE tenant_id=1 AND sku='missing' AND available>=3 RETURNING *) SELECT count(*) FROM changed;",
+      "expected": [
+        "0"
+      ],
+      "stdout": "0\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "delete-cascade",
+      "sql": "BEGIN;\nDELETE FROM change_orders AS o\nWHERE o.tenant_id = 1 AND o.status = 'cancelled'\n  AND EXISTS (\n    SELECT 1 FROM change_lines AS l\n    WHERE l.tenant_id = o.tenant_id AND l.order_id = o.order_id\n  )\nRETURNING o.tenant_id, o.order_id;\n-- (1, 105); DELETE 1.\nSELECT COUNT(*) FROM change_lines\nWHERE tenant_id = 1 AND order_id = 105;\n-- 0: the declared cascade deleted its line too.\nROLLBACK;",
+      "expected": [
+        "1|105",
+        "0"
+      ],
+      "stdout": "1|105\n0\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "delete-protected",
+      "sql": "DELETE FROM change_orders WHERE tenant_id=1 AND order_id=101;",
+      "expected": [],
+      "stdout": "",
+      "stderr": "ERROR:  23503: update or delete on table \"change_orders\" violates foreign key constraint \"receipts_tenant_id_order_id_fkey\" on table \"receipts\"\nDETAIL:  Key (tenant_id, order_id)=(1, 101) is still referenced from table \"receipts\".\nSCHEMA NAME:  pg_temp_9\nTABLE NAME:  receipts\nCONSTRAINT NAME:  receipts_tenant_id_order_id_fkey\nLOCATION:  ri_ReportViolation, ri_triggers.c:2811\n",
+      "exit_code": 3,
+      "passed": true
+    },
+    {
+      "name": "delete-none",
+      "sql": "WITH gone AS (DELETE FROM change_orders WHERE order_id=999 RETURNING *) SELECT count(*) FROM gone;",
+      "expected": [
+        "0"
+      ],
+      "stdout": "0\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "delete-multiple",
+      "sql": "BEGIN; DELETE FROM change_lines WHERE tenant_id=1; WITH gone AS (DELETE FROM change_orders WHERE tenant_id=1 AND order_id IN(102,105) RETURNING *) SELECT count(*) FROM gone; ROLLBACK;",
+      "expected": [
+        "2"
+      ],
+      "stdout": "2\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "conflict-reject",
+      "sql": "INSERT INTO stock VALUES(1,'P7',5);",
+      "expected": [],
+      "stdout": "",
+      "stderr": "ERROR:  23505: duplicate key value violates unique constraint \"stock_pkey\"\nDETAIL:  Key (tenant_id, sku)=(1, P7) already exists.\nSCHEMA NAME:  pg_temp_11\nTABLE NAME:  stock\nCONSTRAINT NAME:  stock_pkey\nLOCATION:  _bt_check_unique, nbtinsert.c:673\n",
+      "exit_code": 3,
+      "passed": true
+    },
+    {
+      "name": "conflict-nothing",
+      "sql": "WITH changed AS (INSERT INTO stock VALUES(1,'P7',5) ON CONFLICT(tenant_id,sku) DO NOTHING RETURNING *) SELECT count(*) FROM changed; SELECT available FROM stock WHERE tenant_id=1 AND sku='P7';",
+      "expected": [
+        "0",
+        "5"
+      ],
+      "stdout": "0\n5\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "conflict-values",
+      "sql": "BEGIN;\nINSERT INTO stock (tenant_id, sku, available) VALUES (1,'P7',5)\nON CONFLICT (tenant_id, sku) DO UPDATE\n SET available = stock.available + EXCLUDED.available\nRETURNING tenant_id, sku, available;\n-- (1, P7, 10).\nROLLBACK;\nBEGIN;\nINSERT INTO stock (tenant_id, sku, available) VALUES (1,'P7',5)\nON CONFLICT (tenant_id, sku) DO UPDATE\n SET available = EXCLUDED.available\nRETURNING tenant_id, sku, available;\n-- (1, P7, 5): replacement, not addition.\nROLLBACK;",
+      "expected": [
+        "1|P7|10",
+        "1|P7|5"
+      ],
+      "stdout": "1|P7|10\n1|P7|5\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "conditional-conflict-zero",
+      "sql": "WITH changed AS (INSERT INTO stock VALUES(1,'P7',5) ON CONFLICT(tenant_id,sku) DO UPDATE SET available=EXCLUDED.available WHERE stock.available IS DISTINCT FROM EXCLUDED.available RETURNING *) SELECT count(*) FROM changed;",
+      "expected": [
+        "0"
+      ],
+      "stdout": "0\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "same-value-update",
+      "sql": "WITH changed AS (UPDATE stock SET available=available WHERE tenant_id=1 AND sku='P7' RETURNING *) SELECT count(*) FROM changed;",
+      "expected": [
+        "1"
+      ],
+      "stdout": "1\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "duplicate-upsert-source",
+      "sql": "INSERT INTO stock VALUES(1,'P7',2),(1,'P7',3) ON CONFLICT(tenant_id,sku) DO UPDATE SET available=stock.available+EXCLUDED.available;",
+      "expected": [],
+      "stdout": "",
+      "stderr": "ERROR:  21000: ON CONFLICT DO UPDATE command cannot affect row a second time\nHINT:  Ensure that no rows proposed for insertion within the same command have duplicate constrained values.\nLOCATION:  ExecOnConflictUpdate, nodeModifyTable.c:2809\n",
+      "exit_code": 3,
+      "passed": true
+    },
+    {
+      "name": "merge-actions",
+      "sql": "BEGIN;\nMERGE INTO stock AS s\nUSING (VALUES (1,'P7',8,false), (1,'P8',0,true), (1,'P9',4,false))\n AS incoming(tenant_id, sku, counted, retire)\nON s.tenant_id = incoming.tenant_id AND s.sku = incoming.sku\nWHEN MATCHED AND incoming.retire THEN DELETE\nWHEN MATCHED THEN UPDATE SET available = incoming.counted\nWHEN NOT MATCHED AND NOT incoming.retire THEN\n INSERT (tenant_id, sku, available)\n VALUES (incoming.tenant_id, incoming.sku, incoming.counted)\nRETURNING merge_action(), s.tenant_id, s.sku, s.available;\n-- UPDATE P7 to 8; DELETE P8; INSERT P9 with 4; MERGE 3.\nROLLBACK;",
+      "expected": [
+        "UPDATE|1|P7|8",
+        "DELETE|1|P8|2",
+        "INSERT|1|P9|4"
+      ],
+      "stdout": "UPDATE|1|P7|8\nDELETE|1|P8|2\nINSERT|1|P9|4\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "merge-duplicate",
+      "sql": "MERGE INTO stock AS s USING (VALUES(1,'P7',2),(1,'P7',3)) AS d(tenant_id,sku,units) ON s.tenant_id=d.tenant_id AND s.sku=d.sku WHEN MATCHED THEN UPDATE SET available=s.available+d.units;",
+      "expected": [],
+      "stdout": "",
+      "stderr": "ERROR:  21000: MERGE command cannot affect row a second time\nHINT:  Ensure that not more than one source row matches any one target row.\nLOCATION:  ExecMergeMatched, nodeModifyTable.c:3349\n",
+      "exit_code": 3,
+      "passed": true
+    },
+    {
+      "name": "rollback-after-error",
+      "sql": "BEGIN;\nUPDATE stock SET available = available - 6\nWHERE tenant_id = 1 AND sku = 'P7';\n-- ERROR: check constraint violation, SQLSTATE 23514.\nSELECT available FROM stock;\n-- ERROR: current transaction is aborted, SQLSTATE 25P02.\nROLLBACK;\nSELECT available FROM stock WHERE tenant_id = 1 AND sku = 'P7';\n-- 5: the session is usable again.",
+      "expected": [
+        "5"
+      ],
+      "stdout": "5\n",
+      "stderr": "ERROR:  23514: new row for relation \"stock\" violates check constraint \"stock_available_check\"\nDETAIL:  Failing row contains (1, P7, -1).\nSCHEMA NAME:  pg_temp_5\nTABLE NAME:  stock\nCONSTRAINT NAME:  stock_available_check\nLOCATION:  ExecConstraints, execMain.c:2081\nERROR:  25P02: current transaction is aborted, commands ignored until end of transaction block\nLOCATION:  exec_simple_query, postgres.c:1140\n",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "rollback-sequence-gap",
+      "sql": "BEGIN; INSERT INTO receipts(tenant_id,order_id,external_ref,amount) VALUES(1,101,'rolled-back',1) RETURNING receipt_id; ROLLBACK; INSERT INTO receipts(tenant_id,order_id,external_ref,amount) VALUES(1,101,'kept',1) RETURNING receipt_id;",
+      "expected": [
+        "2",
+        "3"
+      ],
+      "stdout": "2\n3\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "receipt-constraint",
+      "sql": "INSERT INTO receipts(tenant_id,order_id,external_ref,amount) VALUES(1,101,'bad',-1);",
+      "expected": [],
+      "stdout": "",
+      "stderr": "ERROR:  23514: new row for relation \"receipts\" violates check constraint \"receipts_amount_check\"\nDETAIL:  Failing row contains (2, 1, 101, bad, -1.00).\nSCHEMA NAME:  pg_temp_0\nTABLE NAME:  receipts\nCONSTRAINT NAME:  receipts_amount_check\nLOCATION:  ExecConstraints, execMain.c:2081\n",
+      "exit_code": 3,
+      "passed": true
+    },
+    {
+      "name": "exercise",
+      "sql": "BEGIN;\nINSERT INTO stock (tenant_id, sku, available)\nSELECT tenant_id, sku, SUM(units)::integer\nFROM deliveries\nGROUP BY tenant_id, sku\nON CONFLICT (tenant_id, sku) DO UPDATE\n SET available = stock.available + EXCLUDED.available\nRETURNING tenant_id, sku, available;\n-- P7: 10; P9: 4. P8 remains 2; tenant 2's P7 remains 9.\nSELECT tenant_id,sku,available FROM stock ORDER BY tenant_id,sku; ROLLBACK; SELECT tenant_id,sku,available FROM stock ORDER BY tenant_id,sku;",
+      "expected": [
+        "1|P9|4",
+        "1|P7|10",
+        "1|P7|10",
+        "1|P8|2",
+        "1|P9|4",
+        "2|P7|9",
+        "1|P7|5",
+        "1|P8|2",
+        "2|P7|9"
+      ],
+      "stdout": "1|P9|4\n1|P7|10\n1|P7|10\n1|P8|2\n1|P9|4\n2|P7|9\n1|P7|5\n1|P8|2\n2|P7|9\n",
+      "stderr": "",
+      "exit_code": 0,
+      "passed": true
+    }
+  ]
+}

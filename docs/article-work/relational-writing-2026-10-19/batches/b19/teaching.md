@@ -1,0 +1,9 @@
+# b19 independent teaching review
+
+## Early narrow rechecks
+
+**a17 — PASS.** Retain the b17 full teaching/style, boundary, 63-state, control, playback and phone/theme passes. Reviewed the changed conflict paragraph and source ledger. The paragraph now distinguishes an ignored conflicting receipt proposal from an inserted receipt: negative conflicting bank-1 fails CHECK 23514; missing-order 999 on ignored bank-1 returns nothing and leaves its existing link to 101; a new reference against 999 fails 23503. The following paragraph correctly says a skipped proposal establishes neither validity of every proposed value nor agreement with the existing row. The examples make the exception useful and concrete, without weakening the warning that DO NOTHING is not a general error handler. Rendered the changed passage at 390 px; it is readable. No new required finding; b17 optional improvements remain optional.
+
+**a18 — PASS. T18-1 resolved.** Retain the b17 full prose, boundary, all 45 states, controls, playback and phone/theme passes. On the frozen 4439 candidate, Reservation rows step 2 now says “A runs its locking read” and “No rows locked”; step 3 also labels B “No rows locked”. The stable-class alternative retains A's acquired lock and B's wait. Inspected both branches at both stages and the phone presentation at 390 px: the labels now agree with details, counts and results, and remain readable. Source/repair record confirms only these three labels changed; no SQL, control or numeric-state change. No new required finding; b17 optional improvements remain optional.
+
+These narrow checks used `b19/repair.md`, the assigned snapshots, changed source/ledger and actual frozen 4439 rendering. No practitioner reports were read. No browser download, native execution, build, article/component mutation, Git operation or nested team. Normal viewport restored and the narrow-review tab closed. Full initial a19 review follows below when complete.

@@ -1,0 +1,160 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import MutationFigure from '../../components/relational-next/a17/MutationFigure.astro';
+import {setup,target,inserts,fromQuery,decrement,ambiguous,sourceUpdate,deletion,conflict,merge,failure} from '../../components/relational-next/a17/queries.mjs';
+const headings=[
+ ['state-the-change-before-writing-the-statement','State the change before writing the statement'],
+ ['insert-the-intended-rows-and-keep-their-identities','Insert the intended rows and keep their identities'],
+ ['make-set-based-updates-unambiguous','Make set-based updates unambiguous'],
+ ['delete-rows-and-account-for-dependent-changes','Delete rows and account for dependent changes'],
+ ['decide-what-should-happen-when-an-insert-meets-existing-data','Decide what should happen when an insert meets existing data'],
+ ['inspect-what-changed-inside-a-bounded-transaction','Inspect what changed inside a bounded transaction'],
+ ['prove-the-change-against-awkward-inputs','Prove the change against awkward inputs']
+];
+const defaults=`-- Run each of these as a separate rolled-back exercise.
+INSERT INTO change_orders (tenant_id, order_id, status)
+VALUES (1,107,DEFAULT) RETURNING status; -- open
+INSERT INTO change_orders (tenant_id, order_id, status)
+VALUES (1,107,NULL); -- rejected: NOT NULL, not replaced by open`;
+const conditional=`BEGIN;
+INSERT INTO stock (tenant_id, sku, available) VALUES (1,'P7',5)
+ON CONFLICT (tenant_id, sku) DO UPDATE
+ SET available = EXCLUDED.available
+ WHERE stock.available IS DISTINCT FROM EXCLUDED.available
+RETURNING tenant_id, sku, available;
+-- No row: existing and incoming quantities are both 5.
+ROLLBACK;`;
+const gap=`BEGIN;
+INSERT INTO receipts (tenant_id, order_id, external_ref, amount)
+VALUES (1,101,'rolled-back',1) RETURNING receipt_id;
+-- 2, immediately after a fresh setup.
+ROLLBACK;
+INSERT INTO receipts (tenant_id, order_id, external_ref, amount)
+VALUES (1,101,'kept',1) RETURNING receipt_id;
+-- 3. Identity 2 is not reclaimed.`;
+const inspect=`SELECT tenant_id, sku, available FROM stock ORDER BY tenant_id, sku;
+-- Before: (1,P7,5), (1,P8,2), (2,P7,9).
+-- Inside the delivery exercise:
+-- (1,P7,10), (1,P8,2), (1,P9,4), (2,P7,9).
+-- After ROLLBACK: the original three rows again.`;
+---
+
+<p>A SQL change names a set of rows and says what to do to them. One missing part of a key can change another customer’s order. One repeated source key can add only part of a delivery. A successful statement tells you that the database accepted an operation; checking the identities and resulting values tells you whether it was the operation you intended.</p>
+<p><a href="/review/relational-next/sql/#change-the-intended-rows-and-inspect-the-outcome">Working with SQL</a> cancelled one open order, inspected the result and rolled it back. We will keep that shop and extend the change: several intended rows, incoming deliveries, dependent order lines and a key that already exists. The runnable examples and recorded results use <strong>native PostgreSQL 18.6</strong>. The figures model the logical changes; they do not execute SQL or reproduce the engine’s physical steps.</p>
+
+<nav aria-label="In this article"><ol>{headings.map(([id,title])=><li><a href={`#${id}`}>{title}</a></li>)}</ol></nav>
+
+<section aria-labelledby="state-the-change-before-writing-the-statement">
+ <h2 id="state-the-change-before-writing-the-statement">State the change before writing the statement</h2>
+ <p>The parent used globally unique order numbers. Here two shops share a database: tenant 1 and tenant 2 can each have order 101. The order’s key is now <code>(tenant_id, order_id)</code>. We use separate temporary tables, prefixed where necessary, so the exercise does not change the parent’s fixture.</p>
+ <details><summary>Complete setup, in a fresh disposable PostgreSQL session</summary><Sql code={setup} label="Create the temporary order, stock, receipt and delivery fixture" /></details>
+ <p>The setup creates four orders, three stock rows, one receipt and three order lines. Delivery rows mean genuine separate arrivals: tenant 1 receives two P7 units, then three more, and four P9 units. Tables and their contents disappear when the session closes. Run the setup once in a fresh session, before BEGIN. Each later BEGIN/ROLLBACK example starts from those same rows. Finish the short exercise before reading on.</p>
+ <p>The first request remains “cancel order 101 while it is open”, now specifically for tenant 1. Expect exactly <code>(1,101,cancelled)</code> returned and every other order’s status unchanged. First list the candidate keys with the intended predicate; then carry that predicate into the change.</p>
+ <Sql code={target} label="Cancel one identified open order, inspect it, then discard the exercise" />
+ <p>Figure 1 keeps all four orders visible. Play the complete-key case, then choose <em>Order only</em>. Watch which second identity becomes a candidate.</p>
+ <MutationFigure scene="target" number={1} />
+ <p>Order number alone selects both tenants’ 101s. Tenant 1 plus open status selects 101 and 102: appropriate for “cancel all this shop’s open orders”, wrong for the original request. Omitting WHERE would select all four, including the already cancelled order. The target set is a business decision before it is SQL syntax.</p>
+ <p>Null-sensitive predicates need the same care. <code>note = NULL</code> selects none; <code>tenant_id = 1 AND note IS NULL</code> selects 101 and 105. Missing note is not the same condition as open order. <a href="/review/relational-next/sql-values/#follow-unknown-through-a-predicate">Getting SQL values right</a> explains why WHERE rejects an unknown comparison.</p>
+ <p>A candidate SELECT catches a broad predicate, but another transaction can change data before the UPDATE. Keep the business precondition in the change itself. Where several changes must preserve an invariant together, use <a href="/review/relational-next/transactions/">Making concurrent changes correct</a>; a preview is no reservation of the rows.</p>
+</section>
+
+<section aria-labelledby="insert-the-intended-rows-and-keep-their-identities">
+ <h2 id="insert-the-intended-rows-and-keep-their-identities">Insert the intended rows and keep their identities</h2>
+ <p>An INSERT’s column list states what each supplied value means. Several parenthesised VALUES rows insert several orders in one statement. These two new orders omit status and note:</p>
+ <Sql code={inserts} label="Create two orders and return the actual identities of their receipts" />
+ <p>The table supplies <code>'open'</code> for omitted status. Note has no declared default, so omission supplies NULL, which this nullable column accepts. Writing DEFAULT explicitly also supplies open; writing NULL supplies a missing value and fails the status column’s NOT NULL rule.</p>
+ <p>In Figure 2, compare the proposed row with its resolved values before checking what was stored.</p>
+ <MutationFigure scene="insert" number={2} />
+ <Sql code={defaults} label="DEFAULT and explicit NULL ask for different values" />
+ <p>The receipt insert omits receipt_id, an identity column whose sequence generates a value. Immediately after a fresh setup, the recorded insert returned receipt IDs 2 and 3 alongside bank-2 and bank-3. Keep the returned external reference with each identity; RETURNING has no promised row order. Neither <code>MAX(receipt_id)</code> nor arithmetic on a previous ID identifies this insert’s rows reliably.</p>
+ <p>INSERT can also take a SELECT as its source. First check what one source row means and whether several source rows should become several target rows. Our two P7 deliveries should contribute five units to one stock key. Grouping them by that complete key expresses the rule. A source query returning no rows inserts none; that can be expected, unlike a rejection by a constraint. The final exercise uses this source with an explicit policy for existing stock.</p>
+ <p>Constraints accept or reject the proposed rows. They do not fill missing business meaning: a positive receipt amount with the wrong order key can satisfy every declared rule. The modelling decisions belong to <a href="/review/relational-next/constraints/">Enforcing data rules</a>; adding those rules to live data belongs to <a href="/review/relational-next/live-changes/">Changing a live database</a>.</p>
+</section>
+
+<section aria-labelledby="make-set-based-updates-unambiguous">
+ <h2 id="make-set-based-updates-unambiguous">Make set-based updates unambiguous</h2>
+ <p>UPDATE applies its SET expressions to every selected target row. A value can come from the stored row: <code>available = available - 3</code> subtracts from the value that the UPDATE uses, instead of assigning an amount previously calculated by the application.</p>
+ <Sql code={decrement} label="Put the available-stock precondition inside the decrement" />
+ <p>The first change returns two units remaining. The second returns no row because two is less than three. A missing SKU would also return none. The statement’s zero count establishes that no stock row was updated; it does not by itself explain why.</p>
+ <p>Figure 3 changes the request while keeping the stock visible. Try six units, then an unknown SKU.</p>
+ <MutationFigure scene="guard" number={3} />
+ <p>This is a useful single-row precondition, not a complete order-placement protocol. Reserving several products, cancelling orders and coordinating with other writers require the transaction reasoning in <a href="/review/relational-next/transactions/">Making concurrent changes correct</a>.</p>
+ <p>A source-driven UPDATE adds another requirement: each target must receive one intended source value. This plausible delivery query breaks that contract:</p>
+ <Sql code={ambiguous} label="An intentionally wrong UPDATE FROM: two source matches for P7" />
+ <p>Our run changed P7 from five to seven. It used the two-unit source row, leaving the three-unit delivery unapplied. PostgreSQL’s <a href="https://www.postgresql.org/docs/18/sql-update.html">UPDATE documentation</a> says that only one source match is used and does not promise which. Sorting the deliveries or observing the same winner twice does not establish a rule.</p>
+ <p>Advance Figure 4 to the source matches, then choose <em>Sum genuine deliveries</em>. The repair changes the source supplied to the update.</p>
+ <MutationFigure scene="source" number={4} />
+ <Sql code={sourceUpdate} label="Check repeated keys, then aggregate the genuine delivery contributions" />
+ <p>The grouped source has one row per tenant/SKU, so P7 receives five and ends at ten. P8 and tenant 2’s P7 stay unchanged. P9 has no existing target and is not inserted by UPDATE. <a href="/review/relational-next/joins-and-aggregation/#matches">Joining and summarising data</a> develops the pairing rule behind these matches.</p>
+ <p>SUM is justified because these rows are separate deliveries. If they were repeated copies of one delivery, adding them would be wrong. Enforce a unique delivery identity, or select the latest accepted correction using an explicit order and tie rule, according to the input contract. DISTINCT cannot decide which of those meanings you intended.</p>
+</section>
+
+<section aria-labelledby="delete-rows-and-account-for-dependent-changes">
+ <h2 id="delete-rows-and-account-for-dependent-changes">Delete rows and account for dependent changes</h2>
+ <p>DELETE removes the target rows selected by its predicate. To remove tenant 1’s cancelled orders that have lines, use the relationship as an existence test. The complete tenant/order key keeps another shop’s lines out of the decision:</p>
+ <Sql code={deletion} label="Delete the one qualifying cancelled order and inspect its dependent line" />
+ <p>Only 105 qualifies. Its line disappears because the fixture declares ON DELETE CASCADE on change_lines. The direct result is <code>DELETE 1</code>, and RETURNING lists order 105; neither lists that dependent line. The subsequent count checks it separately.</p>
+ <p>Figure 5 compares this deletion with order 101, whose receipt uses the default foreign-key action, NO ACTION. Watch what remains when that rule rejects the deletion.</p>
+ <MutationFigure scene="delete" number={5} />
+ <p>Deleting 101 would orphan its receipt, so PostgreSQL rejects the statement with foreign-key error 23503. The order, its receipt and both lines remain. Any cascaded work from that failed statement is discarded too. After ROLLBACK the session is usable again. An identity with no order gives DELETE 0; several qualifying orders give several direct deletions.</p>
+ <p>Assigning NULL to a field leaves the row present. Setting status to cancelled also preserves the order and its relationships. Deletion removes it, subject to the declared actions. Choose from the required business lifecycle rather than a universal preference for “soft deletion”. <a href="/review/relational-next/history/">Modelling history and data lifecycles</a> owns retention and history; <a href="/review/relational-next/live-changes/">Changing a live database</a> owns production purges.</p>
+</section>
+
+<section aria-labelledby="decide-what-should-happen-when-an-insert-meets-existing-data">
+ <h2 id="decide-what-should-happen-when-an-insert-meets-existing-data">Decide what should happen when an insert meets existing data</h2>
+ <p>Tenant 1 already has P7 stock. An ordinary INSERT with that key fails uniqueness. PostgreSQL’s ON CONFLICT clause lets this particular key conflict take a different action. State that action’s meaning first:</p>
+ <table><caption>Existing P7 available = 5; proposed value = 5</caption><thead><tr><th>Required outcome</th><th>Action</th><th>Result here</th></tr></thead><tbody>
+  <tr><td>A duplicate is a mistake</td><td>Ordinary INSERT</td><td>Error 23505</td></tr>
+  <tr><td>Preserve existing stock</td><td>DO NOTHING</td><td>5; no returned row</td></tr>
+  <tr><td>Record a new five-unit arrival</td><td>DO UPDATE, add incoming value</td><td>10; one returned row</td></tr>
+  <tr><td>Replace stock with a new count</td><td>DO UPDATE, assign incoming value</td><td>5; one returned row</td></tr>
+ </tbody></table>
+ <p>Figure 6 puts the last two calculations side by side with their statement outcome. An unchanged value can still come from an update.</p>
+ <MutationFigure scene="conflict" number={6} />
+ <Sql code={conflict} label="The same key conflict, with addition and replacement as different policies" />
+ <p><code>stock.available</code> reads the existing value; <code>EXCLUDED.available</code> reads the proposed insert value. The conflict target names the declared unique key <code>(tenant_id, sku)</code>. Both columns are NOT NULL here. A nullable business key needs a deliberate uniqueness/null policy; otherwise apparently duplicate missing values may not conflict at all.</p>
+ <p>DO NOTHING handles the named key conflict; it is not a general constraint-error handler. In our receipt fixture, a negative amount on the existing bank-1 reference still failed CHECK with 23514. But proposing bank-1 against missing order 999 returned no row and left the existing receipt linked to 101: the ignored proposal did not undergo its foreign-key insertion check. Using a new receipt reference against 999 failed with 23503.</p>
+ <p>A skipped proposal does not establish that all its proposed values were valid, or that the existing row matches what the caller expected. Repeating the additive form adds five again. <a href="/review/relational-next/request-recovery/">Recovering database requests safely</a> owns request identities and uncertain outcomes.</p>
+ <p>An optional WHERE can suppress a conflict update when no replacement is needed. In this case it returns no row and reports INSERT 0 0:</p>
+ <Sql code={conditional} label="Skip a replacement when the stored value already agrees" />
+ <p>Two source rows for the same conflict key are another case. In our check, proposing P7 twice to ON CONFLICT DO UPDATE raised cardinality error 21000: it cannot update the same target twice in one statement. Check source keys before choosing the action.</p>
+ <p>Sometimes an incoming relation genuinely needs different operations: a stock count replaces a matched quantity, a retirement removes a matched SKU, and a new SKU is inserted. PostgreSQL 18’s MERGE expresses those actions together:</p>
+ <Sql code={merge} label="Reconcile three explicit stock instructions with three different actions" />
+ <p>The recorded returned actions were UPDATE P7 to eight, DELETE P8 and INSERT P9 with four. Tenant 2’s P7 remained nine. The first true WHEN determines each candidate’s action, so retirement must precede the general matched update. Two source rows attempting to update P7 raised 21000 here too. Missing target rows marked for retirement do nothing.</p>
+ <p>The syntax above, including merge_action() and RETURNING, is PostgreSQL 18’s. Check the exact engine and version when porting. Similar spellings do not imply identical outcomes: PostgreSQL’s key-conflict INSERT documents an insert-or-update concurrency guarantee, whereas MERGE does not promise that one of those actions must occur for a competing insert. Neither is equivalent to a separate “SELECT, then INSERT or UPDATE”. <a href="/review/relational-next/isolation/">Reading and testing isolation guarantees</a> takes up the competing-writer cases.</p>
+</section>
+
+<section aria-labelledby="inspect-what-changed-inside-a-bounded-transaction">
+ <h2 id="inspect-what-changed-inside-a-bounded-transaction">Inspect what changed inside a bounded transaction</h2>
+ <p>Inspect three things before deciding whether to keep a deliberate change: the returned keys, the values at those keys, and the relevant remaining database state. RETURNING is PostgreSQL’s direct row output: inserted values, updated values, or the deleted row’s old values. It is not a report of every cascade or side effect.</p>
+ <p>Our fixture has no user-defined triggers. In its recorded run, <code>UPDATE stock SET available = available</code> for P7 still counted and returned one row. The conditional conflict replacement above returned none. A positive affected-row count therefore does not establish that a value changed; zero does not identify a particular reason. Trigger behaviour can change which operations occur, so inspect the schema and the postcondition too.</p>
+ <p>A constraint error inside BEGIN leaves a failed transaction in PostgreSQL. This exercise deliberately triggers a check violation, then shows why correcting the next SELECT is insufficient:</p>
+ <Sql code={failure} label="A failed transaction needs rollback before further ordinary statements" />
+ <p>In Figure 7, compare the failed update with a successful receipt insert that we later discard.</p>
+ <MutationFigure scene="transaction" number={7} />
+ <p>Rollback discards the inserted receipt, but PostgreSQL does not reclaim its sequence value. Immediately after fresh setup, this separate exercise returned 2 and then 3:</p>
+ <Sql code={gap} label="A rolled-back identity allocation can leave a gap" />
+ <p>Sequences supply distinct allocations, not gapless business numbering. Never infer a missing receipt or a transaction’s commit order from an absent number. More generally, a database rollback does not undo an email or another external action already performed by application code.</p>
+ <p>Inspection inside the transaction establishes this session’s observed state. A kept operation still needs successful COMMIT and an application that handles a lost reply. Read <a href="/review/relational-next/transactions/">Making concurrent changes correct</a> for invariants and <a href="/review/relational-next/applications/">Building applications around a relational database</a> for connection and request boundaries.</p>
+</section>
+
+<section aria-labelledby="prove-the-change-against-awkward-inputs">
+ <h2 id="prove-the-change-against-awkward-inputs">Prove the change against awkward inputs</h2>
+ <p>Return to the delivery fixture. The contract is now complete: add each genuine delivery to existing stock, create previously unknown SKUs, preserve unrelated stock and discard the exercise afterwards. Before execution, expect returned keys <code>(1,P7)</code> and <code>(1,P9)</code>, quantities ten and four, P8 unchanged at two and tenant 2’s P7 unchanged at nine.</p>
+ <Sql code={fromQuery} label="Aggregate delivery contributions, then insert or add by the complete key" />
+ <p>For a manual exercise, run the first inspection below before BEGIN, again after the INSERT but before its ROLLBACK, and once after rollback. The recorded RETURNING rows arrived as P9 then P7; their key/value set agreed with the prediction. The ordered state inspection establishes the full postcondition:</p>
+ <Sql code={inspect} label="Check the complete state as well as the directly returned rows" />
+ <p>Keep the awkward cases beside the query. No source rows should make no change. One incoming key should affect only that key. Several genuine deliveries for P7 must total five before adding. Two proposed values for the same upsert key must be resolved by the source’s business rule. A negative receipt must fail its check; a null-sensitive target predicate must select the intended keys; the complete-key cancellation must leave tenant 2 alone. After each independent case, restore the fixture before the next.</p>
+ <p>The native verification ran 27 cases, including the constraint errors, duplicate-source failures, cascade rejection, same-value update, empty input, no match and rollback gap. Those are single-session checks on a small fixture. They establish neither a concurrency protocol nor an acceptable production cost. Take invariants to <a href="/review/relational-next/transactions/">transactions</a>, expensive changes to <a href="/review/relational-next/performance/">performance</a>, live backfills and corrections to <a href="/review/relational-next/live-changes/">changing a live database</a>, and retries to <a href="/review/relational-next/request-recovery/">recovering requests safely</a>.</p>
+</section>
+
+<section class="essay-sources" aria-labelledby="sources">
+ <h2 id="sources">Sources and further reading</h2>
+ <p>Checked on 20 October 2026. The shop and quantities are invented. The SQL results above were executed on native PostgreSQL 18.6, in temporary tables on a disposable database. No concurrent sessions or production-scale work were measured. The seven figures calculate illustrative logical states, checked against that run; their animation is not an engine trace.</p>
+ <ul>
+  <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/sql-insert.html">INSERT</a>, <a href="https://www.postgresql.org/docs/18/sql-update.html">UPDATE</a>, <a href="https://www.postgresql.org/docs/18/sql-delete.html">DELETE</a> and <a href="https://www.postgresql.org/docs/18/sql-merge.html">MERGE</a>: syntax, source cardinality, conflicts and direct counts.</li>
+  <li><a href="https://www.postgresql.org/docs/18/dml-returning.html">Returning Data from Modified Rows</a> and <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>: returned values, validation and referential actions.</li>
+  <li><a href="https://www.postgresql.org/docs/18/functions-sequence.html">Sequence Manipulation Functions</a>: sequence allocations and rollback; <a href="https://www.postgresql.org/docs/18/tutorial-transactions.html">Transactions</a>: transaction completion and rollback.</li>
+  <li><a href="/review/relational-next/sql/">Working with SQL</a>, the parent’s first complete change; <a href="/review/relational-next/sql-values/">Getting SQL values right</a> and <a href="/review/relational-next/joins-and-aggregation/">Joining and summarising data</a>, for predicate meaning and source multiplicity.</li>
+ </ul>
+</section>
