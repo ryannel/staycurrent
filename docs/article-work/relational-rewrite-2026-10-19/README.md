@@ -1,10 +1,10 @@
-# Relational rewrite: reviewable draft checkpoint
+# Relational rewrite: ready drafts
 
 19 October 2026. The commissioned 54 articles are written under
 `src/drafts/relational/`: 31 family/distributed investigations, 13 PostgreSQL
-and ten CockroachDB. This checkpoint saves the articles, practical worksheets,
-observations and independent reviews. Final review reconciliation and rendered
-checks are still being sealed; status remains drafting.
+and ten CockroachDB. All 54 are ready as drafts after independent readings, technical and editorial
+repairs, collection review and rendered checks. This work record saves the
+articles, practical worksheets, observations and reviews.
 
 ## Open the review build
 
@@ -22,7 +22,9 @@ existing published articles and navigation remain the live reading.
 ## Follow the work
 
 - `commission.md` and `briefs/` record scope and expert-ability breakdowns.
-- `registry.json` lists all 54 source and preview paths.
+- [The final handoff](handoff.md) records the result, map changes and limits.
+- [Verification](verification.md) records native, build and browser checks.
+- `registry.json` lists all 54 source and preview paths, final source hashes and review records.
 - `evidence/` retains actual SQL, commands, replies and version/scope notes.
 - `lab/` holds disposable native cluster worksheets and reproduction notes.
 - `review/` preserves uncued readings, technical/editorial repairs and the

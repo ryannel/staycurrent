@@ -939,3 +939,8 @@ and post-change acceptance. RL111 retains heap horizons/reuse/freeze; RL112
 retains access methods/operators. RL86 keeps the general mechanism and engine
 comparison and links to RL119 only after that destination teaches the promised
 operation. This is a deeper existing home, not a new counted page.
+
+All 54 articles are now ready as drafts after independent article and collection
+review, native execution and rendered checks. The [final production handoff](../article-work/relational-rewrite-2026-10-19/handoff.md)
+records the delivered coverage and remaining experiment limits; the registry
+pins each final source and its review. Publication remains separate.
