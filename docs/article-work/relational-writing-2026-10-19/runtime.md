@@ -110,3 +110,7 @@ permitted`; this is separate from a database error. Restricted `pg_ctl status`
 also incorrectly reported no server while the server was running: perform status
 and stop commands with the same elevated permission rather than starting another
 instance. No container fallback or extra service was started.
+
+## Independent review snapshots
+
+Later review batches build to their own disposable output directory with `astro build --outDir`, run the unchanged site-check APIs against that exact output, then serve it on a separate loopback port. A batch’s files remain immutable through its review, so building the next batch does not reset an active player. Original b10 remains on4437; b11 uses4438 from `/private/tmp/rel3-b11-dist`. Root owns server/snapshot cleanup. These are local review copies, not additional publications.
