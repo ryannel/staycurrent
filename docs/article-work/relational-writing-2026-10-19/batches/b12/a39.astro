@@ -1,0 +1,160 @@
+---
+import { Code } from 'astro:components';
+import RecoveryFigure from '../../components/relational-next/a39/RecoveryFigure.astro';
+import rehearsalUrl from '../../components/relational-next/a39/rehearse.py?url&no-inline';
+const themes = { light: 'github-light', dark: 'github-dark' } as const;
+const sections = [
+ ['start-with-the-loss-you-must-recover-from','Start with the loss you must recover from'],
+ ['choose-the-copy-that-can-reconstruct-the-required-state','Choose the copy that can reconstruct the required state'],
+ ['keep-recovery-possible-after-production-fails','Keep recovery possible after production fails'],
+ ['rehearse-a-full-restore-in-isolation','Rehearse a full restore in isolation'],
+ ['recover-to-the-last-acceptable-state','Recover to the last acceptable state'],
+ ['decide-between-replacing-the-database-and-repairing-selected-data','Decide between replacement and selected repair'],
+ ['prove-readiness-before-returning-traffic','Prove readiness before returning traffic'],
+];
+const runDrill = `python3 rehearse.py \\
+  --pg-bin /path/to/postgresql-18/bin \\
+  --evidence ./restore-evidence.json`;
+const backup = `# The harness supplies its fresh source port and temporary paths.
+pg_basebackup -h 127.0.0.1 -p "$source_port" -U drill \\
+  -D "$work/base" -Fp -X stream --checkpoint=fast \\
+  --label=a39-rehearsal
+pg_verifybackup "$work/base"`;
+const change = `-- Session 1: commit the good work before marking the boundary.
+BEGIN;
+INSERT INTO orders VALUES (103, 'paid');
+INSERT INTO items VALUES (103, 1, 1);
+COMMIT;
+SELECT pg_create_restore_point('before_bad_delete');
+
+-- Later, a mistaken cleanup commits, followed by another good order.
+BEGIN;
+DELETE FROM orders WHERE id = 101; -- cascades to its two items
+COMMIT;
+BEGIN;
+INSERT INTO orders VALUES (104, 'paid');
+INSERT INTO items VALUES (104, 1, 1);
+COMMIT;
+SELECT pg_switch_wal();`;
+const recovery = `# In a new copy of base, with its own port and socket directory:
+archive_mode = off
+restore_command = 'cp /absolute/drill/archive/%f %p'
+recovery_target_name = 'before_bad_delete'
+recovery_target_action = 'pause'
+hot_standby = on
+# Create recovery.signal in this destination, then start it.
+# For the full-replay comparison, omit the two recovery_target_* lines.`;
+const checks = `SELECT pg_is_in_recovery();
+-- Targeted copy: true. Full replay: wait until false.
+-- Only while in recovery:
+SELECT pg_is_wal_replay_paused();
+-- Targeted copy: true, with the target confirmed in its server log.
+
+SELECT id, status FROM orders ORDER BY id;
+SELECT order_id, count(*) AS lines, sum(quantity) AS units
+FROM items GROUP BY order_id ORDER BY order_id;
+SELECT count(*) AS orphan_items
+FROM items i LEFT JOIN orders o ON o.id = i.order_id
+WHERE o.id IS NULL;`;
+---
+
+<p>A backup gives you material from which to recover. A restore proves what that material can become. The useful promise is specific: recover the required facts after a named failure, within the allowed loss and interruption, using access that still works when production does not.</p>
+<p>In the shop from <a href="/review/relational-next/operations/">Running a relational service</a>, a cleanup mistakenly deletes Mina’s paid order 101 and its two item rows. The deletion commits and reaches the replica. More orders arrive before anyone notices. We will recover an earlier copy in isolation, compare it with the current service and decide what the restored facts permit us to do.</p>
+<p>PostgreSQL 18 supplies the concrete procedure. The downloadable rehearsal ran on native PostgreSQL 18.6 in disposable local clusters. The figures explain causes and choices; their planning durations are invented. None of this establishes a production recovery time or a hosted service’s acceptance.</p>
+
+<nav aria-label="In this article" class="article-contents"><ol>{sections.map(([id,title])=><li><a href={`#${id}`}>{title}</a></li>)}</ol></nav>
+
+<h2 id="start-with-the-loss-you-must-recover-from">Start with the loss you must recover from</h2>
+<p>The parent gives the shop a seven-day discovery window for committed mistakes and 60 minutes from incident declaration to correct affected orders, accounting for every acknowledged order. For loss of the production location or administrative account, it allows four hours and at most five minutes of acknowledged changes lost. These are different cases. The five-minute loss allowance does not authorise discarding good later orders to repair Mina’s deletion.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Recovery inputs for different failures"><table><thead><tr><th>Loss case</th><th>State required</th><th>What can defeat recovery</th></tr></thead><tbody>
+ <tr><td>Service storage disappears</td><td>Newest recoverable state within the allowed loss, plus a replacement environment</td><td>Last changes never reached independent history; replacement capacity or keys unavailable</td></tr>
+ <tr><td>Wrong change committed</td><td>Evidence and state before that change; current state for later valid work</td><td>Every live copy contains the mistake; earlier coverage expired</td></tr>
+ <tr><td>Corruption discovered days later</td><td>A known usable earlier copy, with checks for the same damage</td><td>All retained copies contain the damage, or its earliest occurrence is unknown</td></tr>
+ <tr><td>Account or recovery credentials lost</td><td>Copies, catalogue, keys and authority reachable through a surviving access path</td><td>Production and backup deletion, credentials or encryption keys share the failed authority</td></tr>
+</tbody></table></div>
+<p>For each case, name the databases, files and dependent services needed to complete the application action. Include detection delay and when the interruption clock starts. A replica can shorten writer replacement, but it normally repeats committed mistakes. <a href="/review/relational-next/replicas-and-partitions/">Topology operation</a> owns promotion; the parent’s <a href="/review/relational-next/operations/#recover-the-incident-without-destroying-the-evidence">incident method</a> selects and coordinates the response. Here we establish the state restoration can actually supply.</p>
+
+<h2 id="choose-the-copy-that-can-reconstruct-the-required-state">Choose the copy that can reconstruct the required state</h2>
+<p>The important distinction is what a copy preserves and what procedure can use it. A SQL export, a copy of storage and a base backup with later logs are different recovery inputs.</p>
+
+<h3 id="logical-exports-preserve-a-selected-representation">Logical exports preserve a selected representation</h3>
+<p>A <strong>logical export</strong> records object definitions and values rather than the engine’s existing pages. PostgreSQL’s <a href="https://www.postgresql.org/docs/18/app-pgdump.html"><code>pg_dump</code></a> takes a consistent view of one database while ordinary work continues. A custom-format dump can be loaded with <code>pg_restore</code>, which can select objects. Several independently started exports do not thereby share one snapshot; cross-database and external-service consistency need an explicit coordination contract.</p>
+<p>Record the export’s scope. A single-database dump does not capture the cluster’s roles and tablespaces; <code>pg_dumpall --globals-only</code> is a separate capture. Extension binaries, configuration, external files and credentials also need their own recovery inventory. A table-only export can omit objects on which it depends. Loading rows without their referenced parents or required functions is not a complete restoration.</p>
+<p>Logical representation offers useful portability, but test the destination’s supported versions, extensions, types and collations. Loading can spend substantial time creating indexes and validating constraints. Inspect errors and ownership instead of accepting a partial load. An export from before Mina’s deletion could supply her facts, but cannot be advanced through PostgreSQL WAL to a later instant: PostgreSQL’s physical recovery needs a physical base.</p>
+
+<h3 id="physical-backups-and-snapshots-need-an-engine-contract">Physical backups and snapshots need an engine contract</h3>
+<p>A <strong>physical backup</strong> preserves the engine’s files in a form its recovery procedure supports. PostgreSQL’s <a href="https://www.postgresql.org/docs/18/app-pgbasebackup.html"><code>pg_basebackup</code></a> captures an entire cluster, including all databases, and coordinates the online copy with WAL. The rehearsal uses a full plain-format base and streams the WAL needed to make that base recoverable. Subsequent history is archived separately.</p>
+<p>Physical files constrain the recovery environment: use a compatible PostgreSQL major version, architecture and build, restore all tablespaces to correct locations, and provide required libraries and configuration. Configuration outside the captured directory needs separate capture. Incremental physical backups add dependencies on earlier backups and a supported combination step; an incremental file set alone is not a complete database.</p>
+<p>An arbitrary copy of changing data files has no such guarantee. A storage snapshot must satisfy the <a href="https://www.postgresql.org/docs/18/backup-file.html">engine’s documented filesystem-backup conditions</a>, including simultaneous capture of required volumes and WAL. Check whether a provider snapshot is independent, what earlier snapshots or keys it needs and where restoration is permitted. A database-consistent snapshot does not establish consistency with a payment provider.</p>
+
+<h3 id="point-in-time-recovery-needs-a-complete-history">Point-in-time recovery needs a complete history</h3>
+<p><strong>Point-in-time recovery</strong>, or PITR, starts with a suitable base and replays saved transaction history to a chosen boundary. The base must permit recovery to that boundary, and every required log segment and timeline history file must be available. A newer base cannot run backwards. The WAL bundled with a base backup establishes that base’s recovery; it is not a promise that tomorrow’s changes are archived.</p>
+<p>Figure 1 compares replaying to the archive end with stopping before the bad deletion. Step to the final order, then remove the later WAL segment from the targeted copy’s archive. Watch which promise disappears.</p>
+<RecoveryFigure scene="history" number={1} />
+<p>Full replay preserved order 104 and repeated the deletion. Stopping earlier preserved 101 and excluded 104. WAL replay reconstructs database history; it does not select the application intentions we wish had happened. Missing history blocks the intended target even when the base itself passes verification.</p>
+
+<h2 id="keep-recovery-possible-after-production-fails">Keep recovery possible after production fails</h2>
+<p>Retention must preserve <em>coverage</em>. If a mistake may be discovered seven days later, retain a suitable base for the oldest required target and all history needed from that base onwards. A base older than seven days may be essential to that promise. Keep time for investigation and the restore itself before automatic expiry removes the inputs.</p>
+<p>Figure 2 places the oldest target between two bases. Expire the older base and advance through retention. The newer base remains perfectly readable.</p>
+<RecoveryFigure scene="retention" number={2} />
+<p>The catalogue should identify each base, engine and extension versions, start and completion boundaries, required history, storage location, encryption key, expiry and verification result. Monitor copy failures, archive progress and available storage. Also record the last successful restore and its scope separately. “Backup completed” and “restored state accepted” answer different questions.</p>
+<p>Trace the named failure through access as well as storage. Another disk in the same location helps a different case from another administrative account. Identify who can delete copies, shorten retention or revoke their key. Test retrieval and decryption with the recovery identity, including when production access is unavailable. Keep configuration, restore permissions, infrastructure definitions and required service dependencies accessible through that path. <a href="/review/relational-next/security/#protect-connections-copies-and-the-keys-that-unlock-them">Security’s copy and key controls</a> own those boundaries.</p>
+
+<h2 id="rehearse-a-full-restore-in-isolation">Rehearse a full restore in isolation</h2>
+<p>First prove that the base and archive can produce a complete recovered database without a special target. Otherwise an attempted PITR mixes several unknowns: an unusable base, missing library, inaccessible archive and wrong target can all look like “restore failed”. Provision a clean destination, document its versions and capacity, and prevent applications and workers from connecting to live queues, payment or fulfilment services. A restored pending job must not dispatch a second parcel.</p>
+<p><a href={rehearsalUrl} download="rehearse.py">Download the disposable PostgreSQL rehearsal</a>. It needs Python 3, Unix <code>cp</code> and PostgreSQL 18 server tools. Run it as an ordinary OS user, choosing your installed binary directory and a new evidence filename:</p>
+<Code code={runDrill} lang="sh" themes={themes} />
+<p>The harness creates its own temporary cluster, unused loopback ports and local trust-authenticated test role. It never connects to an existing database. It creates two paid orders and three item lines, takes a base, adds the later changes, restores fresh full-replay and targeted copies, and tests a deliberately incomplete archive. It retains commands, outputs and logs in the evidence file, then stops its own servers and removes their data. This is a small mechanism exercise, without production credentials, remote storage, encryption, extensions or application traffic.</p>
+<p>The backup commands inside it are:</p>
+<Code code={backup} lang="sh" themes={themes} />
+<p><code>--checkpoint=fast</code> keeps this tiny drill bounded; it requests concentrated I/O and is not a production scheduling recommendation. <a href="https://www.postgresql.org/docs/18/app-pgverifybackup.html"><code>pg_verifybackup</code></a> checks the manifest, files and required base WAL, but does not prove all later archived history or application meaning. Keep the untouched base for repeated restores; make configuration changes only in a new destination.</p>
+<p>Time the real service path from the agreed start: retrieval, provisioning, key access and decryption, file restoration, log recovery, validation and application reconnection. Use representative data volume and constrained recovery capacity. Figure 3 adds those stages against the shop’s 60-minute budget. Advance past replay, then delay recovery access.</p>
+<RecoveryFigure scene="budget" number={3} />
+<p>The model’s prepared path takes 49 minutes; delayed access takes 69. Our native copies instead recovered a tiny local fixture in less than a second from file-copy start to database queries. That excludes most of this service path and supports no production RTO claim. Repeat at representative scale before accepting the requirement.</p>
+
+<h2 id="recover-to-the-last-acceptable-state">Recover to the last acceptable state</h2>
+<p>A planned drill can place a named marker after known good work. The accidental incident cannot create yesterday’s marker after discovery. Preserve the harmful job’s statement, transaction and commit evidence, application records and a time zone-qualified estimate. Restore separately and test candidate boundaries against known facts: Mina’s order and both items must exist; a known later order may be absent. An approximate “09:10” from a dashboard is not enough to declare the result correct.</p>
+<p>The rehearsal creates an unambiguous boundary in this order. Its table’s foreign key deletes the two item lines when order 101 is deleted:</p>
+<Code code={change} lang="sql" themes={themes} />
+<p>The marker follows <code>COMMIT</code>. Placing it before commit can leave the good order uncommitted at the recovery boundary, even though its insert record precedes the marker in WAL. A restore point identifies a log location, not a promise that every preceding insert is already a committed fact. The harness waits until the switched segment is actually present in the archive; requesting a switch alone does not prove archival completed.</p>
+<p>In each restored copy, override the copied production connection and archive settings before startup. Here the harness uses a separate port and socket, disables archiving from the restored copy and supplies its local archive retrieval command. The targeted destination adds:</p>
+<Code code={recovery} lang="ini" themes={themes} />
+<p>With <code>recovery.signal</code> present, PostgreSQL replays the archive. With <code>pause</code> and hot standby enabled it lets us inspect the target read-only before ending recovery. Inspect the server log for the actual target, timeline and pause. <code>pg_ctl -w</code> can report connection readiness while replay is still running: explicitly check completion or the target pause.</p>
+<p><a href="https://www.postgresql.org/docs/18/runtime-config-wal.html#RUNTIME-CONFIG-WAL-RECOVERY-TARGET">PostgreSQL 18’s target settings</a> also accept a time, transaction identifier or LSN, with at most one target. For those three, <code>recovery_target_inclusive</code> controls inclusion at the exact target and defaults to on. To exclude a known harmful transaction’s commit, a verified transaction target with inclusion off is one option. Transaction identifiers are not commit order; do not interpret “smaller ID” as “committed earlier”. Record the chosen timeline after earlier recoveries or promotions.</p>
+<Code code={checks} lang="sql" themes={themes} />
+<div class="table-scroll" role="region" tabindex="0" aria-label="Observed native restore results"><table><thead><tr><th>Native PostgreSQL 18.6 check</th><th>Orders present</th><th>Item lines / target evidence</th></tr></thead><tbody>
+ <tr><td>Replay to retained archive end</td><td>102, 103, 104</td><td>3 lines; recovery completed</td></tr>
+ <tr><td>Pause at <code>before_bad_delete</code></td><td>101, 102, 103</td><td>4 lines; target logged and replay paused</td></tr>
+ <tr><td>Same target, required later segment removed</td><td>No accepted result</td><td>Startup failed: target not reached</td></tr>
+</tbody></table></div>
+<p>The incomplete-archive test reached a consistent state and briefly allowed read-only connections before failing. That was still no recovery success. Stop when the target or log chain cannot be established. Preserve the evidence and find another supported input set; removing the target to make startup succeed would silently change the recovery promise.</p>
+<p>A managed service supplies a different interface. Amazon RDS <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIT.html">restores a DB instance to a new instance</a> and exposes earliest and latest restorable times. Its parameter and option groups need deliberate selection, and background block loading can affect performance after availability. For the actual engine and service, record retention and latest coverage, target precision, restore destination, region and account restrictions, encryption access, network controls and configuration that needs reapplying. Rehearse that service’s API and application path; this local PostgreSQL run did not test RDS.</p>
+
+<h2 id="decide-between-replacing-the-database-and-repairing-selected-data">Decide between replacing the database and repairing selected data</h2>
+<p>Returning the whole service to the marker would erase order 104 from its current history. In an incident there may be thousands of later edits, payments and fulfilment decisions. If storage was lost and no newer independent history survives, some loss may be unavoidable within the agreed bound. If the current database survives with a localised mistake, it is often valuable precisely because it contains that later work.</p>
+<p>Keep the earlier restore as evidence and extract a proposed repair scope. For Mina, that includes the order, both item lines and any affected reservations, payment references, fulfilment records and event identities in the real schema. Follow foreign keys in both directions and inspect triggers and generated identifiers. A successful table import could overwrite later edits, collide with a reused identifier or enqueue an effect that has already happened.</p>
+<p>Figure 4 preserves order 104 throughout. At the repair decision, change whether identifier 101 has been reused. Predict whether the same extract is still safe to apply.</p>
+<RecoveryFigure scene="repair" number={4} />
+<p>A conflict needs application meaning and current evidence before any write. Define expected current versions, coordinated writer scope, repeatability and reconciliation, then use <a href="/review/relational-next/data-changes/">Running reliable data changes</a> for guarded correction. Keep workers and external effects under the <a href="/review/relational-next/background-work/">background-work recovery procedure</a>. This article supplies a verified earlier database; it does not make copying its rows into a live database automatically safe.</p>
+
+<h2 id="prove-readiness-before-returning-traffic">Prove readiness before returning traffic</h2>
+<p>Engine recovery is the first gate. Backup verification, page checksums and business checks establish different things. The native target was stopped cleanly and <a href="https://www.postgresql.org/docs/18/app-pgchecksums.html"><code>pg_checksums --check</code></a> reported zero bad checksums across 3,884 scanned blocks. That checks enabled page checksums in the stopped cluster. It cannot establish that an order was correctly deleted or that every business relationship is valid. The fixture also checked exact order sets, item counts and quantities, and zero orphan items.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Evidence needed to accept a restored relational service"><table><thead><tr><th>Gate</th><th>Evidence to require</th><th>Stop if</th></tr></thead><tbody>
+ <tr><td>Chosen boundary</td><td>Recovery log, timeline and known before/after records agree with the intended target and loss</td><td>Target unproved or required history missing</td></tr>
+ <tr><td>Database and objects</td><td>Supported integrity checks, schema, indexes, constraints, extensions, sequences and required objects checked</td><td>Damage or missing dependency remains unexplained</td></tr>
+ <tr><td>Business facts</td><td>Affected orders, dependent facts, totals and expected later-work treatment accepted by their owner; current retirement rules applied</td><td>Missing, conflicting or improperly resurrected facts remain</td></tr>
+ <tr><td>Usable application</td><td>Real application identity and new connections perform representative reads and a controlled write/read workflow within the budget</td><td>Permission, routing, correctness, latency or capacity check fails</td></tr>
+ <tr><td>Return to traffic</td><td>One enforced write authority; destructive jobs excluded; dependencies and connections changed deliberately; fallback and external reconciliation preserved</td><td>Another writer or unresolved effect can undo the accepted state</td></tr>
+</tbody></table></div>
+<p>Apply current retention and deletion rules before returning old data: a backup may contain an address that must now remain retired. Ending the target pause, switching an endpoint or enabling a worker is an authorised transition after these checks, under the parent’s incident procedure. Preserve both the current comparison copy and the recovery evidence. Once the replacement accepts new writes, routing back alone would lose that new history; the fallback must account for it.</p>
+<p>Record the recovery inputs, actual boundary and restored facts, lost or unresolved acknowledged work, each timed stage, the acceptance checks and their omissions. Repeat after material changes to data size, engine or extension versions, retention, keys, hosting or recovery capacity. If the measured complete path misses the loss or time requirement, change the recovery design or explicitly revise the requirement. A green copy job cannot settle that decision.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 20 October 2026. Native observations use PostgreSQL 18.6 on one Apple-silicon laptop and the downloadable fixture. No production workload, cloud restore, logical restore, cross-region recovery, encryption failure or traffic cutover was executed. All four figures are explanatory models.</p>
+<ul>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/app-pgdump.html">pg_dump</a>, <a href="https://www.postgresql.org/docs/18/app-pg-dumpall.html">pg_dumpall</a> and <a href="https://www.postgresql.org/docs/18/app-pgrestore.html">pg_restore</a> define logical export scope, globals and loading.</li>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/backup-file.html">Filesystem-level backup</a>, <a href="https://www.postgresql.org/docs/18/app-pgbasebackup.html">pg_basebackup</a> and <a href="https://www.postgresql.org/docs/18/continuous-archiving.html">Continuous archiving and PITR</a> define physical-copy and history requirements.</li>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/runtime-config-wal.html#RUNTIME-CONFIG-WAL-RECOVERY-TARGET">Recovery target settings</a>, <a href="https://www.postgresql.org/docs/18/app-pgverifybackup.html">pg_verifybackup</a> and <a href="https://www.postgresql.org/docs/18/app-pgchecksums.html">pg_checksums</a> define the target and validation contracts used here.</li>
+ <li>Amazon RDS: <a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIT.html">Restoring a DB instance to a specified time</a> supplies the hosted example; check the exact deployed engine and backup arrangement.</li>
+ <li>Continue with <a href="/review/relational-next/operations/#recover-the-incident-without-destroying-the-evidence">incident coordination</a>, <a href="/review/relational-next/data-changes/">guarded data repair</a> or <a href="/review/relational-next/database-moves/">controlled database moves</a> once the required restore has been established.</li>
+</ul>

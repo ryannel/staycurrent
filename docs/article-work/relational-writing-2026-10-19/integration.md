@@ -57,3 +57,7 @@ Built-page script inspection confirmed that the dynamic route emits each rendere
 article’s figure scripts rather than every figure script from the eager registry.
 The introduction and SQL page had their own distinct external player entries;
 small application/performance players were inlined. Search remains shared.
+
+## Immutable browser review copies
+
+Review builds now use isolated output directories served on loopback4438/4439, so another build cannot reset an active reviewer. Initial b11/b12 used `astro build --outDir` plus the unchanged checker APIs against that exact output. Once b10 released original dist, later batches use ordinary `pnpm build` then copy its complete output to a fresh temporary directory before serving it. Released servers stop before reusing their port; retained snapshot directories remain until final cleanup. The original4437 preview is stopped. Root owns all these servers and deletes only its own snapshot directories after review.

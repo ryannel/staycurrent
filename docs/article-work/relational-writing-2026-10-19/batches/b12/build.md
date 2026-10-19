@@ -1,0 +1,3 @@
+# b12 immutable preview
+
+Production Astro build to `/private/tmp/rel3-b12-dist`: 165 pages. The unchanged site-check APIs checked this exact output/current sources: 141 pages, 13 rules, zero issues. Served read-only on4439. Includes a12 selected-account repair, a13 initial draft and a39 conditional missing-WAL narration repair. B10 checkpoint leaves controls/playback/phone/theme checks explicitly to finish; avoid browser download-event waits after the observed tool stall. Download asset will be checked against its executed source instead. a15 unrelated broken evolution URL was corrected before this successful whole-site check.
