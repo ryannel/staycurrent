@@ -26,3 +26,19 @@ Forward validation uses the revised skills on the actual relational repair,
 followed by independent media-first and assembled-page review. The outcome must
 be visible teaching improvements rather than a new checklist. Article allocations
 are recorded in `design.md`, `operation.md` and `products.md` as work lands.
+
+## Forward validation result
+
+The revised skills were used for the actual repair, rather than judged by whether
+their new wording looked stronger. Writers made page-specific media decisions,
+retained suitable static examples and built visible models for the relationships
+that needed them. Fresh independent readers predicted outcomes before seeing
+results, then rejected several apparently correct implementations. Their findings
+changed the code, article entrances and phone layouts. The reports preserve the
+original readings, repairs and bounded rechecks. The introduction's new failure
+branch received an additional fresh reading.
+
+This is evidence that the instructions changed the production and acceptance
+behaviour in this commission. It is not a guarantee of future quality. Review must
+continue to judge the explanation rather than treat this repair's aid or test
+counts as a target.

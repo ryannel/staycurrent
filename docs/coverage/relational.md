@@ -952,3 +952,12 @@ support compared with Indexes. The [follow-up review](../article-work/relational
 supersedes the blanket ready-as-draft judgement above. Coverage allocation and
 native evidence remain useful; the collection needs a substantive learning-tools
 pass and proportional independent review before acceptance.
+
+### Learning-tools repair completed
+
+The user commissioned skill hardening and repair after that finding. All 54 pages
+have now been reassessed, with visible causal models, suitable retained examples,
+independent media-first review and rendered repairs. The [repair handoff](../article-work/relational-rewrite-2026-10-19/media-repair/README.md)
+records per-page decisions, verification and limits. The collection is ready as
+drafts within that scope; the allocation remains 54 pages and publication remains
+separate. Earlier readiness and rejection records remain historical evidence.

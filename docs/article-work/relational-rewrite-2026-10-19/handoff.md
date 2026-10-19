@@ -1,9 +1,10 @@
 # Relational replacement collection: final handoff
 
-**Current collection status: repair required.** The user's subsequent reading
-exposed a gap in interactive teaching tools. [The reopened review](review/learning-tools-gap.md)
-supersedes the readiness judgement below; the following is the preserved delivery
-account at `7562536`.
+**Current collection status: ready as drafts after learning-tools repair.** The
+[repair handoff](media-repair/README.md) records the revised teaching tools,
+independent readings, repairs and verification. It supersedes both the original
+blanket acceptance and the subsequent repair-required status. The following is
+the preserved earlier delivery account at `7562536`.
 
 19 October 2026. **All 54 articles are ready as drafts**: 31 family and
 distributed investigations, 13 PostgreSQL articles and ten CockroachDB articles.

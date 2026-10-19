@@ -1,13 +1,13 @@
-# Relational rewrite: drafts requiring a learning-tools pass
+# Relational rewrite: reviewed drafts
 
 19 October 2026. The commissioned 54 articles are written under
 `src/drafts/relational/`: 31 family/distributed investigations, 13 PostgreSQL
-and ten CockroachDB. The writing, native worksheets and initial reviews are complete. User review
-exposed an unmet part of the teaching standard: most new pages lack the visual,
-explorable models used by Indexes. **The collection requires repair.** See the
-[learning-tools review](review/learning-tools-gap.md), which supersedes the
-previous blanket ready-as-draft judgement. Earlier reviews and source hashes
-remain preserved as records of that delivery.
+and ten CockroachDB. The writing, native worksheets and independent reviews are complete. Following
+user feedback, the collection received a substantive learning-tools repair and
+further independent review. **All 54 pages are ready as drafts within the recorded
+scope.** [The repair handoff](media-repair/README.md) explains what changed and
+what the checks establish. The earlier rejected acceptance remains preserved in
+[the learning-tools finding](review/learning-tools-gap.md).
 
 ## Open the review build
 

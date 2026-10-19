@@ -80,3 +80,11 @@ The implementation and media review remain outstanding. This addendum supersedes
 the blanket collection readiness claim in the delivery handoff. Earlier source
 hashes and per-article status entries identify the reviewed delivery snapshot;
 they are not a new acceptance of its learning tools.
+
+## Repair resolution
+
+The user subsequently commissioned skill hardening and article repair. The
+[completed repair handoff](../media-repair/README.md) records the result. New
+independent media-first readings, consequential repairs, a fresh introduction
+reading and rendered checks now support ready-as-draft status. The finding above
+remains the account of what failed at `7562536`; it was not erased by completion.

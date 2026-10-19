@@ -1,0 +1,34 @@
+const e = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const token = (label, state='') => `<span class="rpt-token" data-tone="${e(state)}">${e(label)}</span>`;
+const path = (left,right,note='') => `<div class="rpt-path"><div>${e(left)}</div><span aria-hidden="true">→</span><div>${e(right)}</div>${note?`<p>${e(note)}</p>`:''}</div>`;
+const board = (label,html) => `<div class="rpt-drawing" role="group" aria-label="${e(label)}"><p class="rpt-drawing-label">${e(label)}</p>${html}</div>`;
+export function renderDiagram(d) {
+ if(!d)return '';
+ const {name,inputs:p,values:v}=d;
+ if(name==='Ranges') {
+  const bounds=['[1, 2500)','[2500, 5000)','[5000, 7500)','[7500, ∞)'],leases=['A','B','C','A'];
+  return board('One ordered key space, four replicated intervals',`<div class="rpt-range-rail">${bounds.map((b,i)=>`<div class="rpt-interval" data-selected="${i===v.idx}"><strong>${b}</strong><span>${i===v.idx?`↑ key ${e(p.key)}`:'other keys'}</span><span>lease: ${leases[i]}</span><div>${['A','B','C'].map(n=>token(n,n===leases[i]?'authority':'')).join('')}</div><small>copies of this interval</small></div>`).join('')}</div>${path(`SQL gateway ${p.gateway}`,`range ${bounds[v.idx]} · leaseholder ${v.lease}`,'The selected key chooses the interval. The connection chooses the gateway.')}`);
+ }
+ if(name==='Replication') {
+  const n={none:0,write:1,flush:2,apply:3}[p.progress],need={local:0,write:1,flush:2,apply:3}[p.policy];
+  return board('The same WAL records at four progress boundaries',`<div class="rpt-wal">${[['Primary local commit',true],['Standby OS write',n>=1],['Standby durable flush',n>=2],['Standby replay / fresh query',n>=3]].map(([label,has],i)=>`<div class="rpt-wal-lane"><strong>${label}</strong><div>${token('o81','present')}${token(has?'o82':'o82 not reached',has?'present':'missing')}</div>${token(i===need?'← required reply boundary':'',i===need?'authority':'quiet')}</div>`).join('')}</div><div class="rpt-decision">${token(v.ack?'reply permitted':'caller still waiting',v.ack?'present':'missing')}${token(v.visible?'read: o81 + o82':'read: o81',v.visible?'present':'missing')}</div>`);
+ }
+ if(name==='Quorum') {
+  const counts=p.goal==='region'?[2,2,1]:p.home==='eu'?[3,0,0]:[0,3,0],lost=p.loss.split('-');
+  return board('Reachable votes for one replicated range',`<div class="rpt-regions">${['eu','us','ap'].map((region,i)=>`<div class="rpt-region"><strong>${region}${p.home===region?' · row home':''}</strong><div>${counts[i]?Array.from({length:counts[i]},(_,j)=>token(`${region}${j+1} ${lost.includes(region)?'× offline':'✓ reachable'}`,lost.includes(region)?'missing':'present')).join(''):token('no voter','quiet')}</div></div>`).join('')}</div><div class="rpt-vote-total">${Array.from({length:v.need},(_,i)=>token(`vote ${i+1}`,i<v.remaining?'present':'missing')).join('')}<strong>${v.remaining} reachable; ${v.need} required</strong></div>${path(`gateway ${p.gateway}`,`${p.home} preferred authority`,lost.includes(p.home)?'Preferred home is unavailable; a surviving authority must be established.':p.gateway===p.home?'Home contact is local while healthy.':'The preferred home contact crosses a region boundary.')}`);
+ }
+ if(name==='Vacuum') {
+  const extra=v.held&&p.refill==='yes'?Array(4).fill('replacement'):[],slots=[...v.slots,...extra];
+  return board('One heap file; gaps remain beside surviving rows',`<div class="rpt-heap">${slots.map((s,i)=>`<div class="rpt-slot" data-tone="${s==='retained obsolete'?'missing':s==='reusable gap'?'quiet':'present'}"><small>slot ${i+1}${i>=8?' · new page room':''}</small><strong>${e(s)}</strong></div>`).join('')}</div><div class="rpt-decision">${token(v.held?'old history retained':'old history released',v.held?'missing':'present')}${token(`${v.fileSlots} file slots`,'authority')}</div>`);
+ }
+ if(name==='Versions')return board('The index route and replacement tuple',`${path('primary key t4/o81','page 0, item 1') }<div class="rpt-version-pages"><div class="rpt-page"><strong>Heap page 0</strong>${token('(0,1) original',p.snapshot==='old'?'authority':'quiet')}${v.target==='(0,2)'?token('(0,2) amended',p.snapshot==='fresh'?'authority':'present'):''}</div>${v.target==='(1,1)'?`<div class="rpt-page"><strong>Heap page 1</strong>${token('(1,1) amended',p.snapshot==='fresh'?'authority':'present')}</div>`:''}</div>${path(v.hot?'existing entry → (0,1)':'new index entry',v.hot?'same-page HOT chain → (0,2)':`replacement ${v.target}`,`A reads ${p.snapshot==='old'?'original':'amended'}; fresh B reads amended.`)}`);
+ if(name==='Scatter') {
+  const n=+p.buckets;return board('Prefix runs preserve order within each bucket',`<div class="rpt-buckets">${Array.from({length:n},(_,i)=>{const keys=Array.from({length:12},(_,j)=>j+1).filter(k=>(k-1)%n===i);return `<div class="rpt-bucket"><strong>Bucket ${i+1}</strong><div>${keys.map(k=>token(k,k>=10?'authority':'')).join('')}</div><span>→ advancing edge</span></div>`;}).join('')}</div>${path(`${v.candidates} newest candidates across ${n} run${n>1?'s':''}`,'merge → 12 · 11 · 10')}`);
+ }
+ if(name==='PgRecovery') {
+  const stop={before:0,delete:1,later:2}[p.target];return board('A recovery target retains a prefix of the original history',`<ol class="rpt-history">${[['Base + safe target','o81 / r81 €20'],['Bad delete','remove t4 orders'],['Later valid acceptance','o82 / r82 €25']].map(([title,fact],i)=>`<li data-included="${i<=stop}"><strong>${title}</strong><span>${fact}</span><small>${i===stop?'↑ stop here':i<=stop?'replay included':'outside target'}</small></li>`).join('')}</ol><div class="rpt-decision">${token(`orders after recovery: ${v.records.map(r=>r[0]).join(' · ')||'none'}`,'authority')}</div>`);
+ }
+ if(name==='PgMigration'||name==='Cutover')return board('Two histories after a copied state',`<div class="rpt-fork"><div><strong>Source branch</strong><div>${v.source.map(([id,amount])=>token(`${id} €${amount}`,'present')).join('')}</div>${token(v.missing?'missing target-only acceptance':'all displayed requests present',v.missing?'missing':'present')}</div><div><strong>Target branch</strong><div>${v.target.map(([id,amount])=>token(`${id} €${amount}`,'present')).join('')}</div>${token(p.reconcile==='yes'?'fenced before return':'current selected writer','authority')}</div></div>`);
+ if(name==='Upgrade')return board('Executable changes above one logical compatibility gate',`<div class="rpt-nodes">${[1,2,3].map(i=>`<div class="rpt-node"><strong>Node ${i}</strong>${token(i<=+p.nodes?'25.4.17':'25.3.7',i<=+p.nodes?'present':'quiet')}</div>`).join('')}</div><div class="rpt-gate" data-tone="${v.safe?'present':'missing'}"><strong>${v.started?p.gate==='done'?'Logical 25.4':'Finalisation work started':'Logical 25.3 preserved'}</strong><span>${v.safe?'Supported return gate still open':'Old-major return gate closed'}</span></div>`);
+ return '';
+}

@@ -1,10 +1,10 @@
 # Relational replacement verification
 
-**Follow-up:** these checks established the recorded technical and rendering
-results. They did not establish adequate interactive learning support. The
-[reopened collection review](review/learning-tools-gap.md) records that gap and
-corrects the generic-figure count below from 31 to 32. Collection repair remains
-outstanding.
+**Follow-up:** the original checks below did not establish adequate interactive
+learning support. The [learning-tools verification](media-repair/verification.md)
+records the completed repair and its additional checks. The reopened review
+preserves the original finding and corrects the old generic-figure count from
+31 to 32. The record below describes the earlier delivery.
 
 19 October 2026. This record closes the authoring commission. Article-specific
 claims and commands remain in `evidence/` and `lab/`; independent judgements
