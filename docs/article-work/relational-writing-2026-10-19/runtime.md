@@ -23,7 +23,12 @@ owned by the current OS user, `ryannel`, with mode 0700. It listens only on IPv4
 loopback; local trust authentication is for this disposable environment. The
 writing-run orchestrator owns stopping and removing this cluster when the run
 ends. Article workers close their own sessions and use separate databases named
-`rel3_aXX_runN`; never use another article's database as a fixture.
+`rel3_aXX_runN`; never use another article's database as a fixture. Do not restart,
+reconfigure or stop this shared verification server. For restore, failover or
+configuration exercises needing server changes, create a separate disposable
+instance with its own directory and port, and remove it after retaining evidence.
+Use uniquely named roles for privilege exercises and remove only those roles.
+Record any session overrides in the article's evidence.
 
 ## Start, verify and stop
 
