@@ -3,7 +3,7 @@ name: staycurrent-breakdown
 description: Break one topic and brief into an article's headings and contextual nested-article stubs.
 ---
 
-Break down the supplied topic and brief into the current article's title, brief and recursive `heading` list, aiming to take an intelligent newcomer to expert practitioner with the least reader time and effort. Place each `nested_article` under its introducing heading, returning only that child's `topic`, `title` and `brief`; leave its headings for a separate breakdown. Use [staycurrent-review](../staycurrent-review/SKILL.md) in breakdown mode, repair the findings and return the YAML.
+Break down the supplied topic and brief into the current article's title, brief and recursive `heading` list, teaching only the depth this piece contributes to expert practice in the original commissioned subject, with the least reader time and effort. Place each `nested_article` under its introducing heading, returning only that child's `topic`, `title` and `brief`; leave its headings for a separate breakdown. Return draft YAML when the orchestrator manages batched review; otherwise use [staycurrent-review](../staycurrent-review/SKILL.md) in breakdown mode, repair the findings and return the reviewed YAML.
 
 ```yaml
 topic: Relational indexes

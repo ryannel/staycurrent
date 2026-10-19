@@ -16,8 +16,9 @@ useful understanding against reader time and effort. Use the four skills in
 - `staycurrent-write`: write one article using the three fixed examples.
 - `staycurrent-review`: arrange independent reviews or perform an assigned perspective.
 
-The orchestrator maintains the shared tree. Workers own their assigned piece,
-including review and repair. Keep briefs and results with the work in `docs/`.
+The orchestrator maintains the shared tree and schedules independent batch
+reviews. Workers own their drafts and repairs; standalone assignments manage
+their own reviews. Keep briefs and results with the work in `docs/`.
 Use plain British English. Check consequential technical claims against primary
 sources and distinguish illustrative models from observed execution. Use the
 existing Astro article components and check rendered figures and controls.

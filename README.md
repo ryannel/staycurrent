@@ -119,7 +119,7 @@ Four skills in `.agents/skills/`, mirrored in `.claude/skills/`, define producti
 `staycurrent-review`. They take an intelligent newcomer to expert practitioner,
 optimising useful understanding against reader time and effort. The orchestrator
 builds and reviews the recursive article tree, then assigns article writers;
-workers complete their own review and repair loops. Article and heading nodes
+the orchestrator batches independent reviews and workers repair their pieces. Article and heading nodes
 use the singular `heading` list and `nested_article` child stubs.
 
 The three chosen writing and teaching examples are fixed at their pre-rewrite
