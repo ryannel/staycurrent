@@ -111,6 +111,19 @@ also incorrectly reported no server while the server was running: perform status
 and stop commands with the same elevated permission rather than starting another
 instance. No container fallback or extra service was started.
 
+## Isolated JavaScript driver
+
+Application worksheets may import the pinned `pg` 8.23.1 driver from
+`/private/tmp/rel3-pg-driver-20261020/node_modules/pg/esm/index.mjs`. Root installed
+it with lifecycle scripts disabled, without changing repository dependencies,
+and verified the package version and Client/Pool exports. This is an available
+test dependency, not evidence that an article's database scenarios have run.
+The orchestrator owns removing this disposable directory after all native checks.
+
+The older `/private/tmp/staycurrent-pg-lab` import recorded in the a04 evidence
+is incomplete now; do not rely on it for new runs. Retained observations from the
+completed a04 run remain historical evidence.
+
 ## Independent review snapshots
 
 Later review batches build to their own disposable output directory with `astro build --outDir`, run the unchanged site-check APIs against that exact output, then serve it on a separate loopback port. A batch’s files remain immutable through its review, so building the next batch does not reset an active player. Original b10 used4437 and is now released/stopped. B11 used4438 from `/private/tmp/rel3-b11-dist`; its server stopped after review. Current snapshot directories, ports and root-owned sessions are tracked in state.json. Root owns server/snapshot cleanup. These are local review copies, not additional publications.
