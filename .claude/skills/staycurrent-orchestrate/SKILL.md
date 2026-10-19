@@ -15,7 +15,7 @@ Merge the returned article and its headings. For every `nested_article` stub, gi
 
 ## Review the whole tree
 
-Use [staycurrent-review](../staycurrent-review/SKILL.md) in tree mode with the complete tree and original brief. Its three independent perspectives check completeness and depth, structure and overlap, and teaching and flow against the three examples. Reconcile their findings across the tree; send new or changed article scopes through breakdown, then recheck the affected findings before writing.
+Use [staycurrent-review](../staycurrent-review/SKILL.md) in tree mode with the complete tree and original brief. Its three independent perspectives check completeness and depth, structure and overlap with adversarial consolidation, and teaching and flow against the three examples. Reconcile their findings across the tree; send new or changed article scopes through breakdown, then recheck the affected findings before writing.
 
 ## Write the articles
 
