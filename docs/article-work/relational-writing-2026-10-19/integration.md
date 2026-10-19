@@ -31,3 +31,18 @@ inspection checked all 38 registry routes for `noindex, nofollow`, one h1, absen
 of a searchable article body, and valid collection links; the root listed all
 37 descendants. Browser review on the existing port-4337 server confirmed the
 shared dark-theme layout and planned labels before article fragments arrived.
+
+## Writing and review integration
+
+The a14 pilot passed independent practitioner and teaching rechecks in p01 and
+was pushed in `bc248b4`. A deployed browser smoke check confirmed the final
+multiplied 100/60 figure state. The teaching review found the approach ready to
+scale without a skill rewrite.
+
+`audit.mjs` checks reserved section destinations and contextual child links in
+each available fragment; `--complete` also requires every planned article. The
+normal site check remains responsible for actual built links and anchors.
+
+The root owns the shared reference/article preview on `127.0.0.1:4337`; a preview
+started by a returning worker can end with its execution session. Workers may
+start private previews only when needed and stop those at handoff.

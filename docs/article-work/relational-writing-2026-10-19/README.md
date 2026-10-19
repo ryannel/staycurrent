@@ -7,10 +7,11 @@ run; the [reviewed tree](../../coverage/relational-fanout-2026-10-19.yaml) remai
 the curriculum. New work is available as an unlisted draft review collection at
 `/review/relational-next/`.
 
-The pilot is a14, Joining and summarising data. Full writing starts after its
-independent practitioner and teaching reviews pass. If the teaching falls short
-of the three examples, the writer/reviewer skills will receive a small correction
-and the pilot will be rewritten before expansion.
+The pilot is a14, Joining and summarising data. Both independent perspectives
+passed batch p01 after local SQL wording, keyboard, mobile and motion repairs.
+The teaching reviewer found effective mechanism-changing interactions and judged
+the approach ready to scale; no skill rewrite was justified. Full writing is now
+under way. Initial findings and the narrow rechecks remain in batches p00/p01.
 
 Each assignment includes its own section plan, parent and sibling scopes, and its
 children's actual section plans. The parent teaches a useful high-level answer;
