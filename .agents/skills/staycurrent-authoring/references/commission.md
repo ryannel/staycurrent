@@ -22,6 +22,10 @@ Keep it short enough that the central reader need stays visible.
 - **Supporting media:** where the reader needs to see a relationship or vary an
   input. Describe the intended meaning, not merely “add a diagram.” Include initial
   state, meaningful changes, expected results, and simplifications for a model.
+  Say what the reader would otherwise reconstruct mentally. Allow new components
+  where needed; do not constrain a writer to a text-reveal shell while expecting
+  a visual simulation. Keep native verification and inline teaching as distinct
+  jobs, and make later failure/operating cases part of the media decision.
 - **Place and delivery:** planned destination, related available reading, owned
   files, draft status, and any constraints from the user's request.
 

@@ -99,6 +99,25 @@ why. Either way, a reader who can't see a figure should still be able to follow 
 text. See the [teaching-aid examples](references/teaching-aids.md) and
 `docs/illustration-style.md`.
 
+Before settling the page's form, identify what the reader must keep in mind or
+predict: records matching, state changing, concurrent actors, a boundary moving,
+or work accumulating. Choose how they will see and, where useful, vary it. Make
+this decision across the whole argument, including later failure and operating
+cases. Record the consequential choices briefly in the brief or handoff; do not
+turn every paragraph into a media inventory. Read the [teaching-aid guidance](references/teaching-aids.md)
+when making these choices. A prose-first draft followed by a few decorative aids
+is not an adequate substitute for designing the explanation.
+
+An interactive aid must make its represented relationship or state inspectable.
+When changing a choice is the lesson, expose that choice and derive the changed
+outcome. Keep the earlier facts needed for comparison visible. Previous/Next
+buttons around replacement paragraphs provide pacing; they do not by themselves
+show a mechanism. A native worksheet verifies real behaviour but does not remove
+the need for a visible explanation on the page. Reuse suitable components or build
+new ones; a convenient template or renderer must not set the teaching standard.
+Static examples remain right when they show the idea more directly. There is no
+minimum figure count or requirement for a control on every page.
+
 Use `staycurrent-research` for the evidence behind consequential claims, and keep a
 general principle, a particular implementation and an invented teaching example
 distinguishable. Write in the house voice of `staycurrent-style`.
@@ -115,6 +134,12 @@ points to onward reading. Take a substantial new article idea back to the map ra
 than writing it. Fold each repair in where the reader needs it rather than appending
 another warning, and read the revised piece continuously before the final editorial
 reading.
+
+For a new or changed causal model, check a consequential variation against its
+stated rules and evidence, not just whether its buttons respond. Have an
+independent reader operate the aid before seeing its intended lesson, then review
+it with the surrounding explanation. Unresolved mental reconstruction of a central
+mechanism is a repair finding even when the prose is accurate.
 
 Inspect the rendered page in light and dark, at desktop and phone widths, exercise the
 controls that matter, and run `pnpm build`. These checks answer different questions from

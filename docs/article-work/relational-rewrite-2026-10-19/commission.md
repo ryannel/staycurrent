@@ -66,3 +66,30 @@ writer's files. Report proposed map moves in your handoff. The coordinator merge
 them before further commissioning. No writer labels their own work ready; separate
 reviewers read and repair the assembled collection. Do not commit or push; the
 coordinator delivers the coherent batch. Preserve uncertainties and actual blockers.
+
+## Learning-tools repair commission: 19 October 2026
+
+The user commissioned skill hardening and article repairs after finding that the
+new pages offered too little interactive teaching compared with Indexes. The
+[reopened review](review/learning-tools-gap.md) records the failed acceptance.
+Apply the revised planning, authoring and review skills to the whole collection.
+
+Choose each aid from the reader's actual question and the state they would
+otherwise reconstruct mentally. Keep the represented records, relationships and
+history visible while a meaningful choice changes the outcome. Inspect later
+failure and operating cases as carefully as the opening. Static examples remain
+valid where they teach more directly; there is no tool quota. Preserve native
+worksheets and their bounded observations.
+
+The implementation may add new Astro components, models and scoped styles; the
+Markdown renderer now accepts the three owned repair folders as well as existing
+Indexes and Storage components. Use an explicit marker to embed a named component.
+No inline Markdown scripts are needed. The shell's old text-step template must
+not limit the teaching form.
+
+Each repair handoff records media decisions across its entire page allocation,
+model rules and checked variations, article integration and remaining limits.
+Independent readers operate new aids before learning the intended conclusions,
+then read them with the article. Native evidence, model correctness, rendered
+meaning and keyboard operation remain separate checks. Publication remains
+outside this commission.

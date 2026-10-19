@@ -89,6 +89,26 @@ both. Throughout, ask for consequences rather than preferences. Where did unders
 fail? Which promise could lead someone to a wrong decision? What does the reader now
 understand well enough to apply elsewhere?
 
+## Review the teaching medium, not just the supplied artifact
+
+Ask what the reader still has to draw, retain or simulate mentally across the
+whole page, including the later cases. A correct table, working Next button or
+executed worksheet does not establish that the central mechanism is visible.
+Where a consequential choice is taught, change it and ask whether the aid exposes
+why the outcome changes. Keep the first prediction and the observed result.
+Distinguish a useful static example, a paced reveal, a visual sequence, a causal
+model and native execution; none automatically substitutes for another.
+
+For new or substantially changed models, use the [isolated-aid protocol](references/protocol.md#read-teaching-aids-before-explaining-them)
+before the assembled-page reading. Check the model's important alternative and
+boundary cases against its stated rules and evidence. Inspect what it actually
+renders and operate its controls. A source-only review must leave rendered
+meaning and interaction explicitly pending. If a central relationship remains
+hidden in prose or disconnected panels, record a repair finding even if the
+example is factually right. Conversely, require a control only when varying
+something improves understanding; remove interaction that makes a simple example
+slower. Readiness needs this judgement, not an interaction or reviewer count.
+
 ## Turn findings into a better explanation
 
 Keep each reading intact enough to show what the reviewer actually saw, and keep

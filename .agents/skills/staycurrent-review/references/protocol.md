@@ -23,6 +23,21 @@ looks operable. For an experiment, separate the first impression from understand
 after using it. The relational work used three readings per aid at the user's request;
 choose the effort to suit the aid's novelty and ambiguity.
 
+Before operating it, record a prediction for one available variation from the
+visible inputs and represented state. Then operate it and identify what changed,
+what persisted and how the display explains the result. Choose another case that
+could plausibly change the decision: a boundary, another event order, a failed
+step or a different input. A designer may supply scope and setup but must keep
+expected answers out of the independent first reading. If a fixed history has no
+useful parameter, judge its spatial and temporal representation instead; do not
+invent a requirement for free-form simulation.
+
+Then read the aid in the article. Check whether its records and controls arrive
+when the thought needs them and continue to support the later consequences. Ask
+where a newcomer is still mentally drawing the mechanism. Review the absence of
+an aid where it matters, not only the quality of what the author supplied. Native
+worksheets and reliable code do not answer that question on their own.
+
 If a reading misses the intended idea, keep the original response, then explain the
 purpose and ask how the aid could change, or whether another medium would serve better.
 Our first index figure asked for order IDs, then drew arrows to the table, and a reader

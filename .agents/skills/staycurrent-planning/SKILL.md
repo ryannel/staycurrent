@@ -76,6 +76,13 @@ environment.
 
 ## Commission against the map and keep it current
 
+Plan the teaching form alongside coverage. For the mechanisms and decisions that
+carry an article, name what the reader needs to see, compare or vary, rather than
+merely requesting an interactive demo. Check that the commission permits the
+components or experiments those jobs need. Existing templates are implementation
+choices, not limits on the explanation. This is a judgement about reading effort,
+not an illustration quota; preserve simple static examples where they suffice.
+
 A brief names the parts the writer owns and the neighbouring parts they should link to
 rather than teach; the authoring skill's
 [commission reference](../staycurrent-authoring/references/commission.md) shows what

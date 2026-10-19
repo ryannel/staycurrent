@@ -7,6 +7,39 @@ prose says what each one shows. Supporting media can make a relationship
 visible, let someone inspect a sequence, or give them a way to test their intuition.
 Choose the form from that opportunity, not from a target number of illustrations.
 
+## Decide what the reader needs to see or change
+
+Choose media as part of the explanation, before committing to a prose-only shape.
+A useful design starts with a question: which rows match, what is retained while
+another actor changes state, what happens when this boundary moves, or where does
+the work go? Keep the starting facts visible, change one meaningful condition,
+and make the resulting state or relationship visible too. Extend or revisit that
+model where a later section changes the same mechanism; do not let the visible
+explanation disappear when the difficult operating cases begin.
+
+Different aids buy different things. A static table can make four matching pairs
+instantly countable. A visual sequence can show a lock held continuously through
+another request's wait. A controllable model can let a reader change lock order
+and see a cycle appear or disappear. A text reveal can pace instructions, but
+hiding the earlier reader's values while showing the later commit makes a
+concurrency explanation harder. A model needs persistent represented state;
+parameter choices are useful when their consequences are part of the lesson,
+not merely because another select control is possible.
+
+Test the proposed aid with a related case. What should happen if one input or
+event changes, and what on screen lets the reader work that out? If the result
+is just another authored paragraph, ask whether the reader still has to construct
+the important diagram or comparison themselves. If a static comparison answers
+faster, use it. If the page's form prevents the useful aid, extend the form rather
+than silently weakening the explanation.
+
+Keep models honest: identify their inputs, invariant, computed outputs and
+simplifications. Check meaningful alternatives, boundary and failure cases with
+model tests where mistakes could teach a false rule; avoid tests that merely
+restate constants or labels. Native observations support implementation claims.
+An illustrative browser model cannot establish a server guarantee, and an
+external server worksheet cannot substitute for helping a newcomer see the idea.
+
 ## Three different needs in one introduction
 
 The relational introduction became heavily verbal after its first relationship
