@@ -52,3 +52,8 @@ Root rebuilds between review batches, never during their playback checks. This
 keeps unrelated writing and development reloads from resetting review state.
 Authors use the development preview on 4337 for their own targeted checks and
 return any HMR limitation explicitly. They do not run the shared full build.
+
+Built-page script inspection confirmed that the dynamic route emits each rendered
+article’s figure scripts rather than every figure script from the eager registry.
+The introduction and SQL page had their own distinct external player entries;
+small application/performance players were inlined. Search remains shared.

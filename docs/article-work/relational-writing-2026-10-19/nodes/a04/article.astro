@@ -1,0 +1,165 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import BoundaryPlayer from '../../components/relational-next/a04/BoundaryPlayer.astro';
+const sections = [
+ ['follow-one-request-across-the-boundaries','Follow one request across the boundaries'],
+ ['preserve-values-and-authority-when-sending-sql','Preserve values and authority when sending SQL'],
+ ['borrow-a-connection-for-bounded-work','Borrow a connection for bounded work'],
+ ['make-the-abstraction-s-database-work-visible','Make the abstraction’s database work visible'],
+ ['recover-according-to-what-the-application-knows','Recover according to what the application knows'],
+ ['make-work-beyond-the-transaction-recoverable','Make work beyond the transaction recoverable'],
+ ['test-the-complete-application-path','Test the complete application path'],
+];
+const bound = `const result = await client.query(
+  \`SELECT order_id, status FROM orders
+   WHERE tenant_id = $1 AND customer_id = $2
+   ORDER BY order_id DESC LIMIT 20\`,
+  [authorisedTenantId, authorisedCustomerId]
+);`;
+const lookup = `const result = await client.query(
+  'SELECT $1::bigint AS id, $2::numeric AS amount',
+  ['9007199254740993', '123456789012345678.90']
+);
+// Tested defaults: both fields return exact decimal strings.
+// Converting the identifier to Number first changes it to
+// 9007199254740992 before PostgreSQL receives it.`;
+const sort = `const sorts = {
+  newest: 'placed_at DESC, order_id DESC',
+  oldest: 'placed_at ASC, order_id ASC'
+};
+if (!Object.hasOwn(sorts, requestedSort)) {
+  throw new Error('Unsupported sort');
+}
+// Only these application-owned SQL fragments can be selected.
+const sql = \`SELECT order_id FROM orders
+  WHERE tenant_id = $1 AND customer_id = $2
+  ORDER BY \${sorts[requestedSort]} LIMIT 20\`;`;
+const lifetime = `// Outline: cleanupAfterFailure is an application helper,
+// not a node-postgres method. Its required contract is below.
+const client = await pool.connect();
+let discard = true;
+try {
+  await client.query('BEGIN');
+  await placeOrder(client, authorisedContext, validatedOrder);
+  await client.query('COMMIT');
+  discard = false;
+} catch (error) {
+  // Record the original error and phase, including whether
+  // COMMIT may have been sent. Cleanup does not settle that outcome.
+  discard = await cleanupAfterFailure(client, error);
+  throw error;
+} finally {
+  client.release(discard);
+}
+// Only now: prepare the HTTP response or do unrelated network work.`;
+---
+
+<p>A correct transaction is only part of a correct application request. The application must send the intended values under the right authority, keep the transaction on its owning connection, understand the work its libraries perform and recover when the reply never arrives. An error at any of those boundaries can defeat otherwise correct SQL.</p>
+<p>Follow Mina ordering a mug and two packets of tea. The API validates the request, records order 103 with its items and reserves stock, then returns the order identifier. Later a worker asks an external service to fulfil it. This is the shop from <a href="/review/relational-next/">Relational databases</a>, extended to show the application’s responsibilities. The concrete driver is node-postgres, tested here at <code>pg 8.23.1</code> against PostgreSQL 18.6. Other libraries have different conversion, transaction and cleanup contracts.</p>
+<p>The <a href="/review/relational-next/transactions/">transaction article</a> supplies the argument that the order, items and guarded stock reservation are correct under concurrency. Here the question is how that argument survives the journey from request to response.</p>
+
+<nav aria-label="In this article" class="article-contents"><ol>{sections.map(([id,title]) => <li><a href={`#${id}`}>{title}</a></li>)}</ol></nav>
+
+<h2 id="follow-one-request-across-the-boundaries">Follow one request across the boundaries</h2>
+<p>The <strong>driver</strong> translates the application’s calls and values into the database protocol, then translates results and errors back. The <strong>connection</strong> carries those exchanges and has state, including an open transaction. A <strong>pool</strong> lends the application a connection for a period of work so it can reuse established connections across requests.</p>
+<p>Before borrowing, the API checks Mina’s authentication, determines which customer and tenant she may act for, and validates quantities and product identifiers. Inside the transaction it makes the stock reservation and writes the order and items, checking the result of each decision. An insert returning an identifier does not yet mean that the transaction committed.</p>
+<p>Play Figure 1 through the commit. Watch the database state change before the application knows it. Then select <em>Response is lost</em> at the last step. The comparison preserves the step, so you can see exactly what changes.</p>
+<BoundaryPlayer scene="request" number={1} />
+<p>Three completions have different owners. The database completes the transaction; the driver delivers evidence of that outcome to the API; the API delivers a response to the user. Losing the HTTP response after a confirmed commit leaves an order the user has not seen confirmed. Losing the database’s commit reply can leave even the API uncertain. Neither failure is undone by returning an error page.</p>
+<p>The order response must say what has completed. “Order accepted, fulfilment pending” can be true after the order and its work record commit. “Fulfilled” requires evidence from the later work. Record those states explicitly rather than making one success flag stand for the whole journey.</p>
+
+<h2 id="preserve-values-and-authority-when-sending-sql">Preserve values and authority when sending SQL</h2>
+<p>A query crosses two contracts: what its values mean, and what the caller is allowed to do. A parameter can preserve a string perfectly while the query reads another customer’s order. A correctly authorised query can still receive a rounded identifier.</p>
+
+<h3 id="bind-values-and-check-their-round-trip">Bind values and check their round trip</h3>
+<p><strong>Parameter binding</strong> supplies values separately from SQL text. In node-postgres, the second argument to <code>query</code> supplies the values referred to by <code>$1</code>, <code>$2</code> and so on. A customer name containing a quote remains a value instead of becoming part of the command.</p>
+<Sql code={bound} label="A bounded order list with values supplied separately" />
+<p>Binding cannot preserve precision already lost in application memory. JavaScript’s ordinary <code>Number</code> cannot represent every large integer. Figure 2 starts with a deliberately large identifier; ordinary shop identifiers need not be this large. Compare the two representations at <em>Bind $1::bigint</em>.</p>
+<BoundaryPlayer scene="values" number={2} left="Application value" right="Database value" />
+<Sql code={lookup} label="An exact integer and decimal through the tested driver" />
+<p>Our native run returned the identifier and amount above as strings, with their digits intact. It also stored an injection-shaped label as ordinary text without executing its contents. Those observations establish these cases for the selected driver and its default parsers; a custom parser or JSON conversion adds another boundary to test.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Value choices at the tested driver boundary"><table><thead><tr><th>Database value</th><th>Observed or documented boundary</th><th>Application decision</th></tr></thead><tbody>
+ <tr><td><code>bigint</code>, exact <code>numeric</code></td><td>Tested large values returned as decimal strings.</td><td>Keep text or use exact arithmetic; do not silently convert to floating point.</td></tr>
+ <tr><td><code>NULL</code></td><td>Returns JavaScript <code>null</code>; input <code>undefined</code> also binds as SQL NULL.</td><td>Reject accidental missing input before binding; distinguish omission from a deliberate null.</td></tr>
+ <tr><td><code>date</code></td><td>The default parser returns a JavaScript <code>Date</code> in the process’s local zone.</td><td>For a calendar day, retain a date-only representation rather than inventing an instant.</td></tr>
+ <tr><td><code>timestamp</code> without time zone</td><td>The default parser interprets the wall time in the process’s local zone.</td><td>Document whose wall time it is; preserve that meaning explicitly.</td></tr>
+ <tr><td><code>timestamptz</code></td><td>Returns a <code>Date</code> for the instant, with millisecond precision.</td><td>Keep the instant separate from any original named zone; use another representation when microseconds matter.</td></tr>
+</tbody></table></div>
+<p>In the recorded Europe/Stockholm process, a database <code>date</code> of 19 October became a <code>Date</code> whose UTC rendering began on 18 October. The date in PostgreSQL had not changed. Midnight in the process’s local zone is the previous evening in UTC. A timestamp ending <code>.123456</code> also became <code>.123</code> in the default JavaScript object. Reading the value as text showed that PostgreSQL still held the microseconds.</p>
+<p>Test values through writing, reading, business calculations and response serialisation, including a large identifier, decimal fractions, nulls, a zone change and sub-millisecond times where relevant. Reject out-of-range or over-precise input deliberately; a database type can reject or coerce a value according to its rules, while a language conversion may lose information without an error. Prepared statement caching is a separate performance choice. Binding does not require giving a query a reusable name; verify syntax, preparation and reuse against the selected API.</p>
+
+<h3 id="keep-untrusted-input-out-of-sql-structure">Keep untrusted input out of SQL structure</h3>
+<p>A parameter represents a value, not a table name or SQL keyword. <code>ORDER BY $1</code> does not turn a supplied string into the name of a sort column. For Mina’s list, expose two sort choices and map them to fixed SQL:</p>
+<Sql code={sort} label="Select SQL structure from application-owned choices" />
+<p>The values still travel through the binding API. For genuinely dynamic identifiers, use the library’s supported identifier-quoting facility as well as checking which identifiers the action is allowed to select. Do not hand-roll quoting, and do not let a request supply an arbitrary SQL fragment.</p>
+<p>Validation asks whether a quantity or sort choice is acceptable to the application. Binding keeps an acceptable or unacceptable value from becoming SQL syntax. Both are needed. Apply the same inspection to query builders, ORM raw-query methods and stored routines that construct SQL internally. Their names do not establish how they handle input.</p>
+
+<h3 id="give-each-application-action-the-authority-it-needs">Give each application action the authority it needs</h3>
+<p>Mina’s authenticated identity belongs to the application. The database normally sees the API’s database role, shared by many users. That role may have permission to read the orders table without knowing which orders Mina may read. Take tenant and customer scope from verified authorisation context, not merely from fields Mina supplies.</p>
+<p>The list query includes both scopes. A change must carry them too: a cancellation by order identifier alone can modify another tenant’s order. Our two-tenant fixture returned no rows when tenant 7 requested tenant 8’s order using both predicates. Repeating that test for changes, counts, relationship loads, raw queries and background jobs checks whether every path preserves the boundary. Filtering after fetching sensitive rows is too late to prevent their exposure to application code.</p>
+<p>Verified database row-security policies can add enforcement. In PostgreSQL, table owners normally bypass row security; superusers and roles with <code>BYPASSRLS</code> bypass it too. A policy tested only through an owner connection is therefore weak evidence for the ordinary request path. Test the real role and how its tenant context is established and cleared.</p>
+<p>Give ordinary requests a role with the actions they need, and keep schema-changing or administrative credentials in separate paths. Observe query shape, value types and safe operation identifiers without logging credentials, payment details or personal values. <a href="/review/relational-next/operations/">Running a relational service</a> owns credential handling, encrypted connections, policy operation and audit controls.</p>
+
+<h2 id="borrow-a-connection-for-bounded-work">Borrow a connection for bounded work</h2>
+<p>For node-postgres, a multi-statement transaction uses one checked-out client. Each <code>pool.query</code> call can choose an available client, so separate pool calls for <code>BEGIN</code>, writes and <code>COMMIT</code> do not establish the required ownership. Pass the owning client into helpers such as <code>placeOrder</code>, or use the transaction handle provided by a higher-level library.</p>
+<Sql code={lifetime} label="Ownership outline, with explicit failure cleanup" />
+<p>The outline’s cleanup helper must wait for outstanding work to finish or fail, attempt rollback when the connection permits it, and return whether reuse is safe. A failed or uncertain connection must be discarded through the driver’s API; in node-postgres, <code>release(true)</code> destroys it. The helper must retain cleanup errors separately and return without throwing, so the original operation error remains the one reported. Disposal is the safe default until successful completion or cleanup establishes reuse. A plain <code>finally</code> that returns an unfinished transaction to the pool is not sufficient.</p>
+<p>Borrow after validation, release after transaction and result cleanup, and keep user think time and unrelated network calls outside that lifetime. Figure 3 gives the pool just two slots. Step once, then switch whether A releases before the external call.</p>
+<BoundaryPlayer scene="pool" number={3} left="Pool occupancy" right="Database activity" />
+<p>C is waiting even though A has no SQL running. Occupied connections measure ownership time, which can include application work, blocked SQL and slow result consumption. Record acquisition wait separately from lease duration and statement duration before deciding that more connections will help. Bound admission and acquisition waiting, and count demand across application instances and workers.</p>
+<p>Connections also carry settings and other session state. Reuse must not give the next request the previous tenant’s context. Streaming results and cancellation can extend ownership beyond the apparent query call. <a href="/review/relational-next/connections/">Managing connections and transaction lifetimes</a> develops cleanup, safe reuse, pooling modes and diagnosis, including why requesting cancellation does not mean a connection is ready to lend again.</p>
+
+<h2 id="make-the-abstraction-s-database-work-visible">Make the abstraction’s database work visible</h2>
+<p>An ORM maps database records to application objects. That is useful for expressing relationships, but an object access may perform database work. A page that looks like “load orders, then display each customer” can run one statement for the list and another for each order’s customer. Response serialisation can trigger those extra reads after the apparent load finished.</p>
+<p>For a bounded page of ten orders, compare the following illustrative strategies for the same customer-name display. These counts assume each statement is awaited separately; they are not a trace of a particular ORM.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Illustrative work for ten order summaries"><table><thead><tr><th>Loading shape</th><th>Statements / round trips</th><th>Returned rows</th></tr></thead><tbody>
+ <tr><td>List, then one customer lookup per order</td><td>11 / 11</td><td>10 orders + 10 customer lookup rows</td></tr>
+ <tr><td>Project order fields and customer name in one join</td><td>1 / 1</td><td>10 order–customer rows, with one matching customer per order</td></tr>
+ <tr><td>List, then load five distinct customers together</td><td>2 / 2</td><td>10 orders + 5 customer rows</td></tr>
+</tbody></table></div>
+<p>The first shape grows with the number of orders: the <strong>N+1 query problem</strong>. An identity map or already-loaded customer can reduce its actual count, so measure a fresh request as well as a warm session. The joined projection suits this response because each order has one matching customer. Adding item rows changes the result shape: an order with twelve items can produce twelve SQL rows, even if the ORM reconstructs one order object.</p>
+<p>Count statements, round trips, returned rows and retained objects separately. A single large join may transfer more data than several bounded queries. A page limit on orders does not bound an order’s items or the final response size. Some ORMs also flush pending changes before an apparent read; SQLAlchemy’s default session behaviour is one documented example. Flush sends writes; it does not mean commit.</p>
+<p>Capture the actual statements through response generation, verify the response meaning and place appropriate bounds on its work. <a href="/review/relational-next/generated-queries/">Controlling the queries your application performs</a> develops loading, collection multiplication and pagination. Once the expensive application operation is identified, <a href="/review/relational-next/performance/">performance diagnosis</a> follows its SQL into execution plans and resource use.</p>
+
+<h2 id="recover-according-to-what-the-application-knows">Recover according to what the application knows</h2>
+<p>The transaction article distinguishes a rejected business condition, an aborted transaction and an unknown outcome. The application needs a separate response to each. No stock reserved is a business result. A confirmed serialisation abort can justify a fresh attempt that repeats the transaction’s reads and decisions. A connection error while commit may have reached the server needs outcome resolution.</p>
+<p>Figure 4 holds the application’s evidence constant: no commit confirmation. Switch the two cases at the last step and compare the database state. These are modelled paths, not a claim that our driver check injected a lost commit reply.</p>
+<BoundaryPlayer scene="recovery" number={4} />
+<p>A timeout alone cannot tell those cases apart. It says that a wait exceeded a budget. A cancellation request can race with completion, and discarding the connection protects later borrowers without establishing whether this transaction committed. PostgreSQL’s cancellation documentation explicitly distinguishes sending a cancellation successfully from observing that the command stopped.</p>
+<p>Give a logical order attempt a stable operation identifier before sending it. Repeated attempts must carry that same identifier and the same intended request. Enforce its uniqueness within the proper tenant scope and retain its result durably with the database change. After a lost response, use that identity to recover the existing result or coordinate another attempt; do not generate a fresh identity simply because the transport failed.</p>
+<p>A preliminary lookup that finds nothing is not proof that an overlapping attempt cannot still commit. The claim and outcome protocol must arbitrate concurrent attempts and reject reuse of a key for different input. <a href="/review/relational-next/request-recovery/">Recovering database requests safely</a> constructs that protocol, along with deadline allocation, bounded retries, backoff and reconciliation. Its key rule already applies here: repeat only what the known outcome and operation contract make safe.</p>
+
+<h2 id="make-work-beyond-the-transaction-recoverable">Make work beyond the transaction recoverable</h2>
+<p>The order’s transaction cannot commit an ordinary HTTP call to the fulfilment provider. Call first and database rollback can leave fulfilment without an order. Commit first and process death can leave an order whose fulfilment was never requested. Holding the connection while calling the provider adds occupancy without making database rollback undo that provider’s work.</p>
+<p>Store a pending fulfilment job in the same transaction as the order. Commit then keeps both facts or neither. A worker can find the job after the request process dies. Figure 5 changes only whether that durable instruction exists.</p>
+<BoundaryPlayer scene="external" number={5} left="Recovery position" right="Durable evidence" />
+<p>The work record closes the gap between committing the order and remembering what remains to do. It does not complete fulfilment. The worker may call the provider successfully, die before recording that success and try again later. Reuse a stable external operation identity where the receiver supports it; otherwise the design needs an authoritative lookup, reconciliation or an explicitly acceptable repeated effect.</p>
+<p>A database job names work to execute. A <strong>transactional outbox</strong> commonly records a fact to publish to another system. Both can preserve intent with the business change, but the payload must say what the receiver can rely on after a delay. Capturing committed database changes is another way to discover publication work; it still does not make the receiver’s effect atomic with the original commit.</p>
+<p><a href="/review/relational-next/background-work/">Connecting transactions to background work and events</a> develops claims, repeated delivery, event meaning and retained evidence. For this first order path, the response says fulfilment is pending until the recorded external outcome justifies a stronger claim.</p>
+
+<h2 id="test-the-complete-application-path">Test the complete application path</h2>
+<p>Run an acceptance exercise through the actual request handler, database, driver and chosen abstraction. A mock can test branching logic without proving conversion, transaction affinity or cleanup. Use a small disposable fixture with two tenants, a nearly exhausted product and orders with no items, ordinary items and many items.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Acceptance checks for the complete order path"><table><thead><tr><th>Change one condition</th><th>Evidence to retain</th></tr></thead><tbody>
+ <tr><td>Exact values and hostile-looking text</td><td>Written and returned values agree through response serialisation; quotes stay data; unwanted rounding or coercion fails visibly.</td></tr>
+ <tr><td>Another tenant’s order identifier</td><td>Reads and changes deny access through every handler, loader and job; no sensitive row escapes into the response or logs.</td></tr>
+ <tr><td>More parent records or one very large child collection</td><td>Response meaning stays correct; statement counts, transferred rows and retained data stay within the endpoint’s bounds.</td></tr>
+ <tr><td>Every pool slot occupied</td><td>New work waits only within its budget or is refused; no abandoned lease appears after cancellation; the next borrower gets usable state.</td></tr>
+ <tr><td>Statement error, interrupted result or cancellation</td><td>The operation phase is recorded, its connection is cleaned or discarded, and no abandoned transaction remains.</td></tr>
+ <tr><td>Two requests for the last mug</td><td>At most one accepted reservation; an aborted attempt re-evaluates the whole transaction under a bounded policy.</td></tr>
+ <tr><td>Commit or HTTP response withheld</td><td>Client knowledge is recorded separately from an independent database observation; a repeated logical request resolves to the intended single operation.</td></tr>
+ <tr><td>Worker death after external acceptance</td><td>Pending work remains discoverable; the next attempt uses the same operation identity and reconciles uncertain external success.</td></tr>
+</tbody></table></div>
+<p>Correlate a request identifier, stable operation identifier and safe tenant scope with acquisition start, lease acquisition, statement completion, commit send, commit result and lease release. Give background attempts their own identifiers linked to the same operation. “Database error after 2 seconds” is insufficient to tell pool waiting from execution, commit uncertainty or delayed external work.</p>
+<p>The native check for this article exercised exact integer and decimal round trips, null and time conversion, bound hostile-looking text, a scoped cross-tenant read, rollback and a one-client pool’s acquisition timeout and subsequent reuse. It used Node 24.16.0, pg 8.23.1 and PostgreSQL 18.6. It did not run an ORM, an HTTP handler, fault injection or a fulfilment provider. The figures are explanatory models; the remaining rows are acceptance work to perform on the application being built.</p>
+<p>Use <a href="/review/relational-next/performance/">performance diagnosis</a> when the complete path works but exceeds its workload budget, and <a href="/review/relational-next/operations/">service operation</a> when the question is capacity, alerts or incident recovery. The focused companions below deepen the boundaries established here without changing who owns the order’s outcome.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 19 October 2026. The shop, timings implied by order and figure states are illustrative. Native observations use the versions and limited checks stated above; driver defaults and custom conversions must be rechecked for the application’s actual dependency versions.</p>
+<ul>
+ <li>node-postgres, <a href="https://node-postgres.com/features/queries">Queries</a> and <a href="https://node-postgres.com/features/types">Data types</a>: binding, identifiers, preparation and default conversions.</li>
+ <li>node-postgres, <a href="https://node-postgres.com/features/transactions">Transactions</a> and <a href="https://node-postgres.com/apis/pool">Pool API</a>: owning client, acquisition, release and disposal.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-rowsecurity.html">Row security policies</a>: row restrictions and bypassing roles; <a href="https://www.postgresql.org/docs/18/libpq-cancel.html">Cancelling queries</a>: dispatch and observed cancellation are different.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/protocol-flow.html">Message flow</a>: statement results, transaction completion and session failure.</li>
+ <li>SQLAlchemy 2.0, <a href="https://docs.sqlalchemy.org/en/20/orm/session_basics.html#flushing">Flushing</a>: pending writes before queries and commit, as one concrete ORM contract.</li>
+ <li>Chris Richardson, <a href="https://microservices.io/patterns/data/transactional-outbox.html">Transactional outbox</a>: atomic intent and the repeated-delivery window.</li>
+</ul>
