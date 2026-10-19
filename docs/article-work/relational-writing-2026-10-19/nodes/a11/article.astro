@@ -1,0 +1,159 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import DesignFigure from '../../components/relational-next/a11/DesignFigure.astro';
+import extension from '../../components/relational-next/a11/extension.sql?raw';
+const sections = [
+ ['state-what-determines-each-fact', 'State what determines each fact'],
+ ['split-facts-that-depend-on-different-keys', 'Split facts that depend on different keys'],
+ ['prove-that-the-split-preserves-the-relationships', 'Prove that the split preserves the relationships'],
+ ['separate-independent-sets-without-inventing-combinations', 'Separate independent sets without inventing combinations'],
+ ['decide-which-repeated-results-are-worth-storing', 'Decide which repeated results are worth storing'],
+ ['give-every-derived-copy-a-maintenance-contract', 'Give every derived copy a maintenance contract'],
+ ['defend-the-design-with-changes-and-counterexamples', 'Defend the design with changes and counterexamples'],
+];
+const reconstruction = `SELECT l.tenant_id, l.booking_id, l.service_id,
+       s.service_name, c.category_label, l.quantity
+FROM booked_services AS l
+JOIN services AS s USING (tenant_id, service_id)
+JOIN service_categories AS c USING (tenant_id, category_id)
+ORDER BY l.tenant_id, l.booking_id, l.service_id;`;
+const total = `SELECT b.tenant_id, b.booking_id,
+       CASE WHEN b.status = 'booked' THEN
+         coalesce(sum(l.quantity * l.agreed_unit_fee_eur)
+           FILTER (WHERE l.status = 'active'), 0)
+         ELSE 0 END AS optional_subtotal_eur
+FROM bookings AS b
+LEFT JOIN booked_services AS l USING (tenant_id, booking_id)
+GROUP BY b.tenant_id, b.booking_id, b.status;`;
+---
+
+<p><strong>Normalisation</strong> gives each fact a place determined by what it describes. If a service’s name appears on twenty booked lines, correcting that name means finding twenty copies. Giving the service its own row makes the correction one change. The booked lines keep their quantities and their references to that service.</p>
+<p>The difficult part is deciding which facts can be separated without changing their meaning. A split can forget who booked what. It can also preserve every relationship while making an important rule harder to enforce. Keeping a calculated result introduces a different obligation: keeping that copy in step with its source.</p>
+<p>We will extend the class-booking service from <a href="/review/relational-next/data-design/#store-each-fact-where-it-belongs">Designing relational data</a>. Mina’s B11 books session S21. Optional services now include equipment hire and refreshments. The parent already separates current offers from agreed fees: those are different facts, as <a href="/review/relational-next/history/">history modelling</a> develops. Here we follow dependencies, reconstruction and maintenance of derived copies.</p>
+
+<nav class="article-contents" aria-label="In this article"><ol>{sections.map(([id, title]) => <li><a href={`#${id}`}>{title}</a></li>)}</ol></nav>
+
+<h2 id="state-what-determines-each-fact">State what determines each fact</h2>
+<p>Suppose an export becomes the proposed storage table. Each row represents one service on one booking. Alongside quantity and agreed unit fee, it repeats the booking’s customer, session and status, the service’s current name, and its category label.</p>
+<p>Three ordinary changes expose the problem. Correcting KIT’s name must update every KIT row. Advertising a new service before anybody books it needs a row with no legitimate booking. Removing the final TEA line also removes the only description of TEA. These are update, insertion and deletion anomalies, now within the service extension.</p>
+<p>In Figure 1, step through the name correction in the mixed table. At the final step, switch to the catalogue design. Then try advertising an unbooked service and deleting the last TEA line.</p>
+<DesignFigure kind="ownership" />
+<p>The right dependencies come from requirements. For every permitted state, a booking identity determines one customer, one session and one status. A service identity determines one current service name and category. A booking–service association determines its quantity and agreed unit fee. The figure abbreviates identities; every identifier in these examples is scoped by tenant.</p>
+<p>A <strong>functional dependency</strong>, written <code>X → Y</code>, means that rows agreeing on X must agree on Y. X is the determinant. It is a rule across all allowed states, not an observation that today’s two rows happen to match. Two different services may share a name; names therefore do not determine service identities under our contract.</p>
+<p>A <strong>candidate key</strong> is a minimal set of attributes that determines the entire row. Minimal means that removing any attribute loses that guarantee. We permit one retained booking per tenant–customer–session pair, as the parent does, and one retained line per booking and service. There are no other uniqueness assumptions. The mixed relation has two candidate keys:</p>
+<ul>
+ <li><code>(tenant_id, booking_id, service_id)</code>.</li>
+ <li><code>(tenant_id, customer_id, session_id, service_id)</code>.</li>
+</ul>
+<p>Neither booking identity alone nor service identity alone determines a quantity. Both parts are needed. Tenant cannot be dropped: another organisation can reuse every displayed number. Choose the first candidate as the primary key, but keep the second in the reasoning. “Primary” selects a key for the schema; it does not make the others stop determining facts.</p>
+<p>Adding a globally unique generated <code>line_id</code> supplies another candidate key if the business uniqueness rules remain. It does not remove the dependencies above. Two distinct line identifiers can still carry conflicting current names for KIT. If the business keys are no longer enforced, the design can also admit duplicate associations. A new identifier solves neither problem.</p>
+
+<h2 id="split-facts-that-depend-on-different-keys">Split facts that depend on different keys</h2>
+<p>Keep the parent’s <code>bookings</code> table. Put each service’s current description in <code>services</code>, keyed by tenant and service. Put quantity, agreed unit fee and line status in <code>booked_services</code>, keyed by tenant, booking and service. The line refers to both owners.</p>
+<p>In the mixed table, booking attributes depend on just the booking part of a composite candidate key, and service attributes on just its service part. These are <strong>partial dependencies</strong>. A relation in second normal form, or <strong>2NF</strong>, has no attribute outside all candidate keys depending on a proper subset of a candidate key. Separating these facts removes that particular repetition. It does not yet settle dependencies within the service description.</p>
+<p>The one-line-per-service assumption matters. If two separately fulfilled equipment lines are allowed on one booking, <code>(tenant, booking, service)</code> is no longer unique. Introduce a meaningful line identity or line number, and decide whether quantities and agreements belong to each occurrence. Do not use a uniqueness constraint to forbid something the application promises to allow.</p>
+
+<h3 id="follow-indirect-dependencies">Follow indirect dependencies</h3>
+<p>KIT and MAP belong to category C1. Its label is Equipment. Copy that label into every service row and a correction still requires several changes, even after booked lines have been separated. The dependency is indirect: <code>(tenant, service) → category</code>, then <code>(tenant, category) → category_label</code>.</p>
+<p>Store category C1 once in <code>service_categories</code>. A label correction changes C1; KIT and MAP continue referring to it, and both read the corrected label through a join. Removing KIT does not remove the category while MAP still needs it. Moving KIT to another category changes its category reference, a different action from renaming the category.</p>
+<p>This is a <strong>transitive dependency</strong> of a non-key label on the service key through another determinant. Third normal form, or <strong>3NF</strong>, rules out this case. Its general condition is that, for each nontrivial functional dependency X → A, X determines the whole row or A belongs to some candidate key. “Nontrivial” means A is not already part of X. The candidate-key allowance matters in the next example; simply inspecting the chosen primary key can miss it.</p>
+<p>Here is the runnable extension to the parent schema. An active line contributes to an optional-service subtotal; cancellation retains its agreement but removes that contribution. Whole-cent euro amounts follow the <a href="/review/relational-next/types/#choose-numeric-representations-from-the-error-you-can-accept">representation contract</a>. The input path must still reject fractional cents before assignment.</p>
+<details><summary>Service catalogue, categories and booked lines</summary><Sql code={extension} label="Add optional services to the parent’s booking schema" /></details>
+
+<h3 id="handle-overlapping-candidate-keys-when-they-matter">Handle overlapping candidate keys when they matter</h3>
+<p>The service now assigns an adviser to each booking’s selected service. Within a tenant, each adviser handles exactly one service, but a service can have several advisers. Each booking has at most one adviser for a given service. An adviser can serve many bookings.</p>
+<p>Consider <code>assignment(tenant, booking, service, adviser)</code>. Its candidate keys are <code>(tenant, booking, service)</code> and <code>(tenant, booking, adviser)</code>. Both are minimal under those rules. Yet <code>(tenant, adviser) → service</code>: A5’s KIT service repeats on every booking A5 serves.</p>
+<p>This relation meets the 3NF condition: each attribute belongs to a candidate key. It fails the stronger <strong>Boyce–Codd normal form</strong>, or BCNF, which requires every nontrivial functional dependency’s determinant to determine the whole row. Adviser identity does not determine a booking. BCNF therefore detects repetition that the candidate-key allowance in 3NF permits.</p>
+<p>A tempting split stores <code>adviser_service(tenant, adviser, service)</code> and <code>booking_adviser(tenant, booking, adviser)</code>. Each adviser’s service is stored once. Keep that proposal in mind: reconstruction and enforcement ask different questions of it.</p>
+
+<h2 id="prove-that-the-split-preserves-the-relationships">Prove that the split preserves the relationships</h2>
+<p>Splitting must preserve the original associations when the projected relations are joined. A <strong>lossless decomposition</strong> guarantees this for every state satisfying the stated dependencies. Seeing one fixture round-trip is a useful check, but it cannot establish that guarantee for all future data.</p>
+<p>For the simple service split, the shared columns are <code>(tenant_id, service_id)</code>. They determine exactly one service description. Each source line therefore gets its own description back once; it cannot match a second service row with a different name. A required foreign key prevents a stored line from having no matching catalogue row. Repeat that argument for the booking and category splits.</p>
+<p>Figure 2 compares that design with a split that leaves only tenant identity in common. Step to the joined result, then switch designs. Count the associations that never appeared in the original.</p>
+<DesignFigure kind="reconstruction" />
+<p>The unsafe split preserves the bookings and the service list, but loses their connection. Tenant 1’s two bookings each match both services. <code>DISTINCT</code> cannot repair it: B11–TEA and B12–KIT are different pairs, and both are false. Joining on a name instead is also unsafe when two services may share that name.</p>
+<p>The separated catalogue may contain additional services with no booked lines. That is an intended new capability, not a failed reconstruction. Starting from booked lines, the inner join reconstructs the booked facts; a catalogue query answers which services are offered, including unbooked ones.</p>
+<Sql code={reconstruction} label="Reconstruct booked service details through their complete keys" />
+<p>For the adviser split, the shared adviser identity determines its service. Joining each assignment to that mapping therefore reconstructs the original triples without extra ones. This makes the split lossless under the adviser dependency. It does not establish the second promise.</p>
+
+<h3 id="check-what-can-still-be-enforced-locally">Check what can still be enforced locally</h3>
+<p><strong>Dependency preservation</strong> asks whether checking the dependencies within the resulting tables is enough to enforce the original dependencies. In the adviser split, nobody locally sees both booking and service. B11 can reference A5 and A6, each mapped to KIT, while both tables obey their own keys. The join then gives B11 two advisers for KIT.</p>
+<p>Figure 3 tries exactly that extra assignment. Compare the original triple’s booking–service uniqueness with the two-table design’s local checks.</p>
+<DesignFigure kind="advisers" />
+<p>For this application, we choose an adviser catalogue plus assignment triples that retain service identity. A unique booking–service key rejects a second adviser. A composite foreign key from assignment’s <code>(tenant, adviser, service)</code> to the catalogue ensures the copied service agrees with the adviser’s service. The catalogue needs a matching unique key for that reference. A booking reference keeps assignments within the booking’s tenant.</p>
+<p>This deliberately retains the repeated service attribute so two ordinary constraints can check the two business rules. Assignment triples alone would still need enforcement of adviser → service; their booking–service key cannot do that. Alternatively, the BCNF split needs a correctly protected cross-table enforcement procedure. Choose after locating every rule, including what happens when an adviser changes service. <a href="/review/relational-next/constraints/#reference-the-whole-relationship">Constraint design</a> supplies the declarations, and <a href="/review/relational-next/transactions/">transactions</a> owns concurrent procedures where declarative enforcement is insufficient.</p>
+
+<h2 id="separate-independent-sets-without-inventing-combinations">Separate independent sets without inventing combinations</h2>
+<p>A venue has facilities Studio and Kitchen, and supported languages English and French. Suppose every supported language is available for every facility. A table <code>(venue, facility, language)</code> then needs four rows. Adding Spanish needs two more. Removing the last facility could erase the only record of the venue’s languages.</p>
+<p>These are two independent sets. Store <code>venue_facility(tenant, venue, facility)</code> and <code>venue_language(tenant, venue, language)</code>. The requirement says that, for one venue, choosing a facility does not restrict the language set. This is a <strong>multivalued dependency</strong>. Fourth normal form, or <strong>4NF</strong>, excludes nontrivial multivalued dependencies unless their determinant determines the whole row. Here venue does not determine a single triple, and splitting removes the set repetition.</p>
+<p>In Figure 4, join the independent sets. Then change the requirement to languages belonging to particular facilities while leaving the projection visible.</p>
+<DesignFigure kind="sets" />
+<p>Try <em>No supported languages</em> too. The venue row still exists; its two facility memberships exist; its language relation has no rows. An inner join yields no facility–language pairs, so it cannot answer “which facilities exist?” in that state. Query the facility relation for that question. There is no need to invent a null language or a dummy facility to keep the venue alive.</p>
+
+<h3 id="keep-combinations-that-are-themselves-facts">Keep combinations that are themselves facts</h3>
+<p>Now English is available only in Studio and French only in Kitchen. The two triples are the availability facts. Splitting them into facility and language memberships, then joining, falsely offers French in Studio and English in Kitchen. Keep <code>venue_facility_language</code> for these promises, with references to the relevant venue, facilities and languages.</p>
+<p>A rectangular pattern in a sample does not prove independence. Perhaps today’s two facilities happen to support both languages; tomorrow’s kitchen may support only one. Ask the business whether every combination is promised. The same question applies to a service’s eligible advisers, payment methods or equipment. Once the pairs carry restrictions, prices or statuses of their own, the association has information that independent sets cannot retain.</p>
+
+<h2 id="decide-which-repeated-results-are-worth-storing">Decide which repeated results are worth storing</h2>
+<p>B11 has two KIT units agreed at €3 each and one TEA at €4. Its optional-service subtotal is €10. Compute it from active source lines whenever it is needed, with a defined zero for an empty booking. The parent’s base session agreement remains separate.</p>
+<Sql code={total} label="Compute the optional-service subtotal, including a zero for no active lines" />
+<p>Storing €10 on the booking avoids that repeated aggregation. It also makes every relevant change responsible for another value. An ordinary view packages the query but stores no result; a PostgreSQL materialised view stores a result that changes when refreshed. Those are different maintenance choices.</p>
+<table><caption>Four copies and the work each moves to writes or refreshes</caption><thead><tr><th>Stored result</th><th>Possible read benefit</th><th>Maintenance obligation</th></tr></thead><tbody>
+ <tr><td>Current service name repeated on lines</td><td>A read avoids the catalogue join</td><td>Every current-name correction reaches all copies, or an enforced reference makes disagreement impossible</td></tr>
+ <tr><td>Optional-service subtotal per booking</td><td>A booking list avoids aggregating its lines</td><td>Every contributing line or booking-state change adjusts the total correctly</td></tr>
+ <tr><td>Daily totals per tenant</td><td>A dashboard reads a small summary table</td><td>Corrections and cancellations reach the correct day under a defined reporting rule</td></tr>
+ <tr><td>Materialised query result</td><td>A report reads precomputed joins or aggregates</td><td>Refresh scope, cost, publication and acceptable age are explicit</td></tr>
+</tbody></table>
+<p>Joins alone are not a performance problem. Start with a concrete read, such as “the first fifty bookings with optional subtotals must return within 100 ms at the expected peak load”. That is a proposed acceptance target, not an observed result. Measure the normalised query on representative booking counts, line counts, skew and concurrent writes. Check a better query, suitable indexes or a narrower result before storing another copy.</p>
+<p>Then compare the improvement with extra writes, a contended subtotal row, storage and refresh work. If a nightly dashboard tolerates old data, paying for atomic updates on every booking may be unnecessary. If checkout promises the exact current amount, an old dashboard generation is unsuitable. <a href="/review/relational-next/performance/">Performance analysis</a> owns plans, workload design and validation of the intervention. No timing measurement here justifies adopting the subtotal copy.</p>
+
+<h2 id="give-every-derived-copy-a-maintenance-contract">Give every derived copy a maintenance contract</h2>
+<p>A stored subtotal needs an owner and a promise readers can understand. Here is a complete proposed contract for B11. It is a design to validate if the read measurements warrant it.</p>
+<table><caption>The proposed optional-service subtotal contract</caption><thead><tr><th>Question</th><th>Decision</th></tr></thead><tbody>
+ <tr><td>Authoritative facts</td><td>Booking status and retained service lines, with quantity, agreed unit fee and line status; current catalogue prices are excluded</td></tr>
+ <tr><td>Calculation</td><td>Sum quantity × agreed unit fee for active lines of a booked booking, in euros; zero for no active lines or a cancelled booking</td></tr>
+ <tr><td>Freshness</td><td>Strict subtotal: source and copy become visible together. Dashboard alternative: display the published source generation and enforce a measured maximum age of 60 seconds</td></tr>
+ <tr><td>Owner and writers</td><td>The booking service owns maintenance across public requests, staff amendments, imports, repair jobs and deletion paths</td></tr>
+ <tr><td>Changes covered</td><td>Line insertion, quantity or fee correction, line cancellation/reactivation, deletion, and booking cancellation/reactivation</td></tr>
+ <tr><td>Concurrent protection</td><td>All affected writers follow the same protected update protocol, including corrections that move a line between bookings</td></tr>
+ <tr><td>Detection and repair</td><td>Compare with a source recomputation at a defined snapshot; rebuild a complete generation and publish only after accounting for intervening writes</td></tr>
+ <tr><td>Failure owner and reader behaviour</td><td>The booking service alerts on failed reconciliation or exceeded age; strict readers compute from source or refuse an answer, and stale dashboards show their age</td></tr>
+</tbody></table>
+<p>Deleting a source line must subtract its contribution before the source disappears, or trigger recomputation under the same protection. Cancelling a whole booking changes its payable subtotal to zero while retaining the line agreements. Reactivating it restores contributions from active lines. A maintenance design that handles only inserts is already incomplete.</p>
+
+<h3 id="choose-atomic-maintenance-or-explicit-lag">Choose atomic maintenance or explicit lag</h3>
+<p>Figure 5 adds €3 and €5 concurrently to the €10 source. With <em>Read, calculate, overwrite</em>, A and B both read €10, calculate replacements independently, then each commits its own line and subtotal in one transaction. Step to the reader’s result before changing the protocol.</p>
+<DesignFigure kind="total" />
+<p>Source now sums to €18, but B’s €15 overwrote A’s €13. Putting each source change and replacement in one transaction ensured each pair committed together; it did not protect the earlier decision against another writer. The maintained total needs a concurrency guarantee as well as atomicity. Correctly protected deltas, locking and recomputation, or validation with retries can supply it under suitable protocols. <a href="/review/relational-next/transactions/">Making concurrent changes correct</a> develops and tests those choices.</p>
+<p>With <em>Refresh later</em>, source reaches €18 while the published subtotal stays at €10. That can satisfy a dashboard contract if its generation and freshness are visible and checked. It cannot satisfy the strict checkout promise. “Every minute” is a scheduling intention, not a bound on age when a refresh fails or takes longer than a minute.</p>
+<p>Asynchronous maintenance also needs reliable delivery or source-based refresh. Missing changes must be detected, repeated changes must not double-count, and out-of-order changes must not restore an older result over a newer one. A complete recomputation can repair missed deltas only if it is safely published. <a href="/review/relational-next/background-work/">Background work</a> owns delivery, progress and recovery protocols; a freshness field alone establishes none of them.</p>
+
+<h3 id="make-drift-detectable-and-rebuilding-safe">Make drift detectable and rebuilding safe</h3>
+<p>Compare source and copy using a common, defined read boundary. Otherwise, a line inserted between two reads can look like corruption. Include bookings with zero contributions, so reconciliation detects a stale positive total left by a deletion or cancellation. Record both the difference and the source generation used.</p>
+<p>Rebuilding introduces a race of its own. A rebuild reads €18; another writer adds €2 and maintains €20; the rebuild then publishes its older €18. The repaired copy has just become wrong. A valid rebuild must block or coordinate relevant writes, catch up changes after its snapshot, or publish a version explicitly treated as that older snapshot. Specify which guarantee applies before writing the replacement procedure.</p>
+<p>For a generation-based dashboard, an interrupted build leaves the previous complete generation published, with its original age. Only a validated replacement becomes available. If the old generation exceeds 60 seconds, readers follow the stated fallback and the owner receives an actionable failure. PostgreSQL’s materialised-view refresh replaces its stored result; its documented refresh options determine reader blocking. Do not infer automatic refresh or a freshness bound from the object’s name.</p>
+<p><a href="/review/relational-next/live-changes/">Live data changes</a> owns safe replacement procedures, while <a href="/review/relational-next/operations/">operations</a> owns scheduling and failure response. If the alleged source cannot reconstruct the stored value—for example an old agreement was never retained—the value is not merely a disposable cache. Revisit which facts are authoritative.</p>
+
+<h2 id="defend-the-design-with-changes-and-counterexamples">Defend the design with changes and counterexamples</h2>
+<p>The resulting design keeps the parent’s booking identities and agreements, adds category and service owners, and stores each booked service association once. Required complete references let a line reconstruct one booking, service and category. Independent venue sets remain separate; restricted facility–language availability remains a triple. Adviser assignments retain a constrained service copy because it makes both rules enforceable.</p>
+<table><caption>Changes that defend or falsify this design</caption><thead><tr><th>Try this</th><th>Required result</th><th>Evidence here</th></tr></thead><tbody>
+ <tr><td>Correct a category label; remove KIT’s final line</td><td>All service reads use the new label; KIT remains offered</td><td>Native PostgreSQL sequential checks</td></tr>
+ <tr><td>Reconstruct the mixed booked facts</td><td>No missing or invented associations; unsafe split produces extras</td><td>Native set comparison and illustrative Figure 2</td></tr>
+ <tr><td>Assign A6 to B11’s KIT as well as A5</td><td>Constrained triples reject it; BCNF split’s local checks admit the counterexample</td><td>Native stored-state checks and Figure 3</td></tr>
+ <tr><td>Restrict languages to particular facilities</td><td>Keep the triples; do not advertise crossed pairs</td><td>Native projection/join check and Figure 4</td></tr>
+ <tr><td>Add €3 and €5 to €10</td><td>Strict copy and source end at €18; naive replacement can leave €15</td><td>Illustrative schedule; native sequential reproduction of its stale-read values</td></tr>
+ <tr><td>Interrupt a refresh before publication</td><td>Old complete generation remains visible, with age and fallback intact</td><td>Model contract; no process-interruption test performed</td></tr>
+</tbody></table>
+<p>The SQL checks ran in a fresh disposable PostgreSQL 18.6 database. They establish the stated keys, references, reconstruction and sequential result changes. The figures are deterministic models. Neither the native sequential reproduction nor the protected model establishes a concurrent implementation’s correctness; no benchmark establishes a benefit for a stored subtotal here.</p>
+<p>Retain the normalised source design now. Retain the adviser service copy with its enforcing reference. Adopt a cached subtotal only after its measured read benefit and tested maintenance contract outweigh the added work. Those are separate, falsifiable reasons for the two kinds of repetition.</p>
+<p>Continue with <a href="/review/relational-next/constraints/">constraints</a> to encode the rules, <a href="/review/relational-next/history/">history</a> to preserve past facts, <a href="/review/relational-next/transactions/">transactions</a> to protect competing changes, and <a href="/review/relational-next/performance/">performance</a> to test whether a derived copy earns its place.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 20 October 2026. Booking, adviser and venue requirements are invented. The native SQL uses PostgreSQL 18.6; no timing or concurrent execution result is claimed. The normal-form names describe the dependencies stated here, rather than certify an application’s unrecorded requirements.</p>
+<ul>
+ <li>William Kent, <a href="https://www.bkent.davidjkent.com/Doc/simple5.htm">A Simple Guide to Five Normal Forms in Relational Database Theory</a>: partial, indirect and independent-set dependencies, with the limits of informal rules.</li>
+ <li>Philip A. Bernstein, <a href="https://apollo.inf.upol.cz/~urbanec/teaching/2021/data2/files/bernstein.pdf">Synthesizing Third Normal Form Relations from Functional Dependencies</a> (1976), §2: candidate keys, dependencies and the role of attributes belonging to a key.</li>
+ <li>Ronald Fagin, <a href="https://research.ibm.com/publications/multivalued-dependencies-and-a-new-normal-form-for-relational-databases">Multivalued Dependencies and a New Normal Form for Relational Databases</a> (1977): multivalued dependencies, 4NF and lossless decomposition.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>: composite keys and references, and limits of row checks for cross-row rules.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-createview.html">CREATE VIEW</a>, <a href="https://www.postgresql.org/docs/18/rules-materializedviews.html">Materialized Views</a> and <a href="https://www.postgresql.org/docs/18/sql-refreshmaterializedview.html">REFRESH MATERIALIZED VIEW</a>: computed views, persisted results and explicit refresh behaviour.</li>
+</ul>
