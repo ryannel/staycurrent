@@ -1,0 +1,161 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import FactOwnership from '../../components/relational-next/a01/FactOwnership.astro';
+import schema from '../../components/relational-next/a01/schema.sql?raw';
+import fixture from '../../components/relational-next/a01/fixture.sql?raw';
+
+const roster = `SELECT b.booking_id, c.display_name, b.agreed_fee_eur
+FROM bookings AS b
+JOIN customers AS c
+  ON c.tenant_id = b.tenant_id
+ AND c.customer_id = b.customer_id
+WHERE b.tenant_id = 1 AND b.session_id = 21
+  AND b.status = 'booked'
+ORDER BY b.booking_id;`;
+const counts = `SELECT s.session_id, count(b.booking_id) AS occupied_places
+FROM sessions AS s
+LEFT JOIN bookings AS b
+  ON b.tenant_id = s.tenant_id
+ AND b.session_id = s.session_id
+ AND b.status = 'booked'
+WHERE s.tenant_id = 1
+GROUP BY s.session_id
+ORDER BY s.session_id;`;
+const changes = `UPDATE customers SET display_name = 'Mina Patel'
+WHERE tenant_id = 1 AND customer_id = 7;
+
+UPDATE sessions SET fee_eur = 22.00
+WHERE tenant_id = 1 AND session_id = 21;
+
+UPDATE bookings SET status = 'cancelled'
+WHERE tenant_id = 1 AND booking_id = 11;`;
+const sections = [
+  ['begin-with-facts-and-rules', 'Begin with facts and rules'],
+  ['give-every-row-a-clear-meaning', 'Give every row a clear meaning'],
+  ['a-value-needs-a-meaning-as-well-as-a-type', 'A value needs a meaning as well as a type'],
+  ['make-invalid-facts-difficult-to-store', 'Make invalid facts difficult to store'],
+  ['store-each-fact-where-it-belongs', 'Store each fact where it belongs'],
+  ['decide-what-changes-and-what-must-be-remembered', 'Decide what changes and what must be remembered'],
+  ['test-the-schema-against-the-application-s-life', 'Test the schema against the application’s life'],
+];
+---
+
+<p>A relational schema describes what the application knows, which facts belong together and which states it will refuse to store. It includes the tables and columns, but also their meanings: whether two rows are duplicate bookings, whether a price is today’s offer or yesterday’s agreement, and what should remain when a customer leaves.</p>
+<p>Those decisions are easiest to test while the design is small. We will build a booking service for organisations running classes. Mina can book a place on a scheduled session, change her contact details and cancel. An organisation needs a roster, a count of occupied places and a record of what it agreed to charge. The example uses PostgreSQL 18; the reasoning starts from the application’s promises.</p>
+<p>By the end, we will have a schema, queries with expected answers, changes that must fail and a short list of obligations the schema does not enforce. Read through that first design before choosing the deeper articles on values, constraints, normalisation or history.</p>
+
+<nav class="article-contents" aria-label="In this article"><ol>{sections.map(([id, title]) => <li><a href={`#${id}`}>{title}</a></li>)}</ol></nav>
+
+<h2 id="begin-with-facts-and-rules">Begin with facts and rules</h2>
+<p>A booking screen might show Mina’s name, a session title and a price in one card. That does not make them one stored fact. Mina can exist before booking anything. A session can be advertised before anyone books it. A booking connects one particular customer with one particular occurrence of a class.</p>
+<p>Write the requirements in ordinary sentences first. Here is the contract we will use:</p>
+<ul>
+  <li>Each organisation is a <strong>tenant</strong>, with its own customers, membership codes and scheduled sessions. A booking must stay within one tenant.</li>
+  <li>A customer can book many sessions; a session can have many customers. Each booking reserves one place. Group bookings are outside this first design.</li>
+  <li>A customer has at most one booking record for a given session. Cancellation retains it; booking again reactivates that record.</li>
+  <li>A session’s capacity is positive. Only bookings whose status is <code>booked</code> occupy places, and their count must not exceed capacity.</li>
+  <li>Fees are whole cents in euros. A booking records the fee agreed when it was made. A later offer does not change that agreement.</li>
+  <li>Staff need today’s customer name on a roster. They need the agreed fee on a booking report, including cancelled bookings. This first version does not promise to reproduce old customer names or every status change.</li>
+</ul>
+<p>These sentences resolve questions that an identifier cannot. Can Mina cancel and book again at the new price? Under this contract, reactivation keeps the original agreement unless an explicit amendment replaces it. If the service must retain each booking attempt or amendment separately, one row for the customer–session pair will be too coarse.</p>
+<p>Record the change paths too: create a customer, advertise an empty session, book, cancel, reactivate, correct a customer, amend a session and merge duplicate customers. Include imports and staff tools. A rule that only the public booking form follows does not cover those other writers.</p>
+
+<h2 id="give-every-row-a-clear-meaning">Give every row a clear meaning</h2>
+<p>Before choosing columns, finish the sentence “one row represents…”. Our three main tables have different answers.</p>
+<table><caption>The meaning and identity of the example’s rows</caption><thead><tr><th>Table</th><th>One row represents</th><th>Identity within a tenant</th></tr></thead><tbody>
+  <tr><td><code>customers</code></td><td>A customer’s current profile</td><td><code>customer_id</code>; membership code is also unique</td></tr>
+  <tr><td><code>sessions</code></td><td>One scheduled occurrence, with a current start, capacity and offer</td><td><code>session_id</code></td></tr>
+  <tr><td><code>bookings</code></td><td>One customer’s retained booking for one session</td><td><code>booking_id</code>; customer and session also identify the record</td></tr>
+</tbody></table>
+<p>We will write C7, S21 and B11 for customer 7, session 21 and booking 11 in the explanations. The SQL stores their numeric parts in separate identifier columns.</p>
+<p>Pottery on 3 November and Pottery on 10 November are two sessions, even if their titles and fees match. A title is something to display, not sufficient evidence of identity. If classes later share a description, introduce a class or course table to own that shared fact; the scheduled occurrences still need their own identities.</p>
+<p>The customer–session relationship is <strong>many-to-many</strong>. Put it in a table of its own, <code>bookings</code>, containing references to both sides. Each customer then has a one-to-many relationship with bookings, and so does each session. The booking status belongs on this relationship: Mina can cancel Pottery while keeping Glazing. A single “cancelled” flag on Mina cannot express that.</p>
+
+<h3 id="choose-identity-and-scope-deliberately">Choose identity and scope deliberately</h3>
+<p>A <strong>candidate key</strong> is a minimal set of columns that uniquely identifies a row under the business rules. Minimal means that removing any column loses that guarantee. A table may have several. We choose one as its <strong>primary key</strong> and enforce the others too.</p>
+<p>A membership code is a <strong>natural key</strong>: it already has a meaning outside storage. A generated customer number is a <strong>surrogate key</strong>: its purpose is identifying the row. An email address is tempting as a natural key, but customers change addresses and can share one. This service has not promised that emails identify people, so an email must not silently become its identity rule.</p>
+<p>We choose <code>(tenant_id, customer_id)</code> as the customer primary key and keep <code>UNIQUE (tenant_id, member_code)</code>. Both are composite keys, made from more than one column. The tenant matters: organisation 1’s <code>M007</code> and organisation 2’s <code>M007</code> can denote different customers. Membership-code equality here is exact, case-sensitive text matching in the test database; a service wanting case-insensitive codes must define and enforce that different rule.</p>
+<p>Giving every booking a number does not prevent duplicates. B11 and B99 could both mean “Mina books S21”. We also need uniqueness on <code>(tenant_id, customer_id, session_id)</code>. It applies to cancelled rows as well, because this design retains one record and reactivates it. A service retaining many cancelled attempts but allowing only one active booking needs a different uniqueness rule; <a href="/review/relational-next/constraints/#enforce-uniqueness-only-where-the-rule-applies">Expressing rules with constraints</a> develops that case.</p>
+<p>Tenant scope also belongs in references. A booking for tenant 1 must reference customer <em>(1, 7)</em>, not merely a customer numbered 7 somewhere. Referencing the complete pair lets the database check that relationship. It does not decide which tenant a signed-in user may access; <a href="/review/relational-next/operations/#limit-who-can-reach-and-change-the-data">access control</a> must enforce that boundary too.</p>
+<p>Choose identifier generation and exposure separately. A central sequence, a client-generated identifier and an organisation’s own number have different allocation and collision requirements. Wider keys also cost storage and index work. None proves that two profiles are different people. Our fixture supplies small identifiers explicitly so these choices do not obscure the relationships.</p>
+<p>A customer merge makes the distinction concrete. If C7 and C8 both booked S21, changing C8’s bookings to C7 would create the same customer–session pair twice. The uniqueness rule should reject that change. Staff must decide which booking and agreement survive, and the merge must apply that decision as a complete change. Silently deleting one loses a business fact.</p>
+
+<h3 id="represent-optional-relationships">Represent optional relationships</h3>
+<p>A customer with no bookings is represented by a customer row and no related booking rows. There is no need for an empty booking. Conversely, every booking must name its customer and session, so both references are required.</p>
+<p>A foreign key checks that a reference points to an existing row. It does not require every customer or session to have a booking. That is useful: we can advertise a new session with zero attendees. If the requirement becomes “a published session must have at least one instructor”, write that separate rule and decide how publication is protected.</p>
+<p>An optional relationship has a different meaning. A booking might optionally have a referrer. A nullable referrer reference could mean “no referrer recorded”, while a present reference must identify an existing customer in the tenant. If “nobody referred them” and “we have not asked” need different treatment, one missing reference cannot preserve that distinction on its own.</p>
+
+<h2 id="a-value-needs-a-meaning-as-well-as-a-type">A value needs a meaning as well as a type</h2>
+<p><code>20</code> could mean euros, cents, a measured weight or a session number. Choose the meaning first, then the type and the application conversion that preserve it.</p>
+<table><caption>Representation choices in this first design</caption><thead><tr><th>Fact</th><th>Contract</th><th>Representation</th></tr></thead><tbody>
+  <tr><td>Current or agreed fee</td><td>Euros, two fractional digits, 0 through 999,999.99; no unknown price</td><td><code>numeric(8,2)</code>, required, bounded</td></tr>
+  <tr><td>Session start</td><td>A particular finite instant</td><td><code>timestamptz</code>, required</td></tr>
+  <tr><td>Membership code</td><td>An exact identifier; leading zeroes matter</td><td>Required text with tenant-scoped uniqueness</td></tr>
+  <tr><td>Contact phone</td><td>A supplied contact string, or no number recorded</td><td>Nullable text</td></tr>
+</tbody></table>
+<p>PostgreSQL’s <code>numeric</code> represents decimal amounts exactly within its declared scale; a value with more fractional digits is rounded on assignment. The input path therefore still needs a policy for a submitted fee of €20.005. Our contract requires whole cents before storage. Choosing an exact type does not by itself reject every unintended input. The upper bound also excludes PostgreSQL’s special numeric value <code>NaN</code>.</p>
+<p>The <code>_eur</code> suffix records our single-currency assumption. If the service accepts other currencies, the amount needs its currency and that currency’s scale and calculation rules. Adding two bare amounts from different currencies is not a useful total.</p>
+<p>For a scheduled occurrence, <code>2026-11-03 18:00+00</code> identifies an instant. PostgreSQL’s <code>timestamptz</code> preserves that instant and displays it in the session time zone; it does not retain the original named zone. “Every Tuesday at 18:00 in Europe/London” is a different fact, needing a local schedule and its zone before occurrences are resolved.</p>
+<p>A missing phone number is <code>NULL</code>, not zero or an invented number. An empty string is a present text value and is different again. If the service must distinguish unknown, inapplicable and deliberately withheld details, give those states explicit meaning, for example with a reason field and valid combinations. <a href="/review/relational-next/types/">Choosing types and representing missing values</a> develops these choices and checks the database–application round trip.</p>
+
+<h2 id="make-invalid-facts-difficult-to-store">Make invalid facts difficult to store</h2>
+<p>A constraint makes a rule part of the database’s acceptance of a change. Here is the complete first schema. Run it in an empty disposable PostgreSQL database. The statement names and types make the design concrete; each rule should already be understandable from the requirements.</p>
+<Sql code={schema} label="The booking schema: required values, identities and tenant-scoped references" />
+<p>The primary keys identify rows and forbid missing key values. The additional unique constraints reject repeated membership codes within a tenant and repeated bookings for one customer–session pair. The two booking foreign keys include the tenant on both sides. A customer existing in tenant 2 cannot satisfy tenant 1’s reference.</p>
+<p><code>NOT NULL</code> and <code>CHECK</code> have separate jobs. A positive-capacity check rejects zero; the required column rejects a missing capacity. PostgreSQL accepts a check whose result is unknown, so a comparison alone does not make a nullable column required. <code>ON DELETE RESTRICT</code> refuses deletion of a customer or session while a booking refers to it, including a cancelled booking.</p>
+<p>Now try to break the design. A second booking with a new booking number but the same customer and session must fail. So must a missing customer, a customer from the wrong tenant, a zero capacity and an unrecognised status. Those are checks of stored data, regardless of whether a form, an import or a staff tool issued the statement.</p>
+<p>Capacity exposes the remaining boundary. Two different customers can each have a unique booking for the last place. Their references and row checks all pass. “The number of booked rows must not exceed this session’s capacity” concerns several rows and changes over time; this schema does not enforce it.</p>
+<p>Every booking, reactivation, move to another session and capacity reduction must therefore use a transaction protocol protecting that rule. A conceptual failure is two requests both reading one free place and then both inserting. That is an illustrative decision sequence, not an observed engine trace. <a href="/review/relational-next/transactions/#coordinate-decisions-that-span-several-rows">Making concurrent changes correct</a> shows how to protect the decision and change together. <a href="/review/relational-next/constraints/">Expressing rules with constraints</a> examines when reshaping a fact or using a supported constraint can cover more of the rule.</p>
+<p>Application validation still provides a useful explanation before submission. It must also handle a database rejection: another request may have changed the situation. Copying the same availability check into every form is not an enforcement argument.</p>
+
+<h2 id="store-each-fact-where-it-belongs">Store each fact where it belongs</h2>
+<p>Suppose we stored a customer name and session details on every booking row. Mina books two sessions. Correcting her name now requires finding both copies; missing one gives two different current names for the same customer. Inserting an advertised session without a booking has nowhere to put its details. Deleting its final booking can erase those details. These are update, insertion and deletion anomalies: ordinary changes damage facts they did not intend to change.</p>
+<p>Separating customers, sessions and bookings repairs those failures. Mina’s current name belongs to her customer identity. A session’s start and offer belong to its occurrence. Booking status and agreed fee belong to the booking. This reasoning is <strong>normalisation</strong>: organise facts according to what determines them, so a change has a defined owner.</p>
+<p>Step through the name correction in Figure 1, then choose <em>Once, on the customer</em> at the same step. Compare how many stored rows need changing. Continue to the fee change and ask whether the old agreed price should change too.</p>
+<FactOwnership />
+<p>The customer identity determines the current name: for a given customer, the design permits one current name. That is a <strong>functional dependency</strong>. It comes from the requirement, not from noticing that the sample rows happen to agree. A surrogate booking number would make the copied rows distinct without removing this dependency or repairing their conflicting names.</p>
+<p>The price difference in the figure is intentional. The session’s €22.00 offer and B11’s €20.00 agreement answer different questions. The agreement needs its own stored value because recalculating it from today’s offer would lose it. By contrast, copying the current customer name onto bookings creates several representations of the same changing fact.</p>
+<p>Repeated contact columns such as <code>phone1</code>, <code>phone2</code> and <code>phone3</code> create another avoidable limit. If customers can have any number of independently labelled contact numbers, a customer-contact table gives each number a row and a reference to its owner. Keep one optional phone column while that is the actual requirement; splitting every value into a new table is not the aim.</p>
+<p>Sometimes a stored result earns its cost. A dashboard might keep a session’s occupied-place count because computing it is too expensive under a measured workload. That count is a derived copy of booking facts. It needs a contract: which statuses count, how fresh readers expect it to be, who updates it for cancellations and reactivations, what protects competing changes and how it is rebuilt when it drifts. Until a representative measurement establishes the benefit, compute the count from bookings.</p>
+<p><a href="/review/relational-next/normalisation/">Normalisation and deliberate redundancy</a> develops dependencies, safe splits and that maintenance contract. <a href="/review/relational-next/performance/">Understanding and improving database performance</a> tests whether the expensive read justifies storing another result.</p>
+
+<h2 id="decide-what-changes-and-what-must-be-remembered">Decide what changes and what must be remembered</h2>
+<p>Run Mina’s booking forward. She books S21 at €20.00. Staff correct her current name. S21’s offer rises to €22.00. Mina cancels. The resulting record should say that she agreed €20.00 and is now cancelled; the roster should omit her, while a booking report can still show her record.</p>
+<p>Our design can answer those questions. It cannot say when the cancellation happened, who made it, how often she cancelled and reactivated, or what name was on a report issued last month. A current status records the result of a change. It is not evidence of the sequence that led there. Add change records or snapshots only after stating the question they must answer.</p>
+<p>Correcting an agreement also needs a meaning. Replacing a mistakenly entered €20.00 with €18.00 gives the current corrected agreement. Reproducing a report issued before that correction requires retaining what was previously recorded. Those are different reporting requirements; a single overwritten value can answer only the first.</p>
+<p>Deletion has the same need for a contract. The foreign keys deliberately refuse to delete a referenced customer. Cascading from that customer would erase retained bookings and their agreements, defeating the reporting requirement. A customer who leaves might instead lose contact details while a minimal customer record remains to support the reference. Decide which details may remain and for how long before implementing that policy.</p>
+<p>Adding a <code>deleted</code> flag alone does not settle it. Queries need to know when to exclude flagged rows, uniqueness rules need to say whether old codes may be reused, and historical reports need to say which names they show. Moving the row to an archive changes where it is found; it does not establish erasure.</p>
+<p><a href="/review/relational-next/history/">Modelling history and data lifecycles</a> chooses the stored history needed for these questions. Record retention and erasure requirements as inputs, including copies in snapshots, reports, replicas, exports and backups. <a href="/review/relational-next/operations/">Running a relational service</a> must turn them into removal and restore procedures. A schema’s live rows are only one part of that lifecycle.</p>
+
+<h2 id="test-the-schema-against-the-application-s-life">Test the schema against the application’s life</h2>
+<p>Start with no data. The schema must allow a customer without bookings and an advertised session without attendees. Then load this small fixture. It contains two tenants, Mina’s two bookings, Jon’s cancelled booking and a session with no bookings.</p>
+<details><summary>Fixture for the schema above</summary><Sql code={fixture} label="Load the small booking fixture" /></details>
+<p>Ask for the roster of S21. One result row means one active booking with its customer’s current name. Joining on the complete customer key gives exactly one customer per booking.</p>
+<Sql code={roster} label="S21’s roster: one row per booked place" />
+<p>The result is B11, Mina Shah, €20.00. Jon’s B13 is cancelled and does not appear. Adding an unrelated contact table where Mina has two phone rows would give two joined rows for B11 unless the query deliberately chooses or aggregates those contacts. A duplicated roster entry is not proof of a duplicate booking; first inspect what each joined row means. <a href="/review/relational-next/sql/#combine-related-facts-without-changing-the-question">Working with SQL</a> develops that reasoning.</p>
+<p>Count places by session next, including empty sessions.</p>
+<Sql code={counts} label="Count booked places while retaining sessions with zero" />
+<p>The expected counts are S21: 1, S22: 1, S23: 0. The left join keeps S23, the status condition limits which bookings match, and counting booking identifiers gives zero for an unmatched session. Counting every joined row would wrongly give that empty session one place. Test an empty case before trusting a plausible total.</p>
+<p>Apply the three changes from Figure 1 using the separated design:</p>
+<Sql code={changes} label="Correct the profile, change the current offer and cancel B11" />
+<p>The roster of S21 is now empty. Its occupied-place count is zero. Joining the retained B11 to its customer and session gives Mina Patel, cancelled, an agreed fee of €20.00 and a current offer of €22.00. No query over these rows can recover Mina’s old name or the time of cancellation.</p>
+<table><caption>What the design promises, and who must keep the promise</caption><thead><tr><th>Requirement</th><th>Enforcement or obligation</th><th>A useful failure case</th></tr></thead><tbody>
+  <tr><td>One retained customer–session booking</td><td>Composite unique constraint</td><td>Retry with a new booking number; merge two customers booked on the same session</td></tr>
+  <tr><td>References stay within a tenant</td><td>Required composite foreign keys</td><td>Use tenant 2’s customer in tenant 1’s booking</td></tr>
+  <tr><td>Positive capacity and permitted status</td><td>Required columns and row checks</td><td>Missing capacity, zero capacity, unknown status</td></tr>
+  <tr><td>Occupied places never exceed capacity</td><td>All relevant writers use a protected transaction protocol</td><td>Two requests for the last place; reduce capacity below occupancy</td></tr>
+  <tr><td>Agreed fee is captured and changed only by an authorised amendment</td><td>Booking/amendment protocol and write authority; bounds alone are insufficient</td><td>Offer changes during booking; accidental overwrite of an old agreement</td></tr>
+  <tr><td>Leaving customers retain only permitted details</td><td>Explicit lifecycle policy and operational removal</td><td>Delete a referenced customer; restore a backup containing removed details</td></tr>
+</tbody></table>
+<p>The schema and sequential examples were executed on a disposable PostgreSQL 18.6 instance. Duplicate bookings, invalid values, missing references, tenant-crossing references, merge conflicts and referenced deletion were rejected as described. The roster and counts matched the answers above. Those runs establish the example’s stored-state behaviour; they do not establish concurrent capacity enforcement, performance or a complete removal procedure.</p>
+<p>Before adoption, take the remaining promises to their owners. Transactions need competing-session tests. Performance needs realistic session and booking counts, roster and reporting frequencies, and the latency targets those reads must meet. Adding constraints to existing data needs a <a href="/review/relational-next/live-changes/">live-change plan</a>, including existing violations and application compatibility.</p>
+<p>Keep the assumptions beside the schema: one place per booking, one retained record per pair, a single currency and no promise to reproduce old profiles. Group bookings, new attempts with different agreements, recurring schedules or historical reports are reasons to revisit those meanings. A useful design makes those decisions visible while the application can still change them deliberately.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 19 October 2026. The organisations, customers and bookings are invented. Figure 1 is a deterministic model of the stated design choices; the SQL examples and rejected-change checks ran on native PostgreSQL 18.6, with UTC and the <code>C</code> locale.</p>
+<ul>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>: required values, checks, keys, composite references and deletion actions.</li>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/datatype-numeric.html">Numeric Types</a>: exact decimal storage, assignment rounding and special values.</li>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/datatype-datetime.html">Date/Time Types</a>: the instant and time-zone behaviour of <code>timestamptz</code>.</li>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/queries-table-expressions.html">Table Expressions</a> and <a href="https://www.postgresql.org/docs/18/functions-aggregate.html">Aggregate Functions</a>: joins, grouping and the difference between counting rows and non-null values.</li>
+</ul>

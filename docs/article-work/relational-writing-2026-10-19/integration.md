@@ -46,3 +46,9 @@ normal site check remains responsible for actual built links and anchors.
 The root owns the shared reference/article preview on `127.0.0.1:4337`; a preview
 started by a returning worker can end with its execution session. Workers may
 start private previews only when needed and stop those at handoff.
+
+Independent review moves to the built preview on `127.0.0.1:4437` from batch b02.
+Root rebuilds between review batches, never during their playback checks. This
+keeps unrelated writing and development reloads from resetting review state.
+Authors use the development preview on 4337 for their own targeted checks and
+return any HMR limitation explicitly. They do not run the shared full build.

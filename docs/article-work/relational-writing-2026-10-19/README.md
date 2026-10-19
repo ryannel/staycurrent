@@ -13,6 +13,11 @@ The teaching reviewer found effective mechanism-changing interactions and judged
 the approach ready to scale; no skill rewrite was justified. Full writing is now
 under way. Initial findings and the narrow rechecks remain in batches p00/p01.
 
+The broader b01 guides prompted a small visual-teaching, playback and phone-
+comparison correction to the writer/reviewer skills. Concrete repair findings
+and the rationale are retained with that batch; acceptance requires rechecking
+the changed explanations, not merely updating the skills.
+
 Each assignment includes its own section plan, parent and sibling scopes, and its
 children's actual section plans. The parent teaches a useful high-level answer;
 its contextual children own deeper mechanisms and procedures. The writer and
