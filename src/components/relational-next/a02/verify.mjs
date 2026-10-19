@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {writeFileSync} from 'node:fs';
+import * as q from './queries.mjs';
+import {joinSteps,paging,reportModel} from './model.mjs';
+const bin='/opt/homebrew/Cellar/postgresql@18/18.6_1/bin/';
+const db=process.argv[2] || 'rel3_a02_run1';
+if(!/^rel3_a02_run\d+$/.test(db))throw new Error('Use an article-owned disposable database');
+const conn=`postgresql://staycurrent@127.0.0.1:57319/${db}`;
+execFileSync(bin+'createdb',['-h','127.0.0.1','-p','57319','-U','staycurrent',db]);
+const run=sql=>execFileSync(bin+'psql',['--no-psqlrc',conn,'-X','-v','ON_ERROR_STOP=1','-A','-t','-P','null=NULL'],{input:sql,encoding:'utf8'}).trim();
+const rows=sql=>JSON.parse(run(`SELECT COALESCE(json_agg(row_to_json(r)), '[]'::json) FROM (${sql.replace(/;\s*$/,'')}) r;`));
+run(q.setup);
+const results={version:run('SELECT version();'),db,zone:run('SHOW TimeZone;'),queries:{}};
+for(const [name,sql] of Object.entries(q.queries))results.queries[name]=rows(sql);
+assert.deepEqual(results.queries.report,[{order_id:101,name:'Mina',due:15,has_payment:true},{order_id:102,name:'Mina',due:20,has_payment:false},{order_id:106,name:'Edda',due:null,has_payment:false}]);
+assert.equal(results.queries.checks.length,0);
+assert.deepEqual(results.queries.candidates.map(r=>r.order_id),[100,101,102,106,103]);
+assert.equal(results.queries.smallWith.length,6);
+assert.deepEqual(results.queries.windows.map(r=>r.customer_value),[50,50,40]);
+assert.deepEqual(results.queries.nextPage.map(r=>r.order_id),[102,105]);
+results.values=rows(`SELECT 5/2 AS integer_result, 5::numeric/2 AS decimal_result, pg_typeof(5::numeric/2)::text AS result_type`);
+assert.equal(results.values[0].integer_result,2);assert.equal(results.values[0].decimal_result,2.5);
+results.nulls=rows(`SELECT order_id, shipped_at IS NULL AS waiting, shipped_at = NULL AS wrong_test FROM orders WHERE order_id IN (101,102) ORDER BY order_id`);
+assert.deepEqual(results.nulls.map(r=>r.wrong_test),[null,null]);
+results.reportTypes=rows(q.stages+` SELECT pg_typeof(due)::text AS due_type, pg_typeof(has_payment)::text AS presence_type FROM balances LIMIT 1`);
+assert.deepEqual(results.reportTypes,[{due_type:'numeric',presence_type:'boolean'}]);
+results.fanout=rows(`SELECT o.order_id, SUM(l.amount) AS order_value, SUM(p.amount) AS paid FROM orders o JOIN order_lines l ON l.order_id=o.order_id JOIN payments p ON p.order_id=o.order_id WHERE o.order_id=101 GROUP BY o.order_id`);
+assert.deepEqual(results.fanout,[{order_id:101,order_value:60,paid:30}]);
+results.stages=rows(q.stages+' SELECT * FROM balances ORDER BY placed_at, order_id');
+results.independent=rows(`SELECT (SELECT sum(amount) FROM order_lines WHERE order_id IN (100,101,102,103,106)) AS line_value,(SELECT sum(amount) FROM payments WHERE order_id IN (100,101,102,103,106)) AS paid`);
+assert.deepEqual(results.independent,[{line_value:100,paid:65}]);
+results.changes=run(q.changes);
+assert.match(results.changes,/101\|cancelled\nUPDATE 1\nUPDATE 0/);
+assert.match(results.changes,/ROLLBACK\n101\|open/);
+results.having=rows(`SELECT order_id,SUM(amount) AS order_value FROM order_lines GROUP BY order_id HAVING SUM(amount)>=30 ORDER BY order_id`);
+assert.deepEqual(results.having.map(r=>r.order_id),[101,103,104,105]);
+results.precedence={wrong:rows(`SELECT order_id FROM orders WHERE status='open' AND customer_id=1 OR customer_id=3 ORDER BY order_id`),right:rows(`SELECT order_id FROM orders WHERE status='open' AND (customer_id=1 OR customer_id=3) ORDER BY order_id`)};
+assert.ok(results.precedence.wrong.some(r=>r.order_id===105));assert.ok(!results.precedence.right.some(r=>r.order_id===105));
+results.distinct={all:rows(`SELECT customer_id FROM orders WHERE order_id IN (101,102)`),distinct:rows(`SELECT DISTINCT customer_id FROM orders WHERE order_id IN (101,102)`)};
+assert.equal(results.distinct.all.length,2);assert.equal(results.distinct.distinct.length,1);
+results.fetch=rows(q.firstPage.replace('LIMIT 2','FETCH FIRST 2 ROWS ONLY'));
+assert.deepEqual(results.fetch,results.queries.firstPage);
+results.rowComparison=rows(`SELECT order_id,placed_at FROM orders WHERE (placed_at,order_id)>(TIMESTAMPTZ '2026-01-10 09:00:00+00',101) ORDER BY placed_at,order_id LIMIT 2`);
+assert.deepEqual(results.rowComparison,results.queries.nextPage);
+results.ranking=rows(`SELECT order_id,ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY placed_at,order_id) AS n FROM orders WHERE order_id IN (101,102,103) ORDER BY customer_id,order_id`);
+assert.deepEqual(results.ranking.map(r=>r.n),[1,2,1]);
+for(const [name,mutation] of Object.entries({empty:'DELETE FROM payments;DELETE FROM order_lines;DELETE FROM orders;DELETE FROM customers;',no_payments:'DELETE FROM payments;',extra_line:'INSERT INTO order_lines VALUES (101,3,10);',extra_receipt:'INSERT INTO payments VALUES (204,101,5);'})){
+ results[name]=JSON.parse(run(`BEGIN;${mutation}SELECT COALESCE(json_agg(row_to_json(r)), '[]'::json) FROM (${q.report.slice(0,-1)}) r;ROLLBACK;`).split('\n').find(l=>l.startsWith('[')));
+}
+assert.deepEqual(results.empty,[]);
+assert.deepEqual(results.no_payments.map(r=>r.due),[10,30,20,null,40]);
+assert.equal(results.extra_line[0].due,25);assert.equal(results.extra_receipt[0].due,10);
+results.updateCounts=run(`BEGIN;UPDATE orders SET status='cancelled' WHERE order_id=999;UPDATE orders SET status='cancelled' WHERE customer_id=1;ROLLBACK;`);
+assert.match(results.updateCounts,/UPDATE 0\nUPDATE 3/);
+results.pagination={};
+for(const [name,mutation] of Object.entries({none:'',insert:`INSERT INTO orders (order_id,customer_id,placed_at,status) VALUES (107,1,'2026-01-05 00:00:00+00','open');`,delete:'DELETE FROM payments WHERE order_id=100;DELETE FROM order_lines WHERE order_id=100;DELETE FROM orders WHERE order_id=100;',move:`UPDATE orders SET placed_at='2026-01-05 00:00:00+00' WHERE order_id=102;`})){
+ const out=run(`BEGIN;${mutation}SELECT json_agg(order_id) FROM (SELECT order_id FROM orders ORDER BY placed_at,order_id OFFSET 2 LIMIT 2) s;SELECT json_agg(order_id) FROM (${q.nextPage.slice(0,-1)}) s;ROLLBACK;`).split('\n').filter(l=>l.startsWith('[')).map(JSON.parse);
+ results.pagination[name]={offset:out[0],keyset:out[1]};
+ assert.deepEqual(out[0],paging('offset',name).next);assert.deepEqual(out[1],paging('keyset',name).next);
+}
+assert.deepEqual(results.queries.pairs.map(r=>Object.values(r)),joinSteps().at(-1).rows);
+assert.deepEqual(rows(q.pairs.replace('JOIN order_lines','LEFT JOIN order_lines')).map(r=>Object.values(r)),joinSteps(true).at(-1).rows);
+results.boundaries=JSON.parse(run(`BEGIN;INSERT INTO orders (order_id,customer_id,placed_at,status) VALUES (108,1,'2026-01-31 23:59:59.5+00','open');SELECT json_agg(order_id ORDER BY order_id) FROM orders WHERE placed_at >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND placed_at < TIMESTAMPTZ '2026-02-01 00:00:00+00';ROLLBACK;`).split('\n').find(l=>l.startsWith('[')));
+assert.ok(results.boundaries.includes(108));assert.ok(results.boundaries.includes(100));assert.ok(!results.boundaries.includes(104));
+results.reportModels={};
+for(const [change,mutation] of Object.entries({none:'',receipt:'INSERT INTO payments VALUES (204,101,5);',settle:'INSERT INTO payments VALUES (204,101,15);',line:'INSERT INTO order_lines VALUES (106,1,10);'})){
+ const actual=run('BEGIN;'+mutation+'SELECT json_agg(row_to_json(r)) FROM ('+q.report.slice(0,-1)+') r;SELECT json_agg(row_to_json(r)) FROM ('+q.stages+' SELECT b.order_id,l.order_value,p.paid,b.due,b.has_payment FROM balances b LEFT JOIN line_totals l ON l.order_id=b.order_id LEFT JOIN payment_totals p ON p.order_id=b.order_id ORDER BY b.placed_at,b.order_id) r;ROLLBACK;').split('\n').filter(l=>l.startsWith('[')).map(JSON.parse);
+ const model=reportModel(change);
+ assert.deepEqual(actual[0],model.final);
+ assert.deepEqual(actual[1],model.rows.map(({order_id,order_value,paid,due,has_payment})=>({order_id,order_value,paid,due,has_payment})));
+ results.reportModels[change]={final:actual[0],stages:actual[1]};
+}
+writeFileSync(new URL('./native-evidence.json',import.meta.url),JSON.stringify(results,null,2)+'\n');
+console.log(`PASS: ${db}; report, types, intermediate results, changes, negative fixtures and all pagination model outcomes checked.`);
