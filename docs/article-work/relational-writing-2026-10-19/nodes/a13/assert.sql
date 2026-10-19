@@ -1,0 +1,46 @@
+\set ON_ERROR_STOP on
+SET TIME ZONE 'UTC';
+SET DateStyle TO 'ISO, DMY';
+SET standard_conforming_strings TO on;
+-- Snapshot of the parent's five open January candidates.
+-- paid = NULL means no receipts in this snapshot; never a null receipt amount.
+CREATE TEMP TABLE order_review (
+ order_id integer PRIMARY KEY, order_value numeric, paid numeric,
+ fee numeric, preferred_label text, customer_name text, placed_at timestamptz
+);
+INSERT INTO order_review VALUES
+ (100, 10, 10, 0, NULL, 'Mina', '2026-01-01 00:00+00'),
+ (101, 30, 15, 1.005, NULL, 'Mina', '2026-01-10 09:00+00'),
+ (102, 20, NULL, 0, '', 'Mina', '2026-01-10 09:00+00'),
+ (103, 40, 40, -2, NULL, 'Tariq', '2026-01-31 23:59:59+00'),
+ (106, NULL, NULL, NULL, 'Edda_100%', 'Edda', '2026-01-22 12:00+00');
+CREATE TEMP VIEW observed_report AS WITH amounts AS (
+ SELECT order_id, placed_at,
+        COALESCE(NULLIF(preferred_label, ''), customer_name) AS label,
+        CASE WHEN fee IS NULL THEN 'undecided'
+             WHEN fee = 0 THEN 'waived'
+             WHEN fee < 0 THEN 'credit' ELSE 'charged' END AS fee_state,
+        round(order_value - COALESCE(paid, 0) + fee, 2) AS payable
+ FROM order_review
+)
+SELECT order_id, label, fee_state, payable FROM amounts
+WHERE payable > 0 OR payable IS NULL
+ORDER BY placed_at, order_id;
+DO $$
+BEGIN
+ IF EXISTS (
+ (SELECT order_id,label,fee_state,payable FROM observed_report
+  EXCEPT ALL VALUES (101,'Mina','charged',16.01::numeric),(102,'Mina','waived',20.00),(106,'Edda_100%','undecided',NULL::numeric))
+ UNION ALL
+ (VALUES (101,'Mina','charged',16.01::numeric),(102,'Mina','waived',20.00),(106,'Edda_100%','undecided',NULL::numeric)
+  EXCEPT ALL SELECT order_id,label,fee_state,payable FROM observed_report)
+ ) THEN RAISE EXCEPTION 'final report differs from hand-written expectations'; END IF;
+ IF (SELECT array_agg(order_id ORDER BY placed_at,order_id) FROM order_review WHERE round(order_value-COALESCE(paid,0)+fee,2)>0 OR round(order_value-COALESCE(paid,0)+fee,2) IS NULL) IS DISTINCT FROM ARRAY[101,102,106] THEN RAISE EXCEPTION 'wrong order identities or order'; END IF;
+ IF round(16.005::numeric,2)<>16.01 OR round(-1.005::numeric,2)<>-1.01 THEN RAISE EXCEPTION 'rounding differs'; END IF;
+ IF (SELECT count(*) FROM order_review WHERE order_value/NULLIF(paid,0) IS NULL)<>2 THEN RAISE EXCEPTION 'guarded division differs'; END IF;
+END $$;
+SELECT 'PASS: final report values and multiplicities, ordered identities, rounding, guarded row division' AS result;
+SELECT order_id,order_value/NULLIF(paid,0) AS ratio FROM order_review ORDER BY order_id;
+WITH inputs(raw) AS (VALUES ('20'),('twenty'),('1e2')) SELECT raw, CASE WHEN pg_input_is_valid(raw,'numeric') THEN raw::numeric END AS parsed FROM inputs;
+WITH labels(id,label) AS (VALUES ('A','José'),('B','JOSE'),('C','Edda_100%'),('D','Edda_1000'))
+SELECT id, label COLLATE "C"='José' AS exact, label COLLATE report_search='JOSE' AS insensitive, label LIKE '%100%%' ESCAPE '!' AS unsafe, label LIKE '%100!%%' ESCAPE '!' AS escaped FROM labels ORDER BY id;
