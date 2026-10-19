@@ -563,10 +563,13 @@ condition, reset/cleanup and a record of the version and settings used.
 ### RL119 — PostgreSQL schema changes under load
 
 - **Outcome and sections:** RL63 — lock evidence, concurrent builds, invalid
-  indexes, constraint validation, version-specific rewrites and backfill controls.
+  indexes, measured index bloat/rebuild/removal decisions, constraint validation,
+  version-specific rewrites and backfill controls.
 - **Entry and teaching:** general expand/contract and PostgreSQL monitoring.
   Execute a blocked ALTER, failed concurrent index build and validated change
-  while an old client and a new client remain active.
+  while an old client and a new client remain active. Extend that native lifecycle
+  through measured sparse-index cost, supported concurrent rebuild, representative
+  usage/constraint checks, safe removal and application acceptance.
 - **Changed case and decision:** an interrupted build leaves an object that
   exists but is not usable as intended. The reader can sequence and recover a
   real change. Product lock/rewrite behaviour needs its own operating lesson;
@@ -742,7 +745,7 @@ condition, reset/cleanup and a record of the version and settings used.
 
 ## Paths and entrances
 
-The order above is a useful shelf, not a required 55-page sequence. Each path
+The order above is a useful shelf, not a required 54-page sequence. Each path
 supplies small missing prerequisites locally and links to full homes for depth.
 
 - **New application:** RL76 → RL77 → RL78 → RL79 → RL81 → RL84 → RL90 →
@@ -919,3 +922,20 @@ The review decomposes original RL74 into RL74a (schema jobs), RL74b (cluster
 upgrade) and RL74c (SQL application migration), owned by RL130, RL131 and RL132.
 These are the three precise parts of the formerly broad unit, not three claims
 to own the same subject. The initial derivation remains unchanged as evidence.
+
+## Production reconciliation: 19 October 2026
+
+The user commissioned the whole allocation for authoring, practical work and
+independent review. Replacement sources and their production status are tracked
+in `docs/article-work/relational-rewrite-2026-10-19/`; this does not publish them
+or change the existing live routes. The earlier proposal notes above retain
+the planning state in which they were written.
+
+The independent assembled-collection audit found that native index maintenance
+had no complete new home: some RL86 links still relied on the old Maintaining
+indexes companion. RL119/RL63 now explicitly owns PostgreSQL index lifecycle
+under load, including bloat measurement, rebuild budgets/REINDEX, safe removal
+and post-change acceptance. RL111 retains heap horizons/reuse/freeze; RL112
+retains access methods/operators. RL86 keeps the general mechanism and engine
+comparison and links to RL119 only after that destination teaches the promised
+operation. This is a deeper existing home, not a new counted page.

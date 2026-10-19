@@ -1,0 +1,126 @@
+[
+  {
+    "label": "environment",
+    "version": {
+      "version": "PostgreSQL 18.6 (Homebrew) on aarch64-apple-darwin25.6.0, compiled by Apple clang version 21.0.0 (clang-2100.3.34.2), 64-bit",
+      "fsync": "on",
+      "synchronous_commit": "on"
+    }
+  },
+  {
+    "label": "rollback removes order and intent",
+    "sql": "SELECT (SELECT count(*) FROM outbox WHERE id='rolled_back') outbox_rows,(SELECT count(*) FROM purchase WHERE id='rolled_back') purchase_rows",
+    "rows": [
+      {
+        "outbox_rows": "0",
+        "purchase_rows": "0"
+      }
+    ]
+  },
+  {
+    "label": "commit keeps order and intent together",
+    "sql": "SELECT p.id order_id,o.id outbox_id FROM purchase p JOIN outbox o ON (p.tenant,p.request_id)=(o.tenant,o.request_id) WHERE p.id='o83'",
+    "rows": [
+      {
+        "order_id": "o83",
+        "outbox_id": "j83"
+      }
+    ]
+  },
+  {
+    "label": "worker A claims epoch 1",
+    "sql": "UPDATE job SET epoch=epoch+1,lease_until=clock_timestamp()+interval '1 hour',status='running' WHERE tenant='t4' AND id='j81' RETURNING epoch",
+    "rows": [
+      {
+        "epoch": "1"
+      }
+    ]
+  },
+  {
+    "label": "worker B reclaims expired work",
+    "sql": "UPDATE job SET epoch=epoch+1,lease_until=clock_timestamp()+interval '1 hour' WHERE id='j81' AND lease_until<clock_timestamp() RETURNING epoch",
+    "rows": [
+      {
+        "epoch": "2"
+      }
+    ]
+  },
+  {
+    "label": "stale A reaches actual effect authority and is rejected",
+    "sql": "WITH authorised AS (SELECT tenant,id,epoch FROM job WHERE tenant=$1 AND id=$2 AND epoch=$3 AND lease_until>clock_timestamp() FOR UPDATE) INSERT INTO effect SELECT tenant,id,epoch,$4 FROM authorised ON CONFLICT(tenant,job) DO NOTHING RETURNING *",
+    "args": [
+      "t4",
+      "j81",
+      1,
+      "confirmation"
+    ],
+    "rows": []
+  },
+  {
+    "label": "current B produces effect",
+    "sql": "WITH authorised AS (SELECT tenant,id,epoch FROM job WHERE tenant=$1 AND id=$2 AND epoch=$3 AND lease_until>clock_timestamp() FOR UPDATE) INSERT INTO effect SELECT tenant,id,epoch,$4 FROM authorised ON CONFLICT(tenant,job) DO NOTHING RETURNING *",
+    "args": [
+      "t4",
+      "j81",
+      2,
+      "confirmation"
+    ],
+    "rows": [
+      {
+        "tenant": "t4",
+        "job": "j81",
+        "epoch": "2",
+        "body": "confirmation"
+      }
+    ]
+  },
+  {
+    "label": "B repeats after missing effect reply",
+    "sql": "WITH authorised AS (SELECT tenant,id,epoch FROM job WHERE tenant=$1 AND id=$2 AND epoch=$3 AND lease_until>clock_timestamp() FOR UPDATE) INSERT INTO effect SELECT tenant,id,epoch,$4 FROM authorised ON CONFLICT(tenant,job) DO NOTHING RETURNING *",
+    "args": [
+      "t4",
+      "j81",
+      2,
+      "confirmation"
+    ],
+    "rows": []
+  },
+  {
+    "label": "effect authority contains one effect",
+    "sql": "SELECT * FROM effect",
+    "rows": [
+      {
+        "tenant": "t4",
+        "job": "j81",
+        "epoch": "2",
+        "body": "confirmation"
+      }
+    ]
+  },
+  {
+    "label": "batch worker skips locked j82 and claims j83",
+    "sql": "WITH candidate AS (SELECT tenant,id FROM job WHERE status='ready' OR(status='running' AND lease_until<clock_timestamp()) ORDER BY tenant,id FOR UPDATE SKIP LOCKED LIMIT 10) UPDATE job j SET status='running',epoch=j.epoch+1,lease_until=clock_timestamp()+interval '1 minute' FROM candidate c WHERE(j.tenant,j.id)=(c.tenant,c.id) RETURNING j.*",
+    "rows": [
+      {
+        "tenant": "t4",
+        "id": "j83",
+        "epoch": "1",
+        "lease_until": "2026-10-19T11:13:02.687Z",
+        "status": "running"
+      }
+    ]
+  },
+  {
+    "label": "later batch claims previously locked j82",
+    "sql": "WITH candidate AS (SELECT tenant,id FROM job WHERE status='ready' OR(status='running' AND lease_until<clock_timestamp()) ORDER BY tenant,id FOR UPDATE SKIP LOCKED LIMIT 10) UPDATE job j SET status='running',epoch=j.epoch+1,lease_until=clock_timestamp()+interval '1 minute' FROM candidate c WHERE(j.tenant,j.id)=(c.tenant,c.id) RETURNING j.*",
+    "rows": [
+      {
+        "tenant": "t4",
+        "id": "j82",
+        "epoch": "1",
+        "lease_until": "2026-10-19T11:13:02.688Z",
+        "status": "running"
+      }
+    ]
+  }
+]
