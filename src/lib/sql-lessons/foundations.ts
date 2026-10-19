@@ -73,7 +73,7 @@ ORDER BY l.order_id;`,
     id: 'json-rules',
     title: 'Give a JSON field a dependable meaning',
     description: 'Distinguish missing values from strings and numbers, then move a required capacity into a typed record.',
-    articleHref: '/learn/databases/relational/tables-and-documents/#queries-and-rules',
+    articleHref: '/learn/databases/relational/postgresql/json/',
     steps: [
       {
         title: 'Inspect four representations',
@@ -306,7 +306,7 @@ GROUP BY customer_id ORDER BY total DESC, customer_id;`,
     id: 'transaction-state',
     title: 'Read your changes before deciding to commit',
     description: 'See your own updates in a Repeatable Read transaction, roll them back, then commit a separate change.',
-    articleHref: '/learn/databases/relational/isolation/#statement-and-transaction',
+    articleHref: '/learn/databases/relational/transaction-boundaries/',
     steps: [
       {
         title: 'Create one committed price',

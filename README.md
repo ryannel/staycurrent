@@ -68,15 +68,19 @@ and four new lessons, is recorded in `docs/article-work/relational-depth-review/
 Review alone does not
 authorise publication of a new commission.
 
-The 19 October relational replacement commission has 54 drafts in
-`src/drafts/relational/`. Its [handoff](docs/article-work/relational-rewrite-2026-10-19/handoff.md)
-records native worksheets, review and coverage changes. Subsequent user review
-reopened acceptance for missing interactive learning support; the completed
-[teaching-tools repair](docs/article-work/relational-rewrite-2026-10-19/media-repair/README.md)
-adds visible models and further independent review. Run
+The 19 October relational replacement commission publishes 54 reviewed articles
+from `src/articles/relational/`: 31 general and distributed relational articles,
+13 PostgreSQL articles and ten CockroachDB articles. The user authorised publication
+after the [teaching-tools repair](docs/article-work/relational-rewrite-2026-10-19/media-repair/README.md).
+The [publication record](docs/article-work/relational-rewrite-2026-10-19/publication.md)
+connects the review evidence to the public routes. The introduction offers task paths
+and a subject directory. Four existing PostgreSQL specialist articles, the checkout,
+practice guide and SQL sandbox remain available. Retired routes redirect to their
+replacement explanations; public worksheets live below the collection's `evidence/` route.
+
+For internal review, run
 `RELATIONAL_DRAFT_PREVIEW=1 pnpm dev --host 127.0.0.1 --port 4323` and open
-`/review/relational/` to read them. Normal builds exclude those routes; this
-commission does not publish replacements.
+`/review/relational/`. Normal builds exclude the review and isolated-model routes.
 
 The 16 October object-storage commission authorises publication of its full
 collection and sandbox. `src/lib/object-storage-collection.ts` defines reading

@@ -11,7 +11,7 @@ export default {
       if (el.childNodes.some((c) => c.nodeType === 1 && !['SPAN', 'B', 'STRONG', 'EM'].includes(c.tagName))) continue;
       if (['A', 'P', 'LI', 'TD', 'TH', 'SUMMARY', 'BUTTON', 'OPTION', 'LABEL', 'TEXT', 'TSPAN'].includes(el.tagName)) continue;
       const text = el.text.replace(/\s+/g, ' ').trim();
-      if (text.length > 80) continue;
+      if (el.tagName !== 'FIGCAPTION' && text.length > 80) continue;
       const m = LABEL.exec(text);
       // A label repeated for the same figure (a fallback, a transcript) counts once.
       if (m && labels.at(-1)?.n !== Number(m[2])) labels.push({ el, word: m[1], n: Number(m[2]), text });

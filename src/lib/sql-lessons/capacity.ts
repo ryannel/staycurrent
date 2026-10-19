@@ -5,7 +5,7 @@ export const capacityTutorials: Tutorial[] = [
     id: 'replica-freshness',
     title: 'A copied change is not always a visible change',
     description: 'Use an explicit SQL model to distinguish acknowledgement, a durable copy and an applied result.',
-    articleHref: '/learn/databases/relational/replicas-and-failover/#acknowledgements',
+    articleHref: '/learn/databases/relational/failover/',
     steps: [
       {
         title: 'Set up the model',
@@ -66,7 +66,7 @@ FROM cap_replica_prices p JOIN cap_replica_progress r USING (node) ORDER BY node
     id: 'partition-pruning',
     title: 'Find which partitions a query needs',
     description: 'Create real PostgreSQL range partitions, inspect pruning, and test their boundaries and keys.',
-    articleHref: '/learn/databases/relational/partitioning-and-sharding/#local-partitions',
+    articleHref: '/learn/databases/relational/partitioning/',
     steps: [
       {
         title: 'Create two months of orders',
@@ -134,7 +134,7 @@ SELECT placed_on, order_id, tenant_id FROM cap_partition_orders WHERE order_id =
     id: 'shard-cutover',
     title: 'Move a tenant without losing its last change',
     description: 'Model a live copy, detect a stale destination, apply changes and reject an old writer generation.',
-    articleHref: '/learn/databases/relational/partitioning-and-sharding/#moving-data',
+    articleHref: '/learn/databases/relational/rebalancing/',
     steps: [
       {
         title: 'Create the source and ownership model',

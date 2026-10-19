@@ -7,6 +7,20 @@ overview and the database guide's linked reading, while removing obsolete conten
 and unused infrastructure. The [earlier direction](history/site-direction-2026-10-02.md)
 records the wider coverage discussion.
 
+## Relational replacement publication, 19 October 2026
+
+The user authorised publication of all 54 revised articles once the learning-tools
+repairs were complete. The public collection now contains 31 general and distributed
+relational articles, 13 PostgreSQL articles and ten CockroachDB articles. The
+introduction offers task paths and a subject directory; every article joins the
+switcher, reading directory, search and previous/next navigation. Interactive models
+and native worksheets retain their reviewed boundaries. Four PostgreSQL specialist
+articles and the SQL sandbox remain available. The practice guide now starts each
+article in a fresh disposable database. Earlier routes resolve to the revised
+explanations. See the [publication record](article-work/relational-rewrite-2026-10-19/publication.md).
+
+The following dated sections record earlier publication decisions.
+
 ## Relational publication, 15 October 2026
 
 The user explicitly commissioned completion and publication of the aligned relational

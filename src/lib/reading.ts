@@ -8,9 +8,9 @@ export const drawingHome = drawingHref('');
 export interface ReadingEntry { href: string; title: string; description: string; group: string; keywords?: string; }
 export const reading: ReadingEntry[] = [
   { href: databaseGuide, title: 'Databases and storage: a field guide', description: 'The main approaches to storing data, the problems they solve, and when to choose them.', group: 'Start here' },
-  { href: relationalHome, title: 'Relational databases: an introduction', description: 'Tables, relationships, queries and reliable changes.', group: 'Start here' },
+  { href: relationalHome, title: 'Relational databases: introduction and choices', description: 'Follow related facts and reliable changes, then choose an embedded, server or distributed database.', group: 'Start here' },
   { href: `${relationalHome}sandbox/`, title: 'SQL sandbox', description: 'Explore PostgreSQL in your browser, with guided lessons from first queries to migrations, indexes and recovery reasoning.', group: 'Practice', keywords: 'PostgreSQL interactive tutorial transactions rollback' },
-  { href: `${relationalHome}practice/`, title: 'Start the SQL practice', description: 'Open PostgreSQL, load the shop records and choose the setup for each article.', group: 'Practice', keywords: 'PostgreSQL psql Docker exercises' },
+  { href: `${relationalHome}practice/`, title: 'Start the SQL practice', description: 'Open a disposable PostgreSQL database and use the independent setup supplied by each article.', group: 'Practice', keywords: 'PostgreSQL psql Docker exercises' },
   ...relationalCollection.flatMap(group => group.articles.filter(article => !!article.status).map(article => ({
     href: relationalArticleHref(article.slug), title: article.title, description: article.description,
     group: group.title, keywords: article.scope,

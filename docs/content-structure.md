@@ -7,15 +7,15 @@ planning commission, independently challenged and revised for discussion before 
 coverage maps extend this document's content jobs; they do not replace current
 publication status or commission the proposed articles.
 
-Current status, 15 October 2026: the user authorised completion and publication of
-the aligned relational collection. Its 34 articles are now implemented and linked
-to practical lessons, with the introduction, checkout and practice routes retained.
-The plan below records the commissioning reasoning; its original proposal language
-does not describe the current availability. The completed inventory is
-`src/lib/relational-collection.ts`, and production evidence is under
-`docs/article-work/relational-completion/` and `docs/article-work/postgresql-rebuild/`.
-The PostgreSQL branch has eleven connected articles spanning server internals,
-distribution, richer query types and extensions. Other fields and the shared
+Current status, 19 October 2026: the user authorised publication of the revised
+54-article relational collection after its teaching-tools repair and independent
+reviews. It covers the general and distributed mechanisms, a 13-article PostgreSQL
+branch and a ten-article CockroachDB branch. Task paths, public worksheets and the
+subject directory connect the articles. Four earlier PostgreSQL specialist articles,
+the checkout and SQL sandbox remain available; the practice entrance now uses
+independent article fixtures. `src/lib/relational-collection.ts` records available
+reading. The [publication record](article-work/relational-rewrite-2026-10-19/publication.md)
+links the production and review evidence. Other fields and the shared
 distributed-systems programme remain outside this commission.
 
 

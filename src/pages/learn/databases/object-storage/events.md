@@ -32,7 +32,7 @@ A separate “processed” marker requires care. Writing the marker before the t
 
 <figure class="object-figure"><div class="flow"><div><strong>Event v1</strong><span>Fetch exact source version<br>Compute resize-3</span></div><div><strong>Write stable output</strong><span>thumbs/i-83/v1/resize-3.jpg<br>Crash before acknowledgement</span></div><div><strong>Repeated event v1</strong><span>Recognise or verify the same output<br>Complete the pending work</span></div></div><figcaption>A stable output identity lets a retry reconcile the effect. The queue can still deliver the event more than once.</figcaption></figure>
 
-If processing includes a non-idempotent external effect, such as charging an account, use that destination's idempotency mechanism or a durable workflow that can reconcile uncertain outcomes. A thumbnail convention does not establish exactly-once behaviour for arbitrary services. The [relational outbox discussion](/learn/databases/relational/adding-another-system/) follows the durable-work boundary in more detail.
+If processing includes a non-idempotent external effect, such as charging an account, use that destination's idempotency mechanism or a durable workflow that can reconcile uncertain outcomes. A thumbnail convention does not establish exactly-once behaviour for arbitrary services. The [relational outbox discussion](/learn/databases/relational/outboxes-and-jobs/) follows the durable-work boundary in more detail.
 
 <div id="do-not-let-old-work-replace-new-results" aria-hidden="true"></div>
 

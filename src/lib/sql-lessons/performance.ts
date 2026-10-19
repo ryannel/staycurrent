@@ -69,7 +69,7 @@ SELECT count(*) FROM perf_jobs WHERE state = 'queued';`,
     id: 'request-batching',
     title: 'Load an order list without multiplying its work',
     description: 'Replace repeated child lookups, then see why combining two child collections can duplicate rows.',
-    articleHref: '/learn/databases/relational/request-cost/',
+    articleHref: '/learn/databases/relational/application-sql/',
     steps: [
       {
         title: 'Prepare three orders and their children',
@@ -135,7 +135,7 @@ SELECT sum(amount) AS paid FROM request_payments WHERE order_id = 101;`,
     id: 'report-freshness',
     title: 'A fast report can contain yesterday’s answer',
     description: 'Build daily totals, store them in a materialized view, and follow a late correction through refresh.',
-    articleHref: '/learn/databases/relational/reporting/',
+    articleHref: '/learn/databases/relational/aggregates-and-windows/',
     steps: [
       {
         title: 'Prepare a small sales ledger',

@@ -9,7 +9,7 @@ import { relationalHome } from './reading';
 export interface PagerEntry { href: string; title: string }
 
 const relational: PagerEntry[] = [
-  { href: relationalHome, title: 'Relational databases: an introduction' },
+  { href: relationalHome, title: 'Relational databases: introduction and choices' },
   ...relationalCollection.flatMap((group) => {
     const available = group.articles.filter((a) => !!a.status);
     const main = available.filter((a) => a.slug === group.main);

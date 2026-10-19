@@ -4,7 +4,7 @@ export const choicesTutorials: Tutorial[] = [
   {
     id:'product-contract', title:'Turn a product assumption into an acceptance case',
     description:'Inspect rounding, a rejected quantity and the surviving records before carrying the same business rules to another engine.',
-    articleHref:'/learn/databases/relational/product-comparison/#correctness',
+    articleHref:'/learn/databases/relational/',
     steps:[
       {title:'Define the intended stored values', instruction:'Run this setup first on the sandbox connection. A line must have a positive integer quantity and a finite nonnegative price stored to two decimal places. These are PostgreSQL declarations; this lesson does not execute other products. Reset and rerun this step to start again.',
        sql:`DROP TABLE IF EXISTS choice_lines;
@@ -26,7 +26,7 @@ RETURNING quantity, unit_price, quantity * unit_price AS total;`, expected:'The 
   {
     id:'search-in-postgres', title:'Search product words inside PostgreSQL',
     description:'Turn titles into searchable terms, match a query, and see how a committed title change changes the answer.',
-    articleHref:'/learn/databases/relational/adding-another-system/#native-search',
+    articleHref:'/learn/databases/relational/outboxes-and-jobs/',
     steps:[
       {title:'Create three product titles', instruction:'Run this independent setup first. PostgreSQL generates searchable terms from each English title. The GIN index offers an access path for those terms. Three records let us reason about matching; they cannot establish search capacity or production ranking quality. Reset and rerun this step to repeat.',
        sql:`DROP TABLE IF EXISTS choice_products;
@@ -55,7 +55,7 @@ WHERE terms @@ plainto_tsquery('english','blue cup') ORDER BY product_id;`, expe
   {
     id:'copy-freshness', title:'Keep a search copy from bringing back an old product',
     description:'Observe a stale copy, apply a newer withdrawal and reject an older replay using per-product versions.',
-    articleHref:'/learn/databases/relational/adding-another-system/#another-copy',
+    articleHref:'/learn/databases/relational/outboxes-and-jobs/',
     steps:[
       {title:'Make the source and copy visible together', instruction:'Run this setup first. These two tables live in ONE database and model two states you can compare; no replica or network runs here. The copy is deliberately updated by later steps. Product 1 is active at version 1 in both. Reset and rerun this step to restore the starting state.',
        sql:`DROP TABLE IF EXISTS choice_copy, choice_source;

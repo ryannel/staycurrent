@@ -961,3 +961,15 @@ independent media-first review and rendered repairs. The [repair handoff](../art
 records per-page decisions, verification and limits. The collection is ready as
 drafts within that scope; the allocation remains 54 pages and publication remains
 separate. Earlier readiness and rejection records remain historical evidence.
+
+
+## Publication, 19 October 2026
+
+After the completed teaching-tools repair, the user authorised publication of all
+54 articles. Sources are now in `src/articles/relational/`. The registry retains
+the reviewed draft hashes and records the public destinations and published hashes.
+The publication changes status and links, reuses the reviewed renderer and models,
+and connects task paths, search, navigation and downloadable evidence. The
+[publication record](../article-work/relational-rewrite-2026-10-19/publication.md)
+records the integration checks. The earlier draft-only boundaries above describe
+those earlier deliveries.

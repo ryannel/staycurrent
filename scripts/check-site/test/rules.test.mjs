@@ -114,3 +114,11 @@ test('css-balanced', () => {
   assert.equal(rule('css-balanced').check({ path: 'x.css', text: '.a:not(.b .c { color: red; }' }).length, 1);
   assert.equal(rule('css-balanced').check({ path: 'x.css', text: '@media print { .a { color: red; }' }).length, 1);
 });
+
+
+test('figure-labels: long captions count beside short figure labels', () => {
+  const caption = 'The retained rows show which records can be read while the concurrent transaction changes their current values. ';
+  const body = `<figure><figcaption>Figure 1. ${caption}</figcaption></figure><figure><span>Figure 2</span><figcaption>Figure 2. ${caption}</figcaption></figure><figure><figcaption>Figure 3. ${caption}</figcaption></figure>`;
+  assert.deepEqual(run('figure-labels', article({ body })), []);
+  assert.equal(run('figure-labels', article({ body: body.replace('Figure 3.', 'Figure 4.') })).length, 1);
+});

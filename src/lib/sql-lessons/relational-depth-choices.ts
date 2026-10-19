@@ -89,7 +89,7 @@ RESET ROLE;`,
     id: 'outbox-delivery',
     title: 'Keep a committed change and its delivery obligation together',
     description: 'Commit source state and an outbox event, model a lost delivery acknowledgement, and replay without undoing newer state.',
-    articleHref: '/learn/databases/relational/adding-another-system/#outbox',
+    articleHref: '/learn/databases/relational/outboxes-and-jobs/',
     steps: [
       {
         title: 'Prepare the catalogue, pending events and destination model',

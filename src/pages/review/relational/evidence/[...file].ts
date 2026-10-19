@@ -1,7 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-const root = fileURLToPath(new URL('../../../../../docs/article-work/relational-rewrite-2026-10-19/', import.meta.url));
+const root = path.resolve('docs/article-work/relational-rewrite-2026-10-19');
 export function getStaticPaths() {
  if (process.env.RELATIONAL_DRAFT_PREVIEW !== '1') return [];
  const walk = (directory: string): string[] => readdirSync(path.join(root, directory), { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(path.join(directory, entry.name)) : [path.join(directory, entry.name)]);
