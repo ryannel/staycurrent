@@ -1,6 +1,6 @@
 # Relational databases: proposed article tree
 
-39 article nodes: 39 expanded and accepted; 0 pending. Planning only; no articles written.
+38 proposed articles: one introduction, eight main guides and 29 deeper articles. Both local review perspectives and all three whole-tree perspectives passed after repair. Planning only; no articles written.
 
 The expertise target is practice in relational databases throughout. Each child is placed under the parent heading that introduces it. Its parent supplies the useful overview before linking to deeper reading.
 
@@ -31,8 +31,7 @@ The complete heading briefs remain in the [canonical YAML](../../coverage/relati
   - [Understanding and improving database performance](#a05)
     - [How stored rows become physical work](#a24)
     - [Choosing indexes for a workload](#a25)
-    - [Following a query through its execution plan](#a26)
-    - [Explaining and correcting plan choices](#a27)
+    - [Diagnosing a query from its execution plan](#a26)
     - [Improving performance under concurrent load](#a28)
   - [Changing a live database](#a06)
     - [Changing schemas without breaking applications](#a29)
@@ -51,7 +50,7 @@ The complete heading briefs remain in the [canonical YAML](../../coverage/relati
 <a id="a00"></a>
 ## a00 · Relational databases
 
-Introduce relational databases through an ordinary application that must keep related facts correct while people read and change them. Establish the model, the work a database performs and the decisions its users remain responsible for. Give an intelligent engineer new to the subject a useful first working model and a route to expert practice in choosing, designing, querying, integrating, diagnosing, operating and recovering a relational service. Keep detailed mechanisms in the contextual articles where they change a practical decision.
+Introduce relational databases through an ordinary application that must keep related facts correct while people read and change them. Establish the model, the work a database performs and the decisions its users remain responsible for. Give an intelligent engineer new to the subject a useful first working model and a route to expert practice in choosing, designing, querying, integrating, diagnosing, operating and recovering a relational service. Keep detailed mechanisms in the contextual articles where they change a practical decision. Make the parent-first reading contract explicit: the current article supplies a usable answer before its contextual children deepen a question. Newcomers finish the working-route parent articles before selecting that depth; readers entering for a particular task see any precise prerequisite section at the contextual entrance.
 
 - One action changes several facts
 - Tables describe facts and relationships
@@ -210,7 +209,7 @@ Teach practitioners to recognise and repair plausible wrong answers caused by SQ
 
 Introduced by [a02](#a02), under **Combine related facts without changing the question**.
 
-Build correct multi-table application queries and reports by keeping the meaning of one result row explicit. Develop join cardinality, outer-join filtering, grouping, counts, conditional totals and the repair of double-counting with a small connected set of checked examples. Assume the parent's first join and grouped query; concentrate on cases that produce plausible wrong answers. Identify the example engine and consequential dialect behaviour at first use. Keep detailed existence and membership semantics with Composing larger SQL queries, expression semantics with Getting SQL values right, and execution methods and costs with performance. This article supplies the depth needed for expert relational practice without a further reporting or join-specialist branch.
+Build correct multi-table application queries and reports by keeping the meaning of one result row explicit. Develop join cardinality, outer-join filtering, grouping, counts, conditional totals and the repair of double-counting with a small connected set of checked examples. Follow the parent-first reading path. Before the first worked task, tell contextual entrants to read Working with SQL's section Express a larger question in checkable stages: its small staged query supplies the derived-table or CTE notation used here. Assume that section alongside the parent's first join and grouped query; concentrate on cases that produce plausible wrong answers. No composition tutorial or prerequisite visit to Composing larger SQL queries is needed. Identify the example engine and consequential dialect behaviour at first use. Keep detailed existence and membership semantics with Composing larger SQL queries, expression semantics with Getting SQL values right, and execution methods and costs with performance. This article supplies the depth needed for expert relational practice without a further reporting or join-specialist branch.
 
 - State what one result row represents
 - Follow the matches a join produces
@@ -421,7 +420,7 @@ Make work beyond a relational transaction discoverable and recoverable. Follow o
 
 Introduced by [a00](#a00), under **Correct SQL still has to do physical work**.
 
-Teach a repeatable method for diagnosing relational workloads and making measured improvements. Build the necessary understanding of row and index storage, buffering, version retention, access paths, join methods, sorting, aggregation, statistics and optimiser choices. Read estimated and observed plans without confusing their units or treating estimates as execution evidence. Connect query shape, indexes, physical layout, maintenance and resource contention to workload latency, throughput and capacity. Choose and validate changes with representative data and concurrency, including write and operational costs; deepen engine internals only where they explain a diagnosis or intervention.
+Teach a repeatable method for diagnosing relational workloads and making measured improvements. Build the necessary understanding of row and index storage, buffering, version retention, access paths, join methods, sorting, aggregation, statistics and optimiser choices. Read estimated and observed plans without confusing their units or treating estimates as execution evidence. Connect query shape, indexes, physical layout, maintenance and resource contention to workload latency, throughput and capacity. Choose and validate changes with representative data and concurrency, including write and operational costs; deepen engine internals only where they explain a diagnosis or intervention. Give the parent a complete ordinary diagnosis-to-measured-improvement loop. Tell readers to finish this article, including its concluding comparison method, before selecting an optional contextual investigation by the question their evidence raises.
 
 - Start with the work people need to finish
 - Find where time and work accumulate
@@ -429,10 +428,8 @@ Teach a repeatable method for diagnosing relational workloads and making measure
   ↳ Deeper article: [How stored rows become physical work](#a24).
 - Give the query a useful route to its rows
   ↳ Deeper article: [Choosing indexes for a workload](#a25).
-- Read a plan as a programme of physical operations
-  ↳ Deeper article: [Following a query through its execution plan](#a26).
-- Understand why the optimiser chose that plan
-  ↳ Deeper article: [Explaining and correcting plan choices](#a27).
+- Explain the work and test a plan hypothesis
+  ↳ Deeper article: [Diagnosing a query from its execution plan](#a26).
 - A faster query can still make the workload slower
   ↳ Deeper article: [Improving performance under concurrent load](#a28).
 - Change one explanation into a measured improvement
@@ -458,7 +455,7 @@ Teach the physical model needed to explain page traffic, cache pressure and unre
 
 Introduced by [a05](#a05), under **Give the query a useful route to its rows**.
 
-Derive index candidates from the work a relational workload needs, explain how their keys limit and order access, and decide whether their read benefit earns their write, space and operating costs. Use one tenant order-history workload with equality filters, a date range, an ordered first page and a related-row lookup. Extend it only when another query exposes a consequential trade-off. Own B-tree traversal, composite key order, coverage, base-row access and index eligibility. Reuse the plan-reading article's reporting conventions and the performance parent's common comparison method. Link statistics diagnosis, physical storage and safe schema changes to their owners. Keep the depth at choosing and evaluating relational indexes, without an index-family catalogue or another benchmarking curriculum.
+At the opening, require completion of Understanding and improving database performance, including its concluding Change one explanation into a measured improvement as the common comparison method used here. Derive index candidates from the work a relational workload needs, explain how their keys limit and order access, and decide whether their read benefit earns their write, space and operating costs. Use one tenant order-history workload with equality filters, a date range, an ordered first page and a related-row lookup. Extend it only when another query exposes a consequential trade-off. Own B-tree traversal, composite key order, coverage, base-row access and index eligibility. Supply a compact local reporting legend before using observed index evidence; no sibling article is a prerequisite. Offer Diagnosing a query from its execution plan for deeper evidence reading and plan-choice diagnosis. Link physical storage and safe schema changes to their owners. Keep the depth at choosing and evaluating relational indexes, without an index-family catalogue or another benchmarking curriculum.
 
 - Start with the queries the workload must serve
 - Follow a B-tree from key to row
@@ -473,35 +470,19 @@ Derive index candidates from the work a relational workload needs, explain how t
 - Keep the candidate only if its benefit survives the workload
 
 <a id="a26"></a>
-## a26 · Following a query through its execution plan
+## a26 · Diagnosing a query from its execution plan
 
-Introduced by [a05](#a05), under **Read a plan as a programme of physical operations**.
+Introduced by [a05](#a05), under **Explain the work and test a plan hypothesis**.
 
-Teach readers to collect and interpret estimated and observed PostgreSQL plans, following one shared reporting query from SQL to physical work. Make execution effects, reporting units and evidence limits explicit before diagnosing repeated work, large intermediates, filtering and spills. Turn a supported observation into a correctness-preserving intervention to test. Share the worked case with Explaining and correcting plan choices: this article owns collecting and reading evidence, and hands off the first consequential estimate/observation mismatch for statistics and parameter diagnosis. Link index design, storage mechanisms, concurrent-load investigation and the parent's comparison method rather than teaching them again. Use a documented PostgreSQL version and distinguish captured execution from illustrative plans throughout.
+Complete one ordinary slow-query investigation in PostgreSQL: collect safe evidence, follow physical rows and repeated work, interpret reporting units, explain a consequential estimate error, test a targeted remedy and accept it against the workload. Use the same reporting query throughout, including common and rare prepared parameters, so statistics and plan choice resolve the original diagnosis rather than begin another tour. Record the concrete engine version and verify its behaviour against primary documentation. Distinguish captured evidence from illustrative arithmetic and explain what each observation cannot establish. Keep uncommon nodes, parallel variants and planner controls conditional and compact. Link index design, storage mechanisms, concurrent-load diagnosis and the parent's comparison method to their owners; do not expand into optimiser or storage-engine specialism. No further article is required to finish this task.
 
-- Start with the query and the work it must return
-- Choose what evidence it is safe to collect
-- Follow rows through the plan tree
-- Recognise how joins turn input rows into work
-- Find work that must accumulate, remember or spill
-- Read the numbers in their own units
-- Account for parallel and incomplete execution
-- Turn a plan observation into a testable change
-
-<a id="a27"></a>
-## a27 · Explaining and correcting plan choices
-
-Introduced by [a05](#a05), under **Understand why the optimiser chose that plan**.
-
-Teach how to turn a surprising relational plan choice into a testable explanation and a targeted correction. Continue the shared worked case from Following a query through its execution plan at its first consequential estimate/observation mismatch; that sibling owns obtaining and reading the plan. Use PostgreSQL as the concrete engine, recording the version and checking engine behaviour against its primary documentation. Build only the statistics, cardinality, cost and parameter model needed to distinguish missing information from a genuinely expensive query or a constrained planning choice. Test remedies against SQL correctness, rare and common parameter values, data drift and planning overhead. Use the parent's workload comparison method and link index design, storage and operating procedures to their owners. Keep this as one focused article without an optimiser algorithm survey or further specialist branches.
-
-- Start with the choice that needs explaining
-- What the planner needs to predict
-- How a small error changes the rest of the plan
-- Find which information is missing
-- Match the remedy to the hypothesis
-- The same statement can need different plans
-- Know when a better estimate is not enough
+- Collect evidence for the slow report safely
+- Follow where the report spends its work
+- Interpret counts, costs and timings before blaming a node
+- Locate the first error that could change the choice
+- Check the statistics behind that prediction
+- Check the application's common and rare parameters
+- Verify the remedy and close the investigation
 
 <a id="a28"></a>
 ## a28 · Improving performance under concurrent load
@@ -615,7 +596,7 @@ Teach practitioners to secure, observe, maintain, scale and recover a relational
 
 Introduced by [a07](#a07), under **Limit who can reach and change the data**.
 
-Teach how to build and verify operational access boundaries around a relational database, using one service's application, migration, reporting, backup and emergency access tasks. Connect network reachability, identity, privileges, ownership, encryption and audit evidence to what each actor can actually do. Develop safe rotation, revocation and compromise response with selected-engine checks and explicit managed-service responsibilities. Keep application query safety and application authorisation in integration, restoration procedures in backups, and the common incident decision method in service operations. This article supplies the operational security depth needed for relational practice; it does not open a general security architecture branch.
+Teach how to build and verify operational access boundaries around a relational database, using one service's application, migration, reporting, backup and emergency access tasks. Connect network reachability, identity, privileges, ownership, encryption and audit evidence to what each actor can actually do. Develop safe rotation, revocation and compromise response with selected-engine checks and explicit managed-service responsibilities. Keep application query safety and application authorisation in integration, restoration procedures in backups, and the common incident decision method in service operations. Follow the parent-first reading route through Running a relational service; readers entering here directly should read its section Recover the incident without destroying the evidence before this article's final compromise exercise. This article supplies the operational security depth needed for relational practice; it does not open a general security architecture branch.
 
 - Turn access needs into testable boundaries
 - Admit only the intended connections
@@ -631,23 +612,17 @@ Teach how to build and verify operational access boundaries around a relational 
 
 Introduced by [a07](#a07), under **Observe the service before it reaches a limit**.
 
-Teach practitioners to connect service objectives to useful database and infrastructure signals, investigate changes against workload and deployment history, and budget capacity for normal operation, failover, maintenance and recovery. Build actionable alerts and validate operating limits with representative load and measured recovery evidence. Use the evidence to choose whether to reduce work, change a limit, add resources or change topology. Link to performance for query diagnosis and benchmark methods, integration for pool implementation, and the neighbouring operational articles for maintenance, replication and restoration procedures.
+Teach practitioners to establish deployment visibility, maintain capacity and growth budgets, reserve normal and degraded headroom, and act on useful alerts before a service reaches a limit. Produce a dashboard, an evidence-routing table and capacity worksheets tied to service objectives and intervention lead times. Reuse the workload measurement and load evidence from Improving performance under concurrent load (a28), the sole owner of deep concurrent-workload diagnosis. Link to the owning maintenance, topology and restoration procedures for their operational evidence and actions.
 
-- Start with the service the application needs
-  - Measure outcomes at the right boundary
-  - Know what the deployment exposes
-- Build a small set of signals that explains pressure
-  - Read rates, distributions and waiting together
-  - Follow pressure to an operating constraint
-- Investigate a change against its history
-- Account for everything that needs space
-  - Estimate steady growth and retained data
-  - Reserve temporary space and time to respond
-- Size for the work the service must survive
-  - Budget normal, failover and maintenance conditions separately
-  - Check the envelope with representative evidence
-- Make alerts lead to an action
-- Choose an intervention and prove it helped
+- Build the dashboard the deployment can support
+  - Apply the workload measures to one service view
+- Route a changed signal with its evidence
+- Forecast space and the time left to act
+  - Include retained and temporary allocations
+  - Compare growth with intervention lead time
+- Reserve capacity for normal and degraded operation
+  - Accept the budget against existing evidence
+- Turn capacity and service alerts into owned action
 
 <a id="a37"></a>
 ## a37 · Maintaining and upgrading a relational service
@@ -673,7 +648,7 @@ Teach practitioners to keep a relational service healthy and change its engine v
 
 Introduced by [a07](#a07), under **Choose where reads and writes can safely run**.
 
-Choose and operate a relational topology against explicit availability, data-loss, recovery and read-freshness requirements. Follow changes from the writer to a replica, distinguish acknowledgement from replay and usable reads, then practise safe promotion, exclusion of the former writer, reconnection and rejoining. Distinguish local table partitioning from distributing database ownership, and assess the routing, transaction, movement and recovery costs of the latter. Use selected-engine and managed-service contracts and bounded failure rehearsals to establish what the deployment can actually deliver. Keep consensus theory, query tuning, application retry mechanics and backup restoration with their owners.
+Choose and operate a relational topology against explicit availability, data-loss, recovery and read-freshness requirements. Follow changes from the writer to a replica, distinguish acknowledgement from replay and usable reads, then practise safe promotion, exclusion of the former writer, reconnection and rejoining. Decide whether local table partitioning preserves the schema and earns its continuing lifecycle cost, then distinguish it from distributing database ownership and assess the routing, transaction, movement and recovery costs of the latter. Use selected-engine and managed-service contracts and bounded failure rehearsals to establish what the deployment can actually deliver. Keep consensus theory, query tuning, application retry mechanics and backup restoration with their owners.
 
 - Turn service requirements into a placement decision
 - Follow a committed change to a replica
@@ -683,7 +658,7 @@ Choose and operate a relational topology against explicit availability, data-los
 - Replace a writer without leaving two authorities
   - Reconnect clients and establish the result
   - Rejoin or replace the former member
-- Recognise when distributing ownership changes the problem
+- Choose between local partitions and distributed ownership
   - Choose a key and trace work across owners
   - Move ownership and retain a recovery path
 - Check the actual hosting and distribution contract
@@ -712,7 +687,7 @@ Teach relational practitioners to choose recovery copies for named loss cases an
 
 Introduced by [a00](#a00), under **Choose a system by testing the contract you need**.
 
-Teach how to select and validate a relational engine and deployment for a concrete application. Turn workload, correctness, latency, availability, locality, operational capacity and total cost into explicit requirements and rejection tests. Compare representative embedded, server and distributed relational choices through the mechanisms that change those tests, including managed service restrictions and responsibilities. Finish with a realistic evaluation and a documented adoption decision. Use neighbouring storage families only to establish suitability; use implementation follow-ups to check a candidate's actual contract rather than to build a vendor catalogue.
+Teach how to select and validate a relational engine and deployment for a concrete application. Turn workload, correctness, latency, availability, locality, operational capacity and total cost into explicit requirements and rejection tests. Compare representative embedded, server and distributed relational choices through the mechanisms that change those tests, including managed service restrictions and responsibilities. Finish with a realistic evaluation and a documented adoption decision. Use neighbouring storage families only to establish suitability; use conditional implementation follow-ups to check a candidate's actual contract. SQLite and CockroachDB are alternative adoption routes, not a required sequence; common disposable PostgreSQL practice starts in Working with SQL before this selection evaluation is complete. Keep the PostgreSQL candidate record here.
 
 - Begin with the application's promises
 - Establish whether a relational system fits

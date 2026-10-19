@@ -1,52 +1,95 @@
-# Relational planning with batched review
+# Relational databases: reviewed plan
 
-Fresh run using the corrected depth target and fan-out workflow. The
-[commission](commission.md) is its only curriculum input; the earlier stopped
-proposal is not reused. Planning ends before article writing.
+**38 articles: one introduction, eight main guides and 29 deeper articles.**
+The complete tree passed both local perspectives and all three whole-tree
+perspectives after repair. No stubs or fourth article level remain. Article
+writing has not started; the next step is discussion with the user.
 
-The orchestrator fills available slots with independent builders. Builders
-return drafts and finish their turns. Two separate review perspectives cover
-each ready batch, with findings and repairs tracked per article. Only accepted
-child briefs enter the expansion queue. Three fresh perspectives review the
-complete tree after every stub is expanded.
+Read the [outline](outline.md) for article briefs, section titles and contextual
+child placements, or the [canonical YAML](../../coverage/relational-fanout-2026-10-19.yaml)
+for every heading brief. The [commission](commission.md) is the curriculum input;
+previous articles and the stopped proposal were not structural inputs.
 
-`run-state.json` records queue, batch and review state. `nodes/` holds assignments
-and builder results; `batches/` preserves review inputs and findings. The
-canonical proposal is `../../coverage/relational-fanout-2026-10-19.yaml`.
+| Branch, including its guide | Articles |
+| --- | ---: |
+| Designing relational data | 5 |
+| Working with SQL | 6 |
+| Making concurrent changes correct | 3 |
+| Building applications around a relational database | 5 |
+| Understanding and improving database performance | 5 |
+| Changing a live database | 4 |
+| Running a relational service | 6 |
+| Choosing a relational database | 3 |
 
-The expert-practitioner target remains relational databases throughout the run.
-Depth and separate pages must earn their value against that original goal and
-the reader's time and effort.
+The introduction adds one article to these branch totals. These are destinations,
+not a compulsory sequence through every child. The root gives a parent-first
+working route, problem-driven routes and conditional adoption routes. Each parent
+supplies a usable answer before introducing its deeper articles in context.
 
-## First-level review
+## Skills and fan-out
 
-The root and eight branch plans passed both perspectives. The editor folded a
-separate incident destination into the operations parent, preserving its decision
-method and links to procedure owners. Repairs also removed a modelling-pattern
-tour and clarified query-composition, lock/isolation and constraint-deployment
-ownership. Both perspectives rechecked the changes. The accepted first-level
-structure contains 40 article nodes; its deeper stubs remain provisional until
-expanded and reviewed.
+The expertise target remains relational databases at every level. Descendants
+contribute only the depth needed for that original goal. There is no imposed page
+count or article-depth cap; the section-level stopping points are the result of
+planning and review.
 
-## Worker handoff
+Builders return drafts and free their slots. The orchestrator fills available
+slots with ready builders and independent batch reviewers, keeping the two local
+perspectives separate and reusing those reviewer roles. Every article receives
+both checks; repairs are returned to builders and rechecked. Three fresh reviewers
+then assess the complete tree. No worker starts a nested review team in this run.
 
-Each fresh builder is asked to apply `staycurrent-breakdown` to its node context,
-read the original commission and relevant parent boundary notes, save draft YAML
-to the specified output, and change no other files. The context contains the
-original subject and expertise goal, its own assignment, parent introduction and
-neighbouring briefs. Reviewer handoffs name one independent perspective, an
-immutable batch manifest and a findings destination; reviewers do not read the
-other perspective’s report or spawn a review team.
+Three subagent slots were available. At 20:19 UTC, 30 plans were drafted and 24 had
+passed both local checks. The final whole-tree sign-off was at 20:37 UTC, roughly
+40 minutes after the tracked root checkpoint at 19:58 UTC. Skill-edit time is
+outside that interval. There is no controlled earlier-run timing or reliable
+speedup ratio.
 
-## Complete expansion checkpoint
+## Whole-tree decisions
 
-The full proposal contains 39 articles: one introduction, eight main guides and
-30 deeper articles. Every active article passed both local perspectives; no
-stubs or fourth article level remain. The PostgreSQL candidate checks were folded
-into the choosing guide after expansion exposed their duplication of the common
-worked implementation. The former a33 draft is preserved with folded status.
-Three fresh reviewers are assessing the immutable complete-tree snapshot under
-`whole-tree/round-1/`. No articles have been written.
+- Fold incident selection into the operations parent and the PostgreSQL candidate
+  record into the chooser. Their distinguishing procedures already have owners.
+- Merge plan reading and optimiser diagnosis into one completed slow-query
+  investigation. Local reviews had retained two task entrances; the fresh
+  whole-tree review identified the cost of interrupting the ordinary diagnosis.
+  The merged article preserves statistics and prepared-parameter reasoning in
+  seven coherent headings, with uncommon variants conditional.
+- Shorten monitoring and sizing to visibility, forecasts, degraded headroom and
+  owned alerts. Concurrent-workload diagnosis has one deeper owner.
+- Assign local-partition design and lifecycle decisions to the existing topology
+  article, with pruning evidence in performance and named live-change procedures.
+- Make the newcomer spine, task routes and conditional candidates explicit. Name
+  short prerequisites for joins, index evaluation and security response; supply
+  local measurement legends without introducing sibling reading loops.
 
-The site build passed, including all 13 structural checks over 103 pages. That
-checks the existing publication, not the educational quality of the proposal.
+The optional SQLite fold was not adopted: its bounded real-driver/file-ownership,
+writer-coordination and recovery checks serve a different deployment question.
+The normalisation counterexample remains compact and decision-led. Shared-fixture
+and visual suggestions remain available in the initial structure/teaching reports
+for the writing stage; they are not unresolved planning requirements or quotas.
+
+## Independent review outcomes
+
+| Perspective | Initial findings | Final recheck |
+| --- | --- | --- |
+| Completeness and depth | [One ownership gap](whole-tree/coverage-r1.md) | [Pass](whole-tree/coverage-r2.md) |
+| Structure, overlap and consolidation | [Three required repairs](whole-tree/structure-r1.md) | [Pass](whole-tree/structure-r2.md) |
+| Teaching and flow against the examples | [Two required repairs](whole-tree/teaching-r1.md) | [Pass](whole-tree/teaching-r2.md) |
+
+All required findings are closed. The teaching reviewer read all three fixed
+examples and their figures. These are planning passes; article prose, figures and
+executed procedures remain part of the later writing commission.
+
+`run-state.json` records queue, batch, folded-node and review status. `nodes/`
+preserves assignments and builder results. `batches/` holds immutable review inputs,
+findings and repairs. `whole-tree/round-1/` preserves the 39-article complete-tree
+snapshot; `round-2/` preserves the reviewed 38-article tree. The former a27 and a33
+drafts remain recorded as folded, not active destinations.
+
+## Validation
+
+The tree schema and article paths validate: 38 expanded articles, 352 headings,
+three article levels and no stubs. Every active article has paired local-review
+records, followed by the three passing whole-tree rechecks. `pnpm build` passed,
+including all 13 site rules over 103 pages; public article sources and publication
+status were not changed by this planning commission.
