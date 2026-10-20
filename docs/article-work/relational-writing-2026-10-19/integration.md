@@ -69,3 +69,11 @@ A24 passed both independent article reviews and was pushed in88faf42. The live r
 ## 20 October · 35 reviewed articles pushed
 
 Individual reviews and required repairs are complete through the database-move article, leaving SQLite, security and monitoring/capacity. The assembled source and rendered audits cover 36 local fragments with zero integration findings. Every completed article has its own commit and push. Repaired model states retain complete before copies and comparisons; affected reviews explicitly retain unchanged native evidence. The final written-corpus review brief is ready. Readable exports preserve prose, tables, code, expandable article exercises and contextual links while using cues for figures; actual source and interactive pages remain authoritative.
+
+## 20 October · all38 reviewed articles pushed
+
+Security and monitoring/capacity passed both article perspectives after branch-specific model narration repairs. All38articles now have separate commits and pushes. The complete source and rendered audits pass with zero findings; all13 full-build rules pass. Three fresh reviewers are reading the finished corpus for completeness/depth, structure/consolidation and teaching/flow against the three reference articles. The c01 immutable manifest covers all38articles and their components; corpus review is still in progress.
+
+## Complete corpus review
+
+All38writtenarticles passed independent article reviews and three fresh whole-corpus perspectives. Required setup/continuation repairs in a01/a02passed focused rechecks; all other181frozen source/component/tree files are unchanged. Complete source and rendered audits pass38/38, the full build passes all13rules, and all97Pagefind fragments exclude review routes. The canonical38article tree remains intact. Native fixtures and the new isolated driver are stopped/removed; final deployment and preview cleanup follow.

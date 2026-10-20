@@ -127,3 +127,7 @@ completed a04 run remain historical evidence.
 ## Independent review snapshots
 
 Later review batches build to their own disposable output directory with `astro build --outDir`, run the unchanged site-check APIs against that exact output, then serve it on a separate loopback port. A batch’s files remain immutable through its review, so building the next batch does not reset an active player. Original b10 used4437 and is now released/stopped. B11 used4438 from `/private/tmp/rel3-b11-dist`; its server stopped after review. Current snapshot directories, ports and root-owned sessions are tracked in state.json. Root owns server/snapshot cleanup. These are local review copies, not additional publications.
+
+## Completed native verification
+
+After all38article native reviews and the corpus setup-bridge rehearsal, root verified this shared disposable server as PID99513 at the recorded data directory, stopped it with a waited fast shutdown, independently confirmed pg_ctl status3 and absence of postmaster.pid, then removed only `/private/tmp/staycurrent-relational-20261019.goQaIi`. The running-state instructions above are retained as the historical verification record; this instance is now stopped and removed.
