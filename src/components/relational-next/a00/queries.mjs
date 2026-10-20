@@ -9,10 +9,18 @@ JOIN customers AS c ON c.customer_id = o.customer_id
 JOIN order_items AS i ON i.order_id = o.order_id
 GROUP BY o.order_id, c.name
 ORDER BY o.order_id;`;
+export const insertOrder = `INSERT INTO orders (order_id, customer_id, status)
+VALUES (103, 1, 'pending_payment');`;
+export const insertItem = `INSERT INTO order_items (order_id, product_id, quantity, unit_price_gbp)
+VALUES (103, 'MUG', 1, 20.00);`;
 export const reserve = `UPDATE products
 SET available = available - 1
 WHERE product_id = 'MUG' AND available >= 1
 RETURNING available;`;
+export const checkout = `BEGIN;
+${insertOrder}
+${insertItem}
+${reserve}`;
 export const fixture = `CREATE TABLE customers (
   customer_id integer PRIMARY KEY,
   name text NOT NULL
@@ -24,7 +32,7 @@ CREATE TABLE products (
 CREATE TABLE orders (
   order_id integer PRIMARY KEY,
   customer_id integer NOT NULL REFERENCES customers,
-  status text NOT NULL CHECK (status IN ('draft', 'pending_payment', 'paid')),
+  status text NOT NULL CHECK (status IN ('draft', 'pending_payment', 'paid', 'cancelled')),
   shipped_at timestamptz
 );
 CREATE TABLE order_items (

@@ -1,0 +1,71 @@
+import assert from 'node:assert/strict';
+import { execFileSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fixture, selectOrders, summary, insertOrder, insertItem, reserve, checkout } from './queries.mjs';
+import { customers, orders, items, products, joinedRows, summaries, orderState, race } from './models.mjs';
+// Defaults are the original runtime; a fresh isolated cluster can be named through the environment.
+const bin = process.env.REL3_A00_BIN || '/opt/homebrew/Cellar/postgresql@18/18.6_1/bin/';
+const port = process.env.REL3_A00_PORT || '57319';
+const user = process.env.REL3_A00_USER || 'staycurrent';
+const database = process.env.REL3_A00_DB || 'rel3_a00_run1';
+assert.match(database, /^rel3_a00_run[0-9]+$/);
+const connection = `postgresql://${user}@127.0.0.1:${port}/${database}`;
+const args = ['--no-psqlrc', connection, '-v', 'ON_ERROR_STOP=1', '-X', '-q', '-A', '-t'];
+const sql = text => execFileSync(bin + 'psql', [...args, '-c', text], { encoding: 'utf8' }).trim();
+const json = query => JSON.parse(sql(`SELECT COALESCE(json_agg(r),'[]'::json) FROM (${query.replace(/;\s*$/, '')}) r;`));
+const lines = text => text.split('\n').map(line => line.trim()).filter(Boolean);
+execFileSync(bin + 'createdb', ['-h','127.0.0.1','-p',port,'-U',user,database]);
+sql(fixture);
+// The tables shown under "Tables, keys and relationships" are the fixture's rows.
+assert.deepEqual(json('SELECT * FROM customers ORDER BY customer_id'), customers);
+assert.deepEqual(json('SELECT order_id, customer_id, status, shipped_at FROM orders ORDER BY order_id'), orders);
+assert.deepEqual(json('SELECT * FROM order_items ORDER BY order_id, product_id'), items);
+assert.deepEqual(json('SELECT * FROM products ORDER BY product_id'), products);
+assert.deepEqual(json(selectOrders), [{ order_id:101, status:'paid' }]);
+const inner = json(summary);
+assert.deepEqual(inner, [{ order_id:101, name:'Mina', item_total_gbp:36 }]);
+const outer = json(summary.replace('JOIN order_items', 'LEFT JOIN order_items'));
+assert.deepEqual(outer, [{ order_id:101, name:'Mina', item_total_gbp:36 }, { order_id:102, name:'Arun', item_total_gbp:null }]);
+for (const keep of [false, true]) {
+  const actual = json(`SELECT o.order_id, c.name AS customer, i.product_id, i.quantity, i.unit_price_gbp FROM orders o JOIN customers c USING(customer_id) ${keep ? 'LEFT ' : ''}JOIN order_items i USING(order_id) ORDER BY o.order_id, i.product_id`);
+  assert.deepEqual(actual, joinedRows(keep).map(({status, ...row}) => row));
+  assert.deepEqual((keep ? outer : inner).map(row => ({ order_id:row.order_id, customer:row.name, total:row.item_total_gbp })), summaries(keep).map(({joined_count,item_count,...row}) => row));
+}
+assert.equal(sql("SELECT count(*) || ',' || count(i.product_id) FROM orders o LEFT JOIN order_items i USING(order_id) WHERE o.order_id=102"), '1,0');
+assert.equal(sql('SELECT count(*) FROM orders WHERE shipped_at = NULL'), '0');
+assert.equal(sql('SELECT count(*) FROM orders WHERE shipped_at IS NULL'), '2');
+const state = () => ({ order:sql('SELECT count(*) FROM orders WHERE order_id=103') === '1', item:sql('SELECT count(*) FROM order_items WHERE order_id=103') === '1', stock:Number(sql("SELECT available FROM products WHERE product_id='MUG'")) });
+const clear = () => sql("DELETE FROM order_items WHERE order_id IN (103,104); DELETE FROM orders WHERE order_id IN (103,104); UPDATE products SET available=1 WHERE product_id='MUG';");
+// Figure 2: separate commits, rollback and commit.
+sql(insertOrder); sql(insertItem);
+assert.deepEqual(state(), orderState(4,false,true).visible);
+clear();
+sql(`BEGIN; ${insertOrder} ${insertItem} ROLLBACK;`);
+assert.deepEqual(state(), orderState(4,true,true).visible);
+assert.equal(sql(checkout), '0');
+assert.deepEqual(state(), orderState(4,true,false).visible);
+// Figure 3: two buyers for the last mug, in competing sessions.
+const run = promisify(execFile);
+const arunOrder = insertOrder.replace('103, 1', '104, 2');
+const arunItem = insertItem.replace('(103,', '(104,');
+const accepted = () => json('SELECT order_id FROM orders WHERE order_id IN (103,104) ORDER BY order_id').map(row => row.order_id);
+const read = "SELECT available FROM products WHERE product_id = 'MUG';";
+const writeZero = "UPDATE products SET available = 0 WHERE product_id = 'MUG';";
+clear();
+const minaRead = run(bin + 'psql', [...args, '-c', `BEGIN; ${insertOrder} ${insertItem} ${read} SELECT pg_sleep(0.6); ${writeZero} SELECT pg_sleep(0.6); COMMIT;`]);
+await new Promise(resolve => setTimeout(resolve, 200));
+const arunRead = run(bin + 'psql', [...args, '-c', `BEGIN; ${arunOrder} ${arunItem} ${read} SELECT pg_sleep(0.6); ${writeZero} COMMIT;`]);
+const [m1, a1] = await Promise.all([minaRead, arunRead]);
+assert.deepEqual([lines(m1.stdout), lines(a1.stdout)], [['1'], ['1']]);
+const readThenWrite = { accepted: accepted(), available: Number(sql(read)) };
+assert.deepEqual(readThenWrite, { accepted: race(false).accepted, available: race(false).available });
+clear();
+const minaReserve = run(bin + 'psql', [...args, '-c', `BEGIN; ${insertOrder} ${insertItem} ${reserve} SELECT pg_sleep(1); COMMIT;`]);
+await new Promise(resolve => setTimeout(resolve, 200));
+const arunReserve = run(bin + 'psql', [...args, '-c', `BEGIN; ${arunOrder} ${arunItem} ${reserve} ROLLBACK;`]);
+const [m2, a2] = await Promise.all([minaReserve, arunReserve]);
+assert.deepEqual([lines(m2.stdout), lines(a2.stdout)], [['0'], []]);
+const conditional = { accepted: accepted(), available: Number(sql(read)) };
+assert.deepEqual(conditional, { accepted: race(true).accepted, available: race(true).available });
+const version = sql('SELECT version()');
+console.log(JSON.stringify({version,inner,outer,counts:{empty_outer_rows:1,empty_item_count:0},read_then_write:{mina_read:'1',arun_read:'1',...readThenWrite},conditional:{mina:'0',arun:'no row',...conditional},checks:'fixture rows, SQL results, models, separate commits, rollback, checkout listing commit, two-buyer read-then-write and conditional update: passed'},null,2));
