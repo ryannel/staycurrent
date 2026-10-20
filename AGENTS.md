@@ -8,7 +8,7 @@ distributed-systems programme remain outside an article commission.
 ## Content work
 
 The goal is to take an intelligent newcomer to expert practitioner, optimising
-useful understanding against reader time and effort. Use the four skills in
+useful understanding against reader time and effort. Use the five skills in
 `.agents/skills/`:
 
 - `staycurrent-orchestrate`: manage recursive planning, corpus review and writing.
