@@ -65,3 +65,16 @@ queries; the order-103 transaction; the unguarded decrement refused with
 tax-country cases and the PostgreSQL 18 `NOT NULL … NOT VALID` then
 `VALIDATE` path (table file node unchanged where no rewrite is claimed); pages
 read at 1,000, 100,000 and 1,000,000 rows.
+
+## d01 repair round (20 October 2026)
+
+Evidence values are unchanged. Only listing layout and labels in `model.mjs` changed: SQL rewrapped to at most 40 characters per line, refusal names added, and the Figure 4 model's final labels and restored chips. The Figure 4 model is still illustrative and not executed. Commands run:
+
+```sh
+LC_ALL=C /opt/homebrew/bin/pg_ctl -D "$SCRATCH/pg/data" -l "$SCRATCH/pg/server.log" \
+  -o "-c port=57501 -c listen_addresses=127.0.0.1 -c unix_socket_directories=''" -w start
+cd src/components/relational-trial/a00 && LC_ALL=C node verify.mjs   # exit 0, "All checks passed", 51 PASS lines
+LC_ALL=C /opt/homebrew/bin/pg_ctl -D "$SCRATCH/pg/data" -m fast stop
+pnpm astro dev --port 4401                                           # browser checks, then stopped
+pnpm build                                                           # exit 0; site check 143 pages, 13 rules ok
+```

@@ -6,7 +6,7 @@ Written from the a03 registry entry and its `nested_article` plan, with the skil
 
 ## What was built
 
-- One running example kept from the introduction's shop: Mina (customer 1) and Arun (customer 2) book classes 21 (tea tasting, capacity 1) and 22 (mug painting, capacity 3, Arun already holds R7). Instructors Lena and Tariq carry the multirow staffing rule for class 21.
+- One running example kept from the introduction's shop: Mina (customer 1) and Arun (customer 2) book classes 21 (tea tasting, capacity 1) and 22 (mug painting, capacity 3, Arun already holds R7). Instructors Lena and Tariq carry (superseded in d01: customers are now Mina and Tariq, instructors Lena and Ravi) the multirow staffing rule for class 21.
 - Three invariants stated up front (capacity, ownership, staffing) with acceptable outcomes and the list of writers; the final section returns to them as a correctness argument.
 - All 18 registry anchors kept, plus `sources`. Headings polished; the contents list shows the level-2 sections.
 - Links to a18 (locking) and a19 (isolation) where their subjects arise and again under further reading. Sibling links: a10, a17, a20, a22 (two anchors), a23, a04, a07, a29, a39.
@@ -48,3 +48,36 @@ Every figure reads its data from `model.mjs`. `schedule-view.mjs` builds Figure 
 - a18 and a19 use their own tables (`resources` and `places`, with Tariq as a booker). Align them with this article's `classes`, `reservations` and `instructors`, with Mina (1) and Arun (2) as bookers and Lena and Tariq as instructors, so that "the class reservations from Making concurrent changes correct" and "class 21's last place" match.
 - a19 links to `#choose-protection-for-the-invariant-you-actually-have`, `#express-a-change-and-its-condition-together` and `#losing-the-reply-does-not-prove-rollback`; all three anchors are kept.
 - The a00 link into this article (`#a-transaction-protects-a-change-within-a-stated-contract`) is assumed from the current a00; check it against the trial a00.
+
+## d01 repairs
+
+Source: `../d01/repair-decisions.md`, "Accepted · a03". All findings applied. Article word count after repair: 5,736 (`wc -w`, file with markup).
+
+| Finding | Change |
+| --- | --- |
+| practitioner-4 | Move listing rewritten: lock 21 then 22, then `UPDATE reservations … WHERE request_id = 'R8' AND class_id = 21` as a guard (UPDATE 0 → ROLLBACK), then take a place in 22 conditionally, then free 21. `verify.mjs` adds a concurrent repeated move with class 21 at capacity 3 (R8, R20, R21): the old listing's second run commits and breaks both classes; the new one stops at `UPDATE 0` and rolls back. The deadlock section and closing argument say moves recheck the booking's current class under the locks. |
+| teaching-4, practitioner-7 | New Figure 5 (`ScheduleFigure` mode `deadlock`, scenario `move`): opposite-order run (40P01 victim, 25P02, Tariq's business rejection, Mina's whole retry) beside the ascending-order run, with starting rows stated in the figure and the prose. Full ordering procedure handed to a18. The old prose-only deadlock check in `verify.mjs` is replaced by the figure's checked schedule. |
+| visual-8, teaching-5, editorial-11 | Customers are Mina Shah (1), Tariq Aziz (2), Edda Berg (3); Tariq is the rival booker; instructors are Lena and Ravi. The opening no longer calls the classes the introduction's shop; it maps `remaining` to the mug's stock and a reservation to an order line once. A closing paragraph applies the argument to the shop's order, items and guarded stock reservation. |
+| visual-9 | Figure 1: `classes` table first and full width; no box scrolls at 375, 768, 1024 or 1280 px. |
+| visual-10 | Figure 4: old version no longer uses opacity; text uses the secondary text token (6.6:1 light, 6.8:1 dark). Uncommitted outline uses the secondary text token (6.6:1 light, 6.8:1 dark). |
+| teaching-6 | Paragraph after Figure 1 on why `remaining` is stored and that a18 takes the counted case. |
+| teaching-7 | "Choosing a protection" table (rule shape, protection, guarantee, writer duty, loser's view); closing argument says why the coordination row was preferred to Serializable and what would change that. |
+| teaching-8 | Predicate paragraph gives the concrete unseen-row case (counting reservations `FOR UPDATE`); check step 4 points to a18 for the worked insert race. |
+| practitioner-5 | Retry paragraph and lost-reply table qualified: under Serializable, 23505 and 23P01 may be retried when the key came from data another transaction was changing (Serialization failure handling page cited). |
+| practitioner-6 | "A row that did not match yet, whether newly inserted or changed to match"; coordination-row and Serializable bullets say they cover rows that start matching, provided every writer takes the row or runs at Serializable. |
+| editorial-12 | Heading "Isolation levels: a fixed snapshot is not enough" (anchor kept); "steady view" removed. |
+| editorial-13 | H2 "Deadlocks, retries and lost replies" (anchor kept). |
+| editorial-14 | "The example schema declares…"; predicate explained; "Suppose class 22 becomes a paid class"; lock defined at first use in the transaction section. |
+| editorial-15 | Deadlock outcome split into short sentences; lost-update definition rephrased; a18 hand-off sentence rephrased. |
+| editorial-16 | Schedule eyebrows "one possible timing, replayed on PostgreSQL 18.6"; "illustrative" no longer used for run schedules; Figure 1 caption rewritten; duplicate verdict uses "left"/"booked"; text summaries keep original case. |
+| editorial-17 | "This procedure works for any rule"; Sources provenance shortened, Homebrew and script notes removed from the page. |
+| visual-11 | Row labels number the starting state as step 1, so the counter and the highlighted row agree. |
+| visual-12 | Move listing and Figure 4 statements broken over short lines; no listing scrolls sideways at 375–1280 px (measured). |
+| visual-13 | Bookings cells show owners ("R7 Tariq, R10 Mina, R11 Mina"); endings table shows owners too. |
+| visual-14 | Result table of the capacity check on the starting rows added under the listing (`invariantResult`, asserted by `verify.mjs`). |
+
+Checks after repair: `verify.mjs` full run exit 0 (twice); browser (pane hidden, emulated viewports) at 375 px light and dark, 768 px light, 1024 px dark, 1280 px light: no page overflow, no Figure 1 box or listing overflow, Figure 5 stepped through both options, counter matches row labels, option change restarts, no console errors. Measured: Figure 4 old-version text and uncommitted outline 6.6:1 (light) and 6.8:1 (dark); captions 6.1:1 and 6.2:1; Figure 5 error text 7.8:1 dark. `pnpm build` passed, all 13 site-check rules ok.
+
+Not checked: screen-reader announcement; Play timing over a full run; the deadlock victim is PostgreSQL's choice — in every run so far the first waiter (Mina) was chosen, and `verify.mjs` would fail if that changed.
+
+Tree note: the instructors are now Lena and Ravi; a19 uses Mina and Tariq as instructors and should rename to match.

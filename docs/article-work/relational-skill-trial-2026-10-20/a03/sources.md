@@ -43,3 +43,14 @@ pnpm build
 
 - The durability table (`synchronous_commit = off`, replicas, `fsync = off`) is from the documentation.
 - MySQL behaviour is from the documentation only.
+
+## d01 repairs: new evidence (20 October 2026)
+
+Same cluster and settings (PostgreSQL 18.6, port 57502, started with the same `pg_ctl` command, stopped afterwards). `node src/components/relational-trial/a03/verify.mjs` run in full twice after the repairs; both exited 0.
+
+- Fixture now has customers Mina Shah (1), Tariq Aziz (2), Edda Berg (3); instructors Lena and Ravi. All schedules re-asserted with the new names.
+- Figure 5, opposite order (after Mina's R8 booking): A locks 21 (`BEGIN`, `21`), B locks 22, A waits for 22, B waits for 21 (both confirmed in `pg_stat_activity`); A gets `ERROR: 40P01`; B's lock is granted (`21`) before A rolls back; A's next statement `ERROR: 25P02`; A `ROLLBACK`; B's reservation guard `UPDATE 1`, place in 21 `UPDATE 0`; B `ROLLBACK`; A's whole move `BEGIN, 21, 22, UPDATE 1, UPDATE 1, UPDATE 1, COMMIT`. Final: class 21 1 left, class 22 1 left, R7 and R8 in 22.
+- Figure 5, ascending order: B waits for 21; A locks 22, moves, commits; B gets 21 and 22, moves, commits. Final: 21 0 left, 22 2 left, R7 in 21, R8 in 22.
+- Repeated move (class 21 capacity 3, 0 left, R8 Mina, R20 Tariq, R21 Edda; class 22 2 left, R7): unguarded listing, second run `UPDATE 1, UPDATE 1, UPDATE 1, COMMIT`, check `21|3|2|2|f`, `22|3|0|2|f`; guarded listing, second run `UPDATE 0`, `ROLLBACK`, check `21|3|1|2|t`, `22|3|1|2|t`.
+- Capacity check on the starting rows: `21|1|1|0|t`, `22|3|2|1|t`.
+- New source cited: PostgreSQL 18, Serialization failure handling, on retrying 23505 and 23P01 under Serializable; Error codes for 23P01.

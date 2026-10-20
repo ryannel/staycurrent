@@ -107,3 +107,39 @@ explanation. Scrollable tables inside figures are focusable regions.
   `min(100%, 15rem)`) was made after the 375 px pass and checked only by the
   build, not re-screenshotted.
 - Contrast of the Shiki-coloured SQL inside figures (shared component).
+
+## d01 repairs (20 October 2026)
+
+Every a00 finding in `../d01/repair-decisions.md` was applied. The layout was not edited.
+
+| Finding | Change |
+| --- | --- |
+| practitioner-1, teaching-2, editorial-1, visual-1 | The section 1 table now has four rows. The work stops after the order; the work stops after the order lines; all three writes finish (nothing wrong); two orders written at the same time (two orders hold one mug). Transactions now says a transaction solves "the first two rows … where the work stopped part-way", but not the last row. |
+| teaching-1, editorial-3 | Before Figure 3, a new paragraph defines isolation level, Read Committed, Repeatable Read, snapshot and row lock. The Repeatable Read paragraph and Figure 3's step text name "serialisation failure (SQLSTATE 40001)". |
+| editorial-4, teaching-3 | The commit paragraph now explains the write-ahead log at first use and is split in two; `synchronous_commit = off` is reworded. The replica clause was removed from Transactions. Replica and backup (base copy plus archived log) are defined before Figure 4, and the paragraph after the figure no longer redefines them. |
+| editorial-2 | "Contextual", "working-route", "deeper" and "parent" are gone. The opening now says "Start with this introduction. Then read each longer article before the shorter articles that follow from it", names the first four longer articles by title, and says a shorter article can wait until its question matters. Each section ends with "Its shorter companion articles cover…". The route paragraph says each shorter companion article names, at its start, the section of the longer article it assumes. |
+| visual-2 | Highlighted rows in Figure 1 have an accent rule, 5 px on the left and 2 px top, bottom and right, plus bold text. Changed values in Figure 3 have a 2 px accent outline and bold text. New chips in Figure 4 get the same outline. Measured at 375 px: the marker against the highlight fill is 4.89:1 in light and 5.29:1 in dark; against the figure surface it is 6.03:1 in light and 9.74:1 in dark. Text on the fill is 12.17:1 in light and 6.57:1 in dark. |
+| practitioner-2 | The deadline row is split in two. Before COMMIT was sent: not committed once the transaction is rolled back or the connection discarded, and never returned to the pool mid-transaction. While COMMIT is in flight: unknown, so look the order up. The connection paragraph now warns that the next borrower's COMMIT would commit an abandoned transaction. |
+| practitioner-3, editorial-7 (NOT VALID) | The NOT VALID advice is a new paragraph of four sentences beginning "Once no old code is running". |
+| editorial-5 | "Section 1/4/6" references are replaced by links that name the headings. |
+| editorial-6 | "Verification run/script" is removed from the body and the figure notes, which now state "Observed in PostgreSQL 18.6". Sources keeps one provenance sentence: "a script that replays every example and fails if any result in the article differs". |
+| editorial-7 | Changes: "Its outcomes are reasoned out, not observed"; the Figure 3 note now says PostgreSQL reported the lock wait; the synchronous_commit sentence is rewritten; the payment/outbox sentence becomes three steps; the schema-lock sentence is split; "a single save()". |
+| editorial-8 | "Order line" is used throughout, including the Figure 1 control ("Follow an order line's keys"), the Figure 2 option label and verdict, and the refusals table. `order_items` appears only as the table name. |
+| editorial-9 | Every link to a longer or shorter article, including the route table, uses that article's registry title. |
+| visual-3 | Refusals read "Refused: foreign key violation (23503)", unique violation (23505), check violation (23514). The last row's rule cell is "None declared". Not-null refusals in the tax-country table and the unguarded 23514 in Transactions are named the same way. |
+| visual-4 | The page-count table is transposed so it fits a phone: one column per table size and one row per measure. "Rows for one customer" is its own row, there is one number per cell, numbers are right-aligned with tabular figures, and a caption above the table states that the counts are observed. |
+| visual-5 | Figure 4's boundary note explains why order 104 never appears (the guarded update rolled it back). The final time label reads "After failover" or "After repair". The restored copy shows chips 101, 102, 103 and 105, with "106 absent" marked. |
+| visual-6 | The Figure 2 verdict no longer gives a direction: "matches the hand calculation". |
+| visual-7 | SQL listings are rewrapped to 40 characters or fewer: receipt, narrow cancellation, the three Figure 2 queries and the order transaction. The `order_items` and `orders` headers in Figure 1, and the receipt headers, can break at underscores on phones. The receipt table is set slightly smaller at phone width. Measured at 375 px: no table, listing or figure region scrolls sideways in any Figure 2 option, and the page width is 375. At 1280 px nothing overflows. |
+
+Evidence: rewrapping the SQL and renaming the refusals changed `model.mjs`, so `verify.mjs` was rerun on port 57501. It exited 0 with 51 PASS lines, `observed.txt` was regenerated and the cluster was stopped. No observed value changed.
+
+Browser checks, port 4401, with the pane hidden and size and theme emulated:
+- 375 px, both themes: overflow measured as above and highlight contrast measured as above.
+- Every Figure 3 option and step in both themes: no text below 4.5:1.
+- Screenshots: Figure 1 in light and Figure 4's repaired final step in dark.
+- The dev server was stopped afterwards.
+
+`pnpm build`: exit 0, site check 143 pages, 13 rules all ok. Article file is now 5,832 words.
+
+Not checked in this round: a screen reader; Figure 4's other states in light theme (the text-contrast check covered Figure 3 in full and the figures' current states).

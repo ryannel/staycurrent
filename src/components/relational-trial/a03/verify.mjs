@@ -22,7 +22,7 @@ for (const value of [BIN, HOST, PORT, USER]) assert.match(value, /^[A-Za-z0-9_./
 const conn = ['-h', HOST, '-p', PORT, '-U', USER];
 const psql = (db, sql) => execFileSync(`${BIN}psql`, ['-X', '-qAt', ...conn, '-d', db, '-v', 'ON_ERROR_STOP=1', '-c', sql], { encoding: 'utf8' }).trim();
 const observe = sql => psql(DB, sql);
-const evidence = { schedules: {}, versions: {}, endings: {}, levels: {}, deadlock: {}, retry: {}, outcome: {} };
+const evidence = { schedules: {}, versions: {}, endings: {}, levels: {}, retry: {}, repeatedMove: {}, outcome: {} };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 class Session {
@@ -68,6 +68,11 @@ function reset({ withoutUnique = false } = {}) {
 }
 const list = sql => { const out = observe(sql); return out ? out.split('\n') : []; };
 function committed(scenario) {
+  if (scenario === 'move') return {
+    left21: Number(observe('SELECT remaining FROM classes WHERE class_id = 21')),
+    left22: Number(observe('SELECT remaining FROM classes WHERE class_id = 22')),
+    bookings: list("SELECT request_id || ' in ' || class_id FROM reservations ORDER BY request_id"),
+  };
   if (scenario === 'staff') return { available: list("SELECT person FROM instructors WHERE class_id = 21 AND available ORDER BY person") };
   const id = scenario === 'place' ? 21 : 22;
   return { remaining: Number(observe(`SELECT remaining FROM classes WHERE class_id = ${id}`)), bookings: list(`SELECT request_id FROM reservations WHERE class_id = ${id} ORDER BY length(request_id), request_id`) };
@@ -75,8 +80,9 @@ function committed(scenario) {
 const json = sql => JSON.parse(observe(`SELECT coalesce(json_agg(r), '[]') FROM (${sql}) r`));
 
 // Run one schedule, step by step, as the figures show it.
-async function runSteps(scenario, steps, { withoutUnique = false, label }) {
+async function runSteps(scenario, steps, { withoutUnique = false, setup, label }) {
   reset({ withoutUnique });
+  if (setup) observe(setup);
   const s = await sessions();
   const pending = {};
   const record = [];
@@ -105,17 +111,14 @@ try {
   assert.deepEqual(json('SELECT * FROM classes ORDER BY class_id'), m.classes);
   assert.deepEqual(json('SELECT * FROM reservations ORDER BY request_id'), m.reservations);
   assert.deepEqual(json('SELECT * FROM instructors ORDER BY person'), m.instructors);
-  assert.deepEqual(json(m.invariantCheck.replace(/;\s*$/, '')), [
-    { class_id: 21, capacity: 1, remaining: 1, booked: 0, rule_holds: true },
-    { class_id: 22, capacity: 3, remaining: 2, booked: 1, rule_holds: true },
-  ]);
+  assert.deepEqual(json(m.invariantCheck.replace(/;\s*$/, '')), m.invariantResult);
 
   // Figures 2 and 3: every schedule and option.
-  process.stderr.write(`[check] Figures 2 and 3: every schedule and option.\n`);
+  process.stderr.write(`[check] Figures 2, 3 and 5: every schedule and option, including the deadlock.\n`);
   for (const [scenario, def] of Object.entries(m.scenarios)) {
     for (const [option, opt] of Object.entries(def.options)) {
       const label = `${scenario}/${option}`;
-      evidence.schedules[label] = await runSteps(scenario, opt.steps, { withoutUnique: opt.withoutUnique, label });
+      evidence.schedules[label] = await runSteps(scenario, opt.steps, { withoutUnique: opt.withoutUnique, setup: def.setup, label });
       const final = opt.steps.at(-1).state;
       evidence.schedules[label].push({ final, verdict: m.verdict(scenario, final) });
     }
@@ -138,8 +141,8 @@ try {
     A.close(); B.close(); await sleep(100);
   }
 
-  // The two-statement listing and the three endings of Arun's duplicate attempt.
-  process.stderr.write(`[check] The two-statement listing and the three endings of Arun's duplicate attempt.\n`);
+  // The two-statement listing and the three endings of Tariq's duplicate attempt.
+  process.stderr.write(`[check] The two-statement listing and the three endings of Tariq's duplicate attempt.\n`);
   {
     reset();
     const { A } = await sessions();
@@ -172,7 +175,7 @@ try {
   const at = (steps, level) => steps.map(step => ({ ...step, sql: step.sql && step.sql.replace(/^BEGIN;/, `BEGIN ISOLATION LEVEL ${level};`) }));
   const levelRuns = {
     'REPEATABLE READ': { place: ['ERROR:  40001'], staffCommit: ['COMMIT'], staffAvailable: [] },
-    SERIALIZABLE: { place: ['ERROR:  40001'], staffCommit: ['ERROR:  40001'], staffAvailable: ['Tariq'] },
+    SERIALIZABLE: { place: ['ERROR:  40001'], staffCommit: ['ERROR:  40001'], staffAvailable: ['Ravi'] },
   };
   for (const [level, expect] of Object.entries(levelRuns)) {
     const place = at(m.scenarios.place.options.interleaved.steps, level).slice(0, 4);
@@ -191,7 +194,7 @@ try {
     const staffCommit = await s.B.send('COMMIT;');
     assert.deepEqual(staffCommit, expect.staffCommit, `${level} staff commit`);
     assert.deepEqual(committed('staff'), { available: expect.staffAvailable });
-    evidence.levels[level] = { place_arun_write: placeWrite, staff_tariq_commit: staffCommit, staff_available: expect.staffAvailable };
+    evidence.levels[level] = { place_tariq_write: placeWrite, staff_ravi_commit: staffCommit, staff_available: expect.staffAvailable };
     s.A.close(); s.B.close(); await sleep(100);
   }
   evidence.levels['READ COMMITTED'] = { place: 'see schedules place/interleaved', staff: 'see schedules staff/interleaved' };
@@ -204,62 +207,13 @@ try {
     const { A, B } = await sessions();
     const serial = 'BEGIN ISOLATION LEVEL SERIALIZABLE; SELECT count(*) FROM instructors WHERE class_id = 21 AND available;';
     await A.send(serial); await B.send(serial);
-    await A.send(m.leave('Lena')); await B.send(m.leave('Tariq'));
+    await A.send(m.leave('Lena')); await B.send(m.leave('Ravi'));
     await A.send('COMMIT;');
     assert.deepEqual(await B.send('COMMIT;'), ['ERROR:  40001']);
-    const naive = await B.send(`BEGIN ISOLATION LEVEL SERIALIZABLE; ${m.leave('Tariq')} COMMIT;`);
+    const naive = await B.send(`BEGIN ISOLATION LEVEL SERIALIZABLE; ${m.leave('Ravi')} COMMIT;`);
     assert.deepEqual(naive, ['BEGIN', 'UPDATE 1', 'COMMIT']);
     assert.deepEqual(committed('staff'), { available: [] });
     evidence.retry = { only_the_failed_update: naive, available_afterwards: [] };
-    A.close(); B.close(); await sleep(100);
-  }
-
-  // Deadlock: Mina moves R8 from 21 to 22 while Arun moves R7 from 22 to 21.
-  process.stderr.write(`[check] Deadlock: Mina moves R8 from 21 to 22 while Arun moves R7 from 22 to 21.\n`);
-  for (const order of ['opposite', 'ascending']) {
-    reset();
-    observe(`${m.book('R8', 21, 1)}`);
-    const { A, B } = await sessions();
-    const sess = { A, B };
-    const mv = { A: m.moveSql.mina, B: m.moveSql.arun };
-    const holds = () => json(m.invariantCheck.replace(/;\s*$/, '')).every(row => row.rule_holds);
-    const finish = async who => {
-      const out = await sess[who].send(mv[who].change.replace(/\n/g, ' '));
-      if (out[1] === 'UPDATE 0') return [...out, ...await sess[who].send('ROLLBACK;')];
-      return [...out, ...await sess[who].send('COMMIT;')];
-    };
-    if (order === 'opposite') {
-      assert.deepEqual(await A.send(`BEGIN; ${mv.A.lock(21)}`), ['BEGIN', '21']);
-      assert.deepEqual(await B.send(`BEGIN; ${mv.B.lock(22)}`), ['BEGIN', '22']);
-      const pa = A.send(mv.A.lock(22)); await waitingOnLock('A');
-      const pb = B.send(mv.B.lock(21));
-      const settled = { A: null, B: null };
-      pa.then(out => { settled.A = out; }); pb.then(out => { settled.B = out; });
-      for (let i = 0; !settled.A?.[0]?.includes('40P01') && !settled.B?.[0]?.includes('40P01'); i++) {
-        if (i > 500) throw new Error(`no deadlock victim reported: ${JSON.stringify(settled)}`);
-        await sleep(20);
-      }
-      const victim = settled.A?.[0]?.includes('40P01') ? 'A' : 'B', survivor = victim === 'A' ? 'B' : 'A';
-      assert.deepEqual(await sess[victim].send('SELECT 1;'), ['ERROR:  25P02']);
-      assert.deepEqual(await sess[victim].send('ROLLBACK;'), ['ROLLBACK']);
-      const survivorLock = await (survivor === 'A' ? pa : pb);
-      const survivorResult = [...survivorLock, ...await finish(survivor)];
-      const v = mv[victim];
-      const retry = await sess[victim].send(`BEGIN; ${v.lock(v.from)} ${v.lock(v.to)} ${v.change.replace(/\n/g, ' ')} COMMIT;`);
-      assert.deepEqual(retry, ['BEGIN', String(v.from), String(v.to), 'UPDATE 1', 'UPDATE 1', 'UPDATE 1', 'COMMIT']);
-      evidence.deadlock.opposite = { victim: victim === 'A' ? 'Mina (A)' : 'Arun (B)', victim_error: '40P01', next_statement: '25P02', survivor: survivorResult, victim_whole_retry: retry, final: json('SELECT request_id, class_id FROM reservations ORDER BY request_id') };
-    } else {
-      assert.deepEqual(await A.send(`BEGIN; ${mv.A.lock(21)}`), ['BEGIN', '21']);
-      const pb = B.send(`BEGIN; ${mv.B.lock(21)}`); await waitingOnLock('B');
-      assert.deepEqual(await A.send(mv.A.lock(22)), ['22']);
-      assert.deepEqual(await finish('A'), ['UPDATE 1', 'UPDATE 1', 'UPDATE 1', 'COMMIT']);
-      assert.deepEqual(await pb, ['BEGIN', '21']);
-      assert.deepEqual(await B.send(mv.B.lock(22)), ['22']);
-      assert.deepEqual(await finish('B'), ['UPDATE 1', 'UPDATE 1', 'UPDATE 1', 'COMMIT']);
-      evidence.deadlock.ascending = { arun_waited_for_21: true, both_committed: true };
-      assert.deepEqual(json('SELECT request_id, class_id FROM reservations ORDER BY request_id'), [{ request_id: 'R7', class_id: 21 }, { request_id: 'R8', class_id: 22 }]);
-    }
-    assert.ok(holds(), `capacity rule after ${order} moves`);
     A.close(); B.close(); await sleep(100);
   }
 
@@ -267,6 +221,35 @@ try {
   process.stderr.write(`[check] The move listing as printed runs on its own.\n`);
   reset(); observe(m.book('R8', 21, 1));
   { const { A } = await sessions(); assert.deepEqual(await A.send(m.moveListing), ['BEGIN', '21', '22', 'UPDATE 1', 'UPDATE 1', 'UPDATE 1', 'COMMIT']); A.close(); await sleep(50); }
+
+  // The same move sent twice at once (a double click, or a repeat after a lost
+  // reply). Class 21 is given capacity 3 and no place left, so the CHECK
+  // constraint cannot hide a wrong count. Without the recheck of R8's class the
+  // second run releases and takes places again; with it, the second run stops.
+  process.stderr.write(`[check] The same move twice at once, without and with the recheck of R8's class.\n`);
+  const crowd = `UPDATE classes SET capacity = 3, remaining = 0 WHERE class_id = 21;
+INSERT INTO reservations VALUES ('R8', 21, 1), ('R20', 21, 2), ('R21', 21, 3);`;
+  const locks = `${m.moveSql.mina.lock(21)} ${m.moveSql.mina.lock(22)}`;
+  const moveBodies = { unguarded: m.unguardedMove.replace(/\n/g, ' '), guarded: m.moveSql.mina.change.replace(/\n/g, ' ') };
+  for (const [kind, body] of Object.entries(moveBodies)) {
+    reset(); observe(crowd);
+    const { A, B } = await sessions();
+    assert.deepEqual(await A.send(`BEGIN; ${locks} ${body}`), ['BEGIN', '21', '22', 'UPDATE 1', 'UPDATE 1', 'UPDATE 1']);
+    const second = B.send(`BEGIN; ${m.moveSql.mina.lock(21)}`); await waitingOnLock('B');
+    assert.deepEqual(await A.send('COMMIT;'), ['COMMIT']);
+    assert.deepEqual(await second, ['BEGIN', '21']);
+    assert.deepEqual(await B.send(m.moveSql.mina.lock(22)), ['22']);
+    // The guarded run stops at its first guard, as the listing says: send only
+    // the reservation recheck, then roll back on UPDATE 0.
+    const out = await B.send(kind === 'unguarded' ? body : body.split('; ')[0] + ';');
+    let end;
+    if (kind === 'unguarded') { assert.deepEqual(out, ['UPDATE 1', 'UPDATE 1', 'UPDATE 1']); end = await B.send('COMMIT;'); }
+    else { assert.deepEqual(out, ['UPDATE 0']); end = await B.send('ROLLBACK;'); }
+    const check = json(m.invariantCheck.replace(/;\s*$/, ''));
+    assert.equal(check.every(row => row.rule_holds), kind === 'guarded', `${kind} repeated move`);
+    evidence.repeatedMove = { ...(evidence.repeatedMove ?? {}), [kind]: { second_run: [...out, ...end], check } };
+    A.close(); B.close(); await sleep(100);
+  }
 
   // A lost reply: cut the client off before COMMIT, and while COMMIT is in progress.
   process.stderr.write(`[check] A lost reply: cut the client off before COMMIT, and while COMMIT is in progress.\n`);
@@ -299,5 +282,5 @@ CREATE CONSTRAINT TRIGGER slow_commit AFTER INSERT ON reservations DEFERRABLE IN
   psql('postgres', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${DB}' AND pid <> pg_backend_pid()`);
   execFileSync(`${BIN}dropdb`, [...conn, DB]);
 }
-console.log(JSON.stringify({ version, settings, database: DB, evidence, checks: 'fixture rows, invariant query, every Figure 2 and 3 schedule, Figure 4 options, listing and endings, isolation-level table, single-statement retry, deadlock and ordered moves, lost-reply cases: passed' }, null, 2));
+console.log(JSON.stringify({ version, settings, database: DB, evidence, checks: 'fixture rows, invariant query, every Figure 2, 3 and 5 schedule (including the deadlock and ordered moves), Figure 4 options, listing and endings, isolation-level table, single-statement retry, move listing, repeated move without and with the recheck, lost-reply cases: passed' }, null, 2));
 process.exit(0); // psql children that were killed mid-statement can keep the event loop open

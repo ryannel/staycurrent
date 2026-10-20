@@ -97,12 +97,16 @@ export const fixtureSql = ({ with103 }) => [
 ].join('\n');
 
 // Section 2: a join puts the separately stored facts back together.
-export const receiptSql = `SELECT o.order_id, c.name AS customer, i.line_no,
-       p.name AS product, i.quantity, i.unit_price
+export const receiptSql = `SELECT o.order_id, c.name AS customer,
+       i.line_no, p.name AS product,
+       i.quantity, i.unit_price
 FROM order_items AS i
-JOIN orders    AS o ON o.order_id = i.order_id
-JOIN customers AS c ON c.customer_id = o.customer_id
-JOIN products  AS p ON p.product_id = i.product_id
+JOIN orders AS o
+  ON o.order_id = i.order_id
+JOIN customers AS c
+  ON c.customer_id = o.customer_id
+JOIN products AS p
+  ON p.product_id = i.product_id
 WHERE o.order_id = 103
 ORDER BY i.line_no;`;
 export const receiptRows = [
@@ -112,12 +116,12 @@ export const receiptRows = [
 
 // Section 2: changes the declared rules refuse, and one they cannot know about.
 export const rejections = [
-  { sql: "INSERT INTO order_items VALUES (103, 3, 'P5', 1, 8.00);", sqlstate: '23503', what: 'An item for product P5, which does not exist', rule: 'Foreign key to products' },
-  { sql: "INSERT INTO order_items VALUES (103, 1, 'P9', 1, 35.00);", sqlstate: '23505', what: 'A second line 1 on order 103', rule: 'Primary key (order_id, line_no)' },
-  { sql: "INSERT INTO order_items VALUES (103, 3, 'P9', 0, 35.00);", sqlstate: '23514', what: 'A quantity of zero', rule: 'CHECK (quantity > 0)' },
-  { sql: "UPDATE products SET stock = -1 WHERE product_id = 'P7';", sqlstate: '23514', what: 'Negative stock for the blue mug', rule: 'CHECK (stock >= 0)' },
-  { sql: 'DELETE FROM customers WHERE customer_id = 1;', sqlstate: '23503', what: 'Deleting Mina while her orders refer to her', rule: 'Foreign key from orders' },
-  { sql: "UPDATE order_items SET quantity = 5 WHERE order_id = 101 AND line_no = 2;", sqlstate: null, what: 'Changing the items of paid order 101', rule: 'None declared: accepted' },
+  { sql: "INSERT INTO order_items VALUES (103, 3, 'P5', 1, 8.00);", sqlstate: '23503', refusal: 'foreign key violation', what: 'An order line for product P5, which does not exist', rule: 'Foreign key to products' },
+  { sql: "INSERT INTO order_items VALUES (103, 1, 'P9', 1, 35.00);", sqlstate: '23505', refusal: 'unique violation', what: 'A second line 1 on order 103', rule: 'Primary key (order_id, line_no)' },
+  { sql: "INSERT INTO order_items VALUES (103, 3, 'P9', 0, 35.00);", sqlstate: '23514', refusal: 'check violation', what: 'A quantity of zero', rule: 'CHECK (quantity > 0)' },
+  { sql: "UPDATE products SET stock = -1 WHERE product_id = 'P7';", sqlstate: '23514', refusal: 'check violation', what: 'Negative stock for the blue mug', rule: 'CHECK (stock >= 0)' },
+  { sql: 'DELETE FROM customers WHERE customer_id = 1;', sqlstate: '23503', refusal: 'foreign key violation', what: 'Deleting Mina while her orders refer to her', rule: 'Foreign key from orders' },
+  { sql: "UPDATE order_items SET quantity = 5 WHERE order_id = 101 AND line_no = 2;", sqlstate: null, refusal: null, what: 'Changing an order line of paid order 101', rule: 'None declared' },
 ];
 
 // Section 3: a first selection, and a change that succeeds while doing the wrong thing.
@@ -133,7 +137,8 @@ export const broadUpdateSql = `UPDATE orders SET status = 'cancelled'
 WHERE customer_id = 1;`;
 export const broadUpdateResult = 'UPDATE 2';
 export const narrowUpdateSql = `UPDATE orders SET status = 'cancelled'
-WHERE order_id = 103 AND status = 'pending';`;
+WHERE order_id = 103
+  AND status = 'pending';`;
 export const narrowUpdateResult = 'UPDATE 1';
 
 // Section 3, Figure 2: one question, three queries. Values are as PostgreSQL returned them.
@@ -146,32 +151,40 @@ export const expectedSummary = [
 export const summaryQueries = [
   {
     key: 'joined',
-    label: 'Join items and payments, then sum',
+    label: 'Join order lines and payments, then sum',
     sql: `SELECT o.order_id,
-       sum(i.quantity * i.unit_price) AS value,
+       sum(i.quantity * i.unit_price)
+         AS value,
        sum(pay.amount) AS paid,
-       sum(i.quantity * i.unit_price) - sum(pay.amount) AS due
+       sum(i.quantity * i.unit_price)
+         - sum(pay.amount) AS due
 FROM orders AS o
-JOIN order_items AS i  ON i.order_id = o.order_id
-JOIN payments    AS pay ON pay.order_id = o.order_id
+JOIN order_items AS i
+  ON i.order_id = o.order_id
+JOIN payments AS pay
+  ON pay.order_id = o.order_id
 GROUP BY o.order_id
 ORDER BY o.order_id;`,
     rows: [
       ['101', '79.00', '79.00', '0.00'],
       ['102', '40.00', '40.00', '0.00'],
     ],
-    verdict: 'Wrong, and plausible. Order 101 has two items and two payments, so the join made four rows and doubled both sums. Order 103 has no payment, so the join dropped it: the unpaid order is missing from a report about what is due.',
+    verdict: 'Wrong, and plausible. Order 101 has two order lines and two payments, so the join made four rows and doubled both sums. Order 103 has no payment, so the join dropped it: the unpaid order is missing from a report about what is due.',
   },
   {
     key: 'left',
     label: 'Keep orders without payments',
     sql: `SELECT o.order_id,
-       sum(i.quantity * i.unit_price) AS value,
+       sum(i.quantity * i.unit_price)
+         AS value,
        sum(pay.amount) AS paid,
-       sum(i.quantity * i.unit_price) - sum(pay.amount) AS due
+       sum(i.quantity * i.unit_price)
+         - sum(pay.amount) AS due
 FROM orders AS o
-JOIN order_items AS i ON i.order_id = o.order_id
-LEFT JOIN payments AS pay ON pay.order_id = o.order_id
+JOIN order_items AS i
+  ON i.order_id = o.order_id
+LEFT JOIN payments AS pay
+  ON pay.order_id = o.order_id
 GROUP BY o.order_id
 ORDER BY o.order_id;`,
     rows: [
@@ -185,21 +198,27 @@ ORDER BY o.order_id;`,
     key: 'separate',
     label: 'Sum each side, then join',
     sql: `WITH value AS (
-  SELECT order_id, sum(quantity * unit_price) AS value
-  FROM order_items GROUP BY order_id
+  SELECT order_id,
+    sum(quantity * unit_price) AS value
+  FROM order_items
+  GROUP BY order_id
 ), paid AS (
   SELECT order_id, sum(amount) AS paid
-  FROM payments GROUP BY order_id
+  FROM payments
+  GROUP BY order_id
 )
 SELECT o.order_id, v.value,
-       coalesce(p.paid, 0.00) AS paid,
-       v.value - coalesce(p.paid, 0.00) AS due
+  coalesce(p.paid, 0.00) AS paid,
+  v.value - coalesce(p.paid, 0.00)
+    AS due
 FROM orders AS o
-JOIN value AS v ON v.order_id = o.order_id
-LEFT JOIN paid AS p ON p.order_id = o.order_id
+JOIN value AS v
+  ON v.order_id = o.order_id
+LEFT JOIN paid AS p
+  ON p.order_id = o.order_id
 ORDER BY o.order_id;`,
     rows: expectedSummary,
-    verdict: 'Correct. Each sum is taken over one kind of row, so nothing is counted twice, and a missing payment total is turned into zero on purpose. Every value matches the hand calculation below the result.',
+    verdict: 'Correct. Each sum is taken over one kind of row, so nothing is counted twice, and a missing payment total is turned into zero on purpose. Every value matches the hand calculation.',
   },
 ];
 
@@ -229,7 +248,7 @@ export function raceSteps(key) {
   }[key];
   const fifth = {
     overwrite: 'Mina commits, so order 103 and stock 0 become visible to everyone. Tariq’s update now proceeds. It sets stock to 0, the number his application calculated from the 1 it read at step 2.',
-    repeatable: 'Mina commits. At Repeatable Read, PostgreSQL will not let Tariq overwrite a row that changed after his snapshot, so his update fails with a serialisation error.',
+    repeatable: 'Mina commits. At Repeatable Read, PostgreSQL will not let Tariq overwrite a row that changed after his snapshot, so his update fails with a serialisation failure, SQLSTATE 40001.',
     guarded: 'Mina commits. PostgreSQL rechecks Tariq’s condition against the committed row. Stock is now 0, so stock >= 1 is false and his update changes no rows.',
   }[key];
   return [
@@ -249,15 +268,22 @@ export function raceSteps(key) {
 
 // Section 4: Mina's order as one transaction, using the guarded change from Figure 3.
 export const orderTransactionSql = `BEGIN;
-INSERT INTO orders VALUES (103, 1, '2026-10-20 10:15+00', 'pending');
+INSERT INTO orders VALUES
+  (103, 1, '2026-10-20 10:15+00',
+   'pending');
 INSERT INTO order_items VALUES
   (103, 1, 'P7', 1, 20.00),
   (103, 2, 'P3', 2, 4.50);
+-- UPDATE 1, or 0 if the mug sold out:
 UPDATE products SET stock = stock - 1
-  WHERE product_id = 'P7' AND stock >= 1;   -- UPDATE 1, or 0 if sold out
+  WHERE product_id = 'P7'
+    AND stock >= 1;
 UPDATE products SET stock = stock - 2
-  WHERE product_id = 'P3' AND stock >= 2;
-COMMIT;   -- or ROLLBACK if either update changed no row`;
+  WHERE product_id = 'P3'
+    AND stock >= 2;
+-- COMMIT, or ROLLBACK if either
+-- update changed no row:
+COMMIT;`;
 
 // Section 4: the same race with an unguarded decrement. The CHECK constraint
 // refuses Tariq's change instead of the application noticing.
@@ -294,7 +320,8 @@ export function recoverySteps(key) {
       text: mistake
         ? 'Mina reports that paid order 101 has vanished. The primary is healthy and so is the replica: both faithfully lack order 101.'
         : 'The primary’s host fails. The replica holds every order up to 106, provided it had received them; an asynchronous replica can be a few commits behind.' },
-    { time: 'After', primary: mistake ? ['101', '102', '103', '105', '106'] : null, replica: mistake ? ['101', '102', '103', '105', '106'] : [...live, '106'], promoted: !mistake, backup: mistake ? 'Restored to 11:09:59 elsewhere: 101, 102, 103, 105; no 106' : 'Not needed', restored: mistake,
+    { time: mistake ? 'After repair' : 'After failover', primary: mistake ? ['101', '102', '103', '105', '106'] : null, replica: mistake ? ['101', '102', '103', '105', '106'] : [...live, '106'], promoted: !mistake,
+      backup: mistake ? 'Restored to 11:09:59 on a separate server:' : 'Not needed', restored: mistake ? ['101', '102', '103', '105'] : null, absent: mistake ? ['106'] : [],
       text: mistake
         ? 'Promoting the replica would change nothing. The team restores the copy and log to 11:09:59 on a separate server, then copies order 101 and its rows back into the live service, and the replica replays the repair. Rewinding the live service instead would lose order 106.'
         : 'The team fences the failed primary so it cannot accept writes, promotes the replica and reconnects the application. Service returns within minutes, with no backup involved.' },
