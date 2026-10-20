@@ -1,0 +1,65 @@
+# b40 independent practitioner review — a35
+
+Reviewed 20 October 2026 against the immutable b40 article and component snapshot at `http://127.0.0.1:4438/review/relational-next/security/`. Perspective: expert relational practice, not general security specialism. **Revise one required figure narration issue, then recheck those branches.** No other blocking correctness, coverage or ownership issue found.
+
+Read AGENTS.md, current staycurrent-review skill, both commissioning/context records supplied with the work, the complete article, source ledger, worksheet, writer report and retained native evidence. Read the actual a07 parent in full and the detailed a36/a37/a38/a39 scopes. Did not read the teaching review or edit article, component or worksheet sources. No shared build or Git operation performed.
+
+## Required finding
+
+### P2 — Admission narration contradicts failed authentication and a blocked route
+
+Location: `src/components/relational-next/a35/SecurityFigure.astro:37`, Figure 1, choices “Reporting client, wrong password” and “Reporting client, forbidden route”, steps 3/4 and 4/4.
+
+Reproduced independently in the frozen rendered article using the actual selector and Next controls. The wrong-password branch correctly shows “Password rejected”, then “No SQL session” and “Connection rejected”. The blocked-route branch correctly shows “Blocked before listener”, “Not reached”, then no SQL session. Both nevertheless narrate “Authentication establishes reporter” at 3/4 and a successful login permitting the approved view at 4/4. These are false conclusions for the chosen state, directly undermining the distinction this figure is intended to teach.
+
+Repair: branch narration on the same reached/authenticated conditions as the panels. At authentication, explain password rejection or why authentication was never attempted; at SQL, explain why neither statement runs without an admitted session. Keep the successful projection-versus-raw-read comparison for the allowed branch. Recheck all 12 Figure 1 choice/step states, including changing the selector while already at each final state. The step 2/4 general statement about a blocked route is true but would also be clearer if it described the selected route.
+
+## Optional improvements
+
+1. **Extend worksheet cleanup/evidence around preflight failures.** In `rehearse.mjs`, output creation, module import, temporary-directory creation and port selection precede the main try/finally. The first independent run hit the environment's loopback `EPERM` at port selection, leaving an empty temporary directory and a zero-byte evidence file. No database or certificate was created. I inspected and removed that exact empty directory and replaced the blank evidence with a transparent failure/cleanup record. Moving resource acquisition under the error/evidence path would make this failure self-explanatory and self-cleaning. Separately, `started` only becomes true after `pg_ctl start` succeeds: an ambiguous startup timeout should inspect/stop its own possible server or retain its directory rather than treating `started=false` as proof nothing can be running. That startup-timeout case was identified by inspection, not executed. This is fixture robustness, not a failure of the completed native observations or production security guidance.
+
+2. **Name the selected operation in Figure 2.** When “Routine with default PUBLIC execute” is selected, the left title still says “Application is a table user” and the field says only “Application operation”. “Application uses a separately owned object”, plus “SELECT/UPDATE” versus “EXECUTE” as applicable, would make the routine lesson less dependent on inference. The actual outcomes and owner/non-owner DDL distinction are sound within the stated model.
+
+## Coverage, judgement and boundaries
+
+The article meets the commissioned relational-practice scope. The shop's positive and negative task map is concrete; it includes application, migration, reporting, backup/recovery and emergency access. It correctly treats files, copies, provider control planes and keys as additional routes to data rather than deriving all authority from SQL grants. It neither claims that a private network proves identity nor that successful authentication proves object permission.
+
+The PostgreSQL role design usefully distinguishes LOGIN from work roles, INHERIT from SET and ADMIN, object grant options from ownership, creator defaults from inherited memberships, and object use from administrative attributes. The app does not own its schema or inherit deployment authority. The new-table/default-routine examples and warning that a GRANT command can succeed without creating an effective grant are practically valuable. The reporting projection avoids importing an unnecessary RLS tutorial; the RLS/SECURITY DEFINER/search-path discussion states the extra contracts and bypass checks without claiming the ordinary routine fixture proves them safe.
+
+TLS checks, storage/copy encryption, key availability, consumer adoption, existing sessions, audit omissions and emergency retirement each get an actionable acceptance question. The article appropriately leaves client certificates, expiry/CRLs, managed proxies, remote firewall admission, IAM/copy-store rights, encryption at rest and emergency activation untested. The scope of observed localhost behaviour is repeatedly explicit. No managed-service claim is presented as executed acceptance.
+
+The parent already supplies a useful three-gate access model and common incident decision method. This article develops its access procedures without replacing that method. Monitoring/capacity remains a36's decision surface, maintenance/change scheduling stays with a37, endpoint/topology operation with a38, and restoration/reconstruction with a39. The final return gate correctly requires business-data acceptance and the application owner's judgement as well as repaired access. Query safety and application authorisation remain in integration. No new article or curriculum expansion is needed.
+
+## Complete native reproduction
+
+Ran the current downloadable worksheet unchanged with the installed PostgreSQL 18.6 binaries and shared read-only pg 8.23.1 module, using a **new own cluster**, kernel-selected port **62674**, private socket directory and two dummy CAs/certificates. Node v24.16.0 and OpenSSL 4.0.3. The normal sandbox rejected loopback listening; the authorised elevated rerun succeeded. No production credentials, external service calls, global trust changes, software installation or shared-server operations.
+
+Evidence:
+
+- `practitioner-native-run.json`: initial environment failure, no server started, exact empty-directory cleanup recorded.
+- `practitioner-native-run2.json`: complete successful run, configuration, all 36 observed results, commands, server log and cleanup. Its actual work directory was `/var/folders/dh/062x03k90yxbfxg__1yd_h000000gn/T/staycurrent-a35-bc1U2R`.
+
+I inspected the results themselves rather than accepting `ok` flags: app UPDATE and reporter projection both returned 101/packed; the raw reporter read failed at schema permission; app DDL, SET owner and role delegation failed; attempted app GRANT left outsider SELECT false. Migrator creation failed before SET ROLE, then the new table owner was shop_owner; app could select the new table while the ungranted routine call failed. Outsider's authenticated connection failed database CONNECT. Plaintext, wrong password, wrong TLS name and untrusted issuer failed at their stated boundaries. pg and actual psql verify-full success/wrong-name failure are present. The valid path negotiated TLSv1.3.
+
+Password replacement rejected the old password on a fresh connection; the original connection continued to return 101. Password expiry also rejected fresh login without ending that session. Expiry was explicitly reset before the independent NOLOGIN attempt, which rejected the correct replacement password; the established connection still worked. Committed membership revocation then rejected its subsequent table request. These observations support the article's subsequent-statement scope, not claims about cancelling in-flight work or SET ROLE states. Selected termination returned `ended=true`, followed by `remaining=0` for that PID.
+
+After the own server's supported certificate reload, a fresh old-root client failed and overlap/new-root clients returned SELECT 1. A previously established TLS session still returned order 101. The log retained SCRAM authentication, TLS details, connection failures, the membership/DDL denials, selected termination and separate CREATE/DROP audit_marker statements. It does not establish a complete read audit.
+
+The prior runs are retained honestly: writer run 1 stopped with 22 checks because expiry masked the intended independent NOLOGIN test; runs 2/3/4 completed 32/36/36 checks respectively. All four record successful stop/removal. The independently rerun current worksheet includes the stricter missing-rejection assertion and pg package-version check.
+
+## Primary and installed-version contract checks
+
+Opened current primary documentation on 20 October 2026 and checked the consequential claims against the selected major version:
+
+- [PostgreSQL 18 HBA](https://www.postgresql.org/docs/18/auth-pg-hba-conf.html): first matching record, no failed-auth fallback, local/host/hostssl distinctions and independent database CONNECT.
+- [Role membership](https://www.postgresql.org/docs/18/role-membership.html), [privileges](https://www.postgresql.org/docs/18/ddl-priv.html) and [default privileges](https://www.postgresql.org/docs/18/sql-alterdefaultprivileges.html): ownership control, membership paths, PUBLIC execution defaults, current creator's future-object defaults. These agree with the fixture.
+- [CREATE ROLE](https://www.postgresql.org/docs/18/sql-createrole.html): LOGIN and password-only VALID UNTIL. [Administrative functions](https://www.postgresql.org/docs/18/functions-admin.html): positive termination timeout waits for actual exit; zero-timeout signalling would have a weaker meaning. The worksheet uses 2000 ms and additionally checks activity.
+- [libpq TLS](https://www.postgresql.org/docs/18/libpq-ssl.html), [server TLS](https://www.postgresql.org/docs/18/ssl-tcp.html) and [node-postgres TLS](https://node-postgres.com/features/ssl): chain/name verification, reload handling and connection-string replacement of ssl options. Also inspected the installed pg 8.23.1 `lib/connection.js` TLS construction: the fixture's explicit servername survives its IP transport host. Actual client outcomes independently agree.
+- [CREATE FUNCTION](https://www.postgresql.org/docs/18/sql-createfunction.html), [row security](https://www.postgresql.org/docs/18/ddl-rowsecurity.html) and [logging](https://www.postgresql.org/docs/18/runtime-config-logging.html): safe definer search_path with pg_temp last, owner/admin policy bypasses and bounded operational/DDL logging. No unexecuted definer or RLS acceptance is implied.
+- [PostgreSQL encryption](https://www.postgresql.org/docs/18/encryption-options.html), [RDS encryption](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html), [RDS PostgreSQL TLS](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL.Concepts.General.SSL.html) and [Secrets Manager rotation](https://docs.aws.amazon.com/secretsmanager/latest/userguide/rotating-secrets.html): documented comparison only. RDS copy coverage and key availability restrictions support the deliberately qualified prose; arbitrary exports still need destination evidence. No hosted acceptance ran.
+
+## Figure state review and release
+
+Using documented CUA controls on frozen 4438, manually advanced every choice/step combination and read both state panels plus narration: Figure 1 admission 12, Figure 2 authority 12, Figure 3 TLS 12, Figure 4 rotation 12, Figure 5 incident 10, **58 total**. No empty, undefined or NaN state text. Reviewed each model against the prose, not merely rendered presence. Apart from the required Figure 1 narration repair, the outcomes are coherent: non-owner versus owner/default access; strict versus disabled peer verification; new-login controls versus surviving sessions; and current containment versus uncertain prior damage. The TLS figure is an illustrative decomposition of encryption and peer acceptance, not a literal packet or TLS-handshake trace. The incident model keeps return conditional on data acceptance and avoids claiming audit records recall disclosed data.
+
+No download link clicked or download event awaited. Did not repeat the separate teaching perspective's full layout, reading-time, keyboard or theme audit. Own native cluster stopped and removed; the initial failed run's empty directory removed; own browser tab closed. Shared 57319, driver dependencies and root-owned 4438 server untouched. **4438 is released from this reviewer; the owner may retire the frozen server after the other review releases.**
