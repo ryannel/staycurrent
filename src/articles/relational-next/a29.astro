@@ -1,0 +1,186 @@
+---
+import { Code } from 'astro:components';
+import SchemaFigure from '../../components/relational-next/a29/SchemaFigure.astro';
+import rehearsalUrl from '../../components/relational-next/a29/rehearse.mjs?url&no-inline';
+const themes={light:'github-light',dark:'github-dark'} as const;
+const sections=[
+ ['describe-the-physical-change-before-scheduling-it','Describe the physical change before scheduling it'],
+ ['keep-a-waiting-schema-change-from-stopping-the-workload','Keep a waiting schema change from stopping the workload'],
+ ['make-the-migration-runner-s-boundaries-visible','Make the migration runner’s boundaries visible'],
+ ['enforce-new-writes-before-validating-old-rows','Enforce new writes before validating old rows'],
+ ['build-a-required-index-through-failure-and-completion','Build a required index through failure and completion'],
+ ['change-a-large-representation-in-recoverable-stages','Change a large representation in recoverable stages'],
+ ['rehearse-the-production-impact-and-set-stop-conditions','Rehearse the production impact and set stop conditions'],
+ ['close-the-change-with-evidence-and-deliberate-cleanup','Close the change with evidence and deliberate cleanup'],
+];
+const inspect=`SELECT pid, application_name, state,
+       clock_timestamp() - xact_start AS transaction_age,
+       wait_event_type, wait_event, pg_blocking_pids(pid) AS blockers
+FROM pg_stat_activity
+WHERE datname = current_database();
+
+SELECT pid, mode, granted
+FROM pg_locks
+WHERE relation = 'orders'::regclass;`;
+const bounded=`BEGIN;
+SET LOCAL lock_timeout = '250ms';
+SET LOCAL statement_timeout = '5s';
+ALTER TABLE orders ADD COLUMN amount_v2 bigint;
+COMMIT;
+-- On an error inside BEGIN: ROLLBACK before reusing the session.`;
+const migration=`// 1760000000000-expand.cjs
+exports.up = pgm => {
+  pgm.sql("SET LOCAL lock_timeout = '250ms'");
+  pgm.sql("SET LOCAL statement_timeout = '5s'");
+  pgm.sql('ALTER TABLE orders ADD COLUMN amount_v2 bigint');
+};
+
+// Separate migration: concurrent operations cannot use the default transaction.
+// Configure session timeouts on the connection, not SET LOCAL here.
+exports.up = pgm => {
+  pgm.noTransaction();
+  pgm.sql('CREATE INDEX CONCURRENTLY orders_amount_v2 ON orders(amount_v2)');
+};`;
+const check=`-- Separate short installation transaction; writers already accept this rule.
+ALTER TABLE orders ADD CONSTRAINT orders_amount_ok
+  CHECK (amount >= 0) NOT VALID;
+
+-- After repairing historical violations; separately bounded transaction:
+ALTER TABLE orders VALIDATE CONSTRAINT orders_amount_ok;
+
+SELECT conname, convalidated, conenforced, pg_get_constraintdef(oid)
+FROM pg_constraint
+WHERE conrelid = 'orders'::regclass;`;
+const indexes=`-- Each concurrent command is a top-level statement, outside BEGIN.
+CREATE UNIQUE INDEX CONCURRENTLY orders_ref_uq ON orders(reference);
+
+SELECT indexrelid::regclass, indisvalid, indisready, indislive,
+       pg_get_indexdef(indexrelid)
+FROM pg_index WHERE indrelid = 'orders'::regclass;
+
+-- Only after the intended eligible index is valid:
+ALTER TABLE orders ADD CONSTRAINT orders_reference_key
+  UNIQUE USING INDEX orders_ref_uq;
+
+SELECT conname, conindid::regclass, pg_get_constraintdef(oid)
+FROM pg_constraint WHERE conrelid = 'orders'::regclass;`;
+const staged=`-- Each ALTER is separately bounded and committed.
+ALTER TABLE orders ADD COLUMN amount_v2 bigint;
+-- Gate: every writer maintains amount_v2 from the current authoritative amount.
+-- Gate: resumable backfill and reconciliation complete under that writer rule.
+ALTER TABLE orders ADD CONSTRAINT orders_v2_ok
+  CHECK (amount_v2 IS NOT NULL AND amount_v2 >= 0) NOT VALID;
+ALTER TABLE orders VALIDATE CONSTRAINT orders_v2_ok;
+-- Outside a transaction block:
+CREATE INDEX CONCURRENTLY orders_amount_v2 ON orders(amount_v2);
+
+-- A reconciliation query; its zero result must remain stable under writers.
+SELECT count(*) AS mismatches FROM orders
+WHERE amount_v2 IS DISTINCT FROM amount::bigint;`;
+const run=`mkdir schema-drill && cd schema-drill
+npm install --ignore-scripts pg@8.23.1 node-pg-migrate@9.0.0
+# Save the downloaded rehearse.mjs here. Node.js 22 or later is required.
+export PG_URL='postgresql://YOUR_ROLE@YOUR_HOST:YOUR_PORT/postgres'
+EVIDENCE=./schema-evidence.json node rehearse.mjs`;
+---
+<p>A schema change alters the rules and representations that running applications depend on. Its SQL can finish while old rows remain unchecked, an index remains unusable or a shipping report still reads the old column. A safe procedure makes those states visible and gives each one a way to stop.</p>
+<p>The shop’s <code>orders.amount</code> stores integer minor currency units. It needs the wider <code>bigint</code> range, and accepted amounts must be non-negative. The conversion is exactly <code>amount::bigint</code>: no currency conversion, rescaling or rounding. Start with <a href="/review/relational-next/live-changes/#keep-old-and-new-applications-compatible">the parent’s compatibility sequence</a>. Its bridge writers, authoritative representation and retirement gate still apply; here we turn the physical database work into executable stages.</p>
+<p>The concrete checks used PostgreSQL <strong>18.6</strong>, node-pg-migrate <strong>9.0.0</strong> and the <code>pg</code> <strong>8.23.1</strong> driver. Figures show explanatory schedules. The small native rehearsal checks lock, catalogue and failure behaviour; it does not establish a production interruption budget.</p>
+<nav aria-label="In this article"><ol>{sections.map(([id,title])=><li><a href={`#${id}`}>{title}</a></li>)}</ol></nav>
+
+<h2 id="describe-the-physical-change-before-scheduling-it">Describe the physical change before scheduling it</h2>
+<p>A <strong>catalogue change</strong> updates the database’s object definitions. A <strong>validation scan</strong> reads existing rows to prove a rule. A <strong>rewrite</strong> stores existing rows in a new physical representation, often rebuilding indexes too. These are different jobs, even when each starts with <code>ALTER TABLE</code>.</p>
+<p>Inventory the exact table, heap and index sizes, row distribution, partitions, constraints, views, functions, triggers, generated columns, defaults and foreign keys. Include external readers, writers, prepared statements, exports and jobs. Record the replication arrangement and deployment privileges. A catalogue cannot find SQL constructed in next week’s export, and a privileged local rehearsal cannot prove a hosted migration role has permission.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="PostgreSQL 18 physical operation comparison"><table><caption>Selected PostgreSQL 18 forms on an ordinary unpartitioned table</caption><thead><tr><th>Exact form</th><th>Existing data work</th><th>Lock and remaining work</th></tr></thead><tbody>
+ <tr><td>Add nullable <code>bigint</code>, no default</td><td>Catalogue; no rewrite</td><td><code>ACCESS EXCLUSIVE</code>; old rows read NULL until supplied</td></tr>
+ <tr><td>Add column with a non-volatile default</td><td>Default evaluated and stored in metadata; no immediate rewrite</td><td><code>ACCESS EXCLUSIVE</code>; distinguish this from a volatile default that requires a rewrite</td></tr>
+ <tr><td><code>ALTER COLUMN SET DEFAULT</code></td><td>Catalogue; existing values unchanged</td><td><code>ACCESS EXCLUSIVE</code>; default affects later writes that request it</td></tr>
+ <tr><td><code>integer → bigint</code></td><td>Rewrite heap and rebuild affected indexes</td><td><code>ACCESS EXCLUSIVE</code>; reserve copy and log space; refresh statistics</td></tr>
+ <tr><td>Add enforced <code>CHECK … NOT VALID</code>; later validate</td><td>Installation skips old-row scan; validation scans later</td><td>Install: <code>ACCESS EXCLUSIVE</code>. Validate: <code>SHARE UPDATE EXCLUSIVE</code>, compatible with ordinary writes</td></tr>
+ <tr><td>Ordinary / concurrent index build</td><td>Ordinary scan and build / additional concurrent scans and waits</td><td><code>SHARE</code> blocks writes / <code>SHARE UPDATE EXCLUSIVE</code> permits ordinary writes; both consume resources</td></tr>
+ <tr><td>Rename table / drop column or table</td><td>Rename preserves object identity / removal is not a row-by-row copy</td><td><code>ACCESS EXCLUSIVE</code>; inspect dependencies first. Dropping a column does not immediately reclaim its stored space</td></tr>
+</tbody></table></div>
+<p>These forms are deliberately specific. Some type changes avoid a rewrite; partitioned-table operations have additional restrictions and child work. Read the <a href="https://www.postgresql.org/docs/18/sql-altertable.html">exact ALTER TABLE contract</a> and <a href="https://www.postgresql.org/docs/18/sql-createindex.html">CREATE INDEX contract</a>, then rehearse the chosen statement. Combining subcommands takes the strongest required lock. Statement length and the word “online” cannot choose between a measured short pause and a staged change.</p>
+
+<h2 id="keep-a-waiting-schema-change-from-stopping-the-workload">Keep a waiting schema change from stopping the workload</h2>
+<p>An ordinary read takes an <code>ACCESS SHARE</code> table lock. PostgreSQL normally retains transaction locks until the transaction ends. Adding our nullable column needs <code>ACCESS EXCLUSIVE</code>, conflicting even with that reader. A transaction left open after its query therefore matters.</p>
+<p>Figure 1 starts with A reading orders inside <code>BEGIN</code>. Advance until C arrives, then compare leaving B waiting with cancelling it. C’s read would coexist with A’s; B changes what C must wait for.</p>
+<SchemaFigure scene="queue" number={1}/>
+<p>Our three-session run captured B blocked by A and C blocked by B. Cancelling B returned <code>57014</code> and let C finish while A remained open. B’s next statement returned <code>25P02</code> until <code>ROLLBACK</code>. The attempted column was absent. This is a reason to bound the DDL attempt before it becomes a queue of application requests.</p>
+<Code code={inspect} lang="sql" themes={themes}/>
+<p>Use a permitted monitoring identity to inspect transaction age, wait event, requested lock and blocker chain. <code>pg_blocking_pids()</code> includes blockers ahead in the lock queue. Avoid cancelling the oldest transaction merely because it appears first: it may be legitimate work. The change owner first stops the dispensable schema attempt, records its SQL and PID, and verifies that its wait and locks have ended. <a href="/review/relational-next/operations/">Running a relational service</a> owns incident escalation.</p>
+<Code code={bounded} lang="sql" themes={themes}/>
+<p>The 250 ms acquisition allowance and five-second statement allowance above are invented drill limits. <code>lock_timeout</code> limits each lock-acquisition wait; <code>statement_timeout</code> limits the statement, including waiting. Neither limits how long your code can hold a successfully acquired lock while idle before commit. Keep the transaction short, and separately bound idle transactions in the actual deployment. Retry only after diagnosing the blocker and checking the stage’s postcondition; repeated immediate attempts recreate the queue.</p>
+<p>Cancellation during execution also needs a recovery check. The drill cancelled a deliberately slowed validation, observed that its constraint remained unvalidated, then successfully repeated it. An error in an explicit transaction requires rollback; a prior committed installation remains installed. <a href="/review/relational-next/transactions/">Transaction guarantees</a> explain that boundary.</p>
+
+<h2 id="make-the-migration-runner-s-boundaries-visible">Make the migration runner’s boundaries visible</h2>
+<p>A <strong>migration runner</strong> selects ordered scripts and records which it applied. In this version, node-pg-migrate normally groups pending migrations in a transaction and uses a session advisory lock to exclude another cooperating runner. That lock does not exclude an administrator running SQL directly, nor prove application compatibility.</p>
+<Code code={migration} lang="js" themes={themes}/>
+<p>The two exports above belong in separate files. A normal CLI invocation is <code>DATABASE_URL=… npx node-pg-migrate up -m migrations</code>, after installing the pinned package locally. Inspect the generated SQL and exact CLI options in the <a href="https://salsita.github.io/node-pg-migrate/cli">runner documentation</a>. The default shared transaction can retain early DDL locks until the whole run commits. Run independently approved stages separately; <code>--no-single-transaction</code> gives separate per-migration transactions, while <code>pgm.noTransaction()</code> disables the transaction for that migration.</p>
+<p>The worksheet exercises the same version’s API on an explicitly configured connection, with session <code>lock_timeout='250ms'</code> and <code>statement_timeout='5s'</code>. A connection’s settings follow that session. <code>SET LOCAL</code> lasts only within its transaction, so a setting in one completed migration cannot configure a later non-transactional build. Set and verify session limits on the actual build connection; a separate inspection connection proves nothing about its defaults.</p>
+<p>Figure 2 deliberately fails the second statement. Compare the surviving object under the default boundary and <code>noTransaction()</code>.</p>
+<SchemaFigure scene="runner" number={2}/>
+<p>In the native run, the transactional failure removed the new column and wrote no success entry. The non-transactional failure left a valid concurrent index and no entry for that migration. A second runner was refused while the first held its advisory lock. The successful first record was <code>id=1, name=1760000000000-expand</code> in <code>public.pgmigrations</code>, with a run timestamp. Keep the schema and history location explicit.</p>
+<p>A connection loss adds uncertainty. The drill withheld the client’s completion after a real server commit, then closed that connection. A fresh session found both the new column and its migration-history row. This simulates a missing acknowledgement, not a network-fault experiment. In deployment, inspect whether the backend still runs, the actual object definition and the runner history before resuming. A missing history row alongside a valid index needs a reviewed repair or a migration that checks and resumes that exact state. Blind replay, <code>IF NOT EXISTS</code> or marking a script applied cannot establish an equivalent definition.</p>
+
+<h2 id="enforce-new-writes-before-validating-old-rows">Enforce new writes before validating old rows</h2>
+<p>The non-negative rule has two populations: rows already stored and rows accepted from now on. Installing an enforced <code>CHECK … NOT VALID</code> protects the latter immediately, while postponing proof about the former. <code>NOT VALID</code> does not mean “disabled”.</p>
+<Code code={check} lang="sql" themes={themes}/>
+<p>First deploy writers that can obey the rule and agree how historical negatives will be resolved. Commit installation in its own bounded transaction. Figure 3 includes an old order with −1. Predict whether a new −2 passes after installation, then try validation with and without repairing the historical row.</p>
+<SchemaFigure scene="constraint" number={3}/>
+<p>The native fixture rejected the new invalid insert with <code>23514</code> while the old −1 remained. Validation failed with the same error code and retained <code>convalidated=false</code>, <code>conenforced=true</code>. Correcting the old value to 100 and repeating validation made the constraint valid. PostgreSQL checks the resulting row on an update too: an unrelated edit to an old invalid row can fail until its violation is repaired.</p>
+<p>The deliberately slowed validation held <code>ShareUpdateExclusiveLock</code>; a concurrent valid insert completed and an invalid one failed. Cancelling the scan left enforcement in place and validation false. Repeating after checking the catalogue completed. Ordinary writes may continue, but another maintenance or schema operation can still conflict, and the scan consumes I/O. Do the historical correction through <a href="/review/relational-next/data-changes/">the resumable data-job procedure</a>, with an authorised meaning for each corrected value.</p>
+<p>A check accepts NULL when its expression is unknown, so <code>amount &gt;= 0</code> relies on our existing not-null rule. PostgreSQL 18 also supports named <code>NOT NULL … NOT VALID</code> constraints followed by validation. Foreign keys have staged validation too, but installation locks both referencing and referenced tables, and the referenced key and supporting lookup paths matter. Neither <code>UNIQUE</code> nor every other constraint supports this same shortcut. Follow the <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">constraint’s own contract</a>.</p>
+
+<h2 id="build-a-required-index-through-failure-and-completion">Build a required index through failure and completion</h2>
+<p>An ordinary index build can be simpler during an agreed write pause. A concurrent build permits normal inserts, updates and deletes, at the cost of additional scans, waits and intermediate catalogue states. It can wait for older writers and snapshots; observe <code>pg_stat_progress_create_index</code>, including its phase and current locker, alongside the activity view. Progress within one phase is not a completion percentage for the whole command.</p>
+<Code code={indexes} lang="sql" themes={themes}/>
+<p>The shop also requires unique order references. Figure 4 follows cancellation and duplicate-key failure. Both paths need an inspection before the next attempt.</p>
+<SchemaFigure scene="index" number={4}/>
+<p>In the fixture, cancelling a concurrent build after its initial catalogue entry left <code>indisvalid=false</code>, <code>indisready=false</code>, <code>indislive=true</code>. A separate attempt with duplicate references failed with <code>23505</code> and left the same flags. These are observed early-failure states, not every possible failed-build state. A later failure can leave a ready but invalid index maintained by writes; an invalid concurrent unique index can even continue enforcing uniqueness. Inspect the flags, definition and error rather than assuming “failed” means absent.</p>
+<p>For our early failures the chosen recovery was a separately submitted <code>DROP INDEX CONCURRENTLY orders_ref_uq</code>, correction of the duplicate, and a fresh build. Confirm the object is the failed standalone index before dropping it. The successful retry was valid and ready. Attaching it renamed it <code>orders_reference_key</code>; <code>pg_constraint.conindid</code> identified that index as the constraint’s supporting object. Dropping the constraint would now drop its owned index too.</p>
+<p>Attachment requires an eligible unique B-tree index: an expression or partial index cannot be used this way. A primary-key attachment also needs not-null columns and can otherwise add validation work. The short attachment takes its own strong table lock, so bound it separately. PostgreSQL 18 does not support concurrent builds directly on the partitioned parent, and only one concurrent index build can run on a given table at a time. Use the exact partition procedure when relevant. <a href="/review/relational-next/indexes/">Choosing indexes</a> owns whether the index benefits queries; creating it safely is a separate decision.</p>
+
+<h2 id="change-a-large-representation-in-recoverable-stages">Change a large representation in recoverable stages</h2>
+<p>First try the simplest physical route on a disposable copy: <code>ALTER TABLE orders ALTER COLUMN amount TYPE bigint USING amount::bigint</code>. Integer values widen exactly, but a different source type can fail conversion. The drill’s text value <code>'twelve'</code> caused <code>22P02</code> and left the old column intact. Defaults, constraints and dependencies must also survive their own conversions.</p>
+<p>Our direct-change fixture had 20,000 rows, a primary key and an amount index. A dependent view initially caused <code>0A000</code>; after removing that throwaway view, the change completed in about 29 ms locally. Its heap file identity changed and total table-plus-index allocation grew from 1,687,552 to 2,162,688 bytes. A second session observed <code>AccessExclusiveLock</code> still held before commit. Those results establish a rewrite and lock boundary, not a safe duration for a large service table.</p>
+<p>The surrounding WAL-position window advanced by 2,270,616 bytes. WAL positions are cluster-wide and other article sessions could contribute; that window is not isolated per-statement log production. We did not measure peak filesystem allocation. A production rehearsal must measure both, including retained WAL and indexes while the old storage still exists. Use <a href="/review/relational-next/maintenance-and-upgrades/#fit-maintenance-within-the-service-budget">the existing maintenance budget</a> rather than assuming a fixed copy multiplier.</p>
+<p>If the direct rewrite cannot fit the allowed pause, add a replacement column. Figure 5 follows one amount through the physical stages. At the rename, predict which representation the existing view reads.</p>
+<SchemaFigure scene="representation" number={5}/>
+<Code code={staged} lang="sql" themes={themes}/>
+<p>Adding the nullable column is the first committed stage. Next, the parent’s bridge release makes every accepted edit maintain both values atomically from the authoritative amount. Drain old writers before trusting the new side. The neighbouring data job supplies missing values in bounded, guarded batches; this article does not replace its progress and concurrent-edit protocol. New amounts must remain within the old integer range while that old representation is required for compatibility.</p>
+<p>Once coverage and meaning reconcile, install and validate the new rule, build the required replacement indexes separately, and refresh statistics for the new access path. Validation of <code>amount_v2 IS NOT NULL AND amount_v2 &gt;= 0</code> proves those properties, but not equality to the old amount. The reconciliation query tests equality; writer enforcement must keep its zero result stable before the read switch.</p>
+<p>Inventory each consumer’s actual dependency. Our view continued to use <code>amount_old</code> after the two column renames. Its stored reference followed the original column’s identity. Recreating the view against the new column changed that contract; <code>CREATE OR REPLACE VIEW</code> cannot simply change an existing output column’s type. Plan the replacement and dependent-view order, privileges and application result types explicitly, potentially with a new view name.</p>
+<p>For foreign keys, generated values, trigger functions and defaults, enumerate what uses the old column and prove the replacement before switching. A copied column does not inherit the old column’s relationships, and function bodies or external SQL can contain names the dependency catalogue does not track. The fixture has no amount foreign key, trigger or generated-value dependency; these remain deployment-specific gates. Avoid dropping real dependencies merely to make a type-change command pass.</p>
+<p>Stop safely after any committed stage: leave the unused added column; leave backfill progress resumable; retain an enforced but unvalidated rule while correcting old violations; inspect or drop a failed standalone index. Before switching readers, a failed gate leaves old reads authoritative. After switching, returning to bridge code is supported only while the old value remains current and representable. Accepting values outside its integer range closes that return path even if the old column still exists.</p>
+
+<h2 id="rehearse-the-production-impact-and-set-stop-conditions">Rehearse the production impact and set stop conditions</h2>
+<p><a href={rehearsalUrl} download="rehearse.mjs">Download the disposable schema rehearsal</a>. It creates a uniquely named database, uses three sessions, retains SQL, errors and observations in a new JSON evidence file, then closes its sessions and drops only its database. Supply an administrative connection with database-creation privileges:</p>
+<Code code={run} lang="sh" themes={themes}/>
+<p>The harness refuses to overwrite the evidence filename. It creates temporary migration files and removes them. Its slow check function deliberately sleeps to make cancellation observable; do not carry that function into a real constraint. The drill’s direct rewrite uses 20,000 rows and its constraint examples use a handful. It tests transitions, repeated validation, failed runner invocation and recovery discovery. It has no representative sustained workload, replicas or production-volume acceptance result.</p>
+<p>Repeat the selected procedure on an isolated production-shaped copy, with the actual runner identity and deployment configuration, index and partition layout, long transactions and sustained reads and writes. Capture baseline and during-change request latency by operation, errors and successful throughput, lock queues, free filesystem space, WAL production and retention, and replica replay or apply delay. Keep permissions and observation access part of the rehearsal.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Example schema change stop gates"><table><caption>Illustrative gates to replace with the service’s measured limits</caption><thead><tr><th>Gate</th><th>Evidence and response</th></tr></thead><tbody>
+ <tr><td>Lock acquisition exceeds 250 ms</td><td>Attempt times out; owner confirms rollback and queue clears. Retry after the blocker condition changes.</td></tr>
+ <tr><td>Statement exceeds five seconds</td><td>Cancel or timeout; wait for backend cleanup, inspect committed stages and concurrent-index remnants.</td></tr>
+ <tr><td>Agreed request-latency or error limit breached for two observation intervals</td><td>Stop admitting further change work; cancel the active DDL if its procedure permits, then verify recovery of service.</td></tr>
+ <tr><td>Free-space reserve or replica-delay limit breached</td><td>Stop before exhausting recovery headroom; retain evidence and reassess the physical route.</td></tr>
+ <tr><td>Any definition or reconciliation check differs</td><td>Keep the read switch closed; repair the exact failed stage before proceeding.</td></tr>
+</tbody></table></div>
+<p>Assign a cancellation owner and an application acceptance owner. Bound the observation interval and recovery time as well as the command. PostgreSQL physical replication replays the physical change through WAL; logical replication does not replicate DDL. Coordinate compatible subscriber schema separately, and test its arrival order. The native drill measured neither path. <a href="/review/relational-next/replicas-and-partitions/">Replica operation</a> owns topology evidence; <a href="/review/relational-next/database-moves/">database moves</a> owns a transfer of database authority.</p>
+
+<h2 id="close-the-change-with-evidence-and-deliberate-cleanup">Close the change with evidence and deliberate cleanup</h2>
+<p>The finished record connects the requested behaviour to observed state: server and runner versions, scripts and transaction boundaries, actual column types and defaults, constraint definitions with enforcement and validation, valid index definitions and ownership, reconciliation under the writer rule, representative application checks and required replica state. Add measured interruption, workload impact, storage headroom and the result of the stop-and-resume rehearsal.</p>
+<p>Distinguish “this transaction was cancelled” from “an earlier stage committed” and “the client does not know the outcome”. The runner history is one item of evidence. Catalogue definitions and application results establish the rest. An unexpected but valid index without history can explain a failed non-transactional migration; do not hide it by inventing a success record before investigating.</p>
+<p>Give each temporary object an owner and removal gate: invalid standalone indexes, slow drill functions, temporary checks, replacement indexes, compatibility columns and obsolete views or tables. Keep the old amount until old readers and jobs are retired, the observation window passes, reconciliation is stable and the return-path decision is recorded. Dropping a temporary proving check must leave the intended permanent rule in force.</p>
+<p>Before a table rename or drop, inspect catalogue dependencies and external SQL, scheduled jobs and delayed application work. A rename preserves database object identity but can break a name used by a client. Use restrictive removal to expose unresolved dependencies; <code>CASCADE</code> is a removal mechanism, not an inventory. Dropped columns also leave storage work for later, as <a href="/review/relational-next/maintenance-and-upgrades/">maintenance</a> explains.</p>
+<p>Unused additions can usually be removed after dependency checks. A committed destructive conversion, a dropped value or new writes beyond the old range need forward repair or <a href="/review/relational-next/backup-and-restore/">the tested recovery procedure</a>, preserving later accepted orders. The change closes when the next operator can tell which representation is authoritative, which stages are proved, which old releases remain usable and what recovery now requires.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 20 October 2026. Native observations use PostgreSQL 18.6 on one Apple-silicon laptop with node-pg-migrate 9.0.0 and pg 8.23.1. The five figures are models. The downloadable worksheet and retained evidence distinguish engine observations, deliberate client-boundary simulation and unperformed production acceptance.</p>
+<ul>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/sql-altertable.html">ALTER TABLE</a>, <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">constraints</a> and <a href="https://www.postgresql.org/docs/18/sql-createview.html">CREATE VIEW</a> for exact forms, dependencies and output compatibility.</li>
+ <li><a href="https://www.postgresql.org/docs/18/sql-createindex.html">CREATE INDEX</a>, <a href="https://www.postgresql.org/docs/18/sql-dropindex.html">DROP INDEX</a> and <a href="https://www.postgresql.org/docs/18/progress-reporting.html#CREATE-INDEX-PROGRESS-REPORTING">index-build progress</a> define concurrent restrictions and failure states.</li>
+ <li><a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit locking</a>, <a href="https://www.postgresql.org/docs/18/functions-info.html">blocking information</a>, <a href="https://www.postgresql.org/docs/18/monitoring-stats.html">activity views</a> and <a href="https://www.postgresql.org/docs/18/runtime-config-client.html">timeouts</a> support the queue and cancellation procedure.</li>
+ <li>node-pg-migrate: <a href="https://github.com/salsita/node-pg-migrate/releases/tag/v9.0.0">9.0.0 release</a>, <a href="https://salsita.github.io/node-pg-migrate/migrations/">migration transactions and locking</a> and <a href="https://salsita.github.io/node-pg-migrate/cli">CLI and history</a>; installed-version behaviour was also rehearsed.</li>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/logical-replication-restrictions.html">logical replication restrictions</a>. Continue with <a href="/review/relational-next/data-changes/">reliable data jobs</a>, <a href="/review/relational-next/maintenance-and-upgrades/">maintenance budgets</a> or <a href="/review/relational-next/backup-and-restore/">restoration</a> for their owning procedures.</li>
+</ul>
