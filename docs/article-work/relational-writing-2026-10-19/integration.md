@@ -65,3 +65,7 @@ Review builds now use isolated output directories served on loopback4438/4439, s
 ## 20 October · 28 published review drafts
 
 A24 passed both independent article reviews and was pushed in88faf42. The live root review page was refreshed in a real browser and reported28 of38 available, with the completed physical-storage destination linked and the remaining work explicitly planned. A25 is frozen inB27 for independent review. The commission-only rendered audit additionally checked all29 locally assembled drafts for opening/contents order, final own sources section, planned anchors, contextual child links, bottom child placement and review/search exclusion: zero findings. The full build passed all13 rules.
+
+## 20 October · 35 reviewed articles pushed
+
+Individual reviews and required repairs are complete through the database-move article, leaving SQLite, security and monitoring/capacity. The assembled source and rendered audits cover 36 local fragments with zero integration findings. Every completed article has its own commit and push. Repaired model states retain complete before copies and comparisons; affected reviews explicitly retain unchanged native evidence. The final written-corpus review brief is ready. Readable exports preserve prose, tables, code, expandable article exercises and contextual links while using cues for figures; actual source and interactive pages remain authoritative.
