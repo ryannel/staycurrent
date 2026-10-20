@@ -54,3 +54,10 @@ Same cluster and settings (PostgreSQL 18.6, port 57502, started with the same `p
 - Repeated move (class 21 capacity 3, 0 left, R8 Mina, R20 Tariq, R21 Edda; class 22 2 left, R7): unguarded listing, second run `UPDATE 1, UPDATE 1, UPDATE 1, COMMIT`, check `21|3|2|2|f`, `22|3|0|2|f`; guarded listing, second run `UPDATE 0`, `ROLLBACK`, check `21|3|1|2|t`, `22|3|1|2|t`.
 - Capacity check on the starting rows: `21|1|1|0|t`, `22|3|2|1|t`.
 - New source cited: PostgreSQL 18, Serialization failure handling, on retrying 23505 and 23P01 under Serializable; Error codes for 23P01.
+
+## d02 repairs: new evidence (20 October 2026)
+
+`verify.mjs` run in full after the repairs on the same cluster (port 57502, stopped afterwards); exit 0.
+
+- Counting bookings with `FOR UPDATE` and no counter (class 22 set to capacity 2, R7 booked): A `BEGIN`, `SELECT request_id FROM reservations WHERE class_id = 22 ORDER BY request_id FOR UPDATE` → `R7`; A inserts R10. B runs the same read and waits (Lock wait confirmed in `pg_stat_activity`). A commits. B's read returns only `R7`; B inserts R11 and commits. Class 22 ends with 3 bookings for capacity 2.
+- Listing text rewrapped (comments only and line breaks); the two-statement listing, booking statement, move listing and check query still produce the same replies.

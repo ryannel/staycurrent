@@ -81,3 +81,21 @@ Checks after repair: `verify.mjs` full run exit 0 (twice); browser (pane hidden,
 Not checked: screen-reader announcement; Play timing over a full run; the deadlock victim is PostgreSQL's choice — in every run so far the first waiter (Mina) was chosen, and `verify.mjs` would fail if that changed.
 
 Tree note: the instructors are now Lena and Ravi; a19 uses Mina and Tariq as instructors and should rename to match.
+
+## d02 repairs
+
+Source: `../d02/repair-decisions.md`, a03 rows. a18 and a19 not edited (practitioner-12 and the a19 rename are deferred). Article word count after repair: 6,047 (`wc -w`, file with markup).
+
+| Finding | Change |
+| --- | --- |
+| practitioner-8, teaching-10, editorial-21 (required) | "Run at Serializable" row now reads "Several rows, when every writer can be run at Serializable"; guarantee holds between Serializable transactions only; every writer must run at Serializable and be retried or rerun after 40001, with `default_transaction_isolation` on the role for a program you cannot edit. Closing argument: a vendor tool points to Serializable only if it can be made to run at Serializable and its refused runs retried or rerun; otherwise no protection in the table covers it, and it must be changed or kept away from the tables. |
+| practitioner-9 (treated as required) | The false "neither transaction would wait" sentence is replaced with the observed case: the second locking read waits for R7's lock, rechecks only R7, misses the new row and books: three bookings for capacity 2. New `verify.mjs` check (class 22 capacity 2, R7 booked; B's wait confirmed in `pg_stat_activity`). |
+| practitioner-10, teaching-11, editorial-27 | Shop paragraph uses "order lines" and `stock`; the ordering claim is now conditional ("If orders updated their products' stock rows in one agreed order… could not deadlock on each other's stock rows"), so it no longer claims a00's listing does it. |
+| editorial-22 | Table uses Figure 3's control names: One conditional statement, Unique constraint, Lock the rows you counted, Lock the class row first (coordination row), Run at Serializable (`protectLabel` in `model.mjs` now names every protection; the coordination-row bullet uses the same name). Protection is now the row heading. |
+| editorial-23, visual-17 | Figure 5 options "Opposite lock orders" and "Both lock class 21 first", matching the prose; "victim" removed from caption and prose; single-scenario figures render no Example select; text summary describes the deadlock, abort, rejection and rerun, and the queue. |
+| editorial-24 | Predicate paragraph split; the second paragraph introduces `SELECT … FOR UPDATE` before using it. |
+| editorial-25 | Prose and step note: Mina's transaction was rolled back before it changed anything, so R8 was still in class 21 and the class still full. |
+| editorial-26 | Retry exception says how to recognise it: at Serializable, a transaction that read the table to choose a new key and then inserted it treats 23505 like 40001; a repeated customer key is still a duplicate. 23P01 left to Sources. |
+| visual-16 | "Choosing a protection" stacks into labelled cards below 600 px (no overflow at 375 px, both themes; label contrast 6.8:1 dark). Listing comments and long lines rewrapped (two-statement listing, booking statement, move listing, check query); no listing overflows at 375 or 1280 px. |
+
+Checks: `verify.mjs` full run exit 0; browser (pane hidden, emulated) 375 px light and dark, 1280 px light: no page, table or listing overflow; Figure 5 options and summary checked; option change restarts. `pnpm build` passed, 13 site-check rules ok. Console showed only stale dev-server WebSocket reconnect errors from the earlier stopped server, no page errors.

@@ -251,6 +251,27 @@ INSERT INTO reservations VALUES ('R8', 21, 1), ('R20', 21, 2), ('R21', 21, 3);`;
     A.close(); B.close(); await sleep(100);
   }
 
+  // Counting bookings with FOR UPDATE, with no counter: class 22 at capacity 2,
+  // R7 already booked. The second session waits on R7's lock, then rechecks only
+  // R7, misses the first session's new row and books anyway.
+  process.stderr.write(`[check] Counting bookings FOR UPDATE: the second session waits, then overbooks.\n`);
+  {
+    reset(); observe('UPDATE classes SET capacity = 2, remaining = 1 WHERE class_id = 22;');
+    const { A, B } = await sessions();
+    const lockedCount = 'SELECT request_id FROM reservations WHERE class_id = 22 ORDER BY request_id FOR UPDATE;';
+    assert.deepEqual(await A.send(`BEGIN; ${lockedCount}`), ['BEGIN', 'R7']);
+    assert.deepEqual(await A.send("INSERT INTO reservations VALUES ('R10', 22, 1);"), ['INSERT 0 1']);
+    const second = B.send(`BEGIN; ${lockedCount}`); await waitingOnLock('B');
+    assert.deepEqual(await A.send('COMMIT;'), ['COMMIT']);
+    const bSaw = await second;
+    assert.deepEqual(bSaw, ['BEGIN', 'R7']);
+    assert.deepEqual(await B.send("INSERT INTO reservations VALUES ('R11', 22, 3); COMMIT;"), ['INSERT 0 1', 'COMMIT']);
+    const booked = Number(observe('SELECT count(*) FROM reservations WHERE class_id = 22'));
+    assert.equal(booked, 3);
+    evidence.lockedCount = { second_session: 'waited on Lock (pg_stat_activity), then returned only R7', b_saw: bSaw, bookings_in_class_22: booked, capacity: 2 };
+    A.close(); B.close(); await sleep(100);
+  }
+
   // A lost reply: cut the client off before COMMIT, and while COMMIT is in progress.
   process.stderr.write(`[check] A lost reply: cut the client off before COMMIT, and while COMMIT is in progress.\n`);
   // A deferred trigger holds COMMIT open for 1.5 s so the cut lands inside it.
@@ -282,5 +303,5 @@ CREATE CONSTRAINT TRIGGER slow_commit AFTER INSERT ON reservations DEFERRABLE IN
   psql('postgres', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${DB}' AND pid <> pg_backend_pid()`);
   execFileSync(`${BIN}dropdb`, [...conn, DB]);
 }
-console.log(JSON.stringify({ version, settings, database: DB, evidence, checks: 'fixture rows, invariant query, every Figure 2, 3 and 5 schedule (including the deadlock and ordered moves), Figure 4 options, listing and endings, isolation-level table, single-statement retry, move listing, repeated move without and with the recheck, lost-reply cases: passed' }, null, 2));
+console.log(JSON.stringify({ version, settings, database: DB, evidence, checks: 'fixture rows, invariant query, every Figure 2, 3 and 5 schedule (including the deadlock and ordered moves), Figure 4 options, listing and endings, isolation-level table, single-statement retry, move listing, repeated move without and with the recheck, counting FOR UPDATE overbooks after a wait, lost-reply cases: passed' }, null, 2));
 process.exit(0); // psql children that were killed mid-statement can keep the event loop open

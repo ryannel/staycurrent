@@ -53,11 +53,14 @@ INSERT INTO instructors VALUES (21, 'Lena', true), (21, 'Ravi', true);`;
 export const book = (request = 'R8', classId = 21, owner = 1) => `WITH taken AS (
   UPDATE classes
   SET remaining = remaining - 1
-  WHERE class_id = ${classId} AND remaining > 0
+  WHERE class_id = ${classId}
+    AND remaining > 0
   RETURNING class_id
 )
-INSERT INTO reservations (request_id, class_id, owner_id)
-SELECT '${request}', class_id, ${owner} FROM taken
+INSERT INTO reservations
+  (request_id, class_id, owner_id)
+SELECT '${request}', class_id, ${owner}
+FROM taken
 RETURNING request_id;`;
 const oneLine = sql => sql.replace(/\s+/g, ' ').trim();
 
@@ -65,20 +68,28 @@ export const twoStep = `BEGIN;
 UPDATE classes
 SET remaining = remaining - 1
 WHERE class_id = 22 AND remaining > 0
-RETURNING remaining;        -- 1: a place was taken
-INSERT INTO reservations (request_id, class_id, owner_id)
-VALUES ('R12', 22, 2);      -- Tariq already holds R7 in class 22
--- ERROR:  duplicate key value violates unique constraint
---         "reservations_class_id_owner_id_key"   (SQLSTATE 23505)
-SELECT remaining FROM classes WHERE class_id = 22;
--- ERROR:  current transaction is aborted, commands ignored
---         until end of transaction block          (SQLSTATE 25P02)
+RETURNING remaining;
+-- 1: a place was taken
+INSERT INTO reservations
+  (request_id, class_id, owner_id)
+VALUES ('R12', 22, 2);
+-- Tariq already holds R7 in class 22:
+-- ERROR:  duplicate key value violates
+--   unique constraint
+--   "reservations_class_id_owner_id_key"
+--   (SQLSTATE 23505)
+SELECT remaining FROM classes
+WHERE class_id = 22;
+-- ERROR:  current transaction is aborted,
+--   commands ignored until end of
+--   transaction block (SQLSTATE 25P02)
 COMMIT;
 -- PostgreSQL replies ROLLBACK`;
 
 export const invariantCheck = `SELECT c.class_id, c.capacity, c.remaining,
        count(r.request_id) AS booked,
-       c.remaining + count(r.request_id) = c.capacity AS rule_holds
+       c.remaining + count(r.request_id)
+         = c.capacity AS rule_holds
 FROM classes AS c
 LEFT JOIN reservations AS r USING (class_id)
 GROUP BY c.class_id
@@ -271,7 +282,16 @@ export const figureOptions = {
   schedule: { place: ['serial', 'interleaved'], staff: ['serial', 'interleaved'] },
   protect: { place: ['interleaved', 'conditional', 'serializable'], duplicate: ['precheck', 'unique'], staff: ['interleaved', 'lockrows', 'coordination', 'serializable'] },
 };
-export const protectLabel = { interleaved: 'No protection' };
+// Figure 3's control names, used for the same protections in the article's table.
+export const protectLabel = {
+  interleaved: 'No protection',
+  conditional: 'One conditional statement',
+  precheck: 'Application check only',
+  unique: 'Unique constraint',
+  lockrows: 'Lock the rows you counted',
+  coordination: 'Lock the class row first (coordination row)',
+  serializable: 'Run at Serializable',
+};
 
 const withOwner = id => `${id} ${owners[id]}`;
 export function stateCells(scenario, state) {
@@ -377,13 +397,16 @@ SELECT class_id FROM classes
 WHERE class_id = 21 FOR UPDATE;
 SELECT class_id FROM classes
 WHERE class_id = 22 FOR UPDATE;
--- Both class rows are held. Now recheck and change:
+-- Both class rows are held.
+-- Now recheck R8, then change.
 UPDATE reservations SET class_id = 22
 WHERE request_id = 'R8' AND class_id = 21;
--- UPDATE 0: R8 is no longer in class 21. ROLLBACK.
+-- UPDATE 0: R8 has already moved.
+-- ROLLBACK.
 UPDATE classes SET remaining = remaining - 1
 WHERE class_id = 22 AND remaining > 0;
--- UPDATE 0: class 22 is full. ROLLBACK.
+-- UPDATE 0: class 22 is full.
+-- ROLLBACK.
 UPDATE classes SET remaining = remaining + 1
 WHERE class_id = 21;
 COMMIT;`;
@@ -405,23 +428,25 @@ scenarios.move = {
   initial: moveStart,
   options: {
     opposite: {
-      label: 'Each locks its own source class first', protection: 'Locks taken in opposite orders',
+      label: 'Opposite lock orders', protection: 'Each move locks its own source class first',
+      summary: 'Each move locked its own source class, then waited for the other’s: a deadlock after step 5. PostgreSQL aborted Mina’s move; Tariq’s move found class 21 full and rolled back; Mina’s move, run again, committed.',
       steps: [
         s('A', `BEGIN; ${lockRow(21)}`, 'BEGIN · locks class 21', ['BEGIN', '21'], moveStart, 'Mina’s move locks class 21, where R8 is now.'),
         s('B', `BEGIN; ${lockRow(22)}`, 'BEGIN · locks class 22', ['BEGIN', '22'], moveStart, 'Tariq’s move locks class 22, where R7 is now.'),
         s('A', lockRow(22), 'Locks class 22: waits for B', null, moveStart, 'Mina’s move asks for class 22 and waits for Tariq’s transaction.', { waits: true }),
         s('B', lockRow(21), 'Locks class 21: waits for A', null, moveStart, 'Tariq’s move asks for class 21 and waits for Mina’s. Each now waits for the other: a deadlock.', { waits: true }),
-        s('A', null, 'Error 40P01: deadlock detected', ['ERROR:  40P01'], moveStart, 'After about a second PostgreSQL finds the cycle and aborts one transaction. In this run it was Mina’s, and her locks were released.', { collect: true }),
+        s('A', null, 'Error 40P01: deadlock detected', ['ERROR:  40P01'], moveStart, 'After about a second PostgreSQL finds the cycle and aborts one transaction. In this run it aborted Mina’s, and her locks were released.', { collect: true }),
         s('B', null, 'Locks class 21', ['21'], moveStart, 'Tariq’s request for class 21 is granted as soon as Mina’s transaction is aborted. His move now holds both class rows.', { collect: true }),
         s('A', one(moveChange('R8', 21, 22)).split('; ')[0] + ';', 'Next statement: error 25P02', ['ERROR:  25P02'], moveStart, 'Mina’s transaction is aborted, so PostgreSQL refuses every further statement in it.'),
         s('A', 'ROLLBACK;', 'ROLLBACK', ['ROLLBACK'], moveStart, 'Her application rolls back. Nothing of the move was kept.'),
-        s('B', one(moveChange('R7', 22, 21)).split('; ').slice(0, 2).join('; ') + ';', 'Moves R7 · takes a place in 21: UPDATE 0', ['UPDATE 1', 'UPDATE 0'], moveStart, 'Mina’s rollback put R8 back in class 21, so class 21 still has no place. Tariq’s guard changes no row.'),
+        s('B', one(moveChange('R7', 22, 21)).split('; ').slice(0, 2).join('; ') + ';', 'Moves R7 · takes a place in 21: UPDATE 0', ['UPDATE 1', 'UPDATE 0'], moveStart, 'Mina’s transaction was rolled back before it changed anything, so R8 is still in class 21 and class 21 is still full. Tariq’s guard changes no row.'),
         s('B', 'ROLLBACK;', 'Full · ROLLBACK', ['ROLLBACK'], moveStart, 'Tariq’s move is a business rejection: class 21 is full. It rolls back, undoing its change to R7.'),
         s('A', `BEGIN; ${lockRow(21)} ${lockRow(22)} ${one(moveChange('R8', 21, 22))} COMMIT;`, 'Whole move again · COMMIT', ['BEGIN', '21', '22', 'UPDATE 1', 'UPDATE 1', 'UPDATE 1', 'COMMIT'], { left21: 1, left22: 1, bookings: ['R7 in 22', 'R8 in 22'] }, 'Mina’s application runs her whole move again from BEGIN. It commits.'),
       ],
     },
     ordered: {
-      label: 'Both lock class 21 first', protection: 'Locks taken in ascending class order',
+      label: 'Both lock class 21 first', protection: 'Both moves lock class 21, then class 22',
+      summary: 'Tariq’s move waited for class 21 before holding anything; Mina’s move committed, then Tariq’s.',
       steps: [
         s('A', `BEGIN; ${lockRow(21)}`, 'BEGIN · locks class 21', ['BEGIN', '21'], moveStart, 'Mina’s move locks class 21 first.'),
         s('B', `BEGIN; ${lockRow(21)}`, 'BEGIN · locks class 21: waits', null, moveStart, 'Tariq’s move also starts with class 21, so it waits before holding anything.', { waits: true }),

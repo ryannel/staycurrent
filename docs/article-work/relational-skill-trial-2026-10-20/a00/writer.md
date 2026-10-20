@@ -143,3 +143,14 @@ Browser checks, port 4401, with the pane hidden and size and theme emulated:
 `pnpm build`: exit 0, site check 143 pages, 13 rules all ok. Article file is now 5,832 words.
 
 Not checked in this round: a screen reader; Figure 4's other states in light theme (the text-contrast check covered Figure 3 in full and the figures' current states).
+
+## d02 repairs (20 October 2026)
+
+| Finding | Change |
+| --- | --- |
+| practitioner-11, teaching-9, editorial-19, visual-15 | "The last column carries a second lesson" now reads "The last row…". d01 transposed the page-count table, so the with-an-index measure is now the last row. |
+| editorial-20 | "Pages" is defined at first use in The work behind a query: fixed-size blocks, 8 kB in PostgreSQL, read as a unit and each holding many rows. "Replication lag" is glossed at first use in Running and recovering the database: how far a replica, described below, has fallen behind the primary. |
+| Malformed markup | d01's NOT VALID repair had left the paragraph before "PostgreSQL 18 offers …" unclosed. It is now closed, and the article has 62 opening and 62 closing paragraph tags. |
+| Sources entries | Nothing was dropped. In `a00.astro`, Sources still contains "Index types" and "Using EXPLAIN" in the PostgreSQL index list item, and the "On this site" list of the eight articles. Both are present in the built `dist/review/relational-trial/index.html`. No change made. |
+
+`pnpm build`: exit 0, site check 143 pages, 13 rules all ok. Article file 5,863 words. Only prose changed this round, so no PostgreSQL rerun and no browser check.
