@@ -7,9 +7,9 @@ Each article moves an intelligent newcomer towards expert practice in the commis
 
 Read [Sequence diagrams](../../../src/reference-articles/sequences.astro), [Indexes](../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../src/reference-articles/storage.astro) in full, including their figures. They are the standard for both writing and teaching.
 
-Let figures carry the important explanations rather than decorate the prose. The strongest let the reader change a cause and watch the result. Choose each figure from the reader's real question and the state they would otherwise have to hold in their head; a static example is better where it teaches more directly. Pick the form that shows the content most directly. Show example data as the reader will meet it: rows under their real column headings, with keys that visibly connect from one example to the next. Give each table column one kind of value, and draw relationships rather than describe them. If a reader has to decode a table cell by cell, the form is wrong. If a figure plays automatically, leave time to read all its visible text. Keep keyboard focus on a control when it reaches its first or last step, and make comparisons usable on a phone. Use the existing Astro article components where they fit.
+Let figures carry the important explanations rather than decorate the prose. The strongest let the reader change a cause and watch the result. Choose, build and check every figure, table, code listing and interactive tool with [staycurrent-figures](../staycurrent-figures/SKILL.md). Use the existing Astro article components where they fit.
 
-Check consequential technical claims against primary sources and list them under Sources and further reading. Say plainly whether a figure is an illustrative model or shows results observed from a real system, and never present an unrun command as observed. Record what actually ran in the work record.
+Check consequential technical claims against primary sources and list them under Sources and further reading. Never present an unrun command as observed. Record what actually ran in the work record.
 
 Use the plan for coverage and relationships. Its titles and headings are provisional: polish them with the prose. Link to each nested article where its subject comes up, and again in the reading list at the foot of the article.
 

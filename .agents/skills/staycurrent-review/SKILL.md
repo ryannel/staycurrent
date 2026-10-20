@@ -48,6 +48,10 @@ Verdict: pass | repairs required
 | --- | --- | --- |
 | [each check from the perspective file, in order] | pass, finding or not applicable | [one line] |
 
+## First reading
+
+[Visual perspective only: what each figure, table and code example seemed to show before reading its prose, and where you were unsure]
+
 ## Findings
 
 ### [perspective]-[n] · required | optional · [piece and location]
@@ -61,8 +65,12 @@ Repair: [a concrete suggestion]
 [What this review could not check, and why]
 ```
 
+Number findings per perspective and keep counting across rounds of the same review: if the editorial findings in the first round end at editorial-13, the recheck starts at editorial-14. Each label then means one problem throughout the work record.
+
+Editorial and teaching reviewers may read the step text of scripted figures from the built page rather than by playing them.
+
 A finding is required when the piece falls short of the goal without the repair, and optional when the repair would only reduce reader effort. The verdict is "repairs required" when any required finding remains.
 
 ## Deciding and rechecking
 
-The coordinator (the orchestrator, or whoever arranged the review) decides which findings to accept and records the reason, especially where perspectives disagree, for example practitioner coverage against value. Accepted findings go to the responsible planner or writer together. After repair, only the affected perspectives recheck, using the same report shape and the checks the repair touched, including the editorial and teaching effects of technical corrections.
+The coordinator (the orchestrator, or whoever arranged the review) decides which findings to accept and records the reason, especially where perspectives disagree, for example practitioner coverage against value. Accepted findings go to the responsible planner or writer together. Findings on shared layout or site-wide text, which belongs to no writer, go to the coordinator to repair. After repair, only the affected perspectives recheck, using the same report shape and the checks the repair touched, including the editorial and teaching effects of technical corrections. When a repair adds a passage or figure, the teaching perspective also rechecks, to judge whether each addition belongs in this piece or in an article that owns the subject.

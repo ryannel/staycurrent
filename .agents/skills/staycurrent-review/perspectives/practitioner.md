@@ -6,7 +6,7 @@ An expert practitioner checks that the piece is right and that it gives the read
 
 ## Checks
 
-1. **Correctness.** Each consequential technical claim is right. Check it against a primary source such as official documentation, a specification or the source code, and name the sources you checked.
+1. **Correctness.** Each consequential technical claim is right. Check it against a primary source such as official documentation, a specification or the source code, and name the sources you checked. Where the system can be run locally, reproducing a claim on a disposable instance is welcome; record the version and commands.
 2. **Evidence.** Illustrative models are labelled as models. Observed results match the recorded evidence, including the version and command. No unrun command is presented as observed.
 3. **Coverage.** The decisions, failure cases and practical judgement in the brief's intended outcomes are all taught, including the awkward case a practitioner will meet.
 4. **Depth, both ways.** Nothing the goal needs is missing, and nothing is taught more deeply than the goal needs. Name both kinds.

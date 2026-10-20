@@ -1,4 +1,6 @@
-// Step controls shared by the stepped figures in Relational databases.
+// Step controls for any stepped figure: Play/Pause, Back, Next, Reset, a step
+// counter and a hold bar. The markup contract and timing rule are described in
+// .agents/skills/staycurrent-figures/SKILL.md.
 // Back and Next use aria-disabled rather than disabled at the ends, so keyboard
 // focus stays on the control. While playing, each step is held for the text that
 // changed on arriving at it, read at roughly 230 words a minute, with a floor.

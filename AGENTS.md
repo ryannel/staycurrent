@@ -14,6 +14,7 @@ useful understanding against reader time and effort. Use the four skills in
 - `staycurrent-orchestrate`: manage recursive planning, corpus review and writing.
 - `staycurrent-breakdown`: plan one article and its contextual child stubs.
 - `staycurrent-write`: write one article using the three fixed examples.
+- `staycurrent-figures`: choose, build and check an article's figures, tables and interactive tools.
 - `staycurrent-review`: arrange independent reviews or perform an assigned perspective.
 
 The orchestrator maintains the shared tree and schedules independent batch
