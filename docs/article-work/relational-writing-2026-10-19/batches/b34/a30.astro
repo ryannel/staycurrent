@@ -1,0 +1,128 @@
+---
+import { Code } from 'astro:components';
+import JobFigure from '../../components/relational-next/a30/JobFigure.astro';
+import worksheetUrl from '../../../docs/article-work/relational-writing-2026-10-19/nodes/a30/evidence/rehearse.mjs?url&no-inline';
+const sections=[
+ ['define-what-each-changed-row-must-mean','Define what each changed row must mean'],
+ ['define-a-set-of-work-that-can-actually-be-finished','Define a set of work that can actually be finished'],
+ ['stop-the-backfill-from-overwriting-a-newer-address','Stop the backfill from overwriting a newer address'],
+ ['commit-the-batch-and-its-progress-together','Commit the batch and its progress together'],
+ ['account-for-everything-a-row-change-can-trigger','Account for everything a row change can trigger'],
+ ['keep-each-batch-inside-the-workload-budget','Keep each batch inside the workload budget'],
+ ['adapt-the-input-contract-for-imports-and-corrections','Adapt the input contract for imports and corrections'],
+ ['prove-completion-before-removing-the-machinery','Prove completion before removing the machinery']
+];
+const themes={light:'github-light',dark:'github-dark'} as const;
+const guard=`-- Parameters come from one recorded source version.
+UPDATE orders
+SET parts = $1, parts_rev = rev,
+    state = $2, parser = 3
+WHERE id = $3 AND rev = $4
+RETURNING id, parts, parts_rev, state;`;
+const inventory=`INSERT INTO work (job, id, rev, raw)
+SELECT 'address-v3', id, rev, raw
+FROM orders
+WHERE state = 'pending'
+   OR parts_rev IS DISTINCT FROM rev
+ON CONFLICT DO NOTHING;
+-- Unique work key: (job, id, rev). No FK to the deletable order.`;
+const checks=`-- Coverage of the enumerated scope, including its exceptions.
+SELECT disposition, count(*)
+FROM work WHERE job = 'address-v3'
+GROUP BY disposition;
+
+-- Current rows whose representation bookkeeping is inconsistent.
+SELECT id, rev FROM orders
+WHERE state = 'current'
+  AND (parts_rev IS DISTINCT FROM rev
+       OR parser IS DISTINCT FROM 3 OR parts IS NULL);
+
+-- A second direction: live work items with no live source.
+SELECT w.id, w.rev FROM work w
+WHERE w.job = 'address-v3' AND w.disposition <> 'deleted'
+  AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = w.id);`;
+---
+
+<p>A <strong>backfill</strong> supplies new values for existing records. A reliable backfill also explains which records it covered, what happened to each one and where to resume after interruption. That matters when the database is still serving requests: yesterday’s source value may be out of date before the worker tries to store its result.</p>
+<p>The shop is replacing free-text delivery addresses with structured fields. Mina can edit an order while the job runs, and some addresses need human confirmation. We will follow one job from its input contract to its completion evidence. The <a href="/review/relational-next/live-changes/#keep-old-and-new-applications-compatible">parent’s bridge release</a> is a prerequisite: every writer, including delayed jobs, must maintain the agreed representation protocol before trusted conversion starts.</p>
+<p>The figures are illustrative schedules. A downloadable rehearsal checks the concrete procedures on native PostgreSQL 18; our run used 18.6. Its small invented address grammar tests job behaviour, rather than providing a production address parser.</p>
+
+<nav aria-label="In this article" class="article-contents"><ol>{sections.map(([id,title])=><li><a href={`#${id}`}>{title}</a></li>)}</ol></nav>
+
+<h2 id="define-what-each-changed-row-must-mean">Define what each changed row must mean</h2>
+<p>Start with what must remain true: <strong>parts marked current describe the current authoritative address, and shipping must never mistake pending, rejected or ambiguous parts for that address</strong>. During this stage, text remains authoritative. A current result records the source version and transformation version that produced it. An empty optional second line is legitimate; it is different from an order the job has not processed.</p>
+<p>Give this run the durable identity <code>address-v3</code>. For each attempted source, retain its order identity, address version, original input, parser version, outcome and reason. Keep the necessary result or before-image evidence for the promised repair. Addresses are sensitive data, so this evidence has a purpose, access policy and expiry; copying it indefinitely into job logs would create another retention problem.</p>
+<p>The rehearsal’s parser accepts only four comma-separated, non-empty fields: street, town, postcode and country. It recognises a small GB postcode shape and records the optional second line as empty. A missing field is <em>review</em>; an unsupported country or malformed postcode is <em>invalid</em>. These are fixture rules, not evidence that a syntactically valid address exists or is deliverable. A real converter needs a tested supported grammar, trustworthy reference data where required and a route for uncertain cases.</p>
+<p>Figure 1 starts with an ambiguous address. Step to <em>Record a disposition</em>, then choose <em>Split and trust</em>. Watch what the success label would conceal.</p>
+<JobFigure scene="input" number={1}/>
+<p>Quarantine gives the worker a useful result: it can explain why the row was not converted and move on without guessing. It does not give the change owner permission to read all addresses from parts. For a required shipping address, confirmation must resolve the case first. The bridge writer records the confirmed address as a new version and updates the parts or explicit review state atomically.</p>
+
+<h2 id="define-a-set-of-work-that-can-actually-be-finished">Define a set of work that can actually be finished</h2>
+<p>A loop needs a declared set of work. Paging through <code>WHERE state = 'pending' OFFSET 100</code> is unsafe: once the first hundred rows stop being pending, skipping a hundred of the remaining rows misses the next hundred. Traversal by an immutable unique key, <code>id &gt; last_id ORDER BY id LIMIT …</code>, avoids that shifting offset, but it still needs an enumeration boundary and a policy for later changes.</p>
+<p>The largest allocated identifier is not that boundary. Transaction A can allocate 101, pause, and commit after B has committed 102 and the cursor has passed it. A timestamp assigned before commit has the same problem. Figure 2 follows those commits. The native rehearsal observed the lower identifier become visible after the higher one.</p>
+<JobFigure scene="coverage" number={2}/>
+<p>For this job, use a <strong>durable worklist</strong>: a table of source identities and versions to account for. Establish the bridge protocol, drain all pre-protocol write transactions, then enumerate the visible unfinished sources with one <code>INSERT … SELECT</code>. Its statement snapshot is the initial scope, S0. The work key <code>(job, id, rev)</code> makes repeating enumeration harmless for the same source version.</p>
+<Code code={inventory} lang="sql" themes={themes}/>
+<p>Process S0 in short transactions. New inserts and edits follow the bridge protocol, so they commit matching parts or an explicit unresolved state. Deletes are allowed; the worklist retains their identity without a foreign key that would erase the evidence. An edit that supersedes a listed version is recorded as superseded, then checked against its new version. Do not treat that label alone as proof that the new version is correct.</p>
+<p>Before closing, repeat the unfinished-source query without the cursor and reconcile all unresolved states. Persist any newly discovered source versions as an additional scope round. A late pending row indicates a broken prerequisite, such as an old direct writer: repair or fence that path before trusting the gate. An accepted bridge insert may be absent from S0, but the final live invariant check still covers it. A short consistent validation snapshot joins these facts; the writer protocol keeps future commits within the rule.</p>
+<p>This protocol has finite batches without holding one snapshot open for the whole run. A worklist costs storage and enumeration work; on a very large table, rehearse those too. A key traversal can avoid a large copied inventory, provided its scope, late commits and exception ledger have an equally complete protocol. A months-long snapshot is a costly substitute because it can retain old row versions, as <a href="/review/relational-next/physical-storage/">physical storage</a> explains.</p>
+
+<h2 id="stop-the-backfill-from-overwriting-a-newer-address">Stop the backfill from overwriting a newer address</h2>
+<p>The worker reads order 101 at address version 7. Mina then changes “14 Mill Lane” to “22 Mill Lane”, creating version 8 and matching parts. The worker’s calculation is still valid for version 7. It has lost the right to apply that calculation to version 8.</p>
+<p>Figure 3 makes that right a condition on the write. Step to <em>Attempt the update</em>, then remove the version check.</p>
+<JobFigure scene="race" number={3}/>
+<Code code={guard} lang="sql" themes={themes}/>
+<p>Every relevant writer must advance <code>rev</code> for an address change, including a change away and back to the same text. The supplied parts must come from the exact recorded text at <code>$4</code>, with parser v3. Do not read a fresh version number and attach it to an old calculation. The native fixture used the worklist’s captured input and version together.</p>
+<p>Inspect <code>RETURNING</code>, rather than assuming a selected item was updated. Zero rows means no conversion was applied. Re-read: a newer source needs a current-result check or fresh work item; a deleted source gets a deleted disposition. A review or invalid outcome also needs the version condition, otherwise the worker could mark Mina’s corrected address invalid using the old input.</p>
+<p>In PostgreSQL Read Committed, an update that meets a competing updater waits and rechecks its condition against the committed row. Our rehearsal held the application’s row lock, observed the worker actually waiting, then committed version 2; the worker’s version-1 update returned zero rows. This establishes the single-row guard used here. Broader multi-row invariants still need the protocols developed in <a href="/review/relational-next/isolation/">isolation</a> and <a href="/review/relational-next/locking/">locking</a>.</p>
+
+<h2 id="commit-the-batch-and-its-progress-together">Commit the batch and its progress together</h2>
+<p>Start with one worker. In one transaction, lock the job record, select a bounded set of pending work, apply guarded changes, record each disposition and advance the batch record. Commit them together. Here progress is the ledger of accounted-for items; a batch number is only a convenient summary. Review, invalid and deleted items are accounted for, while pending items remain eligible for work.</p>
+<p>The unique work identity is <code>(address-v3, order_id, source_rev)</code>. A restart selects pending items under that identity. It does not rerun every row below a remembered high-water mark. A new parser that repairs v3 results gets a new job identity and an explicitly reviewed scope, rather than rewriting the meaning of an existing successful run.</p>
+<p>Figure 4 first ends the worker session before commit. Then choose <em>Commit reply lost</em> at the same step. The last thing the worker heard is insufficient in both cases.</p>
+<JobFigure scene="commit" number={4}/>
+<p>The native rehearsal terminated an uncommitted worker and found both the target and ledger unchanged. It also forced a duplicate-key error after provisional batch writes: all six work items remained pending and the earlier target update rolled back. In a separate transaction, a local proxy dropped PostgreSQL’s <code>COMMIT</code> response after the server emitted it. The client received “Connection terminated unexpectedly”; a fresh connection found the target row, its accepted disposition and the batch counter committed.</p>
+<p>After an uncertain outcome, reconnect and inspect durable work under the same identity. Accepted work stays accepted; pending work can be retried. The fixture’s pending-only replay changed no target rows and produced no row-level audit effects. This property is <strong>idempotency</strong>: repeating the operation does not add another effect. The <a href="/review/relational-next/request-recovery/">request recovery article</a> develops the abort-versus-unknown distinction and why a network error cannot choose between them.</p>
+<p>If the job record and target live in different transaction systems, this atomic arrangement no longer applies. You need a separately verified deduplication and reconciliation protocol. If one worker cannot meet the measured window, first consider disjoint key ranges with separate ledgers. Shared work needs exclusive claims; a lease also needs a generation token checked before a replaced worker writes or advances progress. A promise that a worker “should have stopped” is insufficient. Add that machinery only when the workload requires it.</p>
+
+<h2 id="account-for-everything-a-row-change-can-trigger">Account for everything a row change can trigger</h2>
+<p>An <code>UPDATE</code> can do more than change the named fields. Inventory constraints, foreign keys and their cascading actions, generated values, identity defaults, row and statement triggers, replication or change consumers, and the application effects normally associated with this write. Rehearse with those objects present. If the job adds dependent rows, insert referenced parents first and preserve the required relationship; do not disable constraints to make an unexplained batch pass.</p>
+<p>Read back the stored result after database-generated behaviour. PostgreSQL <code>RETURNING</code> reports updated rows, including values changed by relevant before-row triggers. Deferred work and triggers that issue further statements may need a later read in the transaction or after commit. A trigger may suppress an update, and statement triggers can run even when zero rows are changed. “Zero rows” therefore describes target-row effects, not necessarily every side effect of the statement.</p>
+<p>The address conversion should not send a customer “your address changed” email: it preserves the same address meaning. But a downstream search or shipping copy may need the new representation. Bypassing application code could omit that refresh; calling the normal edit endpoint could send unwanted mail or advance versions as if Mina had edited. Define a deliberate job path that produces the required effects and records their identity.</p>
+<p>When a required external effect follows a committed row, write its handoff record in the batch transaction and reconcile delivery separately. A safe database replay does not make an email provider or external consumer idempotent. <a href="/review/relational-next/background-work/">Connecting transactions to background work and events</a> owns that handoff and deduplication protocol. Deploying the constraints and indexes needed by the job belongs to <a href="/review/relational-next/schema-changes/">the schema-change procedure</a>.</p>
+
+<h2 id="keep-each-batch-inside-the-workload-budget">Keep each batch inside the workload budget</h2>
+<p>A hundred-row batch is not a workload budget. Finding those rows may scan a large table; changing them may update several indexes, trigger dependent writes and generate log that replicas must apply. A fixed row count also behaves differently when one source value takes much longer to parse or a hot order holds a lock.</p>
+<p>Rehearse selection and update plans on representative data. Measure transaction duration, lock waits, rows examined and changed, trigger work, log volume, storage growth, replica lag and the application’s request latency. PostgreSQL’s <code>EXPLAIN (ANALYZE, BUFFERS, WAL)</code> can reveal executed work, including writes; run modifying statements only on a disposable copy. Rolling back an analysed update does not erase its resource cost or guarantee reversal of external trigger effects. <a href="/review/relational-next/query-plans/">Query diagnosis</a> develops the plan reading.</p>
+<p>Figure 5 adds trigger work while the source-row count stays at 100. Continue to the stop condition and compare the worker’s next decision.</p>
+<JobFigure scene="budget" number={5}/>
+<p>Define the response before starting. Name the signal, bound and observation interval: when request latency or replica lag exceeds its agreed limit, stop admitting new batches, record durable state and investigate. Reduce batch size to shorten transactions, lower concurrency to reduce contention, or add spacing to lower sustained pressure. These choices solve different problems. Resume after the workload recovers and the revised setting has been rehearsed.</p>
+<p>Set session-local lock and statement timeouts so a batch cannot wait or execute indefinitely. The fixture used 200 ms and 2 s inside its worker transactions as laboratory limits, not recommendations. On cancellation or error, roll back before reusing the connection; on a lost connection, discover the durable outcome. The <a href="/review/relational-next/monitoring-and-capacity/">monitoring and capacity article</a> owns the service signals, and <a href="/review/relational-next/maintenance-and-upgrades/">maintenance</a> owns the ongoing cleanup work those writes create.</p>
+
+<h2 id="adapt-the-input-contract-for-imports-and-corrections">Adapt the input contract for imports and corrections</h2>
+<p>An external import changes the source boundary. Stage raw input when parsing, relationship checks, deduplication or review must finish before live changes. Retain the supplier’s record identity and input version, plus the batch identity. Decide whether a repeated identity/version is rejected or ignored, and whether a later version replaces, merges with or conflicts with the live record. An upsert implements a chosen rule; it cannot decide whether the supplier or Mina owns the address.</p>
+<p>Validate staged relationships and record missing references before applying them in referential order. PostgreSQL <code>COPY FROM</code> can load staging efficiently and supports error-handling options, but a load that skips bad input needs an explicit rejected-record ledger and reconciliation. Successful parsing and a successful load do not establish that every supplied record was accepted or that the values mean the right thing.</p>
+<p>A correction changes the expected starting state. Record which faulty version or value justifies the change, its intended replacement, and the before-image if reversal is promised. Apply only while that expected state still holds. A correction such as “add £10” needs its durable operation identity checked in the same transaction as the addition, or a replay can add twice. The address backfill instead assigns a deterministic result for one source version.</p>
+<p>A deletion job follows the same rule. A worklist of closed orders is permission to inspect those orders; recheck eligibility, holds and the relevant version when deleting or redacting. Our fixture selected an eligible row, added a hold in another session, then observed zero rows from the guarded delete. Retain a disposition without recreating deleted data. The <a href="/review/relational-next/live-changes/#retire-old-data-and-prove-the-change-is-finished">parent’s retirement procedure</a> covers downstream copies, backups and restoration.</p>
+<p>Reversal is another guarded correction. Restoring an old address blindly could erase Mina’s valid intervening edit. Compare the current state with the faulty result you intend to reverse, quarantine conflicts and reconcile the repaired scope. Preserving a before-image makes recovery possible; it does not make every later inverse safe.</p>
+
+<h2 id="prove-completion-before-removing-the-machinery">Prove completion before removing the machinery</h2>
+<p>Reconcile identities and versions, rather than only totals. Every enumerated source must have a disposition; no pending item may disappear. Check that deleted dispositions match deletion evidence, superseded versions lead to current or explicitly unresolved versions, and accepted versions still satisfy the live rule or have a valid successor. A job with five accounted-for items and two required addresses needing review has finished enumeration, but has not completed the change.</p>
+<Code code={checks} lang="sql" themes={themes}/>
+<p>These queries ask separate questions and are not a complete validator. Reconcile from the live table back to the work scope or bridge-maintained rows as well, finding omissions and unexpected identities. Check duplicate input identities before relying on the work key’s deduplication. Verify required relationships, including any deliberately retained tombstones. The atomic schema and its constraints can establish some structural facts; they cannot establish the correctness of the address split.</p>
+<p>Figure 6 starts with equal totals and different identities. Compare the two methods, then continue to the meaning check.</p>
+<JobFigure scene="reconcile" number={6}/>
+<p>Check values against the intended transformation and independent evidence. Re-running the same buggy parser can repeat the same mistake, so include reviewed examples, representative shipping behaviour and confirmation for ambiguous cases. In the native fixture, injecting “Leeds” into a York result left the version and non-null checks passing; the semantic comparison found order 2. That deterministic comparison checks the fixture grammar, not real-world deliverability.</p>
+<p>Run related reconciliation queries in one short read-only Repeatable Read transaction when they need the same source boundary. Otherwise a count before Mina’s edit and a comparison after it can describe different states. Reconcile unresolved states under that snapshot, verify new writers preserve the invariant and resolve or explicitly accept every deferral. For this required shipping field, unresolved addresses block the parts-only read switch. The bridge may record review states during conversion; before the switch, writers must require confirmed current parts for accepted address changes.</p>
+<p>Close with the job and parser versions, enumeration and catch-up scopes, dispositions, semantic checks, resolved exceptions, writer evidence and remaining repair options. Hand that evidence to the <a href="/review/relational-next/live-changes/">parent’s read-switch and retirement gates</a>. Keep staging, source evidence, before-images and job records for their agreed recovery period, then remove them deliberately. A stopped worker and an empty queue do not establish these gates.</p>
+
+<p><a href={worksheetUrl} download="data-change-rehearsal.mjs">Download the executable PostgreSQL rehearsal</a>. Save it in a disposable directory, install <code>pg@8.23.1</code> with lifecycle scripts disabled, and use Node 24. Set <code>DATABASE_URL</code> to an administrative database on your own disposable PostgreSQL 18 server, then run <code>node data-change-rehearsal.mjs</code>. The role needs permission to create a database and terminate its own worker session. The script opens at most three database sessions, creates a uniquely named <code>rel3_a30_…</code> database and drops only that database in cleanup. It needs local TCP access and uses a local plaintext proxy for the lost-reply case. Do not point it at a production server.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 20 October 2026 against PostgreSQL 18 documentation. Native observations used PostgreSQL 18.6 with pg 8.23.1 and Read Committed, with synchronous commit on. The rehearsal exercised concurrency, rollback, a dropped commit reply, replay and validation failures; it did not benchmark production throughput, run replicas or validate real addresses. The proxy case committed a target change, its disposition and progress together; interruption and SQL-error cases left those effects uncommitted.</p>
+<ul>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a>, <a href="https://www.postgresql.org/docs/18/functions-sequence.html">sequence functions</a> and <a href="https://www.postgresql.org/docs/18/sql-update.html">UPDATE</a>: snapshots, allocation, conditional writes and returned rows.</li>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/trigger-definition.html">Trigger behaviour</a> and <a href="https://www.postgresql.org/docs/18/ddl-generated-columns.html">generated columns</a>: effects beyond the named assignment.</li>
+ <li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/sql-copy.html">COPY</a>, <a href="https://www.postgresql.org/docs/18/sql-explain.html">EXPLAIN</a> and <a href="https://www.postgresql.org/docs/18/runtime-config-client.html">client connection defaults</a>: staging, executed work and session timeouts.</li>
+ <li><a href="/review/relational-next/transactions/">Making concurrent changes correct</a>, <a href="/review/relational-next/request-recovery/">Recovering database requests safely</a> and <a href="/review/relational-next/background-work/">Connecting transactions to background work and events</a> develop the guarantees reused here.</li>
+</ul>
