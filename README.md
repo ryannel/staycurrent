@@ -114,12 +114,14 @@ agents, the limits of human oversight and the editorial disclaimer.
 `AiDisclosure.astro` supplies the footer icon; `AiTextDisclosure.astro` supplies
 the text link through `TitleLine.astro` and directly where there is no title line.
 
-Four skills in `.agents/skills/`, mirrored in `.claude/skills/`, define production:
+Four skills in `.agents/skills/`, symlinked from `.claude/skills/`, define production:
 `staycurrent-orchestrate`, `staycurrent-breakdown`, `staycurrent-write` and
 `staycurrent-review`. They take an intelligent newcomer to expert practitioner,
 optimising useful understanding against reader time and effort. The orchestrator
 builds and reviews the recursive article tree, then assigns article writers;
-the orchestrator batches independent reviews and workers repair their pieces. Article and heading nodes
+the orchestrator batches independent reviews and workers repair their pieces.
+The review skill fixes which of its five perspectives run at each stage, their
+checks and their report format, in `.agents/skills/staycurrent-review/perspectives/`. Article and heading nodes
 use the singular `heading` list and `nested_article` child stubs.
 
 The three chosen writing and teaching examples are fixed at their pre-rewrite

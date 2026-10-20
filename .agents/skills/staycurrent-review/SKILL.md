@@ -1,24 +1,68 @@
 ---
 name: staycurrent-review
-description: Coordinate independent reviews of a breakdown, article tree, written article or corpus, or perform an assigned review perspective.
+description: Arrange independent reviews of a breakdown, article tree, written article or corpus, or carry out one assigned review perspective.
 ---
 
-Review against the original commissioned topic, brief and expertise goal, with the least reader time and effort; descendants contribute to that goal rather than promise specialist mastery of their own topic. Use independent subagents for these perspectives:
+Independent reviewers catch what an author cannot see in their own work. Each perspective looks for a different kind of failure, so each gets its own subagent, its own inputs and its own verdict. The perspectives, their checks and the report format are fixed so that every run reviews the same ground and runs can be compared. Judge everything against the commission: take an intelligent newcomer to expert practitioner in the commissioned subject, in the least reader time and effort. A nested article contributes to that goal; it does not have to make the reader a specialist in its own topic.
 
-- **Breakdown or breakdown batch:** practitioner; value and consolidation; editorial.
-- **Tree or corpus:** completeness and depth; structure, overlap and consolidation; teaching progression; editorial.
-- **Article or article batch:** practitioner; editorial; teaching; interaction.
+## Which perspectives run
 
-**Practitioner:** Check correctness, coverage and practical judgement, using the family context to keep useful parent answers and deeper child mechanisms with their owners. The completeness perspective applies this across the tree or corpus.
+| Mode | Perspectives |
+| --- | --- |
+| Breakdown, or a batch of breakdowns | practitioner, value, teaching |
+| Tree | practitioner, value, teaching |
+| Article, or a batch of articles | practitioner, teaching, editorial, visual |
+| Corpus | practitioner, value, teaching, editorial |
 
-**Value, structure and consolidation:** Challenge reading and navigation cost. Propose concrete cuts or merges, stating what useful understanding would be lost; seek the smallest coherent corpus that meets the original goal.
+Each perspective has one file that states its purpose, its inputs and its checks:
 
-**Editorial:** Use the three reference articles as the standard for titles, headings, prose, captions and control wording. Look for language that needs polishing, unnecessary abstraction and planning instructions surviving into finished copy.
+- [Practitioner](perspectives/practitioner.md): correctness, evidence, coverage and depth.
+- [Value](perspectives/value.md): whether each article and section earns the reader's time.
+- [Teaching](perspectives/teaching.md): how a newcomer builds understanding, and where showing beats telling.
+- [Editorial](perspectives/editorial.md): the words on the page, read as a reader meets them.
+- [Visual](perspectives/visual.md): everything the reader looks at rather than reads: figures, tables, code, diagrams and interactive tools.
 
-**Teaching:** Assess how an intelligent newcomer builds understanding towards the original practitioner goal. Use the references to judge explanations, examples, gradual exposure and visual teaching, identifying mental work the article could help the reader do. Tree reviews assess the planned progression; corpus reviews assess the finished journey.
+Plans are not reviewed for wording or visuals, because the writer replaces the plan's wording and builds the visuals later. A plan's teaching review still checks that each brief says how its hard parts will be shown.
 
-**Interaction:** Exercise the implemented figures and tools. Check that each is informative and understandable on its own: its purpose, controls, changing states and results should be clear. Check that controls expose meaningful changes, explanations agree with outcomes, playback permits reading, and keyboard and phone use work.
+## Assigning a perspective
 
-Editorial and teaching reviewers read [Sequence diagrams](../../../src/reference-articles/sequences.astro), [Indexes](../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../src/reference-articles/storage.astro) in full, including their figures. Planning reviews assess the plan rather than unwritten prose or unimplemented interactions.
+Give each reviewer exactly one perspective, its mode, the pieces, a fixed version of them, and the inputs its file lists:
 
-Assess every assigned piece and return concrete findings by piece and perspective. Send repairs to the responsible writer and recheck affected perspectives, including the editorial and teaching effects of technical corrections, without repeating unchanged work. If assigned one perspective, perform it directly without spawning another team.
+> Apply the [perspective] perspective of [staycurrent-review](SKILL.md) in [mode] mode to [pieces] at [version].
+
+Within one commission, keep the same reviewer for each perspective across batches so it judges consistently. A reviewer assigned one perspective performs it directly and never arranges another team.
+
+## The report
+
+Reviewers report; they do not edit the work. Every report uses this shape, so findings can be compared across runs:
+
+```markdown
+# [Perspective] review · [mode] · [pieces] · [version]
+
+Inputs read: [each input, and anything withheld]
+Verdict: pass | repairs required
+
+## Checks
+
+| Check | Result | Note |
+| --- | --- | --- |
+| [each check from the perspective file, in order] | pass, finding or not applicable | [one line] |
+
+## Findings
+
+### [perspective]-[n] · required | optional · [piece and location]
+
+Problem: [what is wrong, as the reader meets it]
+Effect: [what the reader loses or must do instead]
+Repair: [a concrete suggestion]
+
+## Limits
+
+[What this review could not check, and why]
+```
+
+A finding is required when the piece falls short of the goal without the repair, and optional when the repair would only reduce reader effort. The verdict is "repairs required" when any required finding remains.
+
+## Deciding and rechecking
+
+The coordinator (the orchestrator, or whoever arranged the review) decides which findings to accept and records the reason, especially where perspectives disagree, for example practitioner coverage against value. Accepted findings go to the responsible planner or writer together. After repair, only the affected perspectives recheck, using the same report shape and the checks the repair touched, including the editorial and teaching effects of technical corrections.
