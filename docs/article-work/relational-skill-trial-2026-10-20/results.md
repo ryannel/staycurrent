@@ -2,6 +2,8 @@
 
 Two articles were regenerated from their plans with the skills at f37ab71, without reading the live drafts, then reviewed by the four fixed article perspectives until they passed.
 
+> **Correction, 20 October 2026.** The d02 and d03 rechecks reused the d01 reviewers, as the review skill then required, and read diffs and the earlier decisions rather than the whole page. Their passes are not independent evidence. A fresh editorial reviewer at d04 found five required problems in a03, three of them present since d01. The first-round (d01) findings below are valid; "Rounds to pass" is not. The skills now give every assignment, including repairs and later rounds, to a fresh subagent.
+
 ## Outcome
 
 | | a00 live, first review (c01) | a00 trial, first review (d01) | a03 trial, first review (d01) |

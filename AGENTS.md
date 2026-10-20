@@ -20,7 +20,8 @@ useful understanding against reader time and effort. Use the seven skills in
 - `staycurrent-review`: arrange independent reviews or perform an assigned perspective.
 
 The orchestrator maintains the shared tree and schedules independent batch
-reviews. Workers own their drafts and repairs; standalone assignments manage
+reviews. Every subagent assignment, including a repair or a later review
+round, goes to a fresh subagent; standalone assignments manage
 their own reviews. Keep briefs and results with the work in `docs/`.
 Use plain British English. Check consequential technical claims against primary
 sources and distinguish illustrative models from observed execution. Use the

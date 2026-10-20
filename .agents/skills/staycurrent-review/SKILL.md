@@ -30,7 +30,7 @@ Give each reviewer exactly one perspective, its mode, the pieces, a fixed versio
 
 > Apply the [perspective] perspective of [staycurrent-review](SKILL.md) in [mode] mode to [pieces] at [version].
 
-Within one commission, keep the same reviewer for each perspective across batches so it judges consistently. A reviewer assigned one perspective performs it directly and never arranges another team.
+Every assignment goes to a fresh reviewer that has not seen the piece, its earlier versions or any earlier report, including in a later round. A reviewer who has followed the rounds reads the page through its history: it sees repairs as fixes and stops noticing what has been there all along. In the 2026-10-20 skill trial, reviewers kept across three rounds passed a03; a fresh editorial reviewer then found five required problems, three of which had been on the page throughout. Runs stay comparable because the perspectives, checks and report format are fixed, not because the reviewer is. A reviewer assigned one perspective performs it directly and never arranges another team.
 
 ## The report
 
@@ -65,7 +65,7 @@ Suggestion: [one way to fix it; the writer chooses the repair]
 [What this review could not check, and why]
 ```
 
-Number findings per perspective and keep counting across rounds of the same review: if the editorial findings in the first round end at editorial-13, the recheck starts at editorial-14. Each label then means one problem throughout the work record.
+Number findings per perspective and keep counting across rounds of the same review: if the editorial findings in the first round end at editorial-13, the coordinator tells the next round's reviewer to start at editorial-14. Each label then means one problem throughout the work record.
 
 Editorial and teaching reviewers may read the step text of scripted figures from the built page rather than by playing them.
 
@@ -73,6 +73,6 @@ A finding is required when the piece falls short of the goal without the repair,
 
 ## Deciding and rechecking
 
-The coordinator (the orchestrator, or whoever arranged the review) decides which findings to accept and records the reason, especially where perspectives disagree, for example practitioner coverage against value. A decision names the problem to solve, not the words to insert: the writer repairs it with [staycurrent-revise](../staycurrent-revise/SKILL.md) so that the article still reads as one piece. Accepted findings go to the responsible planner or writer together. Findings on shared layout or site-wide text, which belongs to no writer, go to the coordinator to repair. After repair, only the affected perspectives recheck, using the same report shape and the checks the repair touched, including the editorial and teaching effects of technical corrections. When a repair adds a passage or figure, the teaching perspective also rechecks, to judge whether each addition belongs in this piece and sits well where it was placed.
+The coordinator (the orchestrator, or whoever arranged the review) decides which findings to accept and records the reason, especially where perspectives disagree, for example practitioner coverage against value. A decision names the problem to solve, not the words to insert: a fresh writer repairs it with [staycurrent-revise](../staycurrent-revise/SKILL.md) so that the article still reads as one piece. Accepted findings for one piece go to its writer together. Findings on shared layout or site-wide text, which belongs to no writer, go to the coordinator to repair.
 
-Reviewers who have followed the rounds read a repair as a fix and stop seeing it as a reader does. So before an article passes, a fresh editorial reviewer, given none of the earlier versions, reports or findings, reads the whole article as rendered.
+After repair, the affected perspectives review the whole piece again, with fresh reviewers and every check, exactly as in the first round. Editorial always runs again, because any repair changes the words. The coordinator, not the reviewer, compares the new report with the accepted findings to confirm each was fixed. When a repair added passages or figures, the coordinator names them to the teaching reviewer, without the findings behind them, for its placement check.

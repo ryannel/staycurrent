@@ -5,7 +5,7 @@ description: From a topic and brief, plan a recursive article tree, then coordin
 
 An orchestrated commission turns one topic and brief into a reviewed tree of articles and, when commissioned, the written articles. The goal throughout is the commission's: take an intelligent newcomer to expert practitioner in the commissioned subject, in the least reader time and effort. Every article serves that one goal; a nested article does not set its own expertise target. Run only the stages the commission asks for.
 
-The orchestrator owns the tree, the schedule, review and integration. Workers (planners, writers and reviewers) complete one assignment and return. Keeping review with the orchestrator means workers never wait for review capacity and reviewers can compare pieces across a batch, so workers never start review teams of their own; an assigned reviewer performs its perspective directly.
+The orchestrator owns the tree, the schedule, review and integration. Workers (planners, writers and reviewers) complete one assignment and return, and every assignment goes to a fresh subagent, including repairs and later review rounds. A worker who has seen earlier rounds carries their blind spots forward; everything a fresh one needs is in the plan, the work record and the piece itself. Keeping review with the orchestrator means workers never wait for review capacity and reviewers can compare pieces across a batch, so workers never start review teams of their own; an assigned reviewer performs its perspective directly.
 
 When perspectives disagree, for example completeness against value, decide against the commission's goal and record the reason. Bring the user genuine choices of scope or publication, not routine review decisions.
 
@@ -26,7 +26,7 @@ Start from the commission's topic and brief, and give ready assignments to fresh
 
 > Apply [staycurrent-breakdown](../staycurrent-breakdown/SKILL.md) to this assignment and context. Return the YAML breakdown for orchestrator-managed batched review.
 
-Review returned breakdowns in batches in breakdown mode. Return findings by article to the planner who wrote it and recheck the changed work. Fill free slots with whatever planning or review is ready rather than holding slots in reserve.
+Review returned breakdowns in batches in breakdown mode. Give the findings for each article, with its breakdown, to a fresh planner, then review the changed breakdown again with fresh reviewers. Fill free slots with whatever planning or review is ready rather than holding slots in reserve.
 
 Merge accepted breakdowns into the tree, and accepted example extensions into the record, and queue each `nested_article` stub for its own breakdown. Repeat until no stubs remain.
 
@@ -47,14 +47,14 @@ Give each article to a fresh writer with:
 
 > Apply [staycurrent-write](../staycurrent-write/SKILL.md) to this article plan and context. Return the article for orchestrator-managed batched review, with any proposed tree changes.
 
-Review written articles in batches in article mode, giving each reviewer only the inputs its perspective file lists. Visual reviewers need a rendered preview of the fixed version, with isolated figure routes where you can provide them. Reconcile the findings and return them to the writer together, as problems to solve rather than wording to insert:
+Review written articles in batches in article mode, giving each reviewer only the inputs its perspective file lists. Visual reviewers need a rendered preview of the fixed version, with isolated figure routes where you can provide them. Reconcile the findings and give them together to a fresh writer, with the article, its plan context and its work record, as problems to solve rather than wording to insert:
 
-> Apply [staycurrent-revise](../staycurrent-revise/SKILL.md) to these accepted findings. Return the repaired article and its work record.
+> Apply [staycurrent-revise](../staycurrent-revise/SKILL.md) to this article and these accepted findings. Return the repaired article and its work record.
 
-Send even a one-phrase fix back through that skill rather than making it yourself: a phrase changed in isolation is how patches accumulate. After repair, recheck the affected perspectives and keep each perspective's verdict separate. Merge proposed tree and example changes centrally and update the articles they affect.
+Send even a one-phrase fix back through that skill rather than making it yourself: a phrase changed in isolation is how patches accumulate. After repair, review again with fresh reviewers as [staycurrent-review](../staycurrent-review/SKILL.md) describes, and keep each perspective's verdict separate. Merge proposed tree and example changes centrally and update the articles they affect.
 
 ## Review the corpus
 
-Give the assembled articles and tree to fresh reviewers in corpus mode. Send findings to the owning writers and recheck repairs. Return the tree, article locations, review outcomes and any unresolved work.
+Give the assembled articles and tree to fresh reviewers in corpus mode. Send findings to fresh writers for repair and review the repaired articles again with fresh reviewers. Return the tree, article locations, review outcomes and any unresolved work.
 
 Reviewed drafts are not published reading. Keep them distinct from available articles; publication needs the user's authorisation.

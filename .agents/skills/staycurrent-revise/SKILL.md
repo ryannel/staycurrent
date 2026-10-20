@@ -7,6 +7,8 @@ Review findings arrive one problem at a time, so the easy repair is local: add t
 
 ## Read the finding as a reader's problem
 
+You are usually not the article's original writer. Read the whole article, its plan context and its work record before the findings, so you know the argument you are repairing.
+
 A finding says where the reader stalls or is misled. Its suggested repair is one way to fix that, and the coordinator's decision records which problems to fix, not the wording. Before changing anything, reread the whole section the finding sits in and ask what the reader there needs.
 
 Then choose the change that leaves the section clearest. Usually that means reshaping what is already there, not appending to it:
