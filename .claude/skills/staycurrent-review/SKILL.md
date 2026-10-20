@@ -3,14 +3,22 @@ name: staycurrent-review
 description: Coordinate independent reviews of a breakdown, article tree, written article or corpus, or perform an assigned review perspective.
 ---
 
-Review each piece against the original commissioned topic, brief and expertise goal, with the least reader time and effort; do not reset the target to expert specialism in the piece's own topic:
+Review against the original commissioned topic, brief and expertise goal, with the least reader time and effort; descendants contribute to that goal rather than promise specialist mastery of their own topic. Use independent subagents for these perspectives:
 
-- **Breakdown or breakdown batch:** two independent subagents, a practitioner for coverage and depth and an adversarial editor for learning value, reading time and consolidation.
-- **Tree or corpus:** three independent subagents, checking completeness and depth; structure, overlap and adversarial consolidation; and teaching and flow.
-- **Article or article batch:** two independent subagents, a practitioner for correctness, coverage and practical judgement and a writing/teaching reviewer for prose, animations and interaction.
+- **Breakdown or breakdown batch:** practitioner; value and consolidation; editorial.
+- **Tree or corpus:** completeness and depth; structure, overlap and consolidation; teaching progression; editorial.
+- **Article or article batch:** practitioner; editorial; teaching; interaction.
 
-For a batch, assess every assigned article and return findings by article; recheck repairs without repeating unchanged work. Planning reviews judge scope, decisions and boundaries rather than unwritten prose or implemented figures. Article reviews use the parent, sibling and child plans to check gradual exposure: the parent teaches a useful high-level answer, and the deeper article owns its detail.
+**Practitioner:** Check correctness, coverage and practical judgement, using the family context to keep useful parent answers and deeper child mechanisms with their owners. The completeness perspective applies this across the tree or corpus.
 
-The adversarial editor challenges each article and section's reading and navigation cost. Propose concrete cuts, merges or child articles to fold into parent sections, stating what useful understanding would be lost; seek the smallest coherent corpus that still meets the practitioner goal.
+**Value, structure and consolidation:** Challenge reading and navigation cost. Propose concrete cuts or merges, stating what useful understanding would be lost; seek the smallest coherent corpus that meets the original goal.
 
-Only the teaching/style perspective reads [Sequence diagrams](../../../src/reference-articles/sequences.astro), [Indexes](../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../src/reference-articles/storage.astro) in full, including their figures, and judges how effectively the work follows their writing and teaching. Check how visual teaching carries the important explanations across the article, including mechanisms left to prose or code, reading time for all visible text, keyboard focus at endpoints and phone comparisons. Return concrete findings with locations, send repairs to the responsible worker and recheck them; if assigned one perspective, perform that review directly without spawning another team.
+**Editorial:** Use the three reference articles as the standard for titles, headings, prose, captions and control wording. Look for language that needs polishing, unnecessary abstraction and planning instructions surviving into finished copy.
+
+**Teaching:** Assess how an intelligent newcomer builds understanding towards the original practitioner goal. Use the references to judge explanations, examples, gradual exposure and visual teaching, identifying mental work the article could help the reader do. Tree reviews assess the planned progression; corpus reviews assess the finished journey.
+
+**Interaction:** Exercise the implemented figures and tools. Check that each is informative and understandable on its own: its purpose, controls, changing states and results should be clear. Check that controls expose meaningful changes, explanations agree with outcomes, playback permits reading, and keyboard and phone use work.
+
+Editorial and teaching reviewers read [Sequence diagrams](../../../src/reference-articles/sequences.astro), [Indexes](../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../src/reference-articles/storage.astro) in full, including their figures. Planning reviews assess the plan rather than unwritten prose or unimplemented interactions.
+
+Assess every assigned piece and return concrete findings by piece and perspective. Send repairs to the responsible writer and recheck affected perspectives, including the editorial and teaching effects of technical corrections, without repeating unchanged work. If assigned one perspective, perform it directly without spawning another team.
