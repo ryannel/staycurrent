@@ -1,0 +1,12 @@
+# a00 practitioner recheck — b02
+
+**Decision: pass.** No actionable practitioner findings or required repairs in the changed material. The b01 practitioner pass remains applicable to unchanged material.
+
+Reviewed the revised application, lookup and live-change prose, source disclosure and Figure 3–5 changes against the retained commission and child scopes. Current article and `DecisionFigure.astro` hashes match `b02/manifest.json`. Inspected the frozen page at `http://127.0.0.1:4439/review/relational-next/` and exercised the changed Figure 3 and Figure 4 states.
+
+- **Application prose and Figure 3:** R103 is now explicitly a purchase-attempt identity, distinct from the customer and order identifiers, reused across retries and retained uniquely with the order and result. The separate stable payment-request identity avoids implying that database deduplication alone protects an external charge. The independent inspection and overlapping-attempt qualifications remain. Both rendered commit outcomes use R103 and retain the same missing confirmation. This is useful introductory guidance; the full coordination and reconciliation protocol remains with application integration and request recovery.
+- **Figure 4:** At the initial stage no location has been sought and no table page has been visited. The index's candidate stage reveals page 3 while still reporting no table visit. Only the read stage reports one table page visited, plus the uncounted index search. The revised progression agrees with the stated illustrative access path and preserves the previously reviewed final work comparison. It adds no timing, captured-plan or new native-execution claim.
+- **Figure 5 and live-change prose:** Naming the delivery instruction and its optional column makes the example concrete without changing its compatibility argument. Confirmed historical values, replacement/draining of old writers, verification before strengthening the rule and the allowance for unknown history remain. Detailed rollout and data-conversion procedures stay with the live-change branch.
+- **Source disclosure:** It still distinguishes the six illustrative figures from the earlier native SQL, rollback and competing-update checks. Removing the figures' creation history does not broaden the evidence claim.
+
+No unchanged native checks were repeated and no old runtime was accessed. No source edits, build, Git operations or nested review were performed. The temporary Chrome tab was closed; no theme or viewport setting was changed.

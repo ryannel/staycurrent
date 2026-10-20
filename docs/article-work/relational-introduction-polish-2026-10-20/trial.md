@@ -1,0 +1,11 @@
+# Relational introduction trial
+
+The updated writing and review skills were trialled on a00 only. A fresh writer read the three reference articles and the full direct-child context, then revised the complete piece without suggested replacement headings or earlier verdicts. Its nine revised headings were accepted; the shared coverage map and registry carry those labels and retain the existing anchors. The other 37 articles are unchanged.
+
+Four independent roles reviewed frozen b01. Editorial identified an ambiguous purchase-attempt identifier and two copy issues. Teaching and practitioner passed. Interaction first exercised all six figures without surrounding prose, then found two optional improvements: identify the delivery instruction and reveal the index candidate before visiting its table page. All five suggestions were accepted. Root integration also corrected an early-state lookup note that claimed rows were tested before table reading.
+
+The writer repaired those points together. Frozen b02 received narrow, separate editorial, teaching, interaction and practitioner rechecks; all passed with no remaining findings in the changed scope. Reports and source manifests are retained in b01/ and b02/. The trial demonstrates useful findings from the separate roles; the reader's judgement of the writing remains the next part of review.
+
+The full build passes across 141 pages and 13 site rules. Six figures are implemented, including four new comparisons. Stable section anchors, child destinations, draft metadata and search exclusion are preserved. Isolated figure routes exist only in temporary review snapshots and are absent from the deployment output. No native database work was repeated: the SQL, fixtures, original models and verifier remain unchanged, and the article preserves the distinction between illustrative states and earlier PostgreSQL execution.
+
+Browser checks include the reported branches, keyboard controls, playback allowance and phone viewport layout. The reports state their limits; this was not a physical-device or complete assistive-technology audit. The live destination remains the authorised unlisted draft review at https://staycurrent.dev/review/relational-next/.
