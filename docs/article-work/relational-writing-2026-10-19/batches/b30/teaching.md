@@ -1,0 +1,43 @@
+# b30 teaching review
+
+## a26 — Diagnosing a query from its execution plan
+
+**PASS. No required or optional teaching repair.** Full initial review of immutable4440, complete article, PlanFigure/model, writer handoff and supplied family context. The article meets the reference teaching approach and original relational-practice goal; no skill rewrite or further article is required to finish its ordinary diagnosis. The actual a05/a24/a25 family and the full three fixed references were read earlier. No practitioner report, native execution or download testing was used.
+
+### Prose, progression and scope
+
+The opening states a concrete surprise: ten results need80,000 line lookups while estimates predict only a few hundred joined rows. It promises and completes one investigation. Common north and rare island stay parameters of the same report, rather than introducing a second performance story. Query meaning is established before optimisation: duplicate equal-valued lines contribute separately, numeric totals remain exact, null totals sort last, and a customer identifier breaks ties. Schema/settings are available in a disclosure so they support the evidence without delaying the main question.
+
+The parent already supplies a useful first diagnosis and comparison method. This article deepens physical dependency reading, reporting units, sufficiently consumed inputs, the earliest consequential estimate error, statistics evidence, the actual preparation path and acceptance. It does not duplicate a24's storage curriculum or a25's index design. Optional operations, concurrency and rollout links do not prevent completing the local task. Unneeded Materialize/Memoize/parallel-node catalogues are omitted; hash/merge alternatives and spill evidence are introduced only to interpret what could change this case.
+
+The causal chain is particularly clear. Correct three-line probes are repeated80,000times because the customer input is8,000rather than18. Old frequency0.001, physical scaling and current data support distribution drift. The prediction is stated before ANALYZE; after collection the estimate becomes8,000,88,000index searches disappear and warm top hits fall576,098→2,550. Necessary240,000contributions remain. The forced generic comparison is a sensitivity test, not retroactively assigned as the original cause: actual auto executions stayed custom. This protects the reader from selecting a plausible but unsupported remedy.
+
+Reporting distinctions remain near their use: per-loop rows versus accumulated buffers; planner units versus elapsed time; inclusive parent time versus child work; unconsumed rows versus estimate error; cache accesses versus device I/O; the same access total under different cache states; instrumentation versus application latency. The separate meaning of EXPLAIN's ANALYZE option and statistics collection is explained before both appear. Direct British English and the recurring report make a technically dense subject followable.
+
+The ending closes the ledger with exact-result checks and mixed trials by operation. It retains the short closed-loop/sample-size limits, rare maxima rather than an invented rare-tail estimate, continuing collection cost and absent production-capacity evidence. The native/illustrative boundary is explicit throughout, including the simplified selectivity multiplication and Figure2's LIMIT case. I did not independently certify the native observations.
+
+### Visual teaching across the argument
+
+The five players support distinct useful inferences rather than only displaying controls:
+
+- **Dependency/repetition:** Customers→Orders→Lines→Groups, active-stage treatment and request counters expose10×3multiplication and the consumer's need to aggregate before ranking. Switching region changes the repeated requests while ten final rows remain. A small output is visibly compatible with large input work.
+- **Units:** per-loop3versus240,000overall makes the permitted multiplication explicit; the explanation contrasts already accumulated480,000buffer hits. The inclusive timing stage identifies the order subtree inside the loop total, and the alternate early-stop case prevents treating10consumed of1,000possible rows as an automatic estimator fault.
+- **Estimates:** the tiny18prediction and8,000observation are followed through303versus240,000joined rows. Collection changes the prediction, selected work and search/hit counters together, while the answer still needs all contributions. This connects statistics to work rather than treating better estimates as an end in themselves.
+- **Parameters:** known versus unknown region changes available information; common/rare cases connect that information to the number of probes or broad scans. It keeps estimate, actual population, work and isolated timing visible while narration rejects a universal generic/custom ranking.
+- **Acceptance:** persistent Before/After upper-value bars and selected-phase ranges keep common report, short requests and completed work separately assessable. The note states the small-sample p95 boundary, overlapping change tails and absence of a useful rare-tail estimate. Improvements are accepted within the fixture's boundary.
+
+The surrounding prose tells readers what to observe and interprets the difference afterwards. The bar/state approach supplies purposeful gradual exposure; decorative movement is unnecessary. Dynamic row updates retain labels, units and metrics, and manual controls let the reader inspect a stage.
+
+Mechanisms left to prose/code are proportionate. The shortened actual plan preserves indentation and conditions before the flow simplification. One compact pg_stats account uses this three-value region and identifier histogram to explain summary fields; the dependent island/country example gives simple arithmetic and explicitly distinguishes physical correlation. The hypothesis/test table keeps sample capacity and same-table dependency remedies conditional rather than starting extra investigations. The named-session SQL makes the preparation comparison reproducible. These short concrete relationships do not need additional figures to make the local diagnosis usable.
+
+### Actual browser evidence
+
+- Operated **all12choices /39states**, reading rows, counts, titles and narration: flow10states; units5; estimates6; parameters12; acceptance6. Common/rare probes,3×80,000rows, early-stop qualification, estimate/search transition, four parameter routes and acceptance ranges match their claims. The two explicitly illustrative exceptions remain labelled.
+- Verified **24 keyboard endpoint arrivals**, both ends of every choice. Back/Next retain focus via aria-disabled and clamping. Allfive Play/Pause, final replay, Reset, manual Next stopping playback and choice-change stopping worked. Choice changes deliberately return to the first stage, and Reset preserves the selected case. There are no End buttons or scrubbers in these short players. Read-every-step disclosures provide complete text for all choices, including row units and metrics, and were opened/closed in allfive figures.
+- Dynamic rows retain9.6pxpadding, borders, active treatment, tracks and text hierarchy after redraw. The source has a reduced-motion transition override and visible keyboard focus. Narration is polite; no screen-reader or emulated reduced-motion audit is claimed.
+- At390×844, inspected every choice's endpoint in **both Light and Dark**, plus a dependency intermediate. No horizontal figure overflow. Units/statistics are approximately695–750px, parameters801px and acceptance792–799px at the sampled endpoints. Flow is larger at approximately867px, but ordinary positioning puts both scenario controls, allfour linked stages, narration, three metrics and all transport controls together while the introductory title is above the viewport. Labels and values wrap without clipping. Both palettes preserve active/selected distinctions. Desktop also remains readable.
+- The whole rendered figure text feeds the timer at190wpm plus0.7seconds, minimum8seconds, without a short maximum. Opening a text disclosure recalculates that allowance rather than leaving an old short timer. A sampled dependency intermediate contains93words, giving approximately30.1seconds; partial phone visibility does not stop it. Actual playback retained step4/Pause after8seconds and reached the correct aggregation step5 with Play restored by46seconds. Playback stops offscreen/hidden, with manual inspection still available.
+
+No browser downloads/events, native execution, builds, source edits or nested team. Root owns the asset-byte and technical execution checks.
+
+Restored System theme and normal viewport, closed the owned tab and released preview4440.

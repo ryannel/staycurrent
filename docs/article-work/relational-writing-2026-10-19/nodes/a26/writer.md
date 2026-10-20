@@ -1,0 +1,13 @@
+# a26 writer handoff
+
+Draft ready for orchestrator-managed review: `article.astro`; imports resolve from final `src/articles/relational-next/a26.astro`. Supplied seven anchors retained. Own component directory contains `PlanFigure.astro` and `model.mjs`; own evidence directory contains portable `verify.mjs`, retained `raw-results.json` and local `check.mjs`.
+
+Applied staycurrent-write. Read AGENTS, README/site direction, commission/runtime/context, all three fixed reference articles including figure explanations, actual family a05/a24/a25, and a21's transport implementation for mechanics only. No tree change proposed, no child destination needed, no nested workers, shared files, final article, Git or shared build touched.
+
+One report throughout: customers/orders/order_lines, dated interval, common north and rare island, exact decimal sums, stable ordering and limit. The diagnostic chain ends with targeted ANALYZE and a bounded mixed-workload acceptance. Native18.6 confirmed the estimate18→8000, removal of88000indexsearches and top warm hits576098→2550; both classes' results identical. Actual pg named preparation auto remains custom in all tested sessions. Forced generic plan is shown as a counterfactual sensitivity, explicitly not the symptom's supported cause. Fixture DB was dropped; raw verified/cleaned flags true.
+
+Five interactive players: physical dependencies/repetition; counts and inclusive reporting; estimate/collection change; custom/generic and common/rare; acceptance by workload class. All visible words budget playback, clamped aria-disabled endpoints preserve focus, dynamic styling is scoped through :global, partially visible figures keep playing and fully offscreen/hidden figures pause. Figure2 LIMIT example is labelled illustrative. No physical-device I/O, sustainable capacity or CPU claims from buffer/timing evidence.
+
+Local verification: Astro compiler for fragment and figure, model/capture assertions, supplied-anchor and destination/import checks, whitespace checks. Full rendered review and shared build intentionally left to root. Portable worksheet uses ?url&no-inline; dependencies, environment and cleanup described in article.
+
+Known limits: fixture intentionally regular; six trials short, clients closed-loop, only16common/fourrare samples pertrial. Acceptance figure states common p95 is maximum at this sample size; article does not claim rare-tail quality. Full client result latency includes local protocol/decoding only. Collection cost measured on small table; no sustained production resource or continued maintenance comparison. Accurate estimates may still price imperfect alternatives, covered as a conditional experiment only.
