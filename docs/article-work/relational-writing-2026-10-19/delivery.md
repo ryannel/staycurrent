@@ -1,0 +1,13 @@
+# Relational collection delivery · 20 October 2026
+
+The complete collection of 38 articles is available in the [live relational draft collection](https://staycurrent.dev/review/relational-next/). Every article passed two independent reviews and was committed and pushed individually. The collection remains a draft, with noindex and exclusion from the public reading directory and search.
+
+The canonical tree is `docs/coverage/relational-fanout-2026-10-19.yaml`. Each writing assignment supplied its own headings and brief, parent and sibling scopes, full child plans and contextual link locations. Parents teach a useful first case; dedicated articles develop the deeper mechanisms and procedures. Reviews used the actual neighbouring articles to check those boundaries.
+
+Three fresh corpus reviewers independently read all 38 finished articles and the complete tree. Their completeness, consolidation and teaching reports are under `corpus-review/`. The teaching reviewer used all three fixed reference articles and their implemented figures. Required fixes C-D1 and S01 passed focused rechecks. No required finding remains; optional refinements are distinguished in the original reports and reconciliation.
+
+The assembled pages contain 175 figures. The full build passes all 13 site rules. Additional source and rendered audits pass all 38 articles with zero findings, covering planned destinations, contents, sources, contextual child links, bottom directories and draft/search boundaries. All 97 Pagefind fragments exclude review routes. Native evidence and individual model, keyboard and phone checks remain with their article batches.
+
+The final content delivery is `61c08f7ebbbcfcb5825f8225990a0fde8008214f`; [its build and deployment passed](https://github.com/ryannel/staycurrent/actions/runs/39352426396). Live verification loaded all 38 pages and matched all 58 served script/download assets to the reviewed build. A real browser followed the repaired design-to-SQL entrance, verified the collapsed setup and cleanup instructions and the transaction continuation, then returned to the root showing all 38 drafts available. Earlier live checks exercised the repaired security and monitoring states.
+
+All owned development and review servers, native clusters, the new temporary driver, snapshot copies and reading export are stopped or removed. Pre-existing PostgreSQL software and dependency directories, and the unrelated service on port 4321, were left alone. `state.json` retains every article’s commit and push status, corpus repair references and verified cleanup. The final closeout commit adds delivery records only.

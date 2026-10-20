@@ -94,6 +94,6 @@ The preceding render notes record the initial draft. The B01 teaching repair now
 
 Final Astro transforms: staged article, SqlFigure and ReportFigure all zero diagnostics. Shared build and independent mechanism recheck remain root’s responsibility. The staged article requires re-promotion only for its latest source-paragraph wording and primary type-resolution link.
 
-## Corpus entrance repair ·20October2026
+## Corpus entrance repair · 20 October 2026
 
-Verified official PostgreSQL18 installation, cluster creation, initdb, createdb, pg_ctl and client access documentation. The optional private socket-only start was executed on18.6/macOS through selected-role connection, the existing fixture, seven expected order identities, reset, database removal, waited shutdown and directory removal. The exact displayed shell snippets also passed with contradictory inherited host/address/port/role/service/PGOPTIONS cleared or replaced. Durable records: corpus-review/c02-native-setup.json and c02-exact-setup.json. No existing database, application or service was changed.
+Verified official PostgreSQL 18 installation, cluster creation, initdb, createdb, pg_ctl and client access documentation. The optional private socket-only start was executed on18.6/macOS through selected-role connection, the existing fixture, seven expected order identities, reset, database removal, waited shutdown and directory removal. The exact displayed shell snippets also passed with contradictory inherited host/address/port/role/service/PGOPTIONS cleared or replaced. Durable records: corpus-review/c02-native-setup.json and c02-exact-setup.json. No existing database, application or service was changed.

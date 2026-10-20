@@ -130,4 +130,6 @@ Later review batches build to their own disposable output directory with `astro 
 
 ## Completed native verification
 
-After all38article native reviews and the corpus setup-bridge rehearsal, root verified this shared disposable server as PID99513 at the recorded data directory, stopped it with a waited fast shutdown, independently confirmed pg_ctl status3 and absence of postmaster.pid, then removed only `/private/tmp/staycurrent-relational-20261019.goQaIi`. The running-state instructions above are retained as the historical verification record; this instance is now stopped and removed.
+After all article native reviews and the corpus setup-bridge rehearsal, root verified this shared disposable server as PID 99513 at the recorded data directory, stopped it with a waited fast shutdown, independently confirmed pg_ctl status 3 and absence of postmaster.pid, then removed only `/private/tmp/staycurrent-relational-20261019.goQaIi`. The running-state instructions above are retained as the historical verification record; this instance is now stopped and removed.
+
+The newly installed isolated pg 8.23.1 driver directory was also removed after native work. All root-owned development and immutable-review servers have stopped after reviewer release; their disposable snapshot directories and the regenerable reading export have been removed. No listener remains on the run’s ports 4337, 4438, 4439, 4440 and 57319. Historical commands and paths above describe the completed run, not available services.

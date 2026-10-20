@@ -76,4 +76,8 @@ Security and monitoring/capacity passed both article perspectives after branch-s
 
 ## Complete corpus review
 
-All38writtenarticles passed independent article reviews and three fresh whole-corpus perspectives. Required setup/continuation repairs in a01/a02passed focused rechecks; all other181frozen source/component/tree files are unchanged. Complete source and rendered audits pass38/38, the full build passes all13rules, and all97Pagefind fragments exclude review routes. The canonical38article tree remains intact. Native fixtures and the new isolated driver are stopped/removed; final deployment and preview cleanup follow.
+All 38 written articles passed independent article reviews and three fresh whole-corpus perspectives. Required setup and continuation repairs in a01 and a02 passed focused rechecks. All other 181 frozen source, component and tree files are unchanged. Complete source and rendered audits pass all 38 articles; the full build passes all 13 rules. All 97 Pagefind fragments exclude review routes. The canonical tree retains 38 articles.
+
+## Final live verification and cleanup
+
+Content commit 61c08f7 built and deployed successfully. Live verification passed all 38 pages and 58 exact served script/download assets. A real browser confirmed the final setup and continuation repairs, and availability of all 38 drafts. All owned development and review servers, native clusters, the new driver, snapshots and reading export are stopped or removed. The existing live collection tab remains ready to read. See `delivery.md` and `corpus-review/c02-live-check.json` for the completed record.
