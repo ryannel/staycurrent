@@ -13,7 +13,7 @@ When perspectives disagree, for example completeness against value, decide again
 
 ## Keep the record
 
-Keep one canonical YAML tree under `docs/coverage/` and a work record under `docs/article-work/`: the commission, each piece's draft and review status, the review reports as written, and the decision on each finding. Batching delays review; the record shows it never skipped it.
+Keep one canonical YAML tree under `docs/coverage/`, the collection's example record beside it ([staycurrent-continuity](../staycurrent-continuity/SKILL.md)), and a work record under `docs/article-work/`: the commission, each piece's draft and review status, the review reports as written, and the decision on each finding. Batching delays review; the record shows it never skipped it.
 
 ## Plan the tree
 
@@ -21,13 +21,14 @@ Start from the commission's topic and brief, and give ready assignments to fresh
 
 - its topic and brief;
 - the commission's topic, brief and expertise goal;
-- relevant parent and neighbouring briefs.
+- relevant parent and neighbouring briefs;
+- the example record. For the root breakdown, ask for a proposed record and settle it before planning any child.
 
 > Apply [staycurrent-breakdown](../staycurrent-breakdown/SKILL.md) to this assignment and context. Return the YAML breakdown for orchestrator-managed batched review.
 
 Review returned breakdowns in batches in breakdown mode. Return findings by article to the planner who wrote it and recheck the changed work. Fill free slots with whatever planning or review is ready rather than holding slots in reserve.
 
-Merge accepted breakdowns into the tree and queue each `nested_article` stub for its own breakdown. Repeat until no stubs remain.
+Merge accepted breakdowns into the tree, and accepted example extensions into the record, and queue each `nested_article` stub for its own breakdown. Repeat until no stubs remain.
 
 ## Review the tree
 
@@ -41,11 +42,16 @@ Give each article to a fresh writer with:
 - its children's briefs and planned headings, where each is introduced, and any finished child articles;
 - parent and neighbouring scopes;
 - existing articles it can link to;
+- the example record;
 - the commission's topic, brief and expertise goal.
 
 > Apply [staycurrent-write](../staycurrent-write/SKILL.md) to this article plan and context. Return the article for orchestrator-managed batched review, with any proposed tree changes.
 
-Review written articles in batches in article mode, giving each reviewer only the inputs its perspective file lists. Visual reviewers need a rendered preview of the fixed version, with isolated figure routes where you can provide them. Reconcile the findings and return them to the writer together. After repair, recheck the affected perspectives and keep each perspective's verdict separate. Merge proposed tree changes centrally and update the articles they affect.
+Review written articles in batches in article mode, giving each reviewer only the inputs its perspective file lists. Visual reviewers need a rendered preview of the fixed version, with isolated figure routes where you can provide them. Reconcile the findings and return them to the writer together, as problems to solve rather than wording to insert:
+
+> Apply [staycurrent-revise](../staycurrent-revise/SKILL.md) to these accepted findings. Return the repaired article and its work record.
+
+Send even a one-phrase fix back through that skill rather than making it yourself: a phrase changed in isolation is how patches accumulate. After repair, recheck the affected perspectives and keep each perspective's verdict separate. Merge proposed tree and example changes centrally and update the articles they affect.
 
 ## Review the corpus
 

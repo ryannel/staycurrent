@@ -12,5 +12,6 @@ The words on the page are judged as a reader meets them. Knowing the plan or the
 4. **Openings.** Each section opens by telling the reader something, with its reason, not with a bare instruction.
 5. **Reader-facing text only.** No planning language, editing history or notes about how the article was made.
 6. **Captions and labels.** Captions say what the reader is looking at; control labels say what they will change.
+7. **One piece.** The article reads as if written in one go. No paragraph answers an objection the reader never had, no sentence stacks conditions until its point is lost, and no aside interrupts the argument. Name each passage that reads as a later patch.
 
 In corpus mode, also check that terms, names and the running example stay consistent from article to article.

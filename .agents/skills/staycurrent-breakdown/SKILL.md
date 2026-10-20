@@ -11,7 +11,7 @@ The subject sets the depth. A shallow subject may be taught fastest as a short c
 
 Return the article's `title`, `brief` and a recursive `heading` list. Place each `nested_article` under the heading that introduces it, with only that child's `topic`, `title` and `brief`; its own headings come from a separate breakdown. Keep a subject as a section wherever that serves the reader better than another page to open.
 
-Titles and headings are for readers, so write them as they would appear on the page. Teaching instructions and intended outcomes belong in the briefs. Where a section's idea is hard to hold in the head, such as changing state, data spread across tables or a sequence of events, its brief names the example, figure or table that will show it, so teaching review can check the plan before anything is built. The writer polishes the final wording, so aim for clear rather than final.
+Titles and headings are for readers, so write them as they would appear on the page. Teaching instructions and intended outcomes belong in the briefs. Where a section's idea is hard to hold in the head, such as changing state, data spread across tables or a sequence of events, its brief names the example, figure or table that will show it, so teaching review can check the plan before anything is built. Draw examples from the collection's example record ([staycurrent-continuity](../staycurrent-continuity/SKILL.md)); if this article needs something the record lacks, propose the extension with the breakdown. A root breakdown proposes the record itself. The writer polishes the final wording, so aim for clear rather than final.
 
 ```yaml
 topic: Relational indexes

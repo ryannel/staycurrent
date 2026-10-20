@@ -20,7 +20,7 @@ Interaction must earn its place. If a static example teaches as well, use it.
 - Rows sit under their real column headings, one small table per relation. Never pack a relation's columns into one cell as `name = value` lists.
 - Each column holds one kind of value. If a reader has to decode a cell, the form is wrong.
 - Mark primary and foreign keys, and draw relationships rather than describe them.
-- Keep the running example consistent from figure to figure. The same rows, keys, names and values appear wherever they recur, and a column named in a caption exists in the tables. An order refused in one figure must not appear as accepted in a later one. Keep the example's rows in one model file that every figure imports, so they cannot drift.
+- Keep the running example consistent from figure to figure and from article to article. Take its people, rows, keys and values from the collection's example record ([staycurrent-continuity](../staycurrent-continuity/SKILL.md)), keep them in one model file that every figure imports, and make sure a column named in a caption exists in the tables.
 
 ## Build stepped figures on the shared stepper
 
@@ -45,6 +45,7 @@ Each step should show something new. End on the step that shows the outcome, not
 ## Make it readable everywhere
 
 - **Phones.** Check at 375 px. Side-by-side comparisons stack, column headings do not break inside a name, and nothing overflows the article column.
+- **Prose tables.** A table whose cells are sentences fits only about three columns in the article column. With more, show each row as a labelled card at every width; a table that stacks only on phones still clips on a desktop once its text grows, as the trial's "Choosing a protection" table did.
 - **Themes.** Use the site's colour tokens; the build rejects raw colour values. Check light and dark themes.
 - **Contrast.** Body text needs at least 4.5:1 against its background, and large text and graphics at least 3:1. Warnings, NULL markers and dimmed rows count as body text.
 - **Text alternative.** Give each interactive figure a "Read this figure as text" summary that states the outcomes.
@@ -54,6 +55,8 @@ Each step should show something new. End on the step that shows the outcome, not
 Label each figure as an illustrative model or as results observed from a real system, in its caption and in a boundary note that says what it leaves out. Never present an unrun command as observed.
 
 When a figure shows database behaviour, keep its data and outcomes in a model file and check them against a real database with a verification script, as the relational introduction does in [verify.mjs](../../../src/components/relational-next/a00/verify.mjs). Run it against a disposable local server, and record the version and command in the work record.
+
+A script passes easily when the example data cannot show the failure. In the 2026-10-20 trial, both verification scripts passed while a move listing could still overbook and a `FOR UPDATE` claim was false, because the example data happened to hide both failures. For each protection a figure or listing claims, include a case that would fail if the protection were missing, with data chosen so that the failure is visible, such as a capacity where a missed recheck overbooks.
 
 ## Check before returning
 

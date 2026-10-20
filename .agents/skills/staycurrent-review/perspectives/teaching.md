@@ -12,6 +12,6 @@ A newcomer can only build on what they already have. This perspective follows th
 4. **Showing.** Wherever the reader would otherwise have to hold changing state in their head, a figure, table or worked example shows it. In breakdown and tree modes, check that each brief says how its hard parts will be shown.
 5. **Judgement.** The reader finishes able to make the decision the piece exists for, and knows when it changes.
 6. **Gradual exposure.** The parent gives the high-level answer first and hands the deeper mechanism on to its child at the point the reader would want it.
-7. **Placement of additions.** In a recheck, for each passage or figure the repair added, say whether it belongs in this piece or in an article that already owns the subject. Length is not a finding: an addition that belongs here may be as long as the teaching needs.
+7. **Placement of additions.** In a recheck, for each passage or figure the repair added, say whether it belongs in this piece or in an article that already owns the subject, and whether it sits in the argument where the reader needs it or has been attached beside it. Length is not a finding: an addition that belongs here may be as long as the teaching needs.
 
 In tree mode, judge the planned progression. In corpus mode, follow the finished reading routes from the introduction and check that a reader on each route meets ideas in an order they can build on.

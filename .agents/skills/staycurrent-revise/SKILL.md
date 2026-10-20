@@ -1,0 +1,31 @@
+---
+name: staycurrent-revise
+description: Repair a written article from accepted review findings so that it reads as if it had been written that way, and run the same checks as a first draft.
+---
+
+Review findings arrive one problem at a time, so the easy repair is local: add the missing sentence, qualify the claim, append the case. Each such patch is correct, and together they make a worse article. Qualifications stack, asides answer the reviewer rather than the reader, and the argument loses its line. In the 2026-10-20 skill trial, "Making concurrent changes correct" grew from 4,925 to 6,112 words over two repair rounds. Teaching judged every addition to belong in the article, yet two passages still read as accumulated fixes: a closing sentence about a vendor import tool carried four conditions, and a paragraph about `FOR UPDATE` had to be read twice. Length is not the problem. A repaired article must meet the same standard as a first draft, and be checked the same way.
+
+## Read the finding as a reader's problem
+
+A finding says where the reader stalls or is misled. Its suggested repair is one way to fix that, and the coordinator's decision records which problems to fix, not the wording. Before changing anything, reread the whole section the finding sits in and ask what the reader there needs.
+
+Then choose the change that leaves the section clearest. Usually that means reshaping what is already there, not appending to it:
+
+- **Reword or reorder** when the idea is present but arrives in the wrong place or form.
+- **Cut** when a claim cannot be made true without a pile of conditions. Say the plain true thing, and move the edge cases to the article that owns them or to Sources.
+- **Move** a passage that belongs in another article, and link to it.
+- **Add** when the reader genuinely lacks something. Rewrite the surrounding paragraph so that the new point is part of the argument, rather than a sentence attached at its end.
+
+A correctness repair follows the same rule. State what is true as simply as the evidence allows, and put any condition that changes the reader's decision where they will act on it.
+
+## Finish as a first draft finishes
+
+After the findings are repaired:
+
+1. Reread the complete article as a reader would, including its contents list, captions and controls, against the three reference articles named in [staycurrent-write](../staycurrent-write/SKILL.md). Revise any passage that now reads as a patch: a paragraph that answers an objection the reader never had, a sentence with more than one "unless" or "provided", or an aside that interrupts the point.
+2. Run the [staycurrent-continuity](../staycurrent-continuity/SKILL.md) pass. Repairs are where terms most often arrive before their explanation.
+3. Rebuild and recheck any figure the repair touched with [staycurrent-figures](../staycurrent-figures/SKILL.md), and rerun the article's verification script.
+
+Record each finding and what changed in the work record, and name every passage you restructured beyond the finding, so rechecks know to read it.
+
+Anyone who changes an article's prose uses this skill, including a coordinator making a one-phrase fix.

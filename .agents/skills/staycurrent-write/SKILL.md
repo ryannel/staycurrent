@@ -11,8 +11,8 @@ Let figures carry the important explanations rather than decorate the prose. The
 
 Check consequential technical claims against primary sources and list them under Sources and further reading. Never present an unrun command as observed. Record what actually ran in the work record.
 
-Use the plan for coverage and relationships. Its titles and headings are provisional: polish them with the prose. Link to each nested article where its subject comes up, and again in the reading list at the foot of the article.
+Use the plan for coverage and relationships. Its titles and headings are provisional: polish them with the prose. Link to each nested article where its subject comes up, and again in the reading list at the foot of the article. Take the running example from the collection's example record, as [staycurrent-continuity](../staycurrent-continuity/SKILL.md) describes, and propose an extension rather than inventing a local one.
 
-Before returning, reread the complete piece as a reader would, including its contents list, captions and controls, and revise anything that falls short of the references.
+Before returning, reread the complete piece as a reader would, including its contents list, captions and controls, and revise anything that falls short of the references. Then run the continuity pass.
 
-When the orchestrator manages review, return the draft with any proposed tree changes. Otherwise review it with [staycurrent-review](../staycurrent-review/SKILL.md) in article mode, repair the findings, and return the article, the review results and any proposed tree changes.
+When the orchestrator manages review, return the draft with any proposed tree changes. Otherwise review it with [staycurrent-review](../staycurrent-review/SKILL.md) in article mode, repair the findings with [staycurrent-revise](../staycurrent-revise/SKILL.md), and return the article, the review results and any proposed tree changes.

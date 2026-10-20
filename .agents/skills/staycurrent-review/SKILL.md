@@ -58,7 +58,7 @@ Verdict: pass | repairs required
 
 Problem: [what is wrong, as the reader meets it]
 Effect: [what the reader loses or must do instead]
-Repair: [a concrete suggestion]
+Suggestion: [one way to fix it; the writer chooses the repair]
 
 ## Limits
 
@@ -73,4 +73,6 @@ A finding is required when the piece falls short of the goal without the repair,
 
 ## Deciding and rechecking
 
-The coordinator (the orchestrator, or whoever arranged the review) decides which findings to accept and records the reason, especially where perspectives disagree, for example practitioner coverage against value. Accepted findings go to the responsible planner or writer together. Findings on shared layout or site-wide text, which belongs to no writer, go to the coordinator to repair. After repair, only the affected perspectives recheck, using the same report shape and the checks the repair touched, including the editorial and teaching effects of technical corrections. When a repair adds a passage or figure, the teaching perspective also rechecks, to judge whether each addition belongs in this piece or in an article that owns the subject.
+The coordinator (the orchestrator, or whoever arranged the review) decides which findings to accept and records the reason, especially where perspectives disagree, for example practitioner coverage against value. A decision names the problem to solve, not the words to insert: the writer repairs it with [staycurrent-revise](../staycurrent-revise/SKILL.md) so that the article still reads as one piece. Accepted findings go to the responsible planner or writer together. Findings on shared layout or site-wide text, which belongs to no writer, go to the coordinator to repair. After repair, only the affected perspectives recheck, using the same report shape and the checks the repair touched, including the editorial and teaching effects of technical corrections. When a repair adds a passage or figure, the teaching perspective also rechecks, to judge whether each addition belongs in this piece and sits well where it was placed.
+
+Reviewers who have followed the rounds read a repair as a fix and stop seeing it as a reader does. So before an article passes, a fresh editorial reviewer, given none of the earlier versions, reports or findings, reads the whole article as rendered.
