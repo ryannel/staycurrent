@@ -15,3 +15,11 @@ One independent audit suggestion is sound: say explicitly that assigned reviewer
 The strongest operational improvement is the separation of current reader judgement from applicable mechanical evidence. It needs a narrow receipt: the first visual handoff supplied mixed author records, exposing teaching notes. The compact candidate corrects this explicitly. A fresh reader should judge the displayed explanation without an earlier author's verdict preloading that judgement.
 
 No candidate is adopted on static inspection alone. The next evidence must come from repairs, independent reading, controlled rechecks and a held-out subject, including my own reading of the actual resulting articles.
+
+## Combined candidate D
+
+Read all seven combined roots personally at approximately21:05UTC. Total4,616 words including supporting files,29.3% below active6,529. This is the honest combined comparison: the earlier43.9% reduction applies to Compact A before stable acceptance, recheck policy and prose/generalisation changes. The combined pack still fits seven small roles; review is the largest because it carries the operational contract.
+
+One inherited restriction needs assessment before freezing: revise permits section restructuring only for critical findings, while the new stable standard treats major coherence/teaching defects as medium and C explicitly permits wider repair when earlier judgement is invalidated. The severity label should not prevent the smallest coherent repair. A necessity-based local-first rule could preserve restraint without forcing a false severity increase. This observation is withheld from the independent D audit so it can inspect the pack on its own.
+
+The new compact continuity record looks proportionate: complete first-use audit retained, no transcript of every correct first-use sentence required. Earlier candidate-A workers still produced lengthy inventories for a single sentence repair. Future handoffs should ask for checkable decisions/evidence and limits, without recreating a narrative of unchanged files.
