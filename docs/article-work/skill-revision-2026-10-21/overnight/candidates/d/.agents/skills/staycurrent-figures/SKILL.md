@@ -7,7 +7,7 @@ Show the state, relationships or outcomes the reader would otherwise hold in the
 
 Choose from the reader's question: static tables/listings for data/code, steps for sequences, options for comparisons. Use interaction only when it teaches more than a static example.
 
-Use the [example record](../staycurrent-continuity/SKILL.md) and one shared article model file for all figures. Keep recurring entities, values and notation consistent and caption-named features present. For relational examples, show data under real column headings, one table per relation and one kind of value per column; do not pack columns into `name = value` cells. Mark primary/foreign keys and draw relationships.
+Use the [example record](../staycurrent-continuity/SKILL.md). Put shared figure data/state and executable outcomes in an article model file; a standalone static table or listing needs no artificial model. Keep recurring entities, values and notation consistent and caption-named features present. For relational examples, show data under real column headings, one table per relation and one kind of value per column; do not pack columns into `name = value` cells. Mark primary/foreign keys and draw relationships.
 
 For Play/Back/Next figures, use the shared stepper and read [stepped figures](references/stepper.md). Each step adds information, marks changed values and follows the chosen option's labels; end on the outcome without a repeated final step.
 

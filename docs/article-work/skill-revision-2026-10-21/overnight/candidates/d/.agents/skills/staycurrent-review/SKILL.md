@@ -20,6 +20,8 @@ Give each reviewer exactly one perspective, mode, pieces, fixed version and only
 
 Freeze complete inputs and preview with one preview/build owner under [staycurrent-orchestrate](../staycurrent-orchestrate/SKILL.md). Start ready commissioned perspectives as slots free up, long visual work early.
 
+Focused confirmations consult the reference passages needed to judge their affected checks; they need not reload all three articles. Full perspectives and final complete readings retain their prescribed reference inputs. Widen calibration when the assignment needs a whole-article judgement.
+
 Editorial/teaching may read scripted step text from the built page without playing it. Practitioner/visual may reuse identified evidence for unchanged mechanics where their permitted inputs allow. Relevant source, data, environment and verifier must still apply to the current version; otherwise rerun affected verification or report the limit. Mechanical receipts contain provenance and relevant mechanical records only, excluding author teaching notes, earlier quality verdicts and review findings; extract these from mixed writing records. Reuse replaces no perspective check and no fresh visual reading/use of controls. Editorial receives no plan, earlier approval, repair history or writer's notes.
 
 ## Report

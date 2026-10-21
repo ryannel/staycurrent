@@ -32,6 +32,8 @@ Give each reviewer exactly one perspective, its mode, the pieces, a fixed versio
 
 Freeze the complete inputs and rendered preview before dispatch, with one preview/build owner, as [staycurrent-orchestrate](../staycurrent-orchestrate/SKILL.md) describes. Start ready commissioned perspectives as slots free up, scheduling long visual work early. Every assignment goes to a fresh reviewer, including repair confirmations and final readings. Full-perspective reviewers and final readers must not have seen the piece, earlier versions or reports. Repair checkers receive the accepted problem and pass condition: their task is informed confirmation, not an independent first reading. A reviewer assigned one perspective or check performs it directly and never arranges another team.
 
+Focused confirmations consult the reference passages needed for their affected checks, without reloading all three reference articles. Full perspectives and final complete readings retain their prescribed reference inputs. Widen calibration when the assignment needs a whole-article judgement.
+
 ## The report
 
 Reviewers report; they do not edit the work. Every report uses this shape, so findings can be compared across runs:
