@@ -1,0 +1,9 @@
+# Planning latency observation
+
+Root planner start21:13:21 to writer dispatch21:43:57:30m36 observed span. Planning included twelve full review assignments: root and child breakdown batches, complete tree round1, then complete tree round2 after one local required repair. The first six breakdown reviews passed; the first whole-tree practitioner found the chorded-button lifecycle omission; all other planning perspectives passed. The fresh local planner repair took77reportedseconds. This identifies work worth investigating, not work already proven safe to remove.
+
+This was not an isolated production run: A/C reviews and candidate work competed for three worker slots and coordinator time. Queueing, integration and checkpoint/continuation time are included. Do not attribute the whole span to reviewers or predict a production saving by subtracting every report interval. No article composition occurred before tree acceptance.
+
+Potential later experiment: recursively establish a provisional tree/example, then one complete P/V/T planning review, using early breakdown review where unresolved risk justifies it; focused checks after local repairs. This would change D's schedule and therefore requires a distinct frozen candidate and behavioural check. D remains unchanged during the current transfer trial. Also inspect whether a separate corpus rereading repeats article-batch coverage for a two-page collection; cross-article reading journeys, gaps/overlap and continuity must still be assessed.
+
+The current bare-topic orchestration entrypoint assumes a commission. The transfer supplied a complete reader/outcome brief, so it does not yet test converting an arbitrary topic into a useful commission. A later bounded test should expose that starting point explicitly rather than imply it was covered here.

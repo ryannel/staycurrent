@@ -1,0 +1,186 @@
+---
+import { example } from '../example.mjs';
+import { initialState, matrices } from './model.mjs';
+import { svgMatrix, point } from '../geometry.mjs';
+const state = initialState();
+const m = matrices(state);
+const corners = [{x:0,y:0},{x:example.card.width,y:0},{x:example.card.width,y:example.card.height},{x:0,y:example.card.height}];
+const beforePolygon = corners.map(p => { const v = point(m.V_from_O,p); return `${v.x},${v.y}`; }).join(' ');
+---
+<figure class="gesture-figure" id="gesture-comparison" data-gesture-figure>
+  <figcaption><strong>Gesture comparison.</strong> The derived update keeps the filled anchor on the cross; the shortcut misses. Model C is an illustrative snapshot. Direct dragging uses this page’s current browser mapping.</figcaption>
+  <div class="gesture-controls">
+    <label>Starting state <select data-preset><option value="baseline">Baseline</option><option value="resized">Half-size SVG</option><option value="turned">Turned view + half-size SVG</option><option value="resize-between">Resize between moves</option></select></label>
+    <label>Recorded operation <select data-recorded-mode><option>Card</option><option>Pan</option></select></label>
+    <label>Card update <select data-algorithm><option value="derived">Derived update</option><option value="divide">Divide client movement by zoom</option><option value="stale">Reuse pointer-down inverse</option></select></label>
+    <button type="button" data-reveal>Reveal movement</button><button type="button" data-reset>Reset</button>
+  </div>
+  <p data-start>Start: zoom 2, view angle 0°, pan V (60, 40), card translation G (30, 20). Model pointer C (440, 400).</p>
+  <p data-outcome role="status" aria-live="polite">Reset state. Predict the direction, then reveal the movement.</p>
+  <details class="live-controls"><summary>Pointer, zoom and rotation controls</summary>
+  <div class="gesture-controls">
+    <label>Pointer tool <select data-tool><option>Card</option><option>Pan</option><option>Choose pivot</option></select></label>
+    <label>Zoom <input data-zoom type="range" min={example.zoomLimits.min} max={example.zoomLimits.max} value={example.view.zoom} step="0.25" /></label>
+    <label>View angle <input data-angle type="range" min="-180" max="180" value="0" step="15" /></label>
+    <button type="button" data-more>Zoom ×1.5</button><button type="button" data-centre>Use SVG centre</button>
+  </div>
+  <p data-pivot>Pivot target: SVG centre V (400, 300). Choose pivot, then press a point in the diagram; zoom and angle keep that target fixed.</p>
+  </details>
+  <svg data-surface viewBox={`0 0 ${example.svg.width} ${example.svg.height}`} role="img" aria-label="Review board editor, with a grabbed point and a target cross">
+    <rect class="board-background" width={example.svg.width} height={example.svg.height} />
+    <g data-world transform={svgMatrix(m.V_from_W)}>
+      <path class="world-axes" d="M 0 0 H 300 M 0 0 V 260" />
+      <circle class="other-object" cx="210" cy="130" r="16" />
+      <g data-parent transform={svgMatrix(m.W_from_G)}>
+        <rect class="lane" width={example.group.width} height={example.group.height} />
+        <g data-card transform={svgMatrix(m.G_from_O)}><rect class="card" width={example.card.width} height={example.card.height} /><text class="card-label" x="30" y="27">Review</text><circle class="grab" cx={example.p.x} cy={example.p.y} r="3" /></g>
+      </g>
+    </g>
+    <polygon data-before class="before-card" points={beforePolygon} />
+    <text data-card-name class="screen-card-name" x="260" y="288">Review</text>
+    <path data-anchor-line class="anchor-line" d="M 400 300 L 400 300" />
+    <g data-target transform="translate(400 300)"><path class="target" d="M -12 0 H 12 M 0 -12 V 12" /><text class="target-label" x="15" y="-15">Target V</text></g>
+    <circle data-anchor class="anchor" cx="400" cy="300" r="7" />
+  </svg>
+  <p class="gesture-key">Dashed outline: starting card. Filled circle: retained point. Cross: target. Line between them: a missed promise. The separate round object makes board movement visible.</p>
+  <div class="space-movements" data-deltas aria-label="One movement expressed in four spaces"></div>
+  <details><summary>Read this figure as text</summary><p data-text>At baseline, moving model client (440, 400) to (480, 420) requires card translation G (40, 0). Dividing client movement by zoom instead puts the retained grab at C (420, 440), missing the pointer. In the turned, half-size preset the derived translation is G (-10, 0); the shortcut gives (50, 30) and misses C (350, 210) at (290, 180).</p></details>
+  <details><summary>Browser event log</summary><p>These entries come from events on this editor, separate from the recorded mathematical movement. “Trusted” means the browser supplied the event; scripted dispatch is marked otherwise.</p><pre data-events aria-live="off">No pointer events yet.</pre></details>
+  <details><summary>Current browser mapping</summary><p>These values come from this page’s actual SVG matrices, measured in client CSS pixels. The model’s fixed client origin is not substituted here.</p><pre data-browser-mapping>Awaiting the current browser mapping.</pre></details>
+  <p class="gesture-boundary">This small editor implements one pointer, translation-only card placement and bounded uniform view zoom. Recorded coordinates use the example’s client origin (120, 80); actual pointer coordinates depend on this page’s layout. It has no wheel gesture, multi-touch recognition, inertia or undo.</p>
+</figure>
+<script>
+  import { example } from '../example.mjs';
+  import { point, inverse, svgMatrix } from '../geometry.mjs';
+  import { initialState, matrices, comparison, anchoredView } from './model.mjs';
+  import { installGestures, localPoint } from './handlers.mjs';
+  for (const figure of document.querySelectorAll<HTMLElement>('[data-gesture-figure]')) {
+    const el = <T extends Element>(name: string) => figure.querySelector<T>(`[data-${name}]`)!;
+    const surface = el<SVGSVGElement>('surface');
+    const world = el<SVGGElement>('world'), parent = el<SVGGElement>('parent'), card = el<SVGGElement>('card');
+    const preset = el<HTMLSelectElement>('preset'), algorithm = el<HTMLSelectElement>('algorithm'), tool = el<HTMLSelectElement>('tool');
+    const zoom = el<HTMLInputElement>('zoom'), angle = el<HTMLInputElement>('angle');
+    const fmt = (p: { x: number, y: number }) => `(${Number(p.x.toFixed(2))}, ${Number(p.y.toFixed(2))})`;
+    let state = initialState(), target = { x: example.svg.width / 2, y: example.svg.height / 2 };
+    let retained = { ...example.p };
+    const logs: string[] = [];
+    function render() {
+      const m = matrices(state);
+      world.setAttribute('transform', svgMatrix(m.V_from_W)); parent.setAttribute('transform', svgMatrix(m.W_from_G)); card.setAttribute('transform', svgMatrix(m.G_from_O));
+      const actual = point(m.V_from_O, retained);
+      const cardCorners = [{x:0,y:0},{x:example.card.width,y:0},{x:example.card.width,y:example.card.height},{x:0,y:example.card.height}].map(p => point(m.V_from_O,p));
+      el('card-name').setAttribute('x',String(Math.min(...cardCorners.map(p => p.x))));
+      el('card-name').setAttribute('y',String(Math.min(...cardCorners.map(p => p.y))-14));
+      el('anchor').setAttribute('cx', String(actual.x)); el('anchor').setAttribute('cy', String(actual.y));
+      el('target').setAttribute('transform', `translate(${target.x} ${target.y})`);
+      el('anchor-line').setAttribute('d', `M ${actual.x} ${actual.y} L ${target.x} ${target.y}`);
+      zoom.value = String(state.view.zoom); angle.value = String(state.view.angle);
+      el('pivot').textContent = `Pivot target V ${fmt(target)}. Zoom ${state.view.zoom}, angle ${state.view.angle}°, pan V ${fmt(state.view.pan)}. Choose pivot to set another target.`;
+      const rootCTM = surface.getScreenCTM(), cardCTM = card.getScreenCTM();
+      if (rootCTM && cardCTM) {
+        const client = new DOMPoint(retained.x,retained.y).matrixTransform(cardCTM);
+        const back = client.matrixTransform(cardCTM.inverse());
+        const values = (matrix: DOMMatrix) => [matrix.a,matrix.b,matrix.c,matrix.d,matrix.e,matrix.f].map(n => Number(n.toFixed(6))).join(', ');
+        el('browser-mapping').textContent = `V → actual C: [${values(rootCTM)}]\nO → actual C: [${values(cardCTM)}]\nRetained O ${fmt(retained)} → actual C ${fmt(client)} → O ${fmt(back)}`;
+      }
+    }
+    function status(message: string) { el('outcome').textContent = message; }
+    const gestures = installGestures({ surface, card, parent, world, getState: () => state,
+      commit: (next: typeof state) => { state = next; render(); }, getMode: () => tool.value, report: status });
+    function reset() {
+      gestures.cancel(); state = initialState(preset.value); retained = { ...example.p };
+      target = { x: example.svg.width / 2, y: example.svg.height / 2 };
+      const m = matrices(state);
+      retained = point(inverse(m.V_from_O),target);
+      const corners = [{x:0,y:0},{x:example.card.width,y:0},{x:example.card.width,y:example.card.height},{x:0,y:example.card.height}];
+      el('before').setAttribute('points', corners.map(p => { const v = point(m.V_from_O,p); return `${v.x},${v.y}`; }).join(' '));
+      surface.style.maxWidth = ['resized','turned'].includes(preset.value) ? '400px' : '800px';
+      el('start').textContent = `Start: zoom ${state.view.zoom}, view angle ${state.view.angle}°, pan V ${fmt(state.view.pan)}, card translation G ${fmt(state.card)}. Model pointer C ${fmt(point(m.C_from_O, example.p))}.`;
+      el('deltas').replaceChildren(); status('Reset. Predict the direction, then reveal; or try the pointer tools.'); render();
+    }
+    el('reset').addEventListener('click', reset);
+    preset.addEventListener('change', reset); algorithm.addEventListener('change', reset); el('recorded-mode').addEventListener('change', reset);
+    el('reveal').addEventListener('click', () => {
+      reset(); const mode = el<HTMLSelectElement>('recorded-mode').value;
+      const trace = comparison(preset.value, algorithm.value, mode);
+      state = trace.after; target = trace.targetV; retained = { ...example.p };
+      if (preset.value === 'resize-between') surface.style.maxWidth = '400px';
+      render();
+      const message = `Recorded ${mode}: model C ${fmt(trace.startC)} → ${fmt(trace.targetC)}. Card G ${fmt(state.card)}; pan V ${fmt(state.view.pan)}. Grab lands at model C ${fmt(trace.actualC)}.`;
+      status(`${mode === 'Card' ? `Card G ${fmt(state.card)}` : `Pan V ${fmt(state.view.pan)}`}. Grab C ${fmt(trace.actualC)}; target C ${fmt(trace.targetC)}.`); el('text').textContent = message;
+      for (const [space, d] of Object.entries(trace.deltas)) {
+        const row = document.createElement('div'); row.className = 'space-movement';
+        const label = document.createElement('strong'); label.textContent = `${space} displacement ${fmt(d)}`;
+        const diagram = document.createElementNS('http://www.w3.org/2000/svg','svg'); diagram.setAttribute('viewBox','0 0 100 80'); diagram.setAttribute('aria-hidden','true');
+        const magnitude = Math.max(Math.abs(d.x),Math.abs(d.y),1), x = 50 + d.x/magnitude*28, y = 40 + d.y/magnitude*28;
+        const path = document.createElementNS(diagram.namespaceURI,'path'); path.setAttribute('d',`M 4 40 H 96 M 50 4 V 76 M 50 40 L ${x} ${y}`); path.setAttribute('class','movement-axes');
+        const dot = document.createElementNS(diagram.namespaceURI,'circle'); dot.setAttribute('cx',String(x)); dot.setAttribute('cy',String(y)); dot.setAttribute('r','4'); dot.setAttribute('class','movement-tip');
+        diagram.append(path,dot); row.append(label,diagram); el('deltas').append(row);
+      }
+    });
+    surface.addEventListener('pointerdown', event => {
+      if (tool.value === 'Choose pivot' && event.button === 0 && !gestures.active) {
+        const p = localPoint(surface,event), local = localPoint(card,event); if (p && local) { target = p; retained = local; render(); status(`Chosen pivot V ${fmt(p)}. Zoom and turn now retain this target.`); }
+      } else if (gestures.active) {
+        retained = gestures.active.mode === 'Card' ? { ...gestures.active.anchor } : (localPoint(card,event) ?? { ...example.p });
+        const p = localPoint(surface,event); if (p) target = p; render();
+      }
+    });
+    for (const type of ['pointermove','pointerup']) surface.addEventListener(type, event => {
+      const e = event as PointerEvent;
+      if (gestures.active && e.pointerId === gestures.active.pointerId) { const p = localPoint(surface,e); if(p) target = p; }
+    }, true);
+    for (const type of ['pointerdown','pointermove','pointerup','pointercancel','gotpointercapture','lostpointercapture']) surface.addEventListener(type, event => {
+      const e = event as PointerEvent;
+      logs.push(`${type} id=${e.pointerId} button=${e.button} buttons=${e.buttons} trusted=${e.isTrusted} active=${gestures.active?.mode ?? 'idle'}`);
+      el('events').textContent = logs.slice(-18).join('\n');
+    });
+    function setView(requested: number, degrees: number) {
+      const next = anchoredView(state,target,requested,degrees);
+      if (!next) { status('Invalid view request: kept last valid state.'); return; }
+      state = next; render(); status(`Anchor retained at V ${fmt(target)}; zoom ${state.view.zoom}, angle ${state.view.angle}°, pan V ${fmt(state.view.pan)}.`);
+    }
+    zoom.addEventListener('input', () => setView(Number(zoom.value),state.view.angle));
+    angle.addEventListener('input', () => setView(state.view.zoom,Number(angle.value)));
+    el('more').addEventListener('click', () => setView(state.view.zoom*1.5,state.view.angle));
+    el('centre').addEventListener('click', () => { target = { x: example.svg.width/2,y:example.svg.height/2 }; retained = point(inverse(matrices(state).V_from_O),target); render(); });
+    figure.addEventListener('contextmenu', event => event.preventDefault());
+    window.addEventListener('resize',render);
+    window.addEventListener('scroll',render,{passive:true});
+    reset();
+  }
+</script>
+<style>
+  .gesture-figure { margin: 2rem 0; padding: 1rem; border: 1px solid var(--color-rule); border-radius: .5rem; background: var(--color-surface-alt); }
+  .gesture-figure figcaption { margin-bottom: 1rem; font-size: .9rem; }
+  [data-start],[data-outcome],[data-pivot] { font-size: .85rem; }
+  .live-controls { margin: .75rem 0; }
+  .gesture-controls { display: flex; flex-wrap: wrap; gap: .65rem; align-items: end; margin: 1rem 0; }
+  .gesture-controls label { display: grid; gap: .3rem; font-size: .86rem; min-width: 0; }
+  .gesture-controls select,.gesture-controls button { color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-rule); padding: .5rem; border-radius: .25rem; font: inherit; max-width: 100%; }
+  .gesture-controls button { cursor: pointer; }
+  .gesture-controls input { width: 9rem; }
+  [data-surface] { display: block; width: 100%; height: auto; touch-action: none; user-select: none; border: 1px solid var(--color-rule); }
+  .board-background { fill: var(--color-surface); }
+  .world-axes { fill: none; stroke: var(--color-text-secondary); stroke-width: 1; }
+  .lane { fill: none; stroke: var(--color-text-secondary); stroke-dasharray: 4 3; }
+  .card,.other-object { fill: var(--color-surface-alt); stroke: var(--color-text); stroke-width: 1; }
+  .card-label { display:none; }
+  .screen-card-name { fill: var(--color-text); font: 32px var(--font-sans); pointer-events:none; }
+  .grab { fill: var(--color-text); }
+  .before-card { fill: none; stroke: var(--color-text-secondary); stroke-dasharray: 8 6; stroke-width: 2; pointer-events: none; }
+  .anchor-line { stroke: var(--color-text); stroke-width: 2; stroke-dasharray: 5 4; pointer-events: none; }
+  .anchor { fill: var(--color-text); stroke: var(--color-surface); stroke-width: 2; pointer-events: none; }
+  .target { stroke: var(--color-text); stroke-width: 3; }
+  .target-label { fill: var(--color-text); font: 30px var(--font-sans); }
+  [data-target] { pointer-events: none; }
+  .gesture-key,.gesture-boundary,.gesture-prompt { font-size: .85rem; }
+  [data-outcome] { padding: .75rem; border-left: 3px solid var(--color-text); }
+  .space-movements { display: grid; grid-template-columns: repeat(4,1fr); gap: .5rem; }
+  .space-movements :global(.space-movement) { border: 1px solid var(--color-rule); padding: .5rem; font-size: .8rem; }
+  .space-movements :global(svg) { display: block; width: 100%; max-height: 90px; }
+  .space-movements :global(.movement-axes) { fill: none; stroke: var(--color-text-secondary); stroke-width: 1.5; }
+  .space-movements :global(.movement-tip) { fill: var(--color-text); }
+  [data-events],[data-browser-mapping] { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; }
+  @media(max-width:600px) { .gesture-figure { padding: .75rem; } .gesture-controls { display: grid; grid-template-columns: 1fr 1fr; } .gesture-controls label { grid-column:1/-1; } .gesture-controls input { width:100%; } .space-movements { grid-template-columns: repeat(2,1fr); } }
+</style>
