@@ -122,7 +122,7 @@ finally {
  } else log.serverStopped=true;
  log.ended=new Date().toISOString();
  log.elapsedSeconds=(Date.now()-started.getTime())/1000;
- const evidence='docs/article-work/relational-skill-trial-3/a00-evidence';
+ const evidence=process.argv[3] || 'docs/article-work/relational-skill-trial-3/a00-evidence';
  mkdirSync(evidence,{recursive:true});
  writeFileSync(`${evidence}/native-${port}.json`,JSON.stringify(log,null,2));
  if(log.serverStopped) rmSync(dir,{recursive:true,force:true});

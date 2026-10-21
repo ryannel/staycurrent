@@ -57,9 +57,10 @@ WHERE product_id = 'P7' AND stock >= 1 RETURNING stock;
 UPDATE products SET stock = stock - 2
 WHERE product_id = 'P3' AND stock >= 2 RETURNING stock;
 -- Application: require one returned row, otherwise ROLLBACK.
-INSERT INTO orders VALUES (103, 1, '2026-10-20 10:15+00', 'pending');
-INSERT INTO order_items VALUES
-  (103, 1, 'P7', 1, 20.00), (103, 2, 'P3', 2, 4.50);
+INSERT INTO orders (order_id, customer_id, placed_at, status)
+VALUES (103, 1, '2026-10-20 10:15+00', 'pending');
+INSERT INTO order_items (order_id, line_no, product_id, quantity, unit_price)
+VALUES (103, 1, 'P7', 1, 20.00), (103, 2, 'P3', 2, 4.50);
 COMMIT;
 -- Application: ROLLBACK on any error; confirm only after COMMIT succeeds.`;
 export const race = {

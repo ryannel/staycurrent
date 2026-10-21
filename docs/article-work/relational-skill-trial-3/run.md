@@ -37,3 +37,16 @@ Initial coordinator build compiled but found two h3 figure titles in a00. Its or
 The introduction writer declared freeze, then made final continuity edits while finishing its record. The draft01 SHA manifest detected the changed article (3,749 → 3,752 source words). Two just-dispatched review assignments were cancelled without using findings; replacement reviewers are fresh and see only the final committed draft02. Cancelled assignment time remains part of run cost. No coordinator prose edits.
 
 Coordinator browser checks: all six a03 and both a00 option endpoints exercised by keyboard; focus remained Next at endpoints. a03 Play advanced 1/5→2/5 with holds 4,845ms and 6,780ms; Pause worked. At 375px, both pages have document scroll width375 in light/dark; wide real-column tables scroll within their own containers. The visibility capability returned false even after requesting a visible panel; screenshots and DOM/timer checks are recorded as hidden-pane checks, not observed foreground playback. Article context shell links remain the copied trial2 layout's links into the existing full draft collection; prose links connect both trial3 articles.
+
+## Initial assignments
+
+| Assignment | Fresh agent | Start UTC | End UTC | Elapsed |
+| --- | --- | --- | --- | --- |
+| Write a00 | write_a00 | 19:08:34 | 19:22:40 | 14m06s |
+| Write a03 | write_a03 | 19:08:47 | 19:21:34 | 12m47s |
+| Withdrawn practitioner review | r01_practitioner | 19:22:33 | 19:23:24 | 51s |
+| Withdrawn teaching review | r01_teaching | 19:22:46 | 19:23:35 | 49s |
+
+Withdrawn practitioner had read both articles and some plan/evidence inputs, but started no native servers/processes. Withdrawn teaching read a00 and part of a03/reference inputs; its hidden tab disappeared at interruption. Neither wrote a findings report. Neither is reused. The accepted r01 assignments are fresh `r01_practitioner_fixed`, `r01_teaching_fixed`, `r01_visual`, and a subsequently dispatched fresh editorial reviewer, on commit `80276a4`.
+
+Review input isolation: practitioner receives pieces, plan/context, example and primary sources/evidence; teaching receives pieces, all three reference articles/figures and plan/context; editorial receives only rendered pieces, audience and all three references; visual receives only rendered pieces, rendered reference figures and figures skill. Each starts its own finding sequence at1. Their prompts prohibit any earlier version/report/decision and other perspectives' reports. All subagents start with no inherited conversation.

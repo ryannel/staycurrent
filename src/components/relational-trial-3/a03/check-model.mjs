@@ -8,6 +8,11 @@ for(const [name,scene] of Object.entries(scenes))for(const [option] of scene.opt
  const frames=scene.steps(option);
  assert.ok(frames.length>=4);
  for(const frame of frames)assert.ok(frame.explanation);
+ if(name==='atomicity') {
+  assert.ok(frames.slice(1).every(frame=>frame.a==='R10 committed'));
+  assert.ok(frames[2].b.includes('R11 not yet inserted'));
+  assert.ok(frames[3].b.startsWith('R11 rejected;'));
+ }
  const last=frames.at(-1);
  if(name==='staffing')assert.equal(last.available.filter(Boolean).length,option==='repeatable'?0:1);
  else {

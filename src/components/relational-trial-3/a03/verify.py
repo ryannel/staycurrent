@@ -37,7 +37,7 @@ def run():
    command([BIN+'/initdb','-D',data,'-A','trust','--no-locale','-E','UTF8'])
    command([BIN+'/pg_ctl','-D',data,'-l',tmp+'/server.log','-o',f'-h 127.0.0.1 -p {PORT} -k {sock}','-w','start']);started=True
    command([BIN+'/createdb','-h','127.0.0.1','-p',str(PORT),'a03_trial'])
-   fixture=json.loads(command(['node','--input-type=module','-e',f"import {{setup,seed,guarded,optimistic,depart}} from {json.dumps((HERE/'model.mjs').as_uri())}; console.log(JSON.stringify({{setup,seed,guarded,optimistic,depart}}));"]))
+   fixture=json.loads(command(['node','--input-type=module','-e',f"import {{setup,seed,guarded,optimistic,depart,combinedCount}} from {json.dumps((HERE/'model.mjs').as_uri())}; console.log(JSON.stringify({{setup,seed,guarded,optimistic,depart,combinedCount}}));"]))
    a,b,o=Session('A'),Session('B'),Session('observer')
    version=o.q('SELECT version();');assert '18.6' in version
    o.q('SHOW default_transaction_isolation; SHOW fsync; SHOW synchronous_commit; SHOW full_page_writes; SHOW deadlock_timeout;')
@@ -100,6 +100,15 @@ def run():
    with concurrent.futures.ThreadPoolExecutor() as pool:
     future=pool.submit(b.q,'SELECT class_id FROM classes WHERE class_id=22 FOR UPDATE;');wait(b);a.q("INSERT INTO reservations VALUES ('R13',22,1); COMMIT;");expect(future.result(),'22')
    expect(b.q('SELECT count(*) FROM reservations WHERE class_id=22;'),'2');b.q('ROLLBACK;')
+   # Same-command count keeps its starting snapshot across an observed lock wait.
+   reset();o.q('UPDATE classes SET capacity=2,remaining=1 WHERE class_id=22;')
+   a.q("BEGIN ISOLATION LEVEL READ COMMITTED; SELECT class_id FROM classes WHERE class_id=22 FOR UPDATE; INSERT INTO reservations VALUES ('R13',22,1);")
+   b.q('BEGIN ISOLATION LEVEL READ COMMITTED;')
+   with concurrent.futures.ThreadPoolExecutor() as pool:
+    future=pool.submit(b.q,fixture['combinedCount']);wait(b);a.q('COMMIT;');expect(future.result(),'22|1')
+   expect(b.q('SELECT count(*) FROM reservations WHERE class_id=22;'),'2')
+   b.q('ROLLBACK;');expect(o.q('SELECT count(*) FROM reservations WHERE class_id=22;'),'2')
+   log.append({'same_command_count':'Observed lock wait; combined command returned 22|1; fresh next command counted 2; R14 declined.'})
    # Deadlock and known transaction abort; survivor can finish after victim aborts.
    reset();a.q('BEGIN; SELECT class_id FROM classes WHERE class_id=21 FOR UPDATE;');b.q('BEGIN; SELECT class_id FROM classes WHERE class_id=22 FOR UPDATE;')
    with concurrent.futures.ThreadPoolExecutor() as pool:

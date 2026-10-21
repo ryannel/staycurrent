@@ -1,7 +1,7 @@
 ---
 import Sql from '../../components/explainers/querying/Sql.astro';
 import TransactionFigure from '../../components/relational-trial-3/a03/TransactionFigure.astro';
-import { classes, reservations, guarded, optimistic, depart, setup, seed } from '../../components/relational-trial-3/a03/model.mjs';
+import { classes, reservations, guarded, optimistic, combinedCount, depart, setup, seed } from '../../components/relational-trial-3/a03/model.mjs';
 import worksheet from '../../components/relational-trial-3/a03/worksheet.zip?url&no-inline';
 const sections=[
  ['start-with-the-fact-that-must-remain-true','Start with the fact that must remain true'],
@@ -75,12 +75,25 @@ GROUP BY c.class_id ORDER BY c.class_id;`;
 <h3 id="versions-and-locks-answer-different-questions">A view is not ownership</h3>
 <p><strong>Isolation</strong> specifies how transactions may observe and interfere with each other. PostgreSQL keeps several <strong>row versions</strong>, the values before and after a change, so an ordinary reader can use a committed older value while a writer is working. A <strong>snapshot</strong> selects which versions that read can see. This is <strong>multiversion concurrency control</strong>, or MVCC.</p>
 <p>At Read Committed, each ordinary query gets a new snapshot. A report can read one remaining place, another transaction books it, and the report’s next query finds a reservation while still holding its earlier counter in application memory. A changed reread is a <strong>nonrepeatable read</strong>; a changed set of matching rows is a <strong>phantom</strong>. Neither means PostgreSQL exposed uncommitted work, which would be a <strong>dirty read</strong>.</p>
-<p>PostgreSQL <strong>Repeatable Read</strong> keeps the snapshot established by the transaction’s first data query or change, rather than refreshing it at each command. A report can then read related facts from one stable view. Its own changes remain visible to itself. Keeping a read stable, however, does not reserve the place it describes.</p>
+<p>PostgreSQL <strong>Repeatable Read</strong> keeps the snapshot established by the transaction’s first data query or change, rather than refreshing it at each command. A report can then read related facts from one stable view. Its own changes remain visible to itself. The worksheet repeats the same two reads at each setting:</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Two reads across a competing booking"><table><caption>Read Tea tasting’s remaining places, let Mina commit R8, then read again</caption><thead><tr><th>Setting</th><th>First query</th><th>Second query, after R8 commits</th></tr></thead><tbody>
+ <tr><td>Read Committed</td><td>New snapshot: 1</td><td>New snapshot: 0</td></tr>
+ <tr><td>Repeatable Read</td><td>Original snapshot: 1</td><td>Same snapshot: 1</td></tr>
+</tbody></table></div>
+<p>Both runs finish with zero places remaining in the database. The repeatable view still describes the earlier state; it has not reserved that place.</p>
 <p>A <strong>row lock</strong> holds conflicting writers or locking readers back from the selected row. An ordinary PostgreSQL read usually continues using a permitted version. <code>SELECT … FOR UPDATE</code> requests such a lock; it must be inside the transaction whose later decision it protects. If a standalone locking statement commits immediately, its lock ends before the next statement can use it.</p>
 
 <h3 id="coordinate-decisions-that-span-several-rows">Lock the fact on which every writer can meet</h3>
 <p>Suppose we remove the remaining counter and calculate free places by counting reservations. Locking the reservation rows found by a query does not reserve room against a new row. An empty set contains no rows to lock. Even a nonempty set can gain a distinct reservation. In the worksheet’s stated variation, Mug painting has capacity 2 and Tariq’s R7; Mina and Edda insert R13 and R14, leaving three bookings despite a lock on R7.</p>
-<p>A <strong>coordination row</strong> is a stable row all relevant writers agree to lock before deciding. The class row exists even when its reservation set is empty. At PostgreSQL Read Committed, acquire that row, then issue a <em>separate next command</em> to read capacity and count reservations, decide and change, keeping the lock through commit. That separate command gets a fresh snapshot after any wait. Combining a count with the locking command can retain a count from before the wait.</p>
+<p>A <strong>coordination row</strong> is a stable row all relevant writers agree to lock before deciding. The class row exists even when its reservation set is empty. At PostgreSQL Read Committed, acquire that row, then issue a <em>separate next command</em> to read capacity and count reservations, decide and change, keeping the lock through commit. The following selected native history shows why the command boundary matters. It uses the same capacity-2 variation, initially containing only R7. Mina locks class 22 and inserts R13 without committing; Edda then sends this combined command:</p>
+<Sql code={combinedCount} label="Edda asks for the class lock and reservation count in one command" />
+<div class="table-scroll" role="region" tabindex="0" aria-label="A count keeps its snapshot across a lock wait"><table><caption>Observed on PostgreSQL 18.6 at Read Committed</caption><thead><tr><th>Event</th><th>Edda’s view and result</th></tr></thead><tbody>
+ <tr><td>Edda’s combined command starts</td><td>Its snapshot sees R7: count 1. Mina’s R13 is uncommitted.</td></tr>
+ <tr><td>Edda waits for Mina’s class lock</td><td>The command remains open; it does not take a new snapshot.</td></tr>
+ <tr><td>Mina commits R13; Edda acquires the lock</td><td>Two reservations are now committed. The combined command still returns class 22 with count 1.</td></tr>
+ <tr><td>Edda counts in a separate next command</td><td>A new snapshot sees R7 and R13: count 2. The class is full, so she declines R14.</td></tr>
+</tbody></table></div>
+<p>The lock decides who may change the class next; the new command supplies the view for that decision. Acquiring the lock did not refresh the count in the command that waited.</p>
 <p>The protocol also has to cover cancellation, moves, imports and capacity edits. A foreign key checks that the class exists; it does not enforce the count. <a href="/review/relational-next/locking/">Designing changes that coordinate with locks</a> develops the complete counted-reservation protocol, including missing rows, lock modes and every participating writer.</p>
 
 <h2 id="a-repeatable-view-does-not-by-itself-prove-the-rule">Protect a decision spanning several rows</h2>
@@ -112,7 +125,7 @@ GROUP BY c.class_id ORDER BY c.class_id;`;
 
 <h3 id="losing-the-reply-does-not-prove-rollback">A missing reply leaves an unknown outcome</h3>
 <p>Known aborts differ from a connection lost while <code>COMMIT</code> is in flight. The database may have committed R8 before the reply disappeared. Repeating a decrement as a new booking can consume another place. Keep the same request identity, look up its durable result through the authoritative database, and verify that owner and requested action match before interpreting it as success. A missing row while the original transaction is still running does not settle the outcome.</p>
-<p>This is the purpose of an <strong>idempotent operation</strong>: repeating the same logical request does not repeat its effect. The unique R8 key is useful, but it needs an application protocol around pending work, payload matching and retained results. <a href="/review/relational-next/request-recovery/">Recovering database requests safely</a> owns that protocol. <a href="/review/relational-next/connections/">Managing connections and transaction lifetimes</a> explains how to finish or discard the owning connection after failure.</p>
+<p>This is the purpose of an <strong>idempotent operation</strong>: repeating the same logical request does not repeat its effect. The unique R8 key is useful, but it needs an application protocol around pending work, payload matching and retained results. <a href="/review/relational-next/request-recovery/">Recovering database requests safely</a> explains how to recognise the same request and recover its result. <a href="/review/relational-next/connections/">Managing connections and transaction lifetimes</a> explains how to finish or discard the owning connection after failure.</p>
 
 <h2 id="commit-has-a-durability-boundary-and-a-system-boundary">What COMMIT can promise</h2>
 <p><strong>Durability</strong> is the survival promise after commit. PostgreSQL normally waits for the transaction’s write-ahead log, its recoverable record of changes, to reach durable storage before acknowledging success. That requires storage which honours the flush and the relevant safeguards enabled. With <code>synchronous_commit = off</code>, success can arrive before the log is durable, so a crash can lose recent acknowledged work. Isolation does not choose this loss boundary.</p>

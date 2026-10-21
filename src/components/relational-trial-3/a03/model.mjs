@@ -32,6 +32,13 @@ export const guarded = `WITH taken AS (
 INSERT INTO reservations (request_id, class_id, owner_id)
 SELECT 'R8', class_id, 1 FROM taken
 RETURNING request_id;`;
+export const combinedCount = `SELECT class_id,
+       (SELECT count(*)
+        FROM reservations
+        WHERE class_id = 22) AS reserved
+FROM classes
+WHERE class_id = 22
+FOR UPDATE;`;
 export const optimistic = `UPDATE classes SET remaining = 0
 WHERE class_id = 21 AND remaining = 1
 RETURNING class_id;`;
@@ -49,10 +56,10 @@ export const scenes = {
     options: [['separate','Separate commits'],['together','One transaction']],
     text: 'Starting from class 22, Mina books R10, then her second request R11 fails the one-booking-per-customer rule. Separate commits leave remaining = 0 with two reservations for capacity 3. One transaction rolls back the second decrement: remaining = 1 and two reservations.',
     steps(mode) { return [
-      frame('Mina: ready to book R10','',2,['R7'], 'Class 22 starts with capacity 3, two places remaining and Tariq’s R7.'),
-      frame('R10 committed','',1,['R7','R10'],'Mina’s first request takes one place and records R10. The rule still holds: 1 + 2 = 3.'),
-      frame(mode==='separate'?'Second decrement committed':'Second decrement pending','R11 not yet inserted', mode==='separate'?0:1,['R7','R10'],mode==='separate'?'The second request commits its decrement before attempting R11.':'The second request has changed remaining to 0 inside its transaction. The table below still shows committed rows.'),
-      frame('R11 rejected: duplicate customer',mode==='separate'?'No earlier commit can be undone':'ROLLBACK second request',mode==='separate'?0:1,['R7','R10'],mode==='separate'?'Two reservations, no remaining places: 0 + 2 ≠ 3. A place has vanished.':'Rollback discards the pending decrement. Two reservations and one remaining place still add to capacity 3.')
+      frame('Ready to book R10','Waiting for R10 to finish',2,['R7'], 'Class 22 starts with capacity 3, two places remaining and Tariq’s R7.'),
+      frame('R10 committed','Ready to attempt R11',1,['R7','R10'],'Mina’s first request takes one place and records R10. The rule still holds: 1 + 2 = 3.'),
+      frame('R10 committed',mode==='separate'?'Decrement committed; R11 not yet inserted':'Decrement pending; R11 not yet inserted', mode==='separate'?0:1,['R7','R10'],mode==='separate'?'The second request commits its decrement before attempting R11.':'The second request has changed remaining to 0 inside its transaction. The table below still shows committed rows.'),
+      frame('R10 committed',mode==='separate'?'R11 rejected; earlier decrement stays committed':'R11 rejected; ROLLBACK second request',mode==='separate'?0:1,['R7','R10'],mode==='separate'?'The duplicate-customer rule rejects R11. Two reservations, no remaining places: 0 + 2 ≠ 3. A place has vanished.':'The duplicate-customer rule rejects R11. Rollback discards its pending decrement. Two reservations and one remaining place still add to capacity 3.')
     ]; }
   },
   race: {
