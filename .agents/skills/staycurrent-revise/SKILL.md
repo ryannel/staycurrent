@@ -11,6 +11,8 @@ You are usually not the article's original writer. Read the whole article, its p
 
 A finding says where the reader stalls or is misled. Its suggested repair is one way to fix that, and the coordinator's decision records which problems to fix, not the wording. Before changing anything, reread the whole section the finding sits in and ask what the reader there needs.
 
+Keep the change in proportion to the problem. A low or medium finding is repaired where it sits, with the smallest change that leaves the section reading well. Restructure a section only when a critical finding cannot be fixed without it. Every passage you rewrite is new text that the next fresh reviewer has to check, and in the 2026-10-21 trial repairs that rebuilt more than their findings needed caused most of the later rounds' problems.
+
 Then choose the change that leaves the section clearest. Usually that means reshaping what is already there, not appending to it:
 
 - **Reword or reorder** when the idea is present but arrives in the wrong place or form.
@@ -26,7 +28,7 @@ After the findings are repaired:
 
 1. Reread the complete article as a reader would, including its contents list, captions and controls, against the three reference articles named in [staycurrent-write](../staycurrent-write/SKILL.md). Revise any passage that now reads as a patch: a paragraph that answers an objection the reader never had, a sentence with more than one "unless" or "provided", or an aside that interrupts the point.
 2. Run the [staycurrent-continuity](../staycurrent-continuity/SKILL.md) pass. Repairs are where terms most often arrive before their explanation.
-3. Rebuild and recheck any figure the repair touched with [staycurrent-figures](../staycurrent-figures/SKILL.md), and rerun the article's verification script.
+3. Rebuild and recheck any figure the repair touched with [staycurrent-figures](../staycurrent-figures/SKILL.md), and rerun the article's verification script. Add a check to it only when the repair changes what a figure or listing claims.
 
 Record each finding and what changed in the work record, and name every passage you restructured beyond the finding, so rechecks know to read it.
 

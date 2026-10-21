@@ -51,7 +51,7 @@ Review written articles in batches in article mode, giving each reviewer only th
 
 > Apply [staycurrent-revise](../staycurrent-revise/SKILL.md) to this article and these accepted findings. Return the repaired article and its work record.
 
-Send even a one-phrase fix back through that skill rather than making it yourself: a phrase changed in isolation is how patches accumulate. After repair, review again with fresh reviewers as [staycurrent-review](../staycurrent-review/SKILL.md) describes, and keep each perspective's verdict separate. Merge proposed tree and example changes centrally and update the articles they affect.
+Send even a one-phrase fix back through that skill rather than making it yourself: a phrase changed in isolation is how patches accumulate. After repair, review again with fresh reviewers as [staycurrent-review](../staycurrent-review/SKILL.md) describes, which also sets the severity floor that decides which findings each round repairs and when review ends. Keep each perspective's report separate. Merge proposed tree and example changes centrally and update the articles they affect.
 
 ## Review the corpus
 

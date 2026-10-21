@@ -3,7 +3,7 @@ name: staycurrent-review
 description: Arrange independent reviews of a breakdown, article tree, written article or corpus, or carry out one assigned review perspective.
 ---
 
-Independent reviewers catch what an author cannot see in their own work. Each perspective looks for a different kind of failure, so each gets its own subagent, its own inputs and its own verdict. The perspectives, their checks and the report format are fixed so that every run reviews the same ground and runs can be compared. Judge everything against the commission: take an intelligent newcomer to expert practitioner in the commissioned subject, in the least reader time and effort. A nested article contributes to that goal; it does not have to make the reader a specialist in its own topic.
+Independent reviewers catch what an author cannot see in their own work. Each perspective looks for a different kind of failure, so each gets its own subagent, its own inputs and its own report. The perspectives, their checks and the report format are fixed so that every run reviews the same ground and runs can be compared. Judge everything against the commission: take an intelligent newcomer to expert practitioner in the commissioned subject, in the least reader time and effort. A nested article contributes to that goal; it does not have to make the reader a specialist in its own topic.
 
 ## Which perspectives run
 
@@ -11,7 +11,7 @@ Independent reviewers catch what an author cannot see in their own work. Each pe
 | --- | --- |
 | Breakdown, or a batch of breakdowns | practitioner, value, teaching |
 | Tree | practitioner, value, teaching |
-| Article, or a batch of articles | practitioner, teaching, editorial, visual |
+| Article, or a batch of articles | practitioner, teaching, editorial, visual (which run in each round is below) |
 | Corpus | practitioner, value, teaching, editorial |
 
 Each perspective has one file that states its purpose, its inputs and its checks:
@@ -40,7 +40,7 @@ Reviewers report; they do not edit the work. Every report uses this shape, so fi
 # [Perspective] review · [mode] · [pieces] · [version]
 
 Inputs read: [each input, and anything withheld]
-Verdict: pass | repairs required
+Highest severity: critical | medium | low | none
 
 ## Checks
 
@@ -54,7 +54,7 @@ Verdict: pass | repairs required
 
 ## Findings
 
-### [perspective]-[n] · required | optional · [piece and location]
+### [perspective]-[n] · critical | medium | low · [piece and location]
 
 Problem: [what is wrong, as the reader meets it]
 Effect: [what the reader loses or must do instead]
@@ -69,10 +69,32 @@ Number findings per perspective and keep counting across rounds of the same revi
 
 Editorial and teaching reviewers may read the step text of scripted figures from the built page rather than by playing them.
 
-A finding is required when the piece falls short of the goal without the repair, and optional when the repair would only reduce reader effort. The verdict is "repairs required" when any required finding remains.
+## Severity
+
+Rank each finding by what happens to the reader:
+
+- **Critical:** the reader would come away believing or doing something wrong, cannot follow the argument past this point, or a figure contradicts its own text. A false sentence, a figure note that is wrong in some of its states, and a claim the evidence does not support are critical.
+- **Medium:** the reader stalls, rereads or has to supply something themselves. A term used before it is explained, a passage that reads as a patch, a figure that is hard to follow, and a section that spends the reader's time without return are medium.
+- **Low:** a change that would make reading a little easier, such as wording, a heading or a small layout point.
+
+Length is not a finding by itself. A long article is right when every part earns its place; a part that does not is medium.
 
 ## Deciding and rechecking
 
-The coordinator (the orchestrator, or whoever arranged the review) decides which findings to accept and records the reason, especially where perspectives disagree, for example practitioner coverage against value. A decision names the problem to solve, not the words to insert: a fresh writer repairs it with [staycurrent-revise](../staycurrent-revise/SKILL.md) so that the article still reads as one piece. Accepted findings for one piece go to its writer together. Findings on shared layout or site-wide text, which belongs to no writer, go to the coordinator to repair.
+The coordinator (the orchestrator, or whoever arranged the review) sets each finding's severity, starting from the reviewer's and recording the reason for any change, and decides which findings to accept, especially where perspectives disagree, for example practitioner coverage against value. A decision names the problem to solve, not the words to insert: a fresh writer repairs it with [staycurrent-revise](../staycurrent-revise/SKILL.md) so that the article still reads as one piece. Accepted findings for one piece go to its writer together. Findings on shared layout or site-wide text, which belongs to no writer, go to the coordinator to repair.
 
-After repair, the affected perspectives review the whole piece again, with fresh reviewers and every check, exactly as in the first round. Editorial always runs again, because any repair changes the words. The coordinator, not the reviewer, compares the new report with the accepted findings to confirm each was fixed. When a repair added passages or figures, the coordinator names them to the teaching reviewer, without the findings behind them, for its placement check.
+Each round repairs findings at or above that round's floor:
+
+| Round | Repaired |
+| --- | --- |
+| 1 | critical, medium and low |
+| 2 | critical and medium |
+| 3 and later | critical |
+
+A fresh reviewer reading a long piece always finds something, and every repair adds new text to find it in. In the 2026-10-21 skill trial, findings that had to be fixed fell from 16 to 7 to 5 over three full rounds but never reached zero, and two of the last five sat in text the previous repair had written. The early rounds therefore do the polishing and the later rounds guard correctness. Record findings below the floor with the decision "below this round's floor", so a later revision can take them up.
+
+The review ends after a round that finds nothing at or above its floor. Critical findings are always repaired. Round 3 is the last full round: check a critical repair after it with a fresh reviewer of the perspective that found it, reading the repaired passages and the sections around them in the whole piece, and repeat that check until it passes.
+
+In article mode, practitioner and teaching review every round. Editorial and visual review round 1, and review again before the review ends: when a round finds nothing at or above its floor without them, run them on that same version. In other modes every perspective runs each round.
+
+Every round is a full review of the whole piece by fresh reviewers with every check, as in the first. The coordinator, not the reviewer, compares the new report with the accepted findings to confirm each was fixed. When a repair added passages or figures, the coordinator names them to the teaching reviewer, without the findings behind them, for its placement check.
