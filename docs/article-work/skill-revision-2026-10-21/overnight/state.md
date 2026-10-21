@@ -1,6 +1,6 @@
 # Current state
 
-Updated UTC: 2026-10-21T21:40:00.411201+00:00
+Updated UTC: 2026-10-21T21:44:44.294646+00:00
 
 User authorises sustained overnight experiments and compact skill improvements, with personal review for AI-sounding prose. Read `protocol.md`. Started20:30UTC/22:30Stockholm. Heartbeat `improve-stay-current-skills-overnight` every30minutes, active on this chat; pause only on actual completion. Keep routine continuations quiet.
 
@@ -54,3 +54,12 @@ User authorises sustained overnight experiments and compact skill improvements, 
 ## Latest transfer checkpoint
 
 Both root/child breakdown P/V/T batches pass. Canonical `coordinate-editor.yaml` contains the complete integrated tree. Immutable `transfer/planning/snapshots/tree-v1` matches tree-manifest. Whole-tree teaching passes; practitioner reports one required medium: primary release while another mouse button held can arrive as pointermove rather than pointerup, so explicit completion policy/check needed. `/root/transfer_child_repair_chord` is fresh planner returning child-r02.yaml/record only; coordinator integrates. `/root/transfer_tree_value` independently reviews immutable tree-v1. Do not mutate its snapshot or show prior reports. After repair, freeze tree-v2 and fresh full P/V/T round2 per D's other-modes schedule. No article writing yet. Article paths/layout already settled in registry. Shared example data/module ownership must be assigned before writers; root must read finished child before final root integration.
+
+
+## Writing dispatch · tree accepted
+
+Tree-v2 full fresh round2 P/V/T all pass. `transfer/planning/tree-decisions-r02.md` accepts required chorded-button repair and complete tree; immutable tree-v2 matches canonical source. First root planning start21:13:21; writing dispatch21:43:57, 30m36 observed planning/preparation span. Other A/C experiments competed for slots and coordinator attention, so this is not an isolated planning latency. Twelve full planning review assignments occurred (two3perspective breakdown batches +two3perspective tree rounds), plus one fresh local planner repair. Record this real overhead when assessing later simplification; no speculative efficiency claim.
+
+Active fresh writers `/root/transfer_write_a00` and `/root/transfer_write_a01` in Darchive. Handoffs `transfer/writing/handoff-*.md`, dispatch.json. Root writer owns shared `src/components/coordinate-trial/{example,geometry}.mjs` and a00; child owns a01 and imports shared exports. Root writer announces shared API early; relay to child. Root must see both code-ready notices, run one coordinated build, start static4343, then coordinate browser/theme/375px checks (one author viewport at a time), ask root author to read finished child before final return. Do not declare draft complete before rendered author checks. No Dpreview yet. Evidenceindex archive `docs/article-work/coordinate-skill-trial/evidence.md`, authors own separate a00/a01 evidence and work records. Both copy durable sources into main artifacts/transfer, preserving paths. Next: frozen first4articleperspectives after both complete, then repair/confirmation/finalreading and corpus as currentDrequires. Root own actual prose/media review pending.
+
+Local checkpoint5ee96ce commits completed A/B/C evidence; newer transfer plans/writing handoffs remain uncommitted. Apreview4341 stopped; C4342 session79427 remains. No active skill adoption or push.
