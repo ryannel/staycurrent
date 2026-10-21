@@ -39,6 +39,7 @@ class Session {
     this.proc = spawn(join(bin, 'psql'), ['-X', '-A', '-t', '-h', '127.0.0.1', '-p', port, '-U', 'postgres', '-d', db, '-v', 'VERBOSITY=verbose'], { env });
     this.out = ''; this.err = ''; this.n = 0;
     this.proc.stdout.on('data', chunk => { this.out += chunk; });
+    this.proc.stdin.on('error', () => {});
     this.proc.stderr.on('data', chunk => { this.err += chunk; });
     this.proc.stdin.write('\\set VERBOSITY verbose\n');
   }
@@ -49,6 +50,11 @@ class Session {
     return new Promise(resolve => {
       const poll = setInterval(() => {
         const at = this.out.indexOf(marker);
+        if (at < 0 && this.proc.exitCode !== null) {
+          clearInterval(poll);
+          resolve({ out: this.out.trim(), err: this.err.trim(), code: (this.err.match(/ERROR:\s+([0-9A-Z]{5})/) || [])[1], exited: true });
+          return;
+        }
         if (at < 0) return;
         clearInterval(poll);
         setTimeout(() => {
@@ -62,7 +68,11 @@ class Session {
     });
   }
   async pid() { return Number((await this.run('SELECT pg_backend_pid();')).out); }
-  close() { this.proc.stdin.end(); return new Promise(resolve => this.proc.on('close', resolve)); }
+  close() {
+    if (this.proc.exitCode !== null || this.proc.signalCode) return Promise.resolve();
+    this.proc.stdin.end();
+    return new Promise(resolve => this.proc.on('close', resolve));
+  }
 }
 const settled = (promise, ms = 400) => Promise.race([promise.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), ms))]);
 
@@ -145,13 +155,35 @@ try {
     const out = sql(fresh('shop_after'), m.wrongChange.replace('ROLLBACK;', ''));
     ok(assert.deepEqual, out.split('\n').filter(l => /\|/.test(l)).map(l => { const [order_id, status] = l.split('|'); return { order_id: Number(order_id), status }; }), m.wrongChangeResult);
   }
+  {
+    // The left joins keep an order with no lines and no payment; inner joins drop it.
+    const db = fresh('shop_after');
+    sql(db, "INSERT INTO orders VALUES (105, 3, '2026-10-21 08:00+00', 'pending');");
+    const kept = json(db, m.dueRight).find(r => r.order_id === 105);
+    ok(assert.deepEqual, [kept.value, kept.paid, kept.due].map(v => Number(v).toFixed(2)), ['0.00', '0.00', '0.00']);
+    ok(assert.equal, json(db, m.dueRight.replace('LEFT JOIN value', 'JOIN value')).some(r => r.order_id === 105), false);
+    ok(assert.equal, json(db, m.dueWrong).some(r => r.order_id === 105), false);
+    // Before coalesce, order 103's paid total is NULL, and so is anything computed from it.
+    const raw = json('shop_after', m.dueRight.replace('coalesce(p.paid, 0.00) AS paid', 'p.paid AS paid').replace('coalesce(v.value, 0.00) - coalesce(p.paid, 0.00) AS due', 'v.value - p.paid AS due')).find(r => r.order_id === 103);
+    ok(assert.equal, raw.paid, null); ok(assert.equal, raw.due, null);
+    const shownNull = scenes.due.frames('separate').find(f => f.tables.some(t => t.name === 'Joined totals')).tables.find(t => t.name === 'Joined totals').rows.find(r => r.cells[0] === '103').cells[2];
+    ok(assert.equal, shownNull, 'NULL');
+    evidence.cases.dueWithOrder105 = { leftJoins: kept, rawBeforeCoalesce103: raw };
+  }
   const fig3 = scenes.due;
   for (const option of fig3.options.map(o => o.value)) {
     const last = fig3.frames(option).at(-1);
     const shown = last.tables.find(t => t.name === 'Result').rows.map(r => r.cells);
+    ok(assert.equal, fig3.queries[option], option === 'separate' ? m.dueRight : m.dueWrong);
     const expected = option === 'separate' ? m.dueRightResult : m.dueWrongResult;
     ok(assert.deepEqual, shown.map(c => Number(c[0])), expected.map(r => r.order_id));
     ok(assert.deepEqual, shown.map(c => c.at(-1)), expected.map(r => r.due));
+  }
+  {
+    const joinFrame = fig3.frames('together')[1].tables[0].rows;
+    const realPairs = json('shop_after', 'SELECT i.order_id, i.line_no, p.payment_id FROM order_items i JOIN payments p USING (order_id) ORDER BY 1, 2, 3');
+    ok(assert.deepEqual, joinFrame.filter(r => r.state !== 'dropped').map(r => [Number(r.cells[0]), Number(r.cells[1]), Number(r.cells[3])]), realPairs.map(r => [r.order_id, r.line_no, r.payment_id]));
+    ok(assert.deepEqual, joinFrame.filter(r => r.state === 'dropped').map(r => r.cells[0]), ['103', '103']);
   }
 
   // ---- Figure 4: the race for the last mug, two real sessions per protocol.
@@ -197,13 +229,30 @@ try {
     ok(assert.equal, final.p7, expected.p7);
     ok(assert.deepEqual, final.holding, expected.ordersHoldingMug);
     evidence.cases.race[name] = { trace, tariq: tariqResult, final, tariqWaited: blocked };
-    if (name !== 'readAutocommit') {
+    if (scenes.race.options.some(o => o.value === name)) {
       const frames = scenes.race.frames(name);
       const shownStock = frames.at(-1).tables.find(t => t.name === 'products').rows[0].cells.at(-1);
       ok(assert.equal, Number(shownStock), final.p7);
       const shownOrders = frames.at(-1).tables.find(t => t.name === 'order_items').rows.filter(r => r.state !== 'gone').map(r => Number(r.cells[0]));
       ok(assert.deepEqual, shownOrders, final.holding);
     }
+  }
+
+  {
+    // Had the write been stock = stock - 1, the waiting update would meet the check constraint.
+    const db = fresh('shop_before');
+    const mina = new Session(db); const tariq = new Session(db);
+    const decrement = "UPDATE products SET stock = stock - 1 WHERE product_id = 'P7';";
+    await mina.run('BEGIN;'); await tariq.run('BEGIN;');
+    ok(assert.match, (await mina.run(decrement)).out, /UPDATE 1/);
+    const t = tariq.run(decrement);
+    ok(assert.equal, await settled(t), false, 'the decrement should wait for Mina');
+    await mina.run('COMMIT;');
+    const r = await t;
+    ok(assert.equal, r.code, '23514');
+    ok(assert.match, r.err, /products_stock_check/);
+    await tariq.run('ROLLBACK;'); await mina.close(); await tariq.close();
+    evidence.cases.race.decrement = r.err.split('\n')[0];
   }
 
   // ---- Figure 5: where the connection breaks. The lost reply itself is modelled;
@@ -216,7 +265,8 @@ try {
     const pid = await app.pid();
     const results = [];
     for (const statement of m.placeOrder103.slice(0, name === 'beforeCommit' ? 5 : 6)) results.push(await app.run(statement));
-    ok(assert.match, results[1].out, /UPDATE 1/);
+    ok(assert.match, results[1].out, /INSERT 0 1/);
+    ok(assert.match, results[2].out, /UPDATE 1/);
     if (name !== 'beforeCommit') ok(assert.match, results[5].out, /COMMIT/);
     if (name !== 'replied') await admin.run(`SELECT pg_terminate_backend(${pid});`);
     await app.close(); await admin.close();
@@ -225,25 +275,76 @@ try {
     ok(assert.equal, state.p7, m.breakPoints[name].committed ? 0 : 1);
     const retry = new Session(db);
     const found = await retry.run(m.lookup103);
+    // A blind repeat that claims the mug first.
     await retry.run('BEGIN;');
-    const claim = await retry.run(m.placeOrder103[1]);
+    const claim = await retry.run(m.placeOrderClaimFirst[1]);
     await retry.run('ROLLBACK;');
-    const duplicate = await retry.run(m.placeOrder103[3]);
+    // The repeat the article recommends: the whole transaction, order row first.
+    const repeat = [];
+    for (const statement of m.placeOrder103) {
+      const r = await retry.run(statement);
+      repeat.push(r);
+      if (r.code) { await retry.run('ROLLBACK;'); break; }
+    }
     await retry.close();
     if (m.breakPoints[name].committed) {
       ok(assert.match, claim.out, /UPDATE 0/);
       ok(assert.equal, found.out, '103|pending');
-      ok(assert.equal, duplicate.code, '23505');
+      ok(assert.equal, repeat[1].code, '23505');
     } else {
       ok(assert.match, claim.out, /UPDATE 1/);
       ok(assert.equal, found.out, '');
+      ok(assert.match, repeat.at(-1).out, /COMMIT/);
     }
-    evidence.cases.lostReply[name] = { state, lookupFirst: found.out || '(0 rows)', retryClaim: claim.out, reinsert103: duplicate.code ? duplicate.err.split('\n')[0] : duplicate.out };
-    const shown = scenes.lost.frames(name).at(-2).tables.find(t => t.name === 'orders').rows.some(r => r.cells[0] === '103' && r.state !== 'gone');
-    ok(assert.equal, shown, m.breakPoints[name].committed);
-    const finalShown = scenes.lost.frames(name).at(-1).tables.find(t => t.name === 'orders').rows.some(r => r.cells[0] === '103' && r.state !== 'gone');
+    const [after] = json(db, `SELECT (SELECT stock FROM products WHERE product_id = 'P7') AS p7, (SELECT count(*) FROM orders WHERE order_id = 103) AS has103`);
+    ok(assert.deepEqual, after, { p7: 0, has103: 1 });
+    evidence.cases.lostReply[name] = { state, lookupFirst: found.out || '(0 rows)', claimFirstRepeat: claim.out, insertFirstRepeat: repeat.at(-1).code ? repeat.at(-1).err.split('\n')[0] : repeat.at(-1).out };
+    const frames = scenes.lost.frames(name);
+    const atBreak = frames[2].tables.find(t => t.name === 'orders').rows.some(r => r.cells[0] === '103' && !['gone', 'rolledback'].includes(r.state));
+    ok(assert.equal, atBreak, m.breakPoints[name].committed);
+    const finalShown = frames.at(-1).tables.find(t => t.name === 'orders').rows.some(r => r.cells[0] === '103' && !['gone', 'rolledback'].includes(r.state));
     ok(assert.equal, finalShown, true, `${name}: order 103 exists once the application has recovered`);
   }
+
+  // An attempt still in flight: its COMMIT is held back by waiting for a
+  // synchronous standby that never connects, so it has not finished when the
+  // application looks and repeats. A lookup finds nothing; an insert-first
+  // repeat waits on the primary key and fails once the attempt commits; a
+  // claim-first repeat waits on the stock and reports the mug sold out.
+  // Creating a database commits too, so both are made before commits are held.
+  const inFlightDbs = { insertFirst: fresh('shop_before'), claimFirst: fresh('shop_before') };
+  sql('postgres', "ALTER SYSTEM SET synchronous_standby_names = 'ghost';\nSELECT pg_reload_conf();");
+  try {
+    evidence.cases.inFlight = {};
+    for (const variant of ['insertFirst', 'claimFirst']) {
+      const db = inFlightDbs[variant];
+      const first = new Session(db); const admin = new Session(db); const second = new Session(db);
+      const pid = await first.pid();
+      for (const statement of m.placeOrder103.slice(0, 5)) await first.run(statement);
+      const commit = first.run('COMMIT;');
+      ok(assert.equal, await settled(commit, 600), false, 'the first COMMIT should be held');
+      ok(assert.equal, (await admin.run(`SELECT wait_event FROM pg_stat_activity WHERE pid = ${pid};`)).out, 'SyncRep');
+      const look = await second.run(m.lookup103);
+      ok(assert.equal, look.out, '', 'an attempt in flight is invisible to a lookup');
+      await second.run('BEGIN;');
+      const statements = variant === 'insertFirst' ? m.placeOrder103 : m.placeOrderClaimFirst;
+      const opening = second.run(statements[1]);
+      ok(assert.equal, await settled(opening, 600), false, `${variant}: the repeat should wait for the attempt in flight`);
+      await admin.run(`SELECT pg_terminate_backend(${pid});`);
+      const committed = await commit;
+      ok(assert.match, committed.err, /already committed locally/);
+      const r = await opening;
+      if (variant === 'insertFirst') ok(assert.equal, r.code, '23505'); else ok(assert.match, r.out, /UPDATE 0/);
+      await second.run('ROLLBACK;');
+      await first.close(); await admin.close(); await second.close();
+      const [state] = json(db, `SELECT (SELECT stock FROM products WHERE product_id = 'P7') AS p7, (SELECT count(*) FROM orders WHERE order_id = 103) AS has103`);
+      ok(assert.deepEqual, state, { p7: 0, has103: 1 });
+      evidence.cases.inFlight[variant] = { lookupWhileInFlight: look.out || '(0 rows)', repeatAfterWait: r.code ? r.err.split('\n')[0] : r.out, firstCommit: committed.err.split('\n')[0], state };
+    }
+  } finally {
+    sql('postgres', 'ALTER SYSTEM RESET synchronous_standby_names;\nSELECT pg_reload_conf();');
+  }
+  ok(assert.equal, sql('postgres', 'SHOW synchronous_standby_names;'), '');
 
   // ---- Section 6: scans, an index and the physical work they do.
   {
@@ -253,13 +354,24 @@ try {
     const pages = plan => plan['Shared Hit Blocks'] + plan['Shared Read Blocks'];
     const scanNode = plan => (plan.Plans ? scanNode(plan.Plans.at(-1)) : plan);
     const [sizes] = json('scaled', "SELECT (SELECT count(*) FROM orders) AS orders, pg_relation_size('orders') / 8192 AS order_pages, pg_relation_size('order_items') / 8192 AS item_pages");
-    const textPlan = query => sql('scaled', `SET max_parallel_workers_per_gather = 0; EXPLAIN (ANALYZE, BUFFERS, COSTS OFF, TIMING OFF, SUMMARY OFF) ${query}`);
+    const textPlan = query => { sql('scaled', query + query); return sql('scaled', `SET max_parallel_workers_per_gather = 0; EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) ${query}`); };
+    // The printed plans drop costs and widths and label the row estimate; each
+    // printed line, with wrapped lines joined back, must appear in the real output.
+    const normalise = text => text.split('\n').map(l => l.replace(/\(cost=\S+ rows=(\d+) width=\d+\)/, '(estimated rows=$1)').replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const printed = plan => plan.split('\n').reduce((out, raw) => {
+      const l = raw.replace(/\s+/g, ' ').trim();
+      if (/^\s+\(estimated/.test(raw)) out[out.length - 1] += ' ' + l; else out.push(l);
+      return out;
+    }, []);
+    const checkPlan = (shown, real) => { const lines = normalise(real); for (const l of printed(shown)) ok(assert.ok, lines.includes(l), `printed plan line not in the output: ${l}\n${real}`); };
     evidence.cases.planText = { before: textPlan(m.minaLookup) };
+    checkPlan(m.planBefore, evidence.cases.planText.before);
     const before = explain(m.minaLookup);
     const reportBefore = explain(m.productReport);
     sql('scaled', m.lookupIndex + ' ANALYZE orders;');
     const after = explain(m.minaLookup);
     evidence.cases.planText.after = textPlan(m.minaLookup);
+    checkPlan(m.planAfter, evidence.cases.planText.after);
     const reportAfter = explain(m.productReport);
     const [idx] = json('scaled', "SELECT pg_relation_size('orders_customer_idx') / 8192 AS index_pages");
     const rows = json('scaled', m.minaLookup);
@@ -269,6 +381,17 @@ try {
     ok(assert.ok, pages(before) >= sizes.order_pages && pages(before) < sizes.order_pages * 1.01, `scan read ${pages(before)} of ${sizes.order_pages} pages`);
     ok(assert.ok, /Index Scan|Bitmap/.test(scanNode(after)['Node Type']));
     ok(assert.ok, pages(after) <= 6, `index lookup read ${pages(after)} pages`);
+    // The scan nodes' own counts, which the article's table quotes: the
+    // sequential scan reads every page of orders.
+    ok(assert.equal, pages(before.Plans[0]), sizes.order_pages);
+    ok(assert.equal, before.Plans[0]['Node Type'], 'Seq Scan');
+    ok(assert.equal, scanNode(reportBefore)['Node Type'], 'Seq Scan');
+    ok(assert.equal, scanNode(reportAfter)['Node Type'], 'Seq Scan');
+    ok(assert.equal, pages(scanNode(reportBefore)), sizes.item_pages);
+    ok(assert.equal, pages(scanNode(reportAfter)), sizes.item_pages);
+    // A plan line's count includes the lines beneath it: the heap scan's 3 pages are its own 1 and the index's 2.
+    ok(assert.equal, pages(after.Plans[0]), 3);
+    ok(assert.equal, pages(scanNode(after)), 2);
     ok(assert.ok, Math.abs(pages(reportBefore) - pages(reportAfter)) <= 5);
     ok(assert.ok, pages(reportBefore) >= sizes.item_pages && pages(reportBefore) < sizes.item_pages * 1.01, `report read ${pages(reportBefore)} of ${sizes.item_pages}`);
     // What the index costs every insert: write-ahead log for 10,000 new orders.
@@ -283,9 +406,9 @@ try {
     ok(assert.ok, walWithIndex > walWithout * 1.15, `index adds log: ${walWithout} -> ${walWithIndex}`);
     evidence.cases.physical = {
       sizes, indexPages: idx.index_pages,
-      lookupBefore: { node: scanNode(before)['Node Type'], pages: pages(before), removed: scanNode(before)['Rows Removed by Filter'] },
-      lookupAfter: { node: scanNode(after)['Node Type'], pages: pages(after) },
-      report: { pagesBefore: pages(reportBefore), pagesAfter: pages(reportAfter), node: scanNode(reportBefore)['Node Type'] },
+      lookupBefore: { node: before.Plans[0]['Node Type'], scanPages: pages(before.Plans[0]), wholePlan: pages(before), removed: scanNode(before)['Rows Removed by Filter'] },
+      lookupAfter: { heap: after.Plans[0]['Node Type'], heapPages: pages(after.Plans[0]), index: scanNode(after)['Node Type'], indexPages: pages(scanNode(after)), wholePlan: pages(after) },
+      report: { pagesBefore: pages(reportBefore), pagesAfter: pages(reportAfter), node: scanNode(reportBefore)['Node Type'], scanPagesBefore: pages(scanNode(reportBefore)), scanPagesAfter: pages(scanNode(reportAfter)) },
       walBytesFor10000Inserts: { withoutIndex: walWithout, withIndex: walWithIndex },
     };
   }
@@ -305,6 +428,25 @@ try {
     const oldAfter = await s.run(m.liveChange.oldInsert.replace('105', '106'));
     ok(assert.equal, oldAfter.code, '23502');
     await s.close();
+    // Both ALTER TABLE stages take an ACCESS EXCLUSIVE lock: a plain read waits.
+    const t = fresh('shop_after');
+    const writer = new Session(t); const reader = new Session(t);
+    const locks = {};
+    for (const [stage, statement, prep] of [['expand', m.liveChange.expand], ['contract', m.liveChange.contract, m.liveChange.backfill]]) {
+      if (prep) await writer.run(prep);
+      await writer.run('BEGIN;');
+      ok(assert.match, (await writer.run(statement)).out, /ALTER TABLE/);
+      const lock = await writer.run("SELECT mode FROM pg_locks WHERE relation = 'orders'::regclass AND pid = pg_backend_pid() AND mode = 'AccessExclusiveLock';");
+      ok(assert.equal, lock.out, 'AccessExclusiveLock', stage);
+      const read = reader.run('SELECT count(*) FROM orders;');
+      const readWaited = !(await settled(read));
+      ok(assert.equal, readWaited, true, `${stage}: a plain read should wait for the lock`);
+      await writer.run('COMMIT;');
+      ok(assert.match, (await read).out, /^\d+$/);
+      locks[stage] = { lock: lock.out, readWaited };
+    }
+    await writer.close(); await reader.close();
+    evidence.cases.liveChangeLocks = locks;
     evidence.cases.liveChange = { oneStep: oneStep.err.split('\n')[0], earlyContract: early.err.split('\n')[0], oldWriterAfterContract: oldAfter.err.split('\n')[0] };
   }
 

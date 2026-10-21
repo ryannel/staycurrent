@@ -118,9 +118,9 @@ The rules: for each class, `remaining` plus its reservations equals `capacity`; 
 | Request | Owner | Used for |
 | --- | --- | --- |
 | R7 | Tariq | His existing booking in class 22 |
-| R8 | Mina | Her booking of class 21's last place; moved between classes in Figure 5 |
+| R8 | Mina | Her booking of class 21's last place; moved between classes in the deadlock figure |
 | R9 | Tariq | His competing request for class 21's last place |
-| R10, R11 | Mina | Her double click in class 22 (Figure 3) |
+| R10, R11 | Mina | Her double click in class 22 (the atomicity figure) |
 | R12 | Tariq | His second, refused booking in class 22 |
 | R13 | Mina | Her booking in the `FOR UPDATE` count variation |
 | R14 | Edda | Her competing booking in the same variation |

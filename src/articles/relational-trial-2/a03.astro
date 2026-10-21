@@ -19,19 +19,23 @@ const next = '/review/relational-next/';
 
 const booking = `BEGIN;
 
-${sql.take(21)}
--- One row back: the place is Mina's. No row: ROLLBACK and say the class is full.
-
 ${sql.book('R8', 21, 1)}
--- 23505: ROLLBACK; Mina already has a place in this class.
+-- 23505: Mina already has a place in class 21, through R8 or an
+-- earlier request. ROLLBACK and tell her so.
+
+${sql.take(21)}
+-- One row back: the place is Mina's. No row: ROLLBACK and say the
+-- class is full.
 
 COMMIT;`;
 
-const versionCheck = `-- Earlier, in its own statement: SELECT remaining FROM classes WHERE class_id = 21;  → 1
--- The application decides, then writes only if the value it read is still there.
+const versionCheck = `-- Earlier, in its own statement, the application read 1:
+--   ${sql.readRemaining(21)}
+-- It decides, then writes only if the value is still the one it read.
 UPDATE classes SET remaining = 0
 WHERE class_id = 21 AND remaining = 1;
--- UPDATE 1: the decision still holds.  UPDATE 0: something changed; read again and decide again.`;
+-- UPDATE 1: the decision still holds.
+-- UPDATE 0: something changed. Read again and decide again.`;
 
 const leaveWithLock = `BEGIN;
 
@@ -39,7 +43,8 @@ ${sql.lockClass(21)}
 -- Every change to class 21's instructors takes this lock first.
 
 ${sql.countAvailable}
--- A new statement, so at Read Committed it sees every commit made before the lock was granted.
+-- A new statement, so at Read Committed it sees every commit made
+-- before the lock was granted.
 -- If the count is 1 or less: ROLLBACK and decline. Otherwise:
 
 ${sql.leave('Lena')}
@@ -47,23 +52,24 @@ ${sql.leave('Lena')}
 COMMIT;`;
 
 const move = `BEGIN;
--- Lock both classes in ascending class_id order, one statement each.
+-- Lock both classes in ascending class_id order.
 ${sql.lockClass(21)}
 ${sql.lockClass(22)}
 
-UPDATE classes SET remaining = remaining + 1 WHERE class_id = 21;
+${sql.free(21)}
 ${sql.take(22)}
--- No row: ROLLBACK; class 22 is full and R8 stays in class 21.
+-- No row: ROLLBACK. Class 22 is full and R8 stays in class 21.
 
-UPDATE reservations SET class_id = 22 WHERE request_id = 'R8';
+${sql.move('R8', 22)}
 COMMIT;`;
 
+// One card per anomaly: what it is, then what each PostgreSQL 18 level does.
 const anomalies = [
-  ['Dirty read', 'Seeing another transaction’s uncommitted change', 'No', 'No', 'No'],
-  ['Changed reread (non-repeatable read)', 'Reading the same row twice and getting different values', 'Yes', 'No', 'No'],
-  ['Phantom', 'Rerunning a query and finding rows that were not there before', 'Yes', 'No', 'No'],
-  ['Lost update', 'Overwriting a change with a value computed from an older read (Figure 2)', 'Yes', 'Refused (40001)', 'Refused (40001)'],
-  ['Write skew', 'Two decisions from the same rows, each changing different rows (Figure 3)', 'Yes', 'Yes', 'Refused (40001)'],
+  { name: 'Dirty read', what: 'Seeing another transaction’s uncommitted change.', rc: 'No', rr: 'No', ser: 'No' },
+  { name: 'Non-repeatable read', what: 'Reading the same row twice in one transaction and getting different values.', rc: 'Yes', rr: 'No', ser: 'No' },
+  { name: 'Phantom', what: 'Rerunning a query in one transaction and finding rows that weren’t there before.', rc: 'Yes', rr: 'No: a rerun sees the same rows. Another transaction can still add a row that breaks a rule you checked, as write skew shows.', ser: 'No' },
+  { name: 'Lost update', what: 'Overwriting a change with a value worked out from an older read (Figure 2).', rc: 'Yes', rr: 'Refused with 40001', ser: 'Refused with 40001' },
+  { name: 'Write skew', what: 'Two decisions made from the same rows, each changing a different row (Figure 3).', rc: 'Yes', rr: 'Yes', ser: 'Refused with 40001' },
 ];
 
 const contracts = [
@@ -104,7 +110,7 @@ const contracts = [
   },
   {
     engine: 'SQLite 3', setting: 'WAL mode, BEGIN (deferred)',
-    reads: 'Transactions on separate connections are serializable. A reader keeps its snapshot; only one connection writes at a time.',
+    reads: 'Transactions on separate connections are serialisable. A reader keeps its snapshot; only one connection writes at a time.',
     conflict: 'In the recorded run, Tariq’s write after Mina had committed failed with SQLITE_BUSY_SNAPSHOT. Ravi’s write while Lena held the write lock failed with SQLITE_BUSY.',
     application: 'Roll back and repeat the whole transaction from its first read.',
     evidence: 'Recorded on SQLite 3.54.0',
@@ -112,28 +118,28 @@ const contracts = [
   {
     engine: 'SQLite 3', setting: 'WAL mode, BEGIN IMMEDIATE',
     reads: 'The transaction takes the write lock before its first read.',
-    conflict: 'A second writer waits, up to its busy timeout. In the recorded run Tariq waited 0.36 s, then read 0 and could decline.',
+    conflict: 'A second writer waits, up to its busy timeout. In the recorded run Tariq waited until Mina committed, then read 0 and could decline.',
     application: 'Use it for any transaction that reads and then writes. Writers take turns.',
     evidence: 'Recorded on SQLite 3.54.0',
   },
 ];
 
 const outcomes = [
-  ['A wait', 'The statement is blocked on a row another transaction has changed or locked.', 'Nothing yet. It will finish or fail when that transaction ends.'],
-  ['Deadlock (40P01)', 'Two transactions each waited for a lock the other held. The database chose one to abort.', 'Roll back and repeat the whole transaction.'],
+  ['A wait', 'The statement is held back by a row another transaction has changed or locked.', 'Nothing yet. It will finish or fail when that transaction ends.'],
+  ['Deadlock (40P01)', 'Two transactions each waited for a lock the other held. The database chose one to abort (Figure 4).', 'Roll back and repeat the whole transaction.'],
   ['Serialization failure (40001)', 'The database refused a result that matches no serial order (Repeatable Read or Serializable).', 'Roll back and repeat the whole transaction.'],
-  ['Lock not available (55P03)', 'NOWAIT refused to wait, or lock_timeout ran out.', 'The protected decision never happened. Report “busy”, or try again later; don’t report “full”.'],
-  ['Statement cancelled (57014)', 'statement_timeout ran out, or the statement was cancelled.', 'Roll back. Decide whether the operation is worth another attempt.'],
-  ['Unique or check violation (23505, 23514)', 'The change would break a declared rule.', 'Roll back and report the domain answer, such as “already booked”. Repeating the same change gives the same answer.'],
+  ['Lock not available (55P03)', 'A statement asked not to wait for a lock, or waited longer than the lock_timeout setting allows.', 'The protected decision never happened. Report “busy”, or try again later; don’t report “full”.'],
+  ['Statement cancelled (57014)', 'The statement ran longer than the statement_timeout setting allows, or was cancelled.', 'Roll back. Decide whether the operation is worth another attempt.'],
+  ['Unique or check violation (23505, 23514)', 'The change would break a declared rule.', 'Roll back and report what the error says about the data, such as “already booked”. Repeating the same change gives the same answer.'],
   ['Transaction failed (25P02)', 'An earlier statement failed; PostgreSQL ignores the rest until the transaction ends.', 'Find the first error. Roll back.'],
-  ['Connection lost before the reply to COMMIT', 'The transaction may or may not have committed.', 'Find out from the data before doing anything else (Figure 4).'],
+  ['Connection lost before the reply to COMMIT', 'The transaction may have committed, may still be committing, or may have rolled back.', 'Repeat the operation under the same request_id, so that the repeat meets the first attempt (Figure 5).'],
 ];
 ---
 <ArticleBody depth={3}>
 
-<p>When two requests change the same data at the same time, each can be correct on its own and the result can still be wrong. This article shows how to keep a business rule true under that kind of overlap, and when a request fails part-way through. It starts from the rule itself, then puts the whole change inside one transaction, and then picks a protection that fits the rule: a statement that checks and changes together, a constraint, a shared lock, or stronger isolation.</p>
-<p>The short answer is that a transaction makes a group of changes commit or disappear together, but on its own it does not stop another session from acting on data you have just read. The protection has to cover the decision as well as the write. Often one statement can carry both, as in “take a place only if one is left”. A constraint can refuse a state outright. A rule that spans several rows needs every writer to meet at one shared lock, or the database’s strictest checking, which refuses one of two incompatible transactions so that it can be repeated. Each of these can end a transaction with an error, and the application must reconsider the whole operation, not just the statement that failed. A lost reply to <code>COMMIT</code> does not tell you whether the change committed.</p>
-<p>The introduction raced two customers for the shop’s last mug in <a href={`${next}#a-transaction-protects-a-change-within-a-stated-contract`}>A transaction protects a change within a stated contract</a>. Here the same shop also runs classes, which give us a few more rules to protect. Mina Shah, Tariq Aziz and Edda Berg are customers. <code>classes.remaining</code> stores the places still free in each class, and each row in <code>reservations</code> is one booking, identified by the request that made it. Class 21, Tea tasting, has one place and no bookings. Class 22, Mug painting, has three places, and Tariq already holds one through request R7. Two instructors, Lena and Ravi, teach class 21.</p>
+<p>When two requests change the same data at the same time, each can be correct on its own and the result can still be wrong. This article shows how to keep a business rule true when requests overlap, and when one of them fails part-way through. It builds on <a href={`${next}#a-transaction-protects-a-change-within-a-stated-contract`}>the introduction’s section on transactions</a>, where two customers race for the shop’s last mug, but it explains each term as it comes up, so you can start here.</p>
+<p>In short, a transaction makes a group of changes commit together or not at all. It does not stop another request from acting on data you have just read, so the decision needs protecting as well as the write. Often one statement can do both, such as “take a place only if one is left”. A constraint can refuse a bad state outright. If a rule depends on several rows, either make every writer lock the same row first, or run every writer at the Serializable level, which refuses one of two conflicting transactions so that it can be run again. Any of these protections can end a transaction with an error. The application must then rerun the whole operation, not just the statement that failed. And when the reply to a commit is lost, the application has to find out what happened through the operation’s own identity.</p>
+<p>The shop from the introduction also runs classes, which give us a few more rules to protect. Mina Shah, Tariq Aziz and Edda Berg are customers. <code>classes.remaining</code> stores the places still free in each class, and each row in <code>reservations</code> is one booking, identified by the request that made it. Class 21, Tea tasting, has one place and no bookings. Class 22, Mug painting, has three places, and Tariq already holds one through request R7. Two instructors, Lena and Ravi, teach class 21. Each request runs in its own <strong>session</strong>, one connection’s conversation with the database.</p>
 
 <div class="start-tables">
   <div class="table-scroll" role="region" tabindex="0" aria-label="Starting rows of classes"><table>
@@ -148,14 +154,14 @@ const outcomes = [
   </table></div>
   <div class="table-scroll" role="region" tabindex="0" aria-label="Starting rows of instructors"><table>
     <caption>instructors</caption>
-    <thead><tr><th scope="col">class_id <abbr title="foreign key to classes">FK</abbr></th><th scope="col">person</th><th scope="col">available</th></tr></thead>
+    <thead><tr><th scope="col">class_id <abbr title="part of the primary key, and a foreign key to classes">PK FK</abbr></th><th scope="col">person <abbr title="part of the primary key">PK</abbr></th><th scope="col">available</th></tr></thead>
     <tbody>{start.instructors.map(i => <tr><td>{i.class_id}</td><td>{i.person}</td><td>{String(i.available)}</td></tr>)}</tbody>
   </table></div>
 </div>
 
-<p>PostgreSQL 18 is the reference engine, and MySQL’s InnoDB and SQLite appear where their behaviour changes what you should write. The four numbered figures replay runs recorded on PostgreSQL 18.6: each step shows the statement, what the database returned, and the committed rows afterwards. The worksheet at the end runs them all again.</p>
+<p>PostgreSQL 18 is the reference engine. MySQL’s InnoDB and SQLite appear where their behaviour changes what you should write. The five numbered figures replay runs recorded on PostgreSQL 18.6: each step shows a statement, what the database returned, and the committed rows afterwards. <a href="#where-the-results-come-from">Where the results come from</a>, near the end, says how they were recorded.</p>
 
-<h2 id="start-with-the-fact-that-must-remain-true">Start with the fact that must remain true</h2>
+<h2 id="start-with-the-fact-that-must-remain-true">Invariants</h2>
 <p>An <strong>invariant</strong> is a statement about the committed data that must hold after every commit. Before choosing any mechanism, write the invariants down. The class bookings have three:</p>
 <ol>
   <li><strong>Places add up.</strong> For each class, <code>remaining</code> plus the number of its bookings equals its <code>capacity</code>. Taking a place and recording the booking always happen together.</li>
@@ -168,11 +174,11 @@ const outcomes = [
 <p>The schema already states the rules a database can check by itself. <code>CHECK (remaining BETWEEN 0 AND capacity)</code> stops a class going below zero or above capacity, <code>UNIQUE (class_id, owner_id)</code> is rule 2, and the primary key on <code>request_id</code> means the same request can be recorded only once.</p>
 <Sql code={schemaSql} label="The class-booking tables, with the rules the database can check" />
 
-<h3 id="put-the-complete-change-inside-a-boundary">Put the complete change inside a boundary</h3>
+<h3 id="put-the-complete-change-inside-a-boundary">Transactions, autocommit and ACID</h3>
 <p>A booking is two changes: take a place in <code>classes</code>, and record the booking in <code>reservations</code>. If the application sends them without <code>BEGIN</code>, PostgreSQL runs each statement as a transaction of its own and commits it as soon as it finishes. This is called <strong>autocommit</strong>, and it is what most drivers do unless asked otherwise.</p>
-<p>Figure 1 follows Mina double-clicking Book in class 22, which sends two requests, R10 and R11, one after the other. Play it with <em>Each statement on its own</em>, then switch to <em>One transaction per booking</em> and watch the committed rows when R11’s insert is refused.</p>
-<ScheduleFigure figure="clicks" number={1} caption="Recorded on PostgreSQL 18.6 in a single session. With separate statements, R11’s place stays taken after its insert is refused, so class 22 has 0 remaining and 2 bookings against a capacity of 3. Inside one transaction the refusal undoes R11’s place. The figure shows the clicks one after the other; when they arrive together, R11 waits on class 22’s row first and then fails in the same way, which the worksheet checks separately." />
-<p>With separate statements, nothing undid R11’s first change, and a place disappeared. Inside a transaction, the refused insert left the whole transaction failed. PostgreSQL then refuses every further statement with error 25P02 until the transaction ends. (PostgreSQL labels each error with a five-character code: 23505 is a unique-constraint violation.) A <code>COMMIT</code> sent to a failed transaction is reported back as <code>ROLLBACK</code>. An application should read that result rather than assume the commit worked.</p>
+<p>When PostgreSQL refuses a statement, it returns an error with a five-character code, and this article names errors by those codes. The first one you will meet is 23505: a value that must be unique already exists. Figure 1 follows Mina double-clicking Book in class 22, which sends two requests, R10 and R11, one after the other. Play it with <em>Each statement on its own</em>, then switch to <em>One transaction per booking</em> and watch the committed rows when R11’s insert is refused with 23505.</p>
+<ScheduleFigure figure="clicks" number={1} caption="One session. With separate statements, R11’s place stays taken after its insert is refused, so class 22 has 0 remaining and 2 bookings against a capacity of 3. Inside one transaction the refusal undoes R11’s place." />
+<p>With separate statements, nothing undid R11’s first change, and a place disappeared. Inside a transaction, the refused insert left the whole transaction failed. PostgreSQL then refuses every further statement with 25P02 until the transaction ends, and a <code>COMMIT</code> sent to a failed transaction is reported back as <code>ROLLBACK</code>. An application should read that result rather than assume the commit worked.</p>
 <p>The three commands are short. <code>BEGIN</code> starts a transaction. <code>COMMIT</code> asks the database to make all its changes permanent and visible together. <code>ROLLBACK</code> discards them all. The guarantees are often summarised as ACID, and it helps to be precise about each letter:</p>
 <ul>
   <li><strong>Atomicity</strong> is what Figure 1 showed: all of a transaction’s changes commit, or none do.</li>
@@ -180,43 +186,43 @@ const outcomes = [
   <li><strong>Isolation</strong> describes how much overlapping transactions can affect each other. The next sections are about it.</li>
   <li><strong>Durability</strong> means a committed change survives a crash, under the conditions the server is configured for. It is covered near the end.</li>
 </ul>
-<p>A <strong>savepoint</strong> marks a point inside a transaction that you can roll back to without abandoning the rest. It is not a commit: nothing inside it is permanent until the outer transaction commits. Savepoints also make it easy to undo too little. The worksheet set one after R11 took its place and before its insert, rolled back to the savepoint when the insert was refused, then committed. The place stayed taken with no booking, which is Figure 1’s broken state again.</p>
-<p>Two other behaviours vary between engines. In PostgreSQL, a <code>CREATE TABLE</code> inside a transaction that rolls back leaves no table behind, while MySQL <a href={`${mysql}implicit-commit.html`}>commits implicitly</a> before and after most schema changes. And in PostgreSQL a sequence number taken by <code>nextval</code> is <a href={`${pg}functions-sequence.html`}>never handed back</a>, even if the transaction rolls back. The worksheet’s rolled-back transaction took value 1, and the next call returned 2. Gaps in generated IDs are normal.</p>
-<p>The way an error affects the transaction also differs. In PostgreSQL any error fails the whole transaction. In InnoDB a duplicate-key error <a href={`${mysql}innodb-error-handling.html`}>rolls back only the statement</a> and leaves the transaction open, with R11’s place still taken. If the application then sends <code>COMMIT</code>, the place is lost exactly as in Figure 1’s first option. The safe habit on every engine is the same: after an error you didn’t plan to recover from, send <code>ROLLBACK</code>.</p>
+<p>A <strong>savepoint</strong> marks a point inside a transaction that you can roll back to without abandoning the rest. It is not a commit: nothing inside it is permanent until the outer transaction commits. Savepoints also make it easy to undo too little. Set one after R11 has taken its place and before its insert, roll back to it when the insert is refused, then commit, and the place stays taken with no booking: Figure 1’s broken state again.</p>
+<p>A rollback undoes a transaction’s changes to data, but not quite everything. A sequence, PostgreSQL’s generator of IDs, <a href={`${pg}functions-sequence.html`}>never takes back</a> a number handed out by <code>nextval</code>. A rolled-back transaction that took 1 leaves the next caller with 2, so gaps in generated IDs are normal. In MySQL, most schema changes <a href={`${mysql}implicit-commit.html`}>commit implicitly</a>, so they can’t be rolled back at all, while PostgreSQL rolls back a <code>CREATE TABLE</code> with the rest of its transaction.</p>
+<p>How much an error undoes also differs. In PostgreSQL any error fails the whole transaction. In InnoDB a duplicate-key error <a href={`${mysql}innodb-error-handling.html`}>rolls back only the statement</a> and leaves the transaction open, with R11’s place still taken. If the application then sends <code>COMMIT</code>, the place is lost exactly as in Figure 1’s first option. The safe habit on every engine is the same: after an error you didn’t plan to recover from, send <code>ROLLBACK</code>.</p>
 
-<h3 id="let-the-database-reject-invalid-states-where-it-can">Let the database reject invalid states where it can</h3>
+<h3 id="let-the-database-reject-invalid-states-where-it-can">Constraints</h3>
 <p>A constraint is checked by the database for every writer, including administrative tools, imports and scripts that never pass through the booking code. Where a rule can be stated as a constraint, state it that way. Here the <code>CHECK</code> refuses a negative <code>remaining</code>, the unique constraint refuses Mina’s second booking in a class, the foreign keys refuse a booking for a class or customer that doesn’t exist, and the primary key refuses the same request twice.</p>
-<p>A constraint also settles races between inserts. Checking “does Mina already have a booking here?” and then inserting can fail when two requests both check before either inserts: each sees no booking. A unique constraint does not have that gap. In the worksheet, R10 inserted Mina’s booking and had not yet committed when R11 tried to insert the same pair. R11 waited for R10’s transaction, and when R10 committed, R11 failed with 23505. Had R10 rolled back, R11’s insert would have gone ahead.</p>
-<p>A constraint error is a domain answer, not a passing fault. “Mina already has a place in class 22” is true, and repeating the request will get the same answer, so report it. Later in the article we meet errors of a different kind, which mean only that the transaction collided with another one, and there repeating it is the right response.</p>
-<p>Two of our three rules can’t be written as constraints. A PostgreSQL <code>CHECK</code> sees only the row being written, so it can’t count bookings in another table, and it can’t look at other instructors. <a href={`${next}constraints/#account-for-rules-the-schema-cannot-express`}>Accounting for rules the schema cannot express</a> covers the options in constraint design. What an insert should do when it meets existing data, such as <code>ON CONFLICT</code>, belongs to <a href={`${next}changing-data/#decide-what-should-happen-when-an-insert-meets-existing-data`}>Changing data with SQL</a>. For rules 1 and 3, the transactions themselves must keep the rule.</p>
+<p>A constraint also settles races between inserts. Checking “does Mina already have a booking here?” and then inserting can fail when two requests both check before either inserts: each sees no booking. A unique constraint does not have that gap. Suppose R10 has inserted Mina’s booking and not yet committed when R11 tries to insert the same pair. R11 <strong>waits</strong>: the database holds the statement back until R10’s transaction ends, because only then is it known whether the pair exists. Rows a transaction has written are <strong>locked</strong> until it ends, and another session that needs to change one of them, or to insert a clashing key, waits in the same way. When R10 commits, R11 fails with 23505. Had R10 rolled back, R11’s insert would have gone ahead.</p>
+<p>A constraint error is an answer about the data, not a passing fault. “Mina already has a place in class 22” is true, and repeating the request will get the same answer, so report it. Later we meet errors of a different kind, which mean only that the transaction collided with another one. For those, repeating the transaction is the right response.</p>
+<p>Two of our three rules can’t be written as constraints. A PostgreSQL <code>CHECK</code> sees only the row being written, so it can’t count bookings in another table, and it can’t look at other instructors. The article on constraints covers <a href={`${next}constraints/#account-for-rules-the-schema-cannot-express`}>the options for rules a schema cannot express</a>, and the article on changing data covers <a href={`${next}changing-data/#decide-what-should-happen-when-an-insert-meets-existing-data`}>what an insert should do when it meets existing data</a>, such as <code>ON CONFLICT</code>. For rules 1 and 3, the transactions themselves must keep the rule.</p>
 
-<h2 id="two-correct-looking-transactions-can-make-an-incorrect-result">Two correct-looking transactions can make an incorrect result</h2>
-<p>Mina, with request R8, and Tariq, with R9, both want class 21’s last place. The booking code reads <code>remaining</code>, and if it is above zero, works out the new value, writes it, and inserts the booking. Run alone, that code is correct.</p>
-<p>Figure 2 draws the two requests as a <strong>history</strong>: one column, or lane, per session, with each statement in the order the database received it, and the moments where a statement waited. A useful way to judge a history is to compare it with the <strong>serial orders</strong>, where the same transactions run one at a time. Mina then Tariq: Tariq reads 0 and declines. Tariq then Mina: the same, the other way round. Both serial orders give an acceptable outcome. A concurrent history is safe if its result matches one of them.</p>
-<p>Both requests run at <strong>Read Committed</strong>. How much one transaction sees of others’ work is set by its <strong>isolation level</strong>, and Read Committed is PostgreSQL’s default: each statement sees everything committed before that statement started. Before you play the first option, predict what class 21 will hold once both have committed. Both requests read 1 before either writes.</p>
-<ScheduleFigure figure="race" number={2} caption="Recorded on PostgreSQL 18.6. The first three options run at Read Committed, PostgreSQL’s default; the last runs at Repeatable Read. Between a read and its write, the application works out the new value from what it read; that code isn’t shown. Each option replays its own recorded run, so the step where Tariq waits is real, not drawn in." />
+<h2 id="two-correct-looking-transactions-can-make-an-incorrect-result">Lost updates</h2>
+<p>The introduction showed the basic race: two sessions both read the stock before either writes, and both sell the last mug. Here it is for class 21. Mina, with request R8, and Tariq, with R9, both want the last place. The booking code reads <code>remaining</code>, and if it is above zero, works out the new value, writes it, and inserts the booking. Run alone, that code is correct.</p>
+<p>Figure 2 draws the two requests as a <strong>history</strong>: one column, or lane, per session, with each statement on its own row in the order the database received it. A statement that has to wait stays on its row, marked as waiting, and its result appears on a later row, after whatever released it. A useful way to judge a history is to compare it with the <strong>serial orders</strong>, where the same transactions run one at a time. Mina then Tariq: Tariq reads 0 and declines. Tariq then Mina: the same, the other way round. Both serial orders give an acceptable outcome, and a concurrent history is safe if its result matches one of them.</p>
+<p>Both requests run at <strong>Read Committed</strong>. How much one transaction sees of others’ work is set by its <strong>isolation level</strong>, and Read Committed is PostgreSQL’s default: each statement sees everything committed before that statement started. The first option is the race you have already seen. The last runs the same code at a stricter level, Repeatable Read, explained below. Before you play the other three, predict which of them keep class 21 at one booking, and how the request that loses finds out.</p>
+<ScheduleFigure figure="race" number={2} caption="The first three options run at Read Committed, PostgreSQL’s default; the last runs at Repeatable Read. Between a read and its write, the application works out the new value from what it read; that code isn’t shown." />
 <p>In the first option both transactions committed and class 21 ended with two bookings for one place: 0 remaining plus 2 booked against a capacity of 1. Tariq’s write replaced Mina’s with a value worked out from a read that was out of date by the time it was written. This is a <strong>lost update</strong>. No error was raised, because nothing in the database knew the value had come from an old read.</p>
 
-<h3 id="the-protection-must-cover-the-decision-as-well-as-the-write">The protection must cover the decision as well as the write</h3>
-<p>Both requests in Figure 2 already ran inside transactions. The transaction made each request’s two changes commit together, but it did nothing to the gap between reading <code>remaining</code> and writing it, and that gap is where Tariq read the same row.</p>
-<p>The second option, <em>Subtract one, no condition</em>, lets the database do the arithmetic on whatever the row holds when the update runs. Tariq’s update waited for Mina’s transaction, then subtracted from her committed 0. The result, −1, broke the <code>CHECK</code>, so his statement failed with 23514. The rule held, but only because of the constraint, and Tariq’s application received an error rather than a clear answer. Without that <code>CHECK</code> the class would have been overbooked at −1.</p>
+<h3 id="the-protection-must-cover-the-decision-as-well-as-the-write">Conditional updates</h3>
+<p>Both requests in Figure 2 already ran inside transactions. The transaction made each request’s two changes commit together, but it did nothing about the gap between reading <code>remaining</code> and writing it, and that gap is where Tariq read the same row. The protection has to cover the decision as well as the write.</p>
+<p>The second option, <em>Subtract one, no condition</em>, lets the database do the arithmetic on whatever the row holds when the update runs. Tariq’s update waited for Mina’s transaction, because she had changed the row, then subtracted from her committed 0. The result, −1, broke the <code>CHECK</code>, so his statement failed with 23514. The rule held, but only because of the constraint, and Tariq’s application received an error rather than a clear answer. Without that <code>CHECK</code> the class would have been overbooked at −1.</p>
 <p>The third option, <em>Change only if a place is left</em>, puts the decision and the change into one statement: <code>UPDATE … WHERE class_id = 21 AND remaining &gt; 0 RETURNING remaining</code>. At Read Committed, an update that reaches a row another transaction has changed waits for that transaction. If it commits, PostgreSQL <a href={`${pg}transaction-iso.html#XACT-READ-COMMITTED`}>checks the condition again</a> against the newly committed row. Tariq’s condition was then false, so no row changed and none came back. <code>RETURNING</code> is what lets the application tell the two answers apart: one row means a place was taken, no row means the class is full.</p>
 <Prediction id="predict-rollback" title="What if Mina rolls back instead?" headingLevel={4}>
   <p>Use the third option. Mina’s conditional update has run and R8 is inserted, but not committed. Tariq’s identical update is waiting. Now Mina’s transaction rolls back instead of committing. What does Tariq’s statement return, and which bookings exist after he inserts R9 and commits?</p>
   <Fragment slot="answer">
-    <p>Tariq gets the place. Once Mina’s transaction is gone, his update checks <code>remaining &gt; 0</code> against the row as it was before she started, which still says 1. It changes the row and returns 0. After his commit the bookings are R7 and R9, and class 21 has 0 remaining. The worksheet ran this schedule and got exactly that. A waiting statement does not decide anything until the transaction it waits for has ended, one way or the other.</p>
+    <p>Tariq gets the place. Once Mina’s transaction is gone, his update checks <code>remaining &gt; 0</code> against the row as it was before she started, which still says 1. It changes the row and returns 0. After his commit the bookings are R7 and R9, and class 21 has 0 remaining. A waiting statement does not decide anything until the transaction it waits for has ended, one way or the other.</p>
   </Fragment>
 </Prediction>
 
-<h3 id="a-repeatable-view-does-not-by-itself-prove-the-rule">A repeatable view does not by itself prove the rule</h3>
+<h3 id="a-repeatable-view-does-not-by-itself-prove-the-rule">Repeatable Read and write skew</h3>
 <p>The fourth option in Figure 2 keeps the read-then-write code and runs it at <strong>Repeatable Read</strong>. Each transaction then sees the data as it was at its first statement, a fixed view called a <strong>snapshot</strong>, for as long as it runs. When Tariq’s update reached a row that had changed since his snapshot, PostgreSQL refused it with 40001, “could not serialize access due to concurrent update”. His application then had to start again from <code>BEGIN</code>. The new attempt read 0 and declined.</p>
-<p>That refusal is PostgreSQL’s contract, not a property of the name. InnoDB’s default level is also called Repeatable Read, but there an <code>UPDATE</code> <a href={`${mysql}innodb-consistent-read.html`}>acts on the latest committed row</a> rather than the snapshot. The same steps would let Tariq’s write succeed with no error and lose Mina’s update. That comes from MySQL’s documentation; the worksheet doesn’t run MySQL.</p>
-<p>Even in PostgreSQL, Repeatable Read only notices conflicts between transactions that change the same row. Rule 3 doesn’t give it one. Lena and Ravi both ask to stop teaching class 21 at the same moment. Each request counts the available instructors, sees two, decides one may leave, and marks its own instructor unavailable. Play Figure 3 with <em>Repeatable Read</em> and watch the rule check at the end. Its other options are repairs that come later; two of them use Serializable, PostgreSQL’s strictest level.</p>
-<ScheduleFigure figure="instructors" number={3} caption="Recorded on PostgreSQL 18.6. Only the instructors table is shown, because classes and reservations don’t change. The level each option uses is in its name; Lock class 21 first runs at Read Committed. In the two Serializable options, the second attempt after Ravi’s refused commit is a new transaction on the same connection." />
+<p>That refusal is PostgreSQL’s contract, not a property of the name. InnoDB’s default level is also called Repeatable Read, but there an <code>UPDATE</code> <a href={`${mysql}innodb-consistent-read.html`}>acts on the latest committed row</a> rather than the snapshot. According to MySQL’s documentation, the same steps would let Tariq’s write succeed with no error and lose Mina’s update.</p>
+<p>Even in PostgreSQL, Repeatable Read only notices conflicts between transactions that change the same row, and rule 3 doesn’t give it one. Lena and Ravi both ask to stop teaching class 21 at the same moment. Each request counts the available instructors, sees two, decides one may leave, and marks its own instructor unavailable. Play Figure 3 with <em>Repeatable Read</em> and watch the rule check at the end. Its other options are repairs that come later; two of them use Serializable, PostgreSQL’s strictest level.</p>
+<ScheduleFigure figure="instructors" number={3} caption="Only the instructors table is shown, because classes and reservations don’t change. The level each option uses is in its name; Lock class 21 first runs at Read Committed. In the two Serializable options, the second attempt after Ravi’s refused COMMIT is a new transaction on the same connection." />
 <p>Both transactions committed and class 21 has nobody. Neither changed a row the other changed, so there was no conflict for Repeatable Read to refuse. In either serial order, the second request would have counted one and declined. Two decisions made from the same rows, each changing a different row, is called <strong>write skew</strong>. A stable view keeps each transaction’s reads consistent, but it does not stop two consistent reads leading to incompatible decisions. PostgreSQL’s Repeatable Read is <em>snapshot isolation</em>, and write skew is the outcome snapshot isolation allows.</p>
 
-<h2 id="choose-protection-for-the-invariant-you-actually-have">Choose protection for the invariant you actually have</h2>
-<p>The figures so far point to a short rule of thumb. Match the protection to the shape of the rule:</p>
+<h2 id="choose-protection-for-the-invariant-you-actually-have">Choosing a protection</h2>
+<p>The figures so far point to a short rule of thumb: match the protection to the shape of the rule.</p>
 <div class="table-scroll" role="region" tabindex="0" aria-label="Choosing a protection from the shape of the rule"><table>
   <thead><tr><th scope="col">Shape of the rule</th><th scope="col">Here</th><th scope="col">Protection that fits</th></tr></thead>
   <tbody>
@@ -227,92 +233,108 @@ const outcomes = [
   </tbody>
 </table></div>
 
-<h3 id="express-a-change-and-its-condition-together">Express a change and its condition together</h3>
-<p>Here is the complete booking, using the conditional update from Figure 2. The place is taken first, so if the request has to wait, it waits before it has inserted anything.</p>
-<Sql code={booking} label="A booking that decides and changes in one statement" />
-<p>The application reads the outcome of each statement. One row from the update means Mina has the place, and no row means the class is full. If the class might not exist, that also returns no row, so check separately if the difference matters. A 23505 from the insert means she already has a place.</p>
-<p>The listing relies on three assumptions. The class is identified by its primary key, so the statement can only ever touch one row. The update changes that row relative to its current value. And it runs at Read Committed in PostgreSQL, which checks the condition again after a wait. At Repeatable Read the same statement fails with 40001 instead, and other engines have their own rules, so don’t carry the listing across without checking.</p>
-<p>A conditional update decides from the committed row; it does not wait for changes it has no reason to. In the worksheet, a transaction freeing a place in a full class 21 was still open when Tariq’s update ran. His update saw the committed value 0, matched nothing, and returned at once without waiting. That is a correct answer, since a serial order with Tariq first gives the same result, but it means “full” can be true for only a moment.</p>
-<p>Sometimes the decision needs code the database can’t run, such as a price calculation. Then a <strong>version check</strong> does the same job. Read the value, decide, and make the write conditional on the value still being the one you read. In the worksheet, both sessions read 1. Tariq’s guarded update waited for Mina, and after she committed it changed no rows. Many designs keep a <code>version</code> column that every change increments, which makes the check independent of the business columns.</p>
+<h3 id="express-a-change-and-its-condition-together">The complete booking and version checks</h3>
+<p>Here is the complete booking. It uses the conditional update from Figure 2, and it records the request before it takes the place. The reason for that order comes with lost replies, in Figure 5.</p>
+<Sql code={booking} label="A booking that records the request, then decides and changes in one statement" />
+<p>The application reads the outcome of each statement. A 23505 from the insert means Mina already has a place in class 21. One row from the update means she has the place, and no row means the class is full. A class that doesn’t exist also returns no row, so check separately if that difference matters.</p>
+<p>The listing relies on three assumptions. The class is identified by its primary key, so the update can only ever touch one row. The update changes that row relative to its current value. And it runs at Read Committed in PostgreSQL, which checks the condition again after a wait. At Repeatable Read the same statement fails with 40001 instead, and other engines have their own rules, so don’t carry the listing across without checking.</p>
+<p>Sometimes the decision needs code the database can’t run, such as a price calculation. Then a <strong>version check</strong> does the same job. Read the value, decide, and make the write conditional on the value still being the one you read. When Mina and Tariq both read 1, Tariq’s guarded update waits for Mina, and after she commits it changes no rows. Many designs keep a <code>version</code> column that every change increments, which makes the check independent of the business columns.</p>
 <Sql code={versionCheck} label="Write only if the value read earlier is unchanged" />
 <p>A failed version check means the decision was made from out-of-date data. The answer is to read again and decide again. Sending the same write a second time would just repeat the out-of-date decision.</p>
 
-<h3 id="coordinate-decisions-that-span-several-rows">Coordinate decisions that span several rows</h3>
-<p>Rule 3 depends on two rows, and a conditional update only checks the row it changes. One repair is to make every change to class 21’s instructors meet at a single row first. Switch Figure 3 to <em>Lock class 21 first</em>. Each request starts with <code>SELECT … FOR UPDATE</code> on class 21’s row in <code>classes</code>, which <strong>locks</strong> the row: another transaction that tries to lock or change it waits until this one ends. Ravi’s request waits for that lock before it has counted anything. When it gets the lock, its count is a new statement, so at Read Committed it sees Lena’s commit and finds one instructor. It declines.</p>
+<h3 id="coordinate-decisions-that-span-several-rows">Rules that span several rows</h3>
+<p>Rule 3 depends on two rows, and a conditional update only checks the row it changes. One repair is to make every change to class 21’s instructors meet at a single row first. Switch Figure 3 to <em>Lock class 21 first</em>. Each request starts with <code>SELECT … FOR UPDATE</code> on class 21’s row in <code>classes</code>, which locks the row: another transaction that tries to lock or change it waits until this one ends. Ravi’s request waits for that lock before it has counted anything. When it gets the lock, its count is a new statement, so at Read Committed it sees Lena’s commit and finds one instructor. It declines.</p>
 <Sql code={leaveWithLock} label="Lena’s request, coordinating on class 21’s row" />
-<p>The class row works as a <strong>guard row</strong> because it is stable: it exists whether or not anyone teaches the class, and every writer can find it. A <code>FOR UPDATE</code> lock lasts until the transaction ends, so it covers the count, the decision and the change. (Rolling back to a savepoint taken before the lock also releases it.) The protection only works if every path that can make an instructor unavailable takes part. An administrative screen or a nightly import that updates <code>instructors</code> without locking the class first can break the rule again, because the database only makes participants wait for each other.</p>
-<p>Locking the rows you counted is not the same thing. Take a stated variation of the example in which class 22 has two places, Tariq holds one, and bookings are counted rather than stored in <code>remaining</code>. Mina, as R10, and Edda, as R11, each lock class 22’s reservations with <code>FOR UPDATE</code> and count them. In the worksheet, Edda waited on R7’s lock. After Mina inserted R10 and committed, Edda’s statement still returned only R7, because the new row was not among the rows her statement had found. She inserted R11, and class 22 ended with three bookings for two places. Row locks protect rows that exist. They do not stop new ones appearing. PostgreSQL also refuses <code>FOR UPDATE</code> on a query with <code>count(*)</code>, because an aggregate doesn’t return the rows it counted.</p>
-<p>The other approach is to move the rule into one row. That is what <code>classes.remaining</code> does for rule 1: instead of counting bookings, each booking changes one counter, and a conditional update on one row is enough. Rule 3 could have the same treatment with an available-instructor count on the class row and a <code>CHECK</code> that it stays at 1 or more. The cost is that every writer must keep the counter in step with the rows it summarises.</p>
-<p>The third approach is to let the database detect the problem, by running every one of these transactions at Serializable. That comes next. <a href={`${next}locking/#give-the-invariant-a-stable-coordination-row`}>Designing changes that coordinate with locks</a> works through complete guard-row protocols, including moves, deletions and the choice of lock mode, for the version of this example that counts bookings.</p>
+<p>The class row works as a <strong>guard row</strong> because it is stable: it exists whether or not anyone teaches the class, and every writer can find it. A <code>FOR UPDATE</code> lock lasts until the transaction ends, so it covers the count, the decision and the change. The protection only works if every path that can make an instructor unavailable takes part. An administrative screen or a nightly import that updates <code>instructors</code> without locking the class first can break the rule again, because the database only makes participants wait for each other.</p>
+<p>Locking the rows you counted instead is not enough. A row lock covers a row that exists when the statement runs, and a new booking is a new row. If two requests each lock and count a class’s reservations, neither lock stops the other inserting a booking it never counted. The article on locks <a href={`${next}locking/#cover-every-change-that-could-invalidate-the-decision`}>runs that case</a> for a version of this example that counts bookings.</p>
+<p>The second approach is to move the rule into one row. That is what <code>classes.remaining</code> does for rule 1: instead of counting bookings, each booking changes one counter, and a conditional update on one row is enough. Rule 3 could have the same treatment with an available-instructor count on the class row and a <code>CHECK</code> that it stays at 1 or more. The cost is that every writer must keep the counter in step with the rows it summarises.</p>
+<p>The third approach is to let the database detect the problem, by running every one of these transactions at Serializable. That comes next. The article on locks also works through <a href={`${next}locking/#give-the-invariant-a-stable-coordination-row`}>complete guard-row protocols</a>, including moves, deletions and the choice of lock mode.</p>
 
-<h2 id="understand-the-isolation-contract-behind-the-choice">Understand the isolation contract behind the choice</h2>
+<h2 id="understand-the-isolation-contract-behind-the-choice">Isolation levels</h2>
 <p>An <strong>isolation level</strong> is the engine’s promise about which concurrent histories it allows. The SQL standard defines four levels by the anomalies each must prevent. Berenson and colleagues showed in 1995 that those definitions are ambiguous and miss lost updates and write skew, and engines have filled the gaps in different ways. So treat a level name as the name of one engine’s contract, and read that contract.</p>
-<p>PostgreSQL has three distinct levels; asking for Read Uncommitted gives Read Committed. Here is what each allows, using the outcomes from this article:</p>
-<div class="table-scroll" role="region" tabindex="0" aria-label="Which anomalies each PostgreSQL 18 isolation level allows"><table class="anomalies">
-  <thead><tr><th scope="col">Anomaly</th><th scope="col">What happens</th><th scope="col">Read Committed</th><th scope="col">Repeatable Read</th><th scope="col">Serializable</th></tr></thead>
-  <tbody>{anomalies.map(([name, what, rc, rr, ser]) => <tr><th scope="row">{name}</th><td>{what}</td><td>{rc}</td><td>{rr}</td><td>{ser}</td></tr>)}</tbody>
-</table></div>
-<p>“Yes” means the anomaly can happen. “Refused” means PostgreSQL stops it by failing one of the transactions, which the application must then handle.</p>
-<p>A set of transactions is <strong>serialisable</strong> if the result of running them together is the same as the result of running the committed ones one at a time, in some order. It does not mean the transactions didn’t overlap, and the order doesn’t have to match the order in which they committed. <a href={`${next}isolation/#a-serial-order-does-not-establish-a-real-time-order`}>Reading and testing isolation guarantees</a> shows why that last point matters to a client that saw one commit before another.</p>
+<p>PostgreSQL has three distinct levels; asking for Read Uncommitted gives Read Committed. Here is what each allows, using the outcomes from this article. “Yes” means the anomaly can happen. “Refused” means PostgreSQL stops it by failing one of the transactions, which the application must then handle.</p>
+<div class="cards" role="list" aria-label="Which anomalies each PostgreSQL 18 isolation level allows">
+  {anomalies.map(a => <div class="card" role="listitem">
+    <p class="card-name"><strong>{a.name}</strong></p>
+    <p class="card-what">{a.what}</p>
+    <dl>
+      <dt>Read Committed</dt><dd>{a.rc}</dd>
+      <dt>Repeatable Read</dt><dd>{a.rr}</dd>
+      <dt>Serializable</dt><dd>{a.ser}</dd>
+    </dl>
+  </div>)}
+</div>
+<p>A set of transactions is <strong>serialisable</strong> if the result of running them together is the same as the result of running the committed ones one at a time, in some order. It does not mean the transactions didn’t overlap, and the order doesn’t have to match the order in which they committed. The article on isolation guarantees explains <a href={`${next}isolation/#a-serial-order-does-not-establish-a-real-time-order`}>why that order need not match real time</a>, which matters to a client that saw one commit before another.</p>
 
-<h3 id="versions-and-locks-answer-different-questions">Versions and locks answer different questions</h3>
+<h3 id="versions-and-locks-answer-different-questions">Snapshots, versions and locks</h3>
 <p>PostgreSQL keeps more than one version of a row. An update writes a new version and leaves the old one for any transaction whose snapshot was taken before the update committed. This is <strong>multiversion concurrency control</strong>, or MVCC. Readers pick the version their snapshot allows, so a plain read never waits for a writer. Writers to the same row still conflict. A transaction that changes a row holds a lock on it until it ends, and another transaction that wants to change or lock that row waits.</p>
-<p>A Read Committed transaction takes a new snapshot for each statement. Repeatable Read and Serializable take one at the first statement and keep it. Every level sees the transaction’s own uncommitted changes. The worksheet checked what one statement from Tariq does while Mina’s conditional update of class 21 is uncommitted, and after she commits:</p>
-<div class="table-scroll" role="region" tabindex="0" aria-label="What Tariq’s statement does while Mina’s change is uncommitted and after she commits"><table>
-  <thead><tr><th scope="col">Tariq’s statement</th><th scope="col">While Mina’s change is uncommitted</th><th scope="col">After she commits, at Read Committed</th><th scope="col">After she commits, at Repeatable Read</th></tr></thead>
-  <tbody>{claims.visibility.map(row => <tr><th scope="row"><code>{row.statement}</code></th><td>{row.during}</td><td>{row.readCommitted}</td><td>{row.repeatableRead}</td></tr>)}</tbody>
-</table></div>
+<p>A Read Committed transaction takes a new snapshot for each statement. Repeatable Read and Serializable take one at the first statement and keep it. Every level sees the transaction’s own uncommitted changes. Here is what one statement from Tariq does while Mina’s conditional update of class 21 is uncommitted, and after she commits:</p>
+<div class="cards" role="list" aria-label="What Tariq’s statement does while Mina’s change is uncommitted and after she commits">
+  {claims.visibility.map(row => <div class="card" role="listitem">
+    <p class="card-name"><code>{row.statement}</code></p>
+    <dl>
+      <dt>While Mina’s change is uncommitted</dt><dd>{row.during}</dd>
+      <dt>After she commits, at Read Committed</dt><dd>{row.readCommitted}</dd>
+      <dt>After she commits, at Repeatable Read</dt><dd>{row.repeatableRead}</dd>
+    </dl>
+  </div>)}
+</div>
 <p>So a snapshot decides what a read can see, and a lock decides who has to wait. A snapshot does not reserve anything: holding an old view of class 21 doesn’t stop anyone else booking it.</p>
-<p>Statement snapshots also matter to reports. In the worksheet, a report at Read Committed read class 21’s <code>remaining</code> as 1. Mina’s booking then committed, and the report’s next statement counted 1 booking. Added together, that looks like 2 against a capacity of 1, although no committed state was ever wrong: the two numbers came from different moments. Run at Repeatable Read, the same report read 1 and 0, which agree. A report built from several statements needs one snapshot.</p>
-<p>Old versions are not free. They take space until no snapshot needs them, and cleaning them up is ongoing work. <a href={`${next}physical-storage/#updates-leave-work-behind-them`}>How stored rows become physical work</a> explains what that costs.</p>
+<p>Statement snapshots also matter to reports. Suppose a report at Read Committed reads class 21’s <code>remaining</code> as 1, Mina’s booking then commits, and the report’s next statement counts 1 booking. Added together, that looks like 2 against a capacity of 1, although no committed state was ever wrong: the two numbers came from different moments. Run at Repeatable Read, the same report reads 1 and 0, which agree. A report built from several statements needs one snapshot.</p>
+<p>Old versions are not free. They take space until no snapshot needs them, and cleaning them up is ongoing work. The article on physical storage explains <a href={`${next}physical-storage/#updates-leave-work-behind-them`}>what that cleanup costs</a>.</p>
 
-<h3 id="stronger-isolation-can-reject-a-result-instead-of-waiting">Stronger isolation can reject a result instead of waiting</h3>
+<h3 id="stronger-isolation-can-reject-a-result-instead-of-waiting">Serializable</h3>
 <p>PostgreSQL’s Serializable level uses <a href="https://arxiv.org/abs/1208.4179">serializable snapshot isolation</a>. Each transaction runs on a snapshot as it would at Repeatable Read, and the database also records what each one read. Those records don’t make anyone wait. When it finds overlapping transactions whose reads and writes could not have happened in any serial order, it fails one of them with 40001, at a statement or at <code>COMMIT</code>.</p>
-<p>Switch Figure 3 to <em>Serializable, repeat the transaction</em>. Nothing waits or fails until Ravi’s commit, which is refused. His application then starts the whole transaction again, counts one instructor, and declines. The rule holds without a lock, and without anyone deciding which row to lock.</p>
+<p>Switch Figure 3 to <em>Serializable, repeat the transaction</em>. Nothing waits or fails until Ravi’s <code>COMMIT</code>, which is refused. His application then starts the whole transaction again, counts one instructor, and declines. The rule holds without a lock, and without anyone deciding which row to lock.</p>
 <p>That convenience has three conditions. Every transaction that can affect the rule must run at Serializable: one Read Committed writer can break it unseen. The application must be ready to repeat any transaction, sometimes when no real conflict happened, because the tracking is conservative. And until a Serializable transaction commits, its reads <a href={`${pg}transaction-iso.html#XACT-SERIALIZABLE`}>may not be valid</a>, so don’t act on them outside the database before the commit succeeds.</p>
-<p>Other engines reach for different mechanisms at the same names, and the difference changes what code you write. SQLite appears in WAL mode, its write-ahead log setting, which lets readers carry on while one connection writes. A plain <code>BEGIN</code> in SQLite is deferred: it takes no lock until the transaction first reads or writes. Each card says where its evidence comes from.</p>
-<div class="contract-cards" role="list" aria-label="Isolation contracts by engine and setting">
-  {contracts.map(c => <div class="contract-card" role="listitem">
-    <p class="contract-name"><strong>{c.engine}</strong> · {c.setting}</p>
+
+<h3 id="how-engines-differ">How engines differ</h3>
+<p>The same level names describe different mechanisms in different engines, and the difference changes the code you write. The cards start with PostgreSQL’s three levels as the baseline, then show InnoDB and SQLite. The SQLite cards assume WAL mode, its write-ahead log setting, which lets readers carry on while one connection writes. A plain <code>BEGIN</code> in SQLite is deferred: it takes no lock until the transaction first reads or writes. Each card says where its evidence comes from.</p>
+<div class="cards" role="list" aria-label="Isolation contracts by engine and setting">
+  {contracts.map(c => <div class="card" role="listitem">
+    <p class="card-name"><strong>{c.engine}</strong> · {c.setting}</p>
     <dl>
       <dt>What a read sees</dt><dd>{c.reads}</dd>
       <dt>When writes conflict</dt><dd>{c.conflict}</dd>
       <dt>What the application does</dt><dd>{c.application}</dd>
     </dl>
-    <p class="contract-evidence">{c.evidence}</p>
+    <p class="card-evidence">{c.evidence}</p>
   </div>)}
 </div>
 
-<h2 id="an-aborted-transaction-must-be-reconsidered-as-a-whole">An aborted transaction must be reconsidered as a whole</h2>
+<h2 id="an-aborted-transaction-must-be-reconsidered-as-a-whole">Aborts and deadlocks</h2>
 <p>Every protection in this article can stop a transaction. That is how it keeps the rule: preventing a bad commit sometimes means refusing good work. Each kind of stop means something different, so the application has to tell them apart. These are PostgreSQL’s codes; other engines have their own.</p>
 <div class="table-scroll" role="region" tabindex="0" aria-label="How a transaction can end, and what the application does"><table>
   <thead><tr><th scope="col">Outcome</th><th scope="col">What happened</th><th scope="col">What the application does</th></tr></thead>
   <tbody>{outcomes.map(([what, meaning, action]) => <tr><th scope="row">{what}</th><td>{meaning}</td><td>{action}</td></tr>)}</tbody>
 </table></div>
-<p>How much an error undoes depends on the engine. In PostgreSQL any error fails the whole transaction. In InnoDB a deadlock rolls back the whole transaction, but a lock-wait timeout or a duplicate key rolls back only the statement, unless <code>innodb_rollback_on_timeout</code> is set. Sending <code>ROLLBACK</code> after an unexpected error gives the same starting point everywhere.</p>
-<p>A <strong>deadlock</strong> needs two transactions that each hold a lock the other wants. Suppose Mina’s R8 holds class 21’s place. Mina moves R8 from class 21 to 22, while Tariq moves R7 the other way. If each move locks the class it is leaving first, Mina holds 21 and asks for 22 while Tariq holds 22 and asks for 21. Neither can continue. PostgreSQL checks for this after a wait of <code>deadlock_timeout</code>, one second by default, and aborts one of them with 40P01. In the recorded run it chose Mina, but which one it picks <a href={`${pg}explicit-locking.html#LOCKING-DEADLOCKS`}>can’t be predicted</a>.</p>
-<p>When both moves lock the classes in ascending <code>class_id</code> order, the cycle can’t form. Tariq waited for class 21 before he held anything, Mina finished, and then Tariq’s move went through. Both class rules held at the end.</p>
+<p>In InnoDB, how much is undone depends on the error. A deadlock rolls back the whole transaction. A lock-wait timeout rolls back only the statement that timed out, unless the server runs with <code>innodb_rollback_on_timeout</code>, which makes it roll back the whole transaction. Sending <code>ROLLBACK</code> after an unexpected error gives the same starting point everywhere.</p>
+<p>A <strong>deadlock</strong> needs two transactions that each hold a lock the other wants. Suppose R8 has taken class 21’s place, and Mina and Tariq agree to swap: Mina moves R8 to class 22 while Tariq moves R7 to class 21. Each move locks both class rows before it changes them. Play Figure 4 with <em>Each locks the class it leaves first</em>, then switch to <em>Both lock the lower class_id first</em>.</p>
+<ScheduleFigure figure="swap" number={4} caption="R8 already holds class 21’s place when both moves start, at Read Committed. Each lane states which class rows its move has locked. A move’s last step frees one place, takes the other, moves the booking and commits, in one go." />
+<p>In the first option each move held one class and waited for the other, and neither could ever finish. PostgreSQL checks for a cycle like this after a wait of <code>deadlock_timeout</code>, one second by default, and aborts one of the transactions with 40P01. In the recorded run it aborted Tariq’s, but the documentation says <a href={`${pg}explicit-locking.html#LOCKING-DEADLOCKS`}>which one it picks can’t be predicted</a>. In the second option Tariq’s move waited before it held anything, so no cycle could form. Mina’s move finished, then Tariq’s went through, and both class rules held. Here is Mina’s move in full:</p>
 <Sql code={move} label="Moving R8 to class 22, with both class rows locked in a fixed order" />
-<p>A real move also checks, after taking the locks, that R8 is still where the request expected it. A fixed order removes this cycle, not every deadlock, because foreign keys, unique indexes and other writers can add their own lock dependencies. <a href={`${next}locking/#acquire-several-resources-in-a-consistent-order`}>Acquiring several resources in a consistent order</a> develops the move in full.</p>
+<p>A real move also checks, after taking the locks, that R8 is still where the request expected it. A fixed order removes this cycle, not every deadlock, because foreign keys, unique indexes and other writers can add their own lock dependencies. The article on locks develops <a href={`${next}locking/#acquire-several-resources-in-a-consistent-order`}>lock ordering for moves</a> in full.</p>
 
-<h3 id="retrying-one-statement-can-preserve-a-stale-decision">Retrying one statement can preserve a stale decision</h3>
-<p>Switch Figure 3 to <em>Serializable, repeat the failed statement</em>. Ravi’s commit is refused as before, but this time the application repeats only the statement that failed, inside a new transaction. Nothing conflicts now, so it commits, and class 21 has nobody. The retry carried a decision made from the old count of two into a transaction that never counted.</p>
+<h3 id="retrying-one-statement-can-preserve-a-stale-decision">Retrying a transaction</h3>
+<p>Switch Figure 3 to <em>Serializable, repeat only the write</em>. Ravi’s <code>COMMIT</code> is refused as before, but this time the application repeats only its write, in a new transaction. Nothing conflicts now, so it commits, and class 21 has nobody. The retry carried a decision made from the old count of two into a transaction that never counted.</p>
 <p>A retry means running the whole operation again from <code>BEGIN</code>, including its reads and the code that decides from them. In practice the retry loop wraps the application function that reads and decides, not a list of SQL statements that a driver can replay. Retry only on errors that mean “try again”, such as 40001 and 40P01. Give up after a few attempts, waiting a short, slightly random time between them so that the same transactions don’t collide again, and report the failure. Nothing outside the database may happen inside the loop, or each attempt will repeat it.</p>
 <p>Keep transactions short. Prepare input before <code>BEGIN</code>, and never wait for a person or another service while a transaction is open. A lock held during a network call makes every later booking for that class wait, and at Serializable a longer transaction is more likely to be refused.</p>
-<p>Sometimes waiting is the wrong answer. <code>FOR UPDATE NOWAIT</code> fails at once with 55P03 if the row is locked, and <code>FOR UPDATE SKIP LOCKED</code> leaves locked rows out of the result. Neither means “full”; they mean the decision wasn’t made. <a href={`${next}locking/#decide-what-waiting-and-skipping-mean-for-the-application`}>Deciding what waiting and skipping mean</a> covers when each fits.</p>
-<p>Every booking for class 21 changes the same row, so bookings for a popular class take turns, however idle the rest of the database is. <a href={`${next}concurrent-load/#a-hot-row-can-limit-a-mostly-idle-database`}>A hot row can limit a mostly idle database</a> shows how to recognise that. Retry policy across a whole request, including timeouts and limits, is in <a href={`${next}request-recovery/#repeat-the-complete-logical-transaction-when-required`}>Recovering database requests safely</a>.</p>
+<p>Sometimes waiting is the wrong answer. <code>FOR UPDATE NOWAIT</code> asks not to wait at all: it fails at once with 55P03 if the row is locked. <code>FOR UPDATE SKIP LOCKED</code> leaves locked rows out of the result. Neither means “full”; they mean the decision wasn’t made. The article on locks covers <a href={`${next}locking/#decide-what-waiting-and-skipping-mean-for-the-application`}>when to wait, fail or skip</a>.</p>
+<p>Every booking for class 21 changes the same row, so bookings for a popular class take turns, however idle the rest of the database is. The article on concurrent load shows <a href={`${next}concurrent-load/#a-hot-row-can-limit-a-mostly-idle-database`}>how to recognise such a hot row</a>, and the article on request recovery covers <a href={`${next}request-recovery/#repeat-the-complete-logical-transaction-when-required`}>retry policy across a whole request</a>, including timeouts and limits.</p>
 
-<h3 id="losing-the-reply-does-not-prove-rollback">Losing the reply does not prove rollback</h3>
-<p>The booking service sends <code>COMMIT</code> for Mina’s R8, and the connection fails before the reply arrives. The service can’t tell whether the database received the <code>COMMIT</code>. Play Figure 4 with <em>Committed; service books again</em>, then try the other two options.</p>
-<ScheduleFigure figure="reply" number={4} caption="Recorded on PostgreSQL 18.6 at Read Committed. The broken connection is staged. In the two committed options, the worksheet sent COMMIT and closed the connection without reading the reply. In the third, it ended the server process for that session before sending COMMIT. A real failure can happen at either point, and the service sees the same thing both times." />
-<p>Treating the failure as a rollback told Mina the class was full while the database held her booking. The repair is to give each operation an identity that is stored with its result, here the <code>request_id</code>, and to look it up before doing anything else. If R8 exists, the first attempt committed. If not, repeating the whole booking is safe. The primary key on <code>request_id</code> adds a second guard: a repeated insert of R8 fails with 23505 rather than booking twice.</p>
-<p>That lookup is the database half of the answer. Choosing and passing operation identities through a service, and resolving outcomes the caller never received, are covered in <a href={`${next}request-recovery/#resolve-an-outcome-that-the-caller-did-not-receive`}>Resolving an outcome the caller did not receive</a> and <a href={`${next}request-recovery/#make-the-operation-identity-part-of-the-data-contract`}>Making the operation identity part of the data contract</a>.</p>
+<h3 id="losing-the-reply-does-not-prove-rollback">A lost reply to COMMIT</h3>
+<p>The booking service sends <code>COMMIT</code> for Mina’s R8, and the connection fails before the reply arrives. The service can’t tell whether the <code>COMMIT</code> reached the database, or, if it did, whether it has finished. Figure 5 puts the first attempt in one lane and the service’s repeat, on a new connection, in the other. Play <em>Book again</em>, then <em>Look up R8 first</em>.</p>
+<ScheduleFigure figure="reply" number={5} caption="Both attempts run at Read Committed, and the lost connection is staged. The first two options use a booking that takes the place before recording R8; the last two use the listing’s order, which records R8 first." />
+<p>Treating the failure as a rollback told Mina the class was full while the database held her booking. Looking R8 up first seems to fix that, but a missing R8 means only that the first attempt hasn’t committed so far. It may still be open on the server, with its <code>COMMIT</code> on the way, or even part-way through committing; until it finishes, no other session can see R8. In the second option the lookup found nothing, the repeat waited behind the first attempt’s change to class 21, and when R8 committed, the repeat found the class full: the same wrong answer.</p>
+<p>The repair is to make the repeat meet the first attempt through the operation’s identity, here the <code>request_id</code>. The booking listing records R8 before it takes a place. Play <em>Record R8 first</em>: the repeat’s insert of R8 waits for the first attempt, just as R11 waited for R10 in the section on constraints, and the first attempt’s outcome settles the answer. If it commits, the insert fails with 23505 and the service tells Mina she is booked. If it rolls back, as in the last option, the insert goes ahead and the repeat books her, once. The primary key turns “did it commit?” into a wait with a definite answer.</p>
+<p>Two limits remain. The repeat waits as long as the first attempt stays open, so bound that wait, for example with <code>lock_timeout</code>, and treat running out as “not known yet” rather than “failed”. And the identity only helps if every attempt at one operation carries the same <code>request_id</code>. The article on request recovery covers <a href={`${next}request-recovery/#resolve-an-outcome-that-the-caller-did-not-receive`}>resolving an outcome the caller never received</a>, including a bounded wait, and <a href={`${next}request-recovery/#make-the-operation-identity-part-of-the-data-contract`}>choosing and passing operation identities</a> through a service.</p>
 
-<h2 id="commit-has-a-durability-boundary-and-a-system-boundary">Commit has a durability boundary and a system boundary</h2>
-<p>With PostgreSQL’s default <code>synchronous_commit = on</code>, a successful reply to <code>COMMIT</code> means the transaction’s record has reached durable storage in the write-ahead log, the file PostgreSQL records every change in before it changes the table files. The commit therefore survives a crash of the server. Turning <a href={`${pg}wal-async-commit.html`}>synchronous commit off</a> lets the reply come before that flush. A crash can then lose the most recent commits, up to about three times <code>wal_writer_delay</code> (600 ms with the default 200 ms setting), but the database stays consistent. That is different from turning <code>fsync</code> off, which can corrupt it. The setting can be changed for one transaction, so a low-value change can trade durability for speed while bookings keep the default. The worksheet’s server ran with both <code>synchronous_commit</code> and <code>fsync</code> on.</p>
-<p>That promise covers one server and its storage. Whether a replica has the change when a client is told it committed depends on the replication settings; <a href={`${next}replicas-and-partitions/#decide-what-an-acknowledgement-promises`}>Deciding what an acknowledgement promises</a> covers that. Losing the server, or deleting a booking by mistake, needs another copy, which is the subject of <a href={`${next}backup-and-restore/`}>Backing up and restoring relational data</a>.</p>
+<h2 id="commit-has-a-durability-boundary-and-a-system-boundary">Durability</h2>
+<p>With PostgreSQL’s default <code>synchronous_commit = on</code>, a successful reply to <code>COMMIT</code> means the transaction’s record has reached durable storage in the write-ahead log, the file PostgreSQL records every change in before it changes the table files. The commit therefore survives a crash of the server, provided the disks really store data when PostgreSQL asks them to flush it; PostgreSQL’s notes on <a href={`${pg}wal-reliability.html`}>reliability</a> explain how drive caches can break that promise.</p>
+<p>Turning <a href={`${pg}wal-async-commit.html`}>synchronous commit off</a> lets the reply come before that flush. A crash can then lose the most recent commits, up to about three times <code>wal_writer_delay</code> (600 ms with the default 200 ms setting), but the database stays consistent. That is different from turning off <code>fsync</code>, the setting that makes PostgreSQL force its writes to disk at all, which can corrupt the database in a crash. Synchronous commit can be changed for one transaction, so a low-value change can trade durability for speed while bookings keep the default.</p>
+<p>That promise covers one server and its storage. Whether a replica has the change when a client is told it committed depends on the replication settings, which the article on replicas covers under <a href={`${next}replicas-and-partitions/#decide-what-an-acknowledgement-promises`}>what an acknowledgement promises</a>. Losing the server, or deleting a booking by mistake, needs another copy; that is the subject of <a href={`${next}backup-and-restore/`}>the article on backup and restore</a>.</p>
 
-<h3 id="a-database-rollback-cannot-undo-an-external-effect">A database rollback cannot undo an external effect</h3>
+<h3 id="a-database-rollback-cannot-undo-an-external-effect">Emails and other external effects</h3>
 <p>Suppose a booking also sends Mina a confirmation email. The database can roll back its own changes, but it can’t unsend an email, so where the email is sent decides what can go wrong:</p>
 <div class="table-scroll" role="region" tabindex="0" aria-label="Where to send a confirmation email, and what can go wrong"><table>
   <thead><tr><th scope="col">Where the email is sent</th><th scope="col">What can go wrong</th></tr></thead>
@@ -322,13 +344,11 @@ const outcomes = [
     <tr><th scope="row">From an outbox row written in the same transaction</th><td>The booking and the intention to send commit together. A separate worker sends the email and marks the row sent. If the worker stops after sending, the email can go twice, so the receiver should recognise R8.</td></tr>
   </tbody>
 </table></div>
-<p>The outbox works because it makes the intention part of the data the transaction protects. <a href={`${next}background-work/#commit-the-business-change-and-the-intent-together`}>Committing the business change and the intent together</a> develops it, and <a href={`${next}connections/`}>Managing connections and transaction lifetimes</a> covers how long a transaction and its connection should live.</p>
+<p>The outbox works because it makes the intention part of the data the transaction protects. The article on background work develops <a href={`${next}background-work/#commit-the-business-change-and-the-intent-together`}>the outbox pattern</a>, and the article on connections covers <a href={`${next}connections/`}>how long a transaction and its connection should live</a>.</p>
 
-<h2 id="check-the-argument-with-competing-sessions-and-failures">Check the argument with competing sessions and failures</h2>
-<p>A protection is an argument: this rule, these writers, these reads, this mechanism, so the bad outcomes can’t commit. Test the argument with the histories that would break it. Open two connections and send their statements in the order a history gives, so the interleaving is chosen, not left to chance. Use a third connection to confirm that a statement is really waiting: PostgreSQL’s <code>pg_stat_activity</code> view shows <code>wait_event_type = 'Lock'</code> for it. A pause in your script proves nothing. Choose data that would show the failure: class 21 has one place precisely so that an overbooking is visible.</p>
-<p>Random load is weaker evidence than it looks. The worksheet raced 20 clients, customers 101 to 120 used only for this test, for class 21’s one place, 20 rounds for each protocol. The read-then-write code booked all 20 clients in every round. The conditional update booked exactly one in every round. A second test sent two clients at once with no attempt to line them up, 100 times, and the read-then-write code overbooked all 100 times, because on this machine both reads always arrived before either write. On another machine, or across a network, the same code might pass a long load test. Load tests tell you about timing on one system. Chosen histories test the protocol.</p>
-<p><a href={verifyUrl} download="verify.mjs">Download the worksheet</a> and <a href={modelUrl} download="model.mjs">its schedules</a>, and keep the two files side by side. It runs every option of every figure, checking each statement’s result and the committed rows after each step, along with the other checks described in this article: the waiting and visibility table, the rollback prediction, the concurrent clicks, the failed transaction, the savepoint, schema changes and sequences, the counting variation, both moves, the version check, the report, and the load tests. It needs Node 22 or later and a disposable PostgreSQL 18 server that accepts connections without a password. Run <code>node verify.mjs --host 127.0.0.1 --port 57612</code>. It creates its own database, refuses one that already exists and drops it at the end.</p>
-<p>The recorded run used PostgreSQL 18.6 on macOS (Apple silicon), with Read Committed as the default level, <code>deadlock_timeout</code> of one second, no lock or statement timeout, and <code>synchronous_commit</code> and <code>fsync</code> on. All 235 checks passed. <a href={sqliteUrl} download="verify-sqlite.py">A second script</a> checks the SQLite cards with Python’s standard library: <code>python3 verify-sqlite.py</code>. It passed on SQLite 3.54.0. The MySQL entries come from its documentation and were not run.</p>
+<h2 id="check-the-argument-with-competing-sessions-and-failures">Testing a protection</h2>
+<p>A protection rests on an argument you can write down: which rule it keeps, which writers can affect that rule, what each of them reads, and why the mechanism stops a bad outcome from committing. Test that argument with the histories that would break it. Open two connections and send their statements in the order a history gives, so the interleaving is chosen, not left to chance. Use a third connection to confirm that a statement is really waiting: PostgreSQL’s <code>pg_stat_activity</code> view shows <code>wait_event_type = 'Lock'</code> for it. A pause in your script proves nothing. Choose data that would show the failure: class 21 has one place precisely so that an overbooking is visible.</p>
+<p>Random load is weaker evidence than it looks. In the recorded run, two clients sent at the same moment, with nothing lining them up, made the read-then-write code overbook every time, because both reads arrived before either write. On another machine, or across a network, the same code might pass a long load test. A load test tells you about timing on one system; chosen histories test the protocol.</p>
 <p>Before relying on a protocol, write down:</p>
 <ol class="checklist">
   <li>The rule, as a statement about committed rows.</li>
@@ -340,15 +360,21 @@ const outcomes = [
 </ol>
 <p>Run those tests again whenever a writer, a query, the isolation level or the engine changes.</p>
 
+<h2 id="where-the-results-come-from">Where the results come from</h2>
+<p>The five figures replay schedules recorded on PostgreSQL 18.6 on macOS (Apple silicon), with Read Committed as the default level, a one-second <code>deadlock_timeout</code>, no lock or statement timeout, and <code>synchronous_commit</code> and <code>fsync</code> on. A verification script ran each schedule in real sessions, confirmed each wait in <code>pg_stat_activity</code>, and compared every result, and the committed rows after every step, with the figure. The figures animate those recorded results; they don’t run a database. The script also checks the claims made outside the figures, such as the visibility cards, the rollback prediction, the locked rows that don’t cover a new booking, and the version check.</p>
+<p>Figure 5’s lost connections are staged. The script closed the connection after sending <code>COMMIT</code>, held <code>COMMIT</code> back until a later step, or ended the session’s server process before <code>COMMIT</code> was sent. A separate check held a <code>COMMIT</code> that had reached the server, by naming a synchronous standby, a replica that must confirm each commit, that never connects. While that commit waited, the lookup found no R8, the take-first repeat waited and then found the class full, and the record-first repeat waited and then got 23505.</p>
+<p>The load test raced customers 101 to 120 for class 21’s one place, in 20 rounds for each booking. In the recorded run the read-then-write booking accepted 392 of 400 attempts and overbooked in every round, and the conditional update accepted one per round. The two-client test overbooked 100 times in 100, and 98 in 100 in an earlier run on the same machine.</p>
+<p>All 299 checks passed. <a href={sqliteUrl} download="verify-sqlite.py">A second script</a> checks the SQLite cards with Python’s standard library, and passed on SQLite 3.54.0; the MySQL entries come from its documentation. To rerun the checks, <a href={verifyUrl} download="verify.mjs">download the verification script</a> and <a href={modelUrl} download="model.mjs">its schedules</a> into one folder. They need Node 22 or later and a disposable PostgreSQL 18 server that accepts connections without a password, given with <code>--host</code> and <code>--port</code>. The script creates and drops its own database, and resets the standby setting it changes.</p>
+
 <h2 id="sources">Sources and further reading</h2>
-<p>Checked on 21 October 2026. The people, classes and requests are illustrative. The figure schedules and worksheet checks ran on PostgreSQL 18.6 and SQLite 3.54.0; the MySQL behaviour is taken from its documentation and was not run.</p>
+<p>Checked on 21 October 2026. The people, classes and requests are illustrative.</p>
 <ul>
-  <li>PostgreSQL 18: <a href={`${pg}transaction-iso.html`}>Transaction isolation</a>, for the three levels, rechecking after a wait, the 40001 failures and serializable reads; <a href={`${pg}mvcc-serialization-failure-handling.html`}>Serialization failure handling</a>, for repeating whole transactions; <a href={`${pg}explicit-locking.html`}>Explicit locking</a>, for row locks, deadlocks and savepoints; <a href={`${pg}sql-select.html#SQL-FOR-UPDATE-SHARE`}>The locking clause</a>, for <code>NOWAIT</code>, <code>SKIP LOCKED</code> and the aggregate restriction; <a href={`${pg}ddl-constraints.html`}>Constraints</a>; <a href={`${pg}functions-sequence.html`}>Sequence functions</a>; <a href={`${pg}wal-async-commit.html`}>Asynchronous commit</a>; <a href={`${pg}errcodes-appendix.html`}>Error codes</a>.</li>
+  <li>PostgreSQL 18: <a href={`${pg}transaction-iso.html`}>Transaction isolation</a>, for the three levels, rechecking after a wait, the 40001 failures and serializable reads; <a href={`${pg}mvcc-serialization-failure-handling.html`}>Serialization failure handling</a>, for repeating whole transactions; <a href={`${pg}explicit-locking.html`}>Explicit locking</a>, for row locks and deadlocks; <a href={`${pg}sql-select.html#SQL-FOR-UPDATE-SHARE`}>The locking clause</a>, for <code>NOWAIT</code> and <code>SKIP LOCKED</code>; <a href={`${pg}ddl-constraints.html`}>Constraints</a>; <a href={`${pg}functions-sequence.html`}>Sequence functions</a>; <a href={`${pg}wal-reliability.html`}>Reliability</a>, for what a flush depends on; <a href={`${pg}wal-async-commit.html`}>Asynchronous commit</a>; <a href={`${pg}warm-standby.html#SYNCHRONOUS-REPLICATION`}>Synchronous replication</a>, for the commit wait used in the in-flight check; <a href={`${pg}errcodes-appendix.html`}>Error codes</a>.</li>
   <li>MySQL 8.4: <a href={`${mysql}innodb-transaction-isolation-levels.html`}>InnoDB isolation levels</a>, <a href={`${mysql}innodb-consistent-read.html`}>Consistent nonlocking reads</a>, <a href={`${mysql}innodb-locking-reads.html`}>Locking reads</a>, <a href={`${mysql}innodb-next-key-locking.html`}>Phantom rows</a>, <a href={`${mysql}innodb-error-handling.html`}>InnoDB error handling</a> and <a href={`${mysql}implicit-commit.html`}>Statements that cause an implicit commit</a>.</li>
   <li>SQLite: <a href={`${sqlite}isolation.html`}>Isolation in SQLite</a>, <a href={`${sqlite}lang_transaction.html`}>Transactions</a>, <a href={`${sqlite}wal.html`}>Write-ahead logging</a> and <a href={`${sqlite}rescode.html#busy_snapshot`}>SQLITE_BUSY_SNAPSHOT</a>.</li>
   <li>Hal Berenson, Phil Bernstein, Jim Gray, Jim Melton, Elizabeth O’Neil and Patrick O’Neil, <a href="https://arxiv.org/abs/cs/0701157">A critique of ANSI SQL isolation levels</a> (SIGMOD 1995): why the standard’s anomaly definitions miss lost updates and write skew, and the definition of snapshot isolation.</li>
   <li>Dan Ports and Kevin Grittner, <a href="https://arxiv.org/abs/1208.4179">Serializable snapshot isolation in PostgreSQL</a> (VLDB 2012): how PostgreSQL’s Serializable level detects dangerous dependencies.</li>
-  <li>Continue in this collection with <a href={`${next}locking/`}>Designing changes that coordinate with locks</a>, for complete guard-row protocols, and <a href={`${next}isolation/`}>Reading and testing isolation guarantees</a>, for engine contracts and how to test them. <a href={next}>Relational databases</a> is the introduction this article builds on.</li>
+  <li>Continue in this collection with the article on <a href={`${next}locking/`}>designing changes that coordinate with locks</a>, for complete guard-row protocols, and the article on <a href={`${next}isolation/`}>reading and testing isolation guarantees</a>, for engine contracts and how to test them. <a href={next}>The introduction to relational databases</a> is where this article starts from.</li>
 </ul>
 
 </ArticleBody>
@@ -364,13 +390,17 @@ const outcomes = [
   .table-scroll { max-width: 100%; overflow-x: auto; }
   .table-scroll:focus-visible { outline: 2px solid var(--control); outline-offset: 3px; }
   .table-scroll th[scope="row"] { font-weight: 600; background: none; }
-  .anomalies td:nth-child(n+3) { white-space: nowrap; }
-  .contract-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: .9rem; margin: 1.6rem 0; }
-  .contract-card { padding: .9rem 1rem; border: 1px solid var(--color-rule); border-top: 3px solid var(--color-rule-strong); background: var(--color-surface-alt); font: .86rem/1.55 var(--font-sans); min-width: 0; }
-  .contract-name { margin: 0 0 .6rem; font-size: .9rem; }
-  .contract-card dl { margin: 0; }
-  .contract-card dt { margin-top: .5rem; font-weight: 600; font-size: .78rem; color: var(--color-text-secondary); }
-  .contract-card dd { margin: .1rem 0 0; }
-  .contract-evidence { margin: .8rem 0 0; padding-top: .5rem; border-top: 1px solid var(--color-rule); font-size: .78rem; color: var(--color-text-secondary); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: .9rem; margin: 1.6rem 0; }
+  .card { padding: .9rem 1rem; border: 1px solid var(--color-rule); border-top: 3px solid var(--color-rule-strong); background: var(--color-surface-alt); font: .86rem/1.55 var(--font-sans); min-width: 0; }
+  .card-name { margin: 0 0 .5rem; font-size: .9rem; }
+  .card-name code { overflow-wrap: anywhere; }
+  .card-what { margin: 0 0 .3rem; }
+  .card dl { margin: 0; }
+  .card dt { margin-top: .5rem; font-weight: 600; font-size: .78rem; color: var(--color-text-secondary); }
+  .card dd { margin: .1rem 0 0; }
+  .card-evidence { margin: .8rem 0 0; padding-top: .5rem; border-top: 1px solid var(--color-rule); font-size: .78rem; color: var(--color-text-secondary); }
   .checklist li { margin-bottom: .3rem; }
+  @media (max-width: 420px) {
+    .start-tables th, .start-tables td { padding: .3rem .4rem; }
+  }
 </style>

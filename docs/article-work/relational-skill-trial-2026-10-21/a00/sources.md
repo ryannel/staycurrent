@@ -26,3 +26,17 @@ Each claim below was checked against the listed primary source, either on 21 Oct
 | Origin of the relational model | Codd 1970, https://doi.org/10.1145/362384.362685 | Bibliographic |
 
 The version observed was PostgreSQL 18.6 (Homebrew) on aarch64-apple-darwin25.6.0. Commands are listed in `writer.md`.
+
+## Added in the r01 repairs (21 October 2026)
+
+| Claim | Source | Status |
+| --- | --- | --- |
+| InnoDB's Repeatable Read snapshot applies to reads, not necessarily to UPDATE and DELETE, which can change rows committed after the snapshot; so Figure 4's read-then-write sale oversells there without an error | https://dev.mysql.com/doc/refman/8.4/en/innodb-consistent-read.html | Fetched; the oversell on InnoDB is inferred from the documented rule, not run |
+| ALTER TABLE takes ACCESS EXCLUSIVE unless a form says otherwise; SET NOT NULL scans the table unless a valid CHECK proves no NULL | https://www.postgresql.org/docs/18/sql-altertable.html | Fetched; observed: AccessExclusiveLock held by both the expand and contract statements inside a transaction, and a plain SELECT on orders waited until COMMIT |
+| Only ACCESS EXCLUSIVE blocks a plain SELECT; row locks block only writers of the same row | https://www.postgresql.org/docs/18/explicit-locking.html | Fetched |
+| Under synchronous replication a commit waits for the standby, and its transaction locks are held until then | https://www.postgresql.org/docs/18/warm-standby.html | Fetched; used only as a test device. Observed: a COMMIT held by a standby that never connects (wait event SyncRep) is invisible to a lookup; terminating it reports that the transaction was already committed locally |
+| An insert-first repeat waits for an attempt in flight and fails with 23505 once it commits; a claim-first repeat waits and gets UPDATE 0 | — | Observed, three concurrent psql sessions |
+| A lost reply after COMMIT: a lookup finds 103, an insert-first repeat gets 23505; before COMMIT: lookup 0 rows, the full repeat commits | — | Observed |
+| The waiting `stock = stock - 1` update meets CHECK (stock >= 0) and is refused with 23514 | — | Observed, two concurrent sessions |
+| The left-join query keeps an order with no lines (order 105) with 0.00; inner joins drop it; before coalesce, order 103's paid and due are NULL | https://www.postgresql.org/docs/18/queries-table-expressions.html, https://www.postgresql.org/docs/18/functions-conditional.html | Observed |
+| Plan lines, estimates, bitmap index and heap scans, buffer counts that include child nodes | https://www.postgresql.org/docs/18/using-explain.html, https://www.postgresql.org/docs/18/planner-stats.html | Observed: every printed plan line matched the real EXPLAIN (ANALYZE, BUFFERS) output after normalising costs and widths; heap scan 3 pages = index 2 + table 1 |

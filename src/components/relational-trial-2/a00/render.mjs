@@ -4,8 +4,8 @@
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-const rowTag = { new: 'new', pending: 'uncommitted', gone: 'removed', hit: 'linked' };
-const lineTag = { new: 'new', wait: 'waiting', error: 'error' };
+const rowTag = { new: 'new', pending: 'uncommitted', gone: 'removed', rolledback: 'rolled back', dropped: 'dropped', hit: 'linked' };
+const entryTag = { new: 'new', wait: 'waiting', waited: 'waited', error: 'error' };
 
 export function renderTable(table) {
   const head = table.columns.map(c => `<th scope="col">${esc(c.name)}${c.key ? ` <abbr class="key" title="${c.key === 'PK' ? 'primary key' : c.key === 'FK' ? 'foreign key' : 'part of the primary key and a foreign key'}">${esc(c.key)}</abbr>` : ''}</th>`).join('');
@@ -19,18 +19,35 @@ export function renderTable(table) {
   return `<div class="t2-table"><p class="t2-table-name"><code>${esc(table.name)}</code>${table.note ? ` <span>${esc(table.note)}</span>` : ''}</p><div class="t2-scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></div>`;
 }
 
+/**
+ * The history so far: one column per session or viewer, one row per moment,
+ * time running down the table. A cell is empty when that column did nothing
+ * at that moment.
+ */
+function renderEntry(e) {
+  if (!e) return '<td></td>';
+  const text = e.plain ? `<span class="msg">${esc(e.text)}</span>` : `<code>${esc(e.text)}</code>`;
+  const result = e.result ? `<span class="result">→ ${esc(e.result)}</span>` : '';
+  const tag = e.state ? ` <span class="tag">${entryTag[e.state]}</span>` : '';
+  return `<td${e.state ? ` data-entry="${e.state}"` : ''}>${text}${result}${tag}</td>`;
+}
+
+export function renderHistory(history) {
+  const head = history.columns.map(c => `<th scope="col">${esc(c)}</th>`).join('');
+  const body = history.rows.length
+    ? history.rows.map(row => `<tr>${row.map(renderEntry).join('')}</tr>`).join('')
+    : `<tr><td colspan="${history.columns.length}" class="empty">nothing sent yet</td></tr>`;
+  return `<div class="t2-history-wrap"><table class="t2-history" data-columns="${history.columns.length}"><caption>Time runs down the table</caption><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
 export function renderFrame(frame) {
-  const lanes = frame.lanes?.length
-    ? `<div class="t2-lanes">${frame.lanes.map(lane => `<div class="t2-lane"><p class="t2-lane-name">${esc(lane.who)}</p>${lane.lines.length
-        ? `<ol>${lane.lines.map(l => `<li${l.state ? ` data-line="${l.state}"` : ''}>${l.plain ? `<span class="msg">${esc(l.text)}</span>` : `<code>${esc(l.text)}</code>`}${l.result ? `<span class="result">→ ${esc(l.result)}</span>` : ''}${l.state ? ` <span class="tag">${lineTag[l.state]}</span>` : ''}</li>`).join('')}</ol>`
-        : '<p class="t2-idle">nothing sent yet</p>'}</div>`).join('')}</div>`
-    : '';
+  const history = frame.history ? renderHistory(frame.history) : '';
   const tables = `<div class="t2-tables">${frame.tables.map(renderTable).join('')}</div>`;
   const checks = frame.checks?.length
     ? `<ul class="t2-checks">${frame.checks.map(c => `<li data-ok="${c.ok}"><span class="mark">${c.ok ? 'Right' : 'Wrong'}</span> <span>${esc(c.label)}:</span> <strong>${esc(c.value)}</strong></li>`).join('')}</ul>`
     : '';
   const outcome = frame.outcome ? `<p class="t2-outcome">${esc(frame.outcome)}</p>` : '';
-  return `<p class="t2-label">${esc(frame.label)}</p>${lanes}${tables}${checks}${outcome}`;
+  return `<p class="t2-label">${esc(frame.label)}</p>${history}${tables}${checks}${outcome}`;
 }
 
 /** A plain-text account of every step, for the "Read this figure as text" summary. */

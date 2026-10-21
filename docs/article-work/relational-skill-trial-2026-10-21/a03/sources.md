@@ -19,6 +19,9 @@ Checked on 21 October 2026. Each row gives the claim in the article, its source,
 | Transactional DDL; nextval never rolled back | https://www.postgresql.org/docs/18/functions-sequence.html (DDL: general transactional behaviour) | Yes: ddlAndSequences |
 | synchronous_commit on waits for WAL flush; off risks losing recent commits (up to three times wal_writer_delay) without inconsistency, unlike fsync off; settable per transaction | https://www.postgresql.org/docs/18/wal-async-commit.html, https://www.postgresql.org/docs/18/runtime-config-wal.html#GUC-SYNCHRONOUS-COMMIT | Settings recorded (synchronous_commit=on, fsync=on); crash behaviour not tested |
 | Error codes 40001, 40P01, 55P03, 57014, 23505, 23514, 25P02 | https://www.postgresql.org/docs/18/errcodes-appendix.html | 40001, 40P01, 23505, 23514, 25P02 observed; 55P03 and 57014 documented only |
+| (r01) Durability of a commit depends on storage honouring flushes; drive write-back caches can break it | https://www.postgresql.org/docs/18/wal-reliability.html | Documented only |
+| (r01) A COMMIT can have reached the server and not finished (held here by a synchronous standby that never connects); until it finishes other sessions cannot see its rows; a session waiting on its row or key gets the outcome when it ends; terminating the waiting backend reports "already committed locally" | https://www.postgresql.org/docs/18/warm-standby.html#SYNCHRONOUS-REPLICATION | Yes: verify "In-flight COMMIT" check (lookup finds no R8; take-first repeat waits, then no row; record-first repeat waits, then 23505) |
+| (r01) A deadlock between opposite lock orders aborts one transaction with 40P01; ascending order lets both moves commit | https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-DEADLOCKS | Yes: Figure 4 replay (in this run the transaction that waited first, Tariq's, was aborted) |
 | pg_stat_activity wait_event_type = 'Lock' to confirm a wait | https://www.postgresql.org/docs/18/monitoring-stats.html#PG-STAT-ACTIVITY-VIEW | Used by the worksheet |
 
 ## MySQL 8.4 InnoDB (documented; not run)
@@ -40,7 +43,7 @@ The InnoDB Serializable card's "two read-then-write transactions can deadlock" i
 | --- | --- | --- |
 | Serializable between separate connections; WAL readers keep a snapshot; one writer | https://www.sqlite.org/isolation.html, https://www.sqlite.org/wal.html | Yes |
 | Deferred transaction's write after another commit fails SQLITE_BUSY_SNAPSHOT | https://www.sqlite.org/rescode.html#busy_snapshot | Yes |
-| BEGIN IMMEDIATE takes the write lock at the start; second writer waits on busy timeout | https://www.sqlite.org/lang_transaction.html | Yes (waited 0.36 s) |
+| BEGIN IMMEDIATE takes the write lock at the start; second writer waits on busy timeout | https://www.sqlite.org/lang_transaction.html | Yes (waited 0.36 s in the first run, 0.39 s in r01; the article no longer quotes the time) |
 
 ## Papers
 
@@ -49,4 +52,4 @@ The InnoDB Serializable card's "two read-then-write transactions can deadlock" i
 
 ## On-site links
 
-/review/relational-next/ (a00 anchor a-transaction-protects-a-change-within-a-stated-contract), constraints/ (a10), changing-data/ (a17), locking/ (a18, three anchors), isolation/ (a19), physical-storage/ (a24), concurrent-load/ (a28), request-recovery/ (a22, three anchors), replicas-and-partitions/ (a38), backup-and-restore/ (a39), background-work/ (a23), connections/ (a20). Every anchor was confirmed in the relational-next source files and in the rendered page's link list.
+/review/relational-next/ (a00 anchor a-transaction-protects-a-change-within-a-stated-contract), constraints/ (a10), changing-data/ (a17), locking/ (a18, four anchors after r01), isolation/ (a19), physical-storage/ (a24), concurrent-load/ (a28), request-recovery/ (a22, three anchors), replicas-and-partitions/ (a38), backup-and-restore/ (a39), background-work/ (a23), connections/ (a20). Every anchor was confirmed in the relational-next source files and in the rendered page's link list.

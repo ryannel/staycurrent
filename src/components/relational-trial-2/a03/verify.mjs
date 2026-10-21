@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Worksheet for "Making concurrent changes correct": runs every schedule the
+// Verification script for "Making concurrent changes correct": runs every schedule the
 // article's figures and tables describe in real PostgreSQL sessions, with explicit
 // barriers, and checks each statement's result and the committed rows after each
 // step. Needs Node 22 or later and a disposable PostgreSQL 18 server that accepts
@@ -16,7 +16,7 @@ const arg = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); r
 const HOST = arg('host', '127.0.0.1');
 const PORT = Number(arg('port', '57612'));
 const USER = arg('user', 'postgres');
-const DB = `a03_worksheet_${process.pid}`;
+const DB = `a03_verify_${process.pid}`;
 
 // ---- A small PostgreSQL client: simple-query protocol, trust authentication ----
 class Session {
@@ -36,7 +36,7 @@ class Session {
       this.onStartupError = reject;
     });
   }
-  failCurrent(error) { const current = this.queue.shift(); if (current) current.reject(error); }
+  failCurrent(error) { const current = this.queue.shift(); if (current) current.reject(Object.assign(error, { results: current.results, notices: current.notices ?? [] })); }
   receive(chunk) {
     this.buffer = Buffer.concat([this.buffer, chunk]);
     while (this.buffer.length >= 5) {
@@ -62,6 +62,7 @@ class Session {
       const fields = {}; let i = 0;
       while (body[i] !== 0) { const code = String.fromCharCode(body[i]); const end = body.indexOf(0, i + 1); fields[code] = body.toString('utf8', i + 1, end); i = end + 1; }
       if (type === 'E') { if (!this.ready) { this.onStartupError(new Error(fields.M)); return; } if (current) current.results.push({ error: fields.C, message: fields.M }); }
+      if (type === 'N' && current) (current.notices ??= []).push(`${fields.M}${fields.D ? ` ${fields.D}` : ''}`);
       return;
     }
     if (!current) return;
@@ -142,6 +143,7 @@ function compare(label, expect, result) {
 // ---- Replay a figure's steps -----------------------------------------------
 async function replay(figureId, option) {
   await reset();
+  if (figures[figureId].setupSql) await observer.query(figures[figureId].setupSql);
   const sessions = {}; const pending = {};
   const lane = async id => (sessions[id] && !sessions[id].closed ? sessions[id] : (sessions[id] = await connectAs(`${figureId}-${option.id}-${id}`)));
   for (const [index, step] of option.steps.entries()) {
@@ -156,6 +158,11 @@ async function replay(figureId, option) {
       session.send(step.run).catch(() => {}); session.socket.end(); session.closed = true;
       await sleep(300);
       check(true, label, 'COMMIT sent, connection dropped without reading the reply');
+    } else if (step.lane && step.action === 'commit-held') {
+      // The COMMIT is lost on the way: nothing reaches the server yet, so the
+      // transaction stays open there until a later step sends it.
+      const session = await lane(step.lane);
+      check(session.status === 'T', label, `COMMIT held back; the server still has the transaction open (status ${session.status})`);
     } else if (step.lane && step.action === 'drop-before-commit') {
       const session = await lane(step.lane);
       await observer.query(`SELECT pg_terminate_backend(${session.pid});`);
@@ -190,7 +197,8 @@ const expectedBroken = {
   'clicks/separate': ['class-22'], 'clicks/transaction': [],
   'race/read-write': ['class-21'], 'race/subtract': [], 'race/condition': [], 'race/repeatable': [],
   'instructors/repeatable': ['instructors'], 'instructors/lock': [], 'instructors/serializable-whole': [], 'instructors/serializable-statement': ['instructors'],
-  'reply/new': [], 'reply/lookup': [], 'reply/never': [],
+  'swap/opposite': [], 'swap/ordered': [],
+  'reply/again': [], 'reply/lookup': [], 'reply/claim': [], 'reply/claim-lost': [],
 };
 
 // ---- Checks for claims made outside the figures -----------------------------
@@ -302,7 +310,8 @@ async function ddlAndSequences() {
 }
 
 async function countingVariation() {
-  // Stated variation: class 22's capacity is 2 (one place left). The decision counts
+  // Stated variation: class 22's capacity is 2 (one place left). Mina (R13) and Edda
+  // (R14) each lock and count class 22's reservations. The decision counts
   // reservations and locks the rows it counted. A new row is not among them.
   await reset();
   await observer.query('UPDATE classes SET capacity = 2, remaining = 1 WHERE class_id = 22;');
@@ -312,55 +321,75 @@ async function countingVariation() {
   check(same(m.rows, [['R7']]), 'Counting variation · Mina locks and counts 1 reservation (capacity 2)');
   const p = edda.send(`BEGIN; ${lockRows}`);
   check(await waitingOnLock(edda), 'Counting variation · Edda waits on R7’s lock');
-  await mina.query(`${sql.book('R10', 22, 1)} COMMIT;`);
+  await mina.query(`${sql.book('R13', 22, 1)} COMMIT;`);
   const e = (await p).at(-1);
-  check(same(e.rows, [['R7']]), 'Counting variation · after the wait Edda still counts only R7: R10 is not among the rows her statement found', JSON.stringify(e.rows));
-  await edda.query(`${sql.book('R11', 22, 3)} COMMIT;`);
+  check(same(e.rows, [['R7']]), 'Counting variation · after the wait Edda still counts only R7: R13 is not among the rows her statement found', JSON.stringify(e.rows));
+  await edda.query(`${sql.book('R14', 22, 3)} COMMIT;`);
   const n = (await observer.query('SELECT count(*) FROM reservations WHERE class_id = 22;')).rows[0][0];
   check(n === claims.countingVariation.bookingsAfter, 'Counting variation · three bookings for capacity 2', `${n}`);
   mina.close(); edda.close();
 }
 
-async function swapDeadlock() {
-  // After R8 is committed: Mina moves R8 21 -> 22 while Tariq moves R7 22 -> 21.
-  // Each move locks both class rows, frees its old place, takes the new one.
-  const setup = async () => { await reset(); await observer.query(`${sql.take(21)} ${sql.book('R8', 21, 1)}`); };
-  const free = id => `UPDATE classes SET remaining = remaining + 1 WHERE class_id = ${id};`;
-  const move = (request, to) => `UPDATE reservations SET class_id = ${to} WHERE request_id = '${request}';`;
-  const finish = (from, to, request) => `${free(from)} ${sql.take(to)}`;
-  await setup();
-  let mina = await connectAs('swap-mina'), tariq = await connectAs('swap-tariq');
-  await mina.query(`BEGIN; ${sql.lockClass(21)}`); await tariq.query(`BEGIN; ${sql.lockClass(22)}`);
-  const pm = mina.send(sql.lockClass(22)); await sleep(100);
-  const pt = tariq.send(sql.lockClass(21));
-  const both = await timeout(Promise.all([pm, pt]), 5000);
-  if (both.pending) { check(false, 'Swap, opposite order · expected a deadlock to be detected'); mina.destroy(); tariq.destroy(); return; }
-  const [rm, rt] = both.value.map(r => r.at(-1));
-  const errors = [rm, rt].filter(r => r.error === '40P01').length;
-  check(errors === 1, 'Swap, opposite order · Mina locks 21 then 22, Tariq 22 then 21: exactly one is aborted as a deadlock victim (40P01)', `${rm.error ?? 'locked'} / ${rt.error ?? 'locked'}`);
-  await mina.send('ROLLBACK;'); await tariq.send('ROLLBACK;');
-  mina.close(); tariq.close();
-  await setup();
-  mina = await connectAs('swap-mina2'); tariq = await connectAs('swap-tariq2');
-  await mina.query(`BEGIN; ${sql.lockClass(21)} ${sql.lockClass(22)}`);
-  const pt2 = tariq.send(`BEGIN; ${sql.lockClass(21)}`);
-  check(await waitingOnLock(tariq), 'Swap, lower class first · Tariq waits on class 21 before holding anything');
-  const m2 = (await mina.send(`${finish(21, 22)} ${move('R8', 22)} COMMIT;`)).at(-1);
-  await timeout(pt2, 3000);
-  const t2 = (await tariq.send(`${sql.lockClass(22)} ${finish(22, 21)}`)).at(-1);
-  await tariq.query(`${move('R7', 21)} COMMIT;`);
-  const db = await committed();
-  const ok = m2.tag === 'COMMIT' && same(t2.rows, [[0]]) && rules(db).classes.every(r => r.ok) && db.reservations.find(r => r.request_id === 'R7').class_id === 21;
-  check(ok, 'Swap, lower class first · both moves commit in turn and both class rules hold', JSON.stringify(db.classes));
-  mina.close(); tariq.close();
+async function conditionalDoesNotWait() {
   // A conditional update does not wait for an uncommitted change it does not match.
-  await setup();
-  mina = await connectAs('swap-mina3'); tariq = await connectAs('swap-tariq3');
-  await mina.query(`BEGIN; ${free(21)}`);
+  // (The swap's deadlock and its lock-order fix are replayed as a figure.)
+  await reset();
+  await observer.query(`${sql.take(21)} ${sql.book('R8', 21, 1)}`);
+  const mina = await connectAs('cond-mina'); const tariq = await connectAs('cond-tariq');
+  await mina.query(`BEGIN; ${sql.free(21)}`);
   const quick = await timeout(tariq.send(`BEGIN; ${sql.take(21)}`), 1000);
   check(!quick.pending && same(quick.value.at(-1).rows, []), 'Conditional update · Tariq’s take of class 21 sees committed remaining 0 and returns no row at once, without waiting for Mina’s uncommitted +1');
   await mina.send('ROLLBACK;'); await tariq.send('ROLLBACK;');
   mina.close(); tariq.close();
+}
+
+async function inFlightCommit() {
+  // A COMMIT that has reached the server but not finished. A synchronous standby that
+  // never connects ('ghost') holds the first attempt's COMMIT in the SyncRep wait,
+  // after its commit record is written locally but before other sessions can see it.
+  // Meanwhile the service's repeat runs on a new connection.
+  const ghost = async on => {
+    await observer.query(on ? "ALTER SYSTEM SET synchronous_standby_names = 'ghost';" : 'ALTER SYSTEM RESET synchronous_standby_names;');
+    await observer.query('SELECT pg_reload_conf();'); await sleep(300);
+  };
+  const syncRepWait = async (session, ms = 3000) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      const r = await observer.query(`SELECT wait_event FROM pg_stat_activity WHERE pid = ${session.pid};`);
+      if (r.rows[0]?.[0] === 'SyncRep') return true;
+      await sleep(25);
+    }
+    return false;
+  };
+  const cases = [
+    { name: 'take first', first: `${sql.take(21)} ${sql.book('R8', 21, 1)}`, repeat: sql.take(21), expect: r => same(r.rows, []), result: 'no row: the repeat reports the class full although R8 committed' },
+    { name: 'record R8 first', first: `${sql.book('R8', 21, 1)} ${sql.take(21)}`, repeat: sql.book('R8', 21, 1), expect: r => r.error === '23505', result: '23505: the repeat learns that R8 exists' },
+  ];
+  for (const c of cases) {
+    await reset();
+    try { await ghost(true); } catch (error) { log.push(`note In-flight COMMIT check skipped: ALTER SYSTEM was refused (${error.message})`); return; }
+    const a = await connectAs(`inflight-a-${c.name}`); const b = await connectAs(`inflight-b-${c.name}`);
+    try {
+      await a.query(`BEGIN ISOLATION LEVEL READ COMMITTED; ${c.first}`);
+      const commit = a.send('COMMIT;').catch(error => [...(error.notices ?? []).map(message => ({ message })), ...(error.results ?? []), { error: 'connection', message: error.message }]);
+      check(await syncRepWait(a), `In-flight COMMIT, ${c.name} · the first attempt’s COMMIT is held in the SyncRep wait`);
+      const look = await b.query(sql.lookup('R8'));
+      check(same(look.rows, []), `In-flight COMMIT, ${c.name} · the repeat’s lookup does not find R8`, JSON.stringify(look.rows));
+      const repeat = b.send(`BEGIN ISOLATION LEVEL READ COMMITTED; ${c.repeat}`);
+      check(await waitingOnLock(b), `In-flight COMMIT, ${c.name} · the repeat waits for the first attempt`);
+      await observer.query(`SELECT pg_terminate_backend(${a.pid});`);
+      const first = await commit;
+      check(first.some(r => /committed locally/i.test(r.message ?? '')), `In-flight COMMIT, ${c.name} · ending the first attempt’s wait leaves it committed locally`, first.map(r => r.message ?? r.tag).join(' | '));
+      const outcome = await timeout(repeat, 3000);
+      check(!outcome.pending && c.expect(outcome.value.at(-1)), `In-flight COMMIT, ${c.name} · after the wait the repeat gets ${c.result}`, outcome.pending ? 'still waiting' : JSON.stringify(outcome.value.at(-1)));
+      await b.send('ROLLBACK;');
+      const db = await committed();
+      check(db.reservations.filter(r => r.request_id === 'R8').length === 1 && db.classes[0].remaining === 0, `In-flight COMMIT, ${c.name} · R8 is committed once and class 21 has no place left`);
+    } finally {
+      await ghost(false);
+      a.destroy(); b.close();
+    }
+  }
 }
 
 async function versionCheck() {
@@ -450,7 +479,7 @@ async function load() {
 }
 
 // ---- Run -------------------------------------------------------------------
-const watchdog = setTimeout(() => { console.log(log.join('\n')); console.log('\nStopped: the worksheet took longer than five minutes.'); process.exit(3); }, 300000);
+const watchdog = setTimeout(() => { console.log(log.join('\n')); console.log('\nStopped: the script took longer than five minutes.'); process.exit(3); }, 300000);
 admin = new Session('a03-admin', 'postgres');
 await admin.connect();
 const exists = await admin.query(`SELECT 1 FROM pg_database WHERE datname = '${DB}';`);
@@ -476,7 +505,8 @@ try {
   await savepointHazard();
   await ddlAndSequences();
   await countingVariation();
-  await swapDeadlock();
+  await conditionalDoesNotWait();
+  await inFlightCommit();
   await versionCheck();
   await fracturedReport();
   await load();

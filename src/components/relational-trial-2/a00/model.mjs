@@ -186,11 +186,12 @@ export const dueRight = `WITH value AS (
   SELECT order_id, sum(amount) AS paid
   FROM payments GROUP BY order_id
 )
-SELECT o.order_id, v.value,
+SELECT o.order_id,
+       coalesce(v.value, 0.00) AS value,
        coalesce(p.paid, 0.00) AS paid,
-       v.value - coalesce(p.paid, 0.00) AS due
+       coalesce(v.value, 0.00) - coalesce(p.paid, 0.00) AS due
 FROM orders AS o
-JOIN value AS v ON v.order_id = o.order_id
+LEFT JOIN value AS v ON v.order_id = o.order_id
 LEFT JOIN paid AS p ON p.order_id = o.order_id
 ORDER BY o.order_id;`;
 
@@ -258,6 +259,8 @@ export const raceProtocols = {
     begin: 'BEGIN;',
     write: "UPDATE products SET stock = stock - 1\nWHERE product_id = 'P7' AND stock >= 1;",
   },
+  // Not drawn in Figure 4: the prose says in one sentence that this level
+  // refuses Tariq's write, and verify.mjs checks that it does.
   repeatable: {
     label: 'Repeatable Read',
     begin: 'BEGIN ISOLATION LEVEL REPEATABLE READ;',
@@ -285,15 +288,28 @@ export const breakPoints = {
   afterCommit: { label: 'Connection breaks after COMMIT', committed: true, appSees: 'a broken connection' },
 };
 
-/** Mina's whole order as one transaction using the conditional update. */
+/**
+ * Mina's whole order as one transaction. The application chose the number 103
+ * before sending anything, and the insert of order 103 comes first: a repeat
+ * after a lost reply then meets any attempt still in flight at order 103's
+ * primary key, rather than at the mug's stock.
+ */
 export const placeOrder103 = [
   'BEGIN;',
-  "UPDATE products SET stock = stock - 1 WHERE product_id = 'P7' AND stock >= 1;",
-  "UPDATE products SET stock = stock - 2 WHERE product_id = 'P3' AND stock >= 2;",
   "INSERT INTO orders VALUES (103, 1, '2026-10-20 10:15+00', 'pending');",
-  "INSERT INTO order_items VALUES (103, 1, 'P7', 1, 20.00), (103, 2, 'P3', 2, 4.50);",
+  "UPDATE products SET stock = stock - 1\n  WHERE product_id = 'P7' AND stock >= 1;",
+  "UPDATE products SET stock = stock - 2\n  WHERE product_id = 'P3' AND stock >= 2;",
+  "INSERT INTO order_items VALUES\n  (103, 1, 'P7', 1, 20.00), (103, 2, 'P3', 2, 4.50);",
   'COMMIT;',
 ];
+/** The listing printed in the article: the same statements, with the application's check. */
+export const placeOrderListing = [
+  ...placeOrder103.slice(0, 4),
+  '-- If either UPDATE changes 0 rows: ROLLBACK, "sold out".',
+  ...placeOrder103.slice(4),
+].join('\n');
+/** The same order with the stock claimed before the order row: what a repeat must not do. */
+export const placeOrderClaimFirst = [placeOrder103[0], placeOrder103[2], placeOrder103[3], placeOrder103[1], placeOrder103[4], placeOrder103[5]];
 export const lookup103 = "SELECT order_id, status FROM orders WHERE order_id = 103;";
 
 // ---------------------------------------------------------------- Section 6
@@ -323,6 +339,29 @@ GROUP BY product_id
 ORDER BY product_id;`;
 export const lookupIndex = 'CREATE INDEX orders_customer_idx ON orders (customer_id);';
 
+/**
+ * The two plans as the article prints them: EXPLAIN (ANALYZE, BUFFERS) output
+ * with costs, widths, memory, the sort's buffer line and the planning summary
+ * left out, the planner's row estimate labelled, and long lines wrapped.
+ * verify.mjs checks every line against the real output.
+ */
+export const planBefore = `Sort (estimated rows=10) (actual rows=2.00 loops=1)
+  Sort Key: placed_at
+  ->  Seq Scan on orders (estimated rows=10) (actual rows=2.00 loops=1)
+        Filter: (customer_id = 1)
+        Rows Removed by Filter: 199001
+        Buffers: shared hit=1268`;
+export const planAfter = `Sort (estimated rows=10) (actual rows=2.00 loops=1)
+  Sort Key: placed_at
+  ->  Bitmap Heap Scan on orders
+        (estimated rows=10) (actual rows=2.00 loops=1)
+        Recheck Cond: (customer_id = 1)
+        Buffers: shared hit=3
+        ->  Bitmap Index Scan on orders_customer_idx
+              (estimated rows=10) (actual rows=2.00 loops=1)
+              Index Cond: (customer_id = 1)
+              Buffers: shared hit=2`;
+
 // ---------------------------------------------------------------- Section 7
 export const liveChange = {
   oneStep: 'ALTER TABLE orders ADD COLUMN delivery_country text NOT NULL;',
@@ -347,31 +386,31 @@ export const failures = {
   },
   deletion: {
     label: 'Order 101 deleted by mistake',
-    happened: 'At 10:10 a clean-up script commits DELETE for paid order 101. Order 103 is placed at 10:15.',
+    happened: 'At 10:10 a clean-up script commits DELETE for paid order 101. Order 103 is placed at 10:15. A restore would stop at 10:09, just before the delete.',
   },
 };
 
 export const mechanisms = {
   replay: { label: 'Crash recovery', how: 'Restart and replay the write-ahead log on the same disks.' },
   promote: { label: 'Promote a replica', how: 'Make a standby copy on another machine the new writer.' },
-  restore: { label: 'Restore an earlier state', how: 'Rebuild a separate copy from a backup and the archived log, stopped at 10:09.' },
+  restore: { label: 'Restore an earlier state', how: 'Rebuild a separate copy from a backup and the archived log, stopped at an earlier point.' },
 };
 
 /** For each failure and mechanism: what comes back, and whether it is the right tool. */
 export const recoveryMatrix = {
   crash: {
     replay: { order101: 'present', order103: 'present', verdict: 'fits', note: 'Every committed change returns, including order 103. This is what the log is for.' },
-    promote: { order101: 'present', order103: 'depends', note: 'Works, but only keeps order 103 if the replica had received it. Unnecessary when the disks survive.', verdict: 'possible' },
-    restore: { order101: 'present', order103: 'lost', note: 'Throws away good work after 10:09. Far more than this failure needs.', verdict: 'wrong' },
+    promote: { order101: 'present', order103: 'replica', verdict: 'possible', note: 'Keeps order 103 only if the replica had received it, and is unnecessary when the disks survive.' },
+    restore: { order101: 'present', order103: 'lost', verdict: 'wrong', note: 'Stopped at an earlier point, such as 10:09, it loses good work since then, including order 103. Far more than this failure needs.' },
   },
   lost: {
-    replay: { order101: 'gone', order103: 'gone', note: 'There is nothing to restart: the log was on the lost disk.', verdict: 'wrong' },
-    promote: { order101: 'present', order103: 'depends', note: 'Fits. Order 103 survives only if its commit waited for the replica, or the replica had already received it.', verdict: 'fits' },
-    restore: { order101: 'present', order103: 'depends', note: 'Works if backups and archived log are stored elsewhere, but slower, and it loses whatever log had not been archived.', verdict: 'possible' },
+    replay: { order101: 'gone', order103: 'gone', verdict: 'wrong', note: 'There is nothing to restart: the log was on the lost disk.' },
+    promote: { order101: 'present', order103: 'replica', verdict: 'fits', note: 'Order 103 survives only if its commit waited for the replica, or the replica had already received it.' },
+    restore: { order101: 'present', order103: 'archived', verdict: 'possible', note: 'Needs the backup and archived log to be stored elsewhere. Slower, and it loses whatever log had not yet been archived.' },
   },
   deletion: {
-    replay: { order101: 'gone', order103: 'present', note: 'Recovery replays the committed DELETE faithfully. The mistake is a committed change.', verdict: 'wrong' },
-    promote: { order101: 'gone', order103: 'present', note: 'The replica applied the same DELETE moments after the writer did.', verdict: 'wrong' },
-    restore: { order101: 'present', order103: 'lost', note: 'Fits, in a separate copy: order 101 returns, but order 103 is missing there and must be carried across from the live database.', verdict: 'fits' },
+    replay: { order101: 'gone', order103: 'present', verdict: 'wrong', note: 'Recovery replays the committed DELETE faithfully. The mistake is a committed change.' },
+    promote: { order101: 'gone', order103: 'present', verdict: 'wrong', note: 'The replica applied the same DELETE moments after the writer did.' },
+    restore: { order101: 'present', order103: 'lost', verdict: 'fits', note: 'In a separate copy: order 101 returns, but order 103 is missing there and must be carried across from the live database.' },
   },
 };

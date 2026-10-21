@@ -4,15 +4,18 @@ import { rules, customerName } from './model.mjs';
 
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/** The history up to `index`: one row per lane statement, in the order they ran. */
+/** The history up to `index`: one row per lane statement, in the order things
+ * happened. A statement that waits keeps its own row; when the wait ends, its
+ * result arrives as a new row at that point in time, after whatever released it. */
 export function history(steps, index) {
   const rows = [];
   for (let i = 0; i <= index; i++) {
     const step = steps[i];
     if (!step.lane) continue;
     if (step.resume) {
-      const waiting = [...rows].reverse().find(r => r.lane === step.lane && r.status === 'wait');
-      if (waiting) Object.assign(waiting, { out: step.out, status: step.status ?? 'ok', resumedAt: i, resumed: true });
+      const waiting = [...rows].reverse().find(r => r.lane === step.lane && r.status === 'wait' && r.endedAt === undefined);
+      if (waiting) waiting.endedAt = i;
+      rows.push({ lane: step.lane, show: step.show, out: step.out, status: step.status ?? 'ok', at: i, resumed: true });
       continue;
     }
     rows.push({ lane: step.lane, show: step.show, out: step.out, status: step.status ?? 'ok', at: i });
@@ -20,14 +23,22 @@ export function history(steps, index) {
   return rows;
 }
 
-function laneCell(row, lane, rows, index, names) {
+const waited = out => out.replace(/^waiting for/, 'waited for');
+
+function laneCell(row, lane, rows, index) {
   if (row.lane === lane) {
-    const current = row.at === index || row.resumedAt === index;
-    const outcome = row.status === 'wait' ? `${row.out}…` : row.out;
-    return `<div class="hcell st-${row.status}${current ? ' current' : ''}"><code>${esc(row.show)}</code><span class="out">${row.resumed ? 'after the wait: ' : ''}${esc(outcome)}</span></div>`;
+    const current = row.at === index;
+    if (row.status === 'wait') {
+      const ended = row.endedAt !== undefined;
+      return `<div class="hcell st-wait${ended ? ' ended' : ''}${current ? ' current' : ''}"><code>${esc(row.show)}</code><span class="out">${esc(ended ? waited(row.out) : `${row.out}…`)}</span></div>`;
+    }
+    if (row.resumed) {
+      return `<div class="hcell st-${row.status} resumed${current ? ' current' : ''}"><code>${esc(row.show)}</code><span class="out">finished after the wait: ${esc(row.out)}</span></div>`;
+    }
+    return `<div class="hcell st-${row.status}${current ? ' current' : ''}"><code>${esc(row.show)}</code><span class="out">${esc(row.out)}</span></div>`;
   }
   // Show a lane that is still blocked while the other lane works.
-  const blocked = rows.find(r => r.lane === lane && r.at < row.at && (r.status === 'wait' || (r.resumedAt !== undefined && r.resumedAt > row.at)));
+  const blocked = rows.find(r => r.lane === lane && r.status === 'wait' && r.at < row.at && (r.endedAt === undefined || r.endedAt > row.at));
   return blocked ? `<div class="hcell blocked"><span class="out">still waiting</span></div>` : '<div class="hcell empty"></div>';
 }
 
@@ -47,7 +58,7 @@ function tableHtml(kind, db, before) {
       db.reservations.map(r => { const isNew = before && !before.reservations.some(o => o.request_id === r.request_id); return `<tr class="${isNew ? 'changed' : ''}"><td>${esc(r.request_id)}</td><td>${r.class_id}</td><td>${r.owner_id} <span class="who">(${esc(customerName(r.owner_id))})</span></td></tr>`; }).join('')
     }</tbody></table>`;
   }
-  return `<table class="rows"><caption>instructors</caption><thead><tr><th scope="col">class_id</th><th scope="col">person</th><th scope="col">available</th></tr></thead><tbody>${
+  return `<table class="rows"><caption>instructors</caption><thead><tr><th scope="col">class_id <abbr title="part of the primary key, and a foreign key to classes">PK FK</abbr></th><th scope="col">person <abbr title="part of the primary key">PK</abbr></th><th scope="col">available</th></tr></thead><tbody>${
     db.instructors.map(i => `<tr><td>${i.class_id}</td><td>${esc(i.person)}</td><td class="${changed(r => r.person === i.person, 'available', i.available) ? 'changed' : ''}">${i.available}</td></tr>`).join('')
   }</tbody></table>`;
 }
@@ -59,9 +70,15 @@ export function boardHtml(figure, option, index) {
   const lanes = Object.keys(figure.lanes);
   const rows = history(steps, index);
   const pending = lane => { for (let i = index; i >= 0; i--) { const s = steps[i]; if (s.lane === lane && s.pending !== undefined) return s.pending; } return ''; };
-  const head = lanes.map(l => `<div class="lane-head"><span class="lane-name">${esc(figure.lanes[l])}</span><span class="pending" data-live>${pending(l) ? `Uncommitted: ${esc(pending(l))}` : 'Nothing uncommitted'}</span></div>`).join('');
+  // A figure about locks states what each lane holds instead of what it has changed.
+  const holdsLocks = lane => steps.some(s => s.lane === lane && s.holds !== undefined);
+  const holds = lane => { for (let i = index; i >= 0; i--) { const s = steps[i]; if (s.lane === lane && s.holds !== undefined) return s.holds; } return ''; };
+  const state = lane => holdsLocks(lane)
+    ? (holds(lane) ? `Holds locks on: ${esc(holds(lane))}` : 'Holds no locks')
+    : (pending(lane) ? `Uncommitted: ${esc(pending(lane))}` : 'Nothing uncommitted');
+  const head = lanes.map(l => `<div class="lane-head"><span class="lane-name">${esc(figure.lanes[l])}</span><span class="pending" data-live>${state(l)}</span></div>`).join('');
   const body = rows.length
-    ? rows.map(row => `<li class="hrow">${lanes.map(l => laneCell(row, l, rows, index, figure.lanes)).join('')}</li>`).join('')
+    ? rows.map(row => `<li class="hrow">${lanes.map(l => laneCell(row, l, rows, index)).join('')}</li>`).join('')
     : `<li class="hrow"><div class="hcell empty start">No statement has run yet.</div></li>`;
   const r = rules(step.db);
   const ruleLines = figure.tables.includes('instructors') ? [r.instructors] : r.classes;

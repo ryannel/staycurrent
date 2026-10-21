@@ -64,6 +64,8 @@ export const sql = {
   leave: person => `UPDATE instructors SET available = false\nWHERE class_id = 21 AND person = '${person}';`,
   lockClass: id => `SELECT class_id FROM classes WHERE class_id = ${id} FOR UPDATE;`,
   lookup: request => `SELECT class_id, owner_id FROM reservations\nWHERE request_id = '${request}';`,
+  free: id => `UPDATE classes SET remaining = remaining + 1 WHERE class_id = ${id};`,
+  move: (request, to) => `UPDATE reservations SET class_id = ${to} WHERE request_id = '${request}';`,
 };
 
 // The rules every committed state must keep.
@@ -97,6 +99,11 @@ export const apply = {
   remaining: (id, value) => db => { db.classes.find(c => c.class_id === id).remaining = value; },
   book: (request, id, owner) => db => { db.reservations.push({ request_id: request, class_id: id, owner_id: owner }); },
   unavailable: person => db => { db.instructors.find(i => i.person === person).available = false; },
+  move: (request, from, to) => db => {
+    db.reservations.find(r => r.request_id === request).class_id = to;
+    db.classes.find(c => c.class_id === from).remaining += 1;
+    db.classes.find(c => c.class_id === to).remaining -= 1;
+  },
   capacity: (id, value) => db => { db.classes.find(c => c.class_id === id).capacity = value; },
 };
 
@@ -226,36 +233,79 @@ const instructors = {
     { lane: 'B', ...leaveSteps('Ravi', SER)[1], text: 'Ravi’s marks Ravi unavailable.' },
     { lane: 'A', run: 'COMMIT;', show: 'COMMIT', out: 'committed', expect: { tag: 'COMMIT' }, pending: '', commit: [apply.unavailable('Lena')], text: 'Lena’s transaction commits.' },
     { lane: 'B', run: 'COMMIT;', show: 'COMMIT', out: 'refused: could not serialize (40001)', expect: { error: '40001' }, status: 'error', pending: '', text: 'Ravi’s commit fails, as before.' },
-    { lane: 'B', run: `${SER} ${sql.leave('Ravi')}`, show: 'BEGIN again; set Ravi unavailable', out: '1 row updated', expect: { count: 1 }, pending: 'Ravi unavailable', text: 'This time the application repeats only the statement that failed, keeping the decision it made from the old count of two.' },
+    { lane: 'B', run: `${SER} ${sql.leave('Ravi')}`, show: 'BEGIN again; set Ravi unavailable', out: '1 row updated', expect: { count: 1 }, pending: 'Ravi unavailable', text: 'This time the application repeats only its write, in a new transaction. It keeps the decision it made from the old count of two and never counts again.' },
     { lane: 'B', run: 'COMMIT;', show: 'COMMIT', out: 'committed', expect: { tag: 'COMMIT' }, pending: '', commit: [apply.unavailable('Ravi')], text: 'Nothing conflicts now, so it commits. The retry carried a stale decision into a new transaction, and class 21 has nobody.' },
   ]),
 };
 
-// Figure 4: Mina's booking R8, when the reply to COMMIT never arrives.
-const lostReply = kind => {
-  const committed = kind !== 'never';
-  const steps = [
-    { lane: 'A', run: `${RC} ${sql.take(21)}`, show: 'BEGIN; take a place in class 21', out: 'remaining is now 0', expect: { rows: [[0]] }, pending: 'class 21 remaining 0', text: 'The booking service starts Mina’s booking, R8, and takes class 21’s last place.' },
-    { lane: 'A', run: sql.book('R8', 21, 1), show: 'insert R8', out: 'inserted', expect: { count: 1 }, pending: 'class 21 remaining 0 · R8', text: 'It records R8 in the same transaction.' },
-    committed
-      ? { lane: 'A', run: 'COMMIT;', action: 'commit-then-drop', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', pending: '', commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)], text: 'The service sends COMMIT. The database commits R8, then the connection fails before the reply arrives.' }
-      : { lane: 'A', run: 'COMMIT;', action: 'drop-before-commit', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', pending: '', text: 'The service sends COMMIT, but the connection fails before the database receives it. The database rolls the unfinished transaction back.' },
-    { lane: null, text: 'Either way, the service sees the same thing: a broken connection and no answer. Mina is still waiting.' },
-  ];
-  if (kind === 'new') steps.push(
-    { lane: 'A', run: `${RC} ${sql.take(21)}`, show: 'BEGIN again; take a place', out: 'no row: class full', expect: { rows: [] }, status: 'refused', text: 'The service treats the failure as a rollback and books again on a new connection. No place is left, because R8 took it.' },
-    { lane: 'A', run: 'ROLLBACK;', show: 'ROLLBACK', out: 'tells Mina: class full', expect: { tag: 'ROLLBACK' }, status: 'error', pending: '', text: 'Mina is told the class is full, while the database holds her booking.' },
-  );
-  if (kind === 'lookup') steps.push(
-    { lane: 'A', run: sql.lookup('R8'), show: 'look up R8', out: 'found: class 21, Mina', expect: { rows: [[21, 1]] }, text: 'The service asks what happened to R8 before doing anything else. It exists.' },
-    { lane: null, text: 'So the first attempt committed. Mina is told she is booked, and nothing is repeated.' },
-  );
-  if (kind === 'never') steps.push(
-    { lane: 'A', run: sql.lookup('R8'), show: 'look up R8', out: 'not found', expect: { rows: [] }, text: 'The service looks up R8 first. It doesn’t exist, so the first attempt did not commit.' },
-    { lane: 'A', run: `${RC} ${sql.take(21)}`, show: 'BEGIN again; take a place', out: 'remaining is now 0', expect: { rows: [[0]] }, pending: 'class 21 remaining 0', text: 'Repeating the whole booking is now safe. It takes the place again.' },
-    { lane: 'A', run: `${sql.book('R8', 21, 1)} COMMIT;`, show: 'insert R8; COMMIT', out: 'committed', expect: { tag: 'COMMIT' }, pending: '', commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)], text: 'R8 commits, once. Mina is told she is booked.' },
-  );
-  return build(steps);
+// Figure 4: the swap. R8 already holds class 21's place. Mina moves R8 from class 21
+// to 22 while Tariq moves R7 from 22 to 21. Each move locks the classes it touches.
+const afterR8 = build([{ commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)] }])[0].db;
+const moveRest = (request, from, to) => `${sql.free(from)} ${sql.take(to)} ${sql.move(request, to)} COMMIT;`;
+const swap = {
+  opposite: build([
+    { lane: 'A', run: `${RC} ${sql.lockClass(21)}`, show: 'BEGIN; lock class 21', out: 'locked', expect: { rows: [[21]] }, holds: 'class 21', text: 'Mina’s move starts with the class she is leaving, 21, and locks its row.' },
+    { lane: 'B', run: `${RC} ${sql.lockClass(22)}`, show: 'BEGIN; lock class 22', out: 'locked', expect: { rows: [[22]] }, holds: 'class 22', text: 'Tariq’s move starts with the class he is leaving, 22, and locks its row.' },
+    { lane: 'B', run: sql.lockClass(21), show: 'lock class 21', out: 'waiting for Mina', expect: { waits: true }, status: 'wait', text: 'Tariq’s move asks for class 21 and waits, because Mina’s transaction holds it.' },
+    { lane: 'A', run: sql.lockClass(22), show: 'lock class 22', out: 'waiting for Tariq', expect: { waits: true }, status: 'wait', text: 'Mina’s move asks for class 22 and waits for Tariq. Each now waits for the other, so neither can ever finish.' },
+    { lane: 'B', resume: true, show: 'lock class 21', out: 'refused: deadlock (40P01)', expect: { error: '40P01' }, status: 'error', holds: '', text: 'After a second of waiting, PostgreSQL checks for a cycle, finds one and aborts one of the transactions. In this run it aborted Tariq’s, which had started waiting first, and released his lock on class 22.' },
+    { lane: 'A', resume: true, show: 'lock class 22', out: 'locked', expect: { rows: [[22]] }, holds: 'class 21, class 22', text: 'Mina’s waiting request now gets class 22.' },
+    { lane: 'A', run: moveRest('R8', 21, 22), show: 'free 21, take 22, move R8; COMMIT', out: 'committed', expect: { tag: 'COMMIT' }, holds: '', commit: [apply.move('R8', 21, 22)], text: 'Mina’s move frees her place in 21, takes one in 22, moves R8 and commits.' },
+    { lane: 'B', run: 'ROLLBACK;', show: 'ROLLBACK', out: 'rolled back', expect: { tag: 'ROLLBACK' }, text: 'Nothing of Tariq’s move remains. His application has to start the whole move again, and this time class 21 has a free place.' },
+  ], afterR8),
+  ordered: build([
+    { lane: 'A', run: `${RC} ${sql.lockClass(21)}`, show: 'BEGIN; lock class 21', out: 'locked', expect: { rows: [[21]] }, holds: 'class 21', text: 'Now every move locks the lower class_id first. Mina’s move locks class 21.' },
+    { lane: 'B', run: `${RC} ${sql.lockClass(21)}`, show: 'BEGIN; lock class 21', out: 'waiting for Mina', expect: { waits: true }, status: 'wait', text: 'Tariq’s move also starts with class 21, so it waits before it holds anything.' },
+    { lane: 'A', run: sql.lockClass(22), show: 'lock class 22', out: 'locked', expect: { rows: [[22]] }, holds: 'class 21, class 22', text: 'Nobody holds class 22, so Mina’s move takes it at once.' },
+    { lane: 'A', run: moveRest('R8', 21, 22), show: 'free 21, take 22, move R8; COMMIT', out: 'committed', expect: { tag: 'COMMIT' }, holds: '', commit: [apply.move('R8', 21, 22)], text: 'Mina’s move frees her place in 21, takes one in 22, moves R8 and commits, releasing both locks.' },
+    { lane: 'B', resume: true, show: 'BEGIN; lock class 21', out: 'locked', expect: { rows: [[21]] }, holds: 'class 21', text: 'Tariq’s move now gets class 21.' },
+    { lane: 'B', run: sql.lockClass(22), show: 'lock class 22', out: 'locked', expect: { rows: [[22]] }, holds: 'class 21, class 22', text: 'Then class 22.' },
+    { lane: 'B', run: moveRest('R7', 22, 21), show: 'free 22, take 21, move R7; COMMIT', out: 'committed', expect: { tag: 'COMMIT' }, holds: '', commit: [apply.move('R7', 22, 21)], text: 'Tariq’s move takes the place Mina freed in class 21 and commits. Both moves are done, and both classes still add up.' },
+  ], afterR8),
+};
+
+// Figure 5: Mina's booking R8 when the reply to COMMIT is lost. Lane A is the first
+// attempt; lane B is the service's repeat on a new connection. The first two options
+// use a booking that takes the place before recording R8; the last two use the
+// listing's booking, which records R8 first.
+const placeFirst = [
+  { lane: 'A', run: `${RC} ${sql.take(21)}`, show: 'BEGIN; take a place in class 21', out: 'remaining is now 0', expect: { rows: [[0]] }, pending: 'class 21 remaining 0', text: 'The booking service starts Mina’s booking, R8, and takes class 21’s last place.' },
+  { lane: 'A', run: sql.book('R8', 21, 1), show: 'insert R8', out: 'inserted', expect: { count: 1 }, pending: 'class 21 remaining 0 · R8', text: 'It records R8 in the same transaction.' },
+];
+const recordFirst = [
+  { lane: 'A', run: `${RC} ${sql.book('R8', 21, 1)}`, show: 'BEGIN; insert R8', out: 'inserted', expect: { count: 1 }, pending: 'R8', text: 'This time the booking records R8 before anything else.' },
+  { lane: 'A', run: sql.take(21), show: 'take a place in class 21', out: 'remaining is now 0', expect: { rows: [[0]] }, pending: 'R8 · class 21 remaining 0', text: 'Then it takes class 21’s last place.' },
+];
+const lostCommit = {
+  done: { lane: 'A', run: 'COMMIT;', action: 'commit-then-drop', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', pending: '', commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)], text: 'The service sends COMMIT. The database commits R8, then the connection fails before the reply arrives.' },
+  held: { lane: 'A', action: 'commit-held', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', text: 'The service sends COMMIT and the connection fails. The COMMIT has not reached the database yet, so the first attempt is still open there.' },
+  never: { lane: 'A', run: 'COMMIT;', action: 'drop-before-commit', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', pending: '', text: 'The service sends COMMIT, but the connection fails before the database receives it. The database rolls the first attempt back.' },
+};
+const blind = { lane: null, text: 'Whatever happened, the service sees the same thing: a broken connection and no answer. Mina is still waiting.' };
+const arrives = { lane: 'A', run: 'COMMIT;', show: 'COMMIT reaches the database', out: 'committed', expect: { tag: 'COMMIT' }, pending: '', commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)], text: 'The first attempt’s COMMIT reaches the database late, and R8 commits.' };
+const reply = {
+  again: build([...placeFirst, lostCommit.done, blind,
+    { lane: 'B', run: `${RC} ${sql.take(21)}`, show: 'BEGIN; take a place', out: 'no row: class full', expect: { rows: [] }, status: 'refused', text: 'The service treats the failure as a rollback and books again. No place is left, because R8 took it.' },
+    { lane: 'B', run: 'ROLLBACK;', show: 'ROLLBACK', out: 'tells Mina: class full', expect: { tag: 'ROLLBACK' }, status: 'error', text: 'Mina is told the class is full, while the database holds her booking.' },
+  ]),
+  lookup: build([...placeFirst, lostCommit.held, blind,
+    { lane: 'B', run: sql.lookup('R8'), show: 'look up R8', out: 'not found', expect: { rows: [] }, text: 'The service looks R8 up first. It isn’t there. That means only that the first attempt hasn’t committed yet.' },
+    { lane: 'B', run: `${RC} ${sql.take(21)}`, show: 'BEGIN; take a place', out: 'waiting for the first attempt', expect: { waits: true }, status: 'wait', text: 'So the service books again. Its update waits, because the first attempt has changed class 21’s row and hasn’t ended.' },
+    arrives,
+    { lane: 'B', resume: true, show: 'BEGIN; take a place', out: 'no row: class full', expect: { rows: [] }, status: 'refused', text: 'The waiting update checks its condition against the committed row. No place is left.' },
+    { lane: 'B', run: 'ROLLBACK;', show: 'ROLLBACK', out: 'tells Mina: class full', expect: { tag: 'ROLLBACK' }, status: 'error', text: 'Mina is told the class is full, while R8 holds her place. The lookup didn’t help.' },
+  ]),
+  claim: build([...recordFirst, lostCommit.held, blind,
+    { lane: 'B', run: `${RC} ${sql.book('R8', 21, 1)}`, show: 'BEGIN; insert R8', out: 'waiting for the first attempt', expect: { waits: true }, status: 'wait', text: 'The service books again with the same request, R8, which the booking records first. The insert waits, because the first attempt has written R8 and hasn’t ended.' },
+    arrives,
+    { lane: 'B', resume: true, show: 'BEGIN; insert R8', out: 'refused: R8 exists (23505)', expect: { error: '23505' }, status: 'refused', text: 'The waiting insert now fails: R8 exists. That error is the answer the service needed.' },
+    { lane: 'B', run: 'ROLLBACK;', show: 'ROLLBACK', out: 'tells Mina: booked', expect: { tag: 'ROLLBACK' }, text: 'The first attempt committed, so Mina is told she is booked. Nothing was booked twice.' },
+  ]),
+  'claim-lost': build([...recordFirst, lostCommit.never, blind,
+    { lane: 'B', run: `${RC} ${sql.book('R8', 21, 1)}`, show: 'BEGIN; insert R8', out: 'inserted', expect: { count: 1 }, pending: 'R8', text: 'The service books again with R8. The first attempt has been rolled back, so the insert goes ahead. Had it still been open, the insert would have waited for it.' },
+    { lane: 'B', run: sql.take(21), show: 'take a place in class 21', out: 'remaining is now 0', expect: { rows: [[0]] }, pending: 'R8 · class 21 remaining 0', text: 'It takes the place.' },
+    { lane: 'B', run: 'COMMIT;', show: 'COMMIT', out: 'committed: tells Mina booked', expect: { tag: 'COMMIT' }, pending: '', commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)], text: 'R8 commits, once, and Mina is told she is booked.' },
+  ]),
 };
 
 export const figures = {
@@ -290,18 +340,31 @@ export const figures = {
       { id: 'repeatable', label: 'Repeatable Read', steps: instructors.repeatable },
       { id: 'lock', label: 'Lock class 21 first', steps: instructors.lock },
       { id: 'serializable-whole', label: 'Serializable, repeat the transaction', steps: instructors['serializable-whole'] },
-      { id: 'serializable-statement', label: 'Serializable, repeat the failed statement', steps: instructors['serializable-statement'] },
+      { id: 'serializable-statement', label: 'Serializable, repeat only the write', steps: instructors['serializable-statement'] },
+    ],
+  },
+  swap: {
+    title: 'Mina and Tariq swap classes',
+    // R8 has already taken class 21's place; verify.mjs commits this before replaying.
+    setupSql: `${sql.take(21)} ${sql.book('R8', 21, 1)}`,
+    lanes: { A: 'Mina moves R8 from 21 to 22', B: 'Tariq moves R7 from 22 to 21' },
+    tables: ['classes', 'reservations'],
+    initial: 'opposite',
+    options: [
+      { id: 'opposite', label: 'Each locks the class it leaves first', steps: swap.opposite },
+      { id: 'ordered', label: 'Both lock the lower class_id first', steps: swap.ordered },
     ],
   },
   reply: {
     title: 'Mina’s booking when the reply to COMMIT is lost',
-    lanes: { A: 'Booking service, R8' },
+    lanes: { A: 'First attempt, R8', B: 'The service’s repeat, R8' },
     tables: ['classes', 'reservations'],
-    initial: 'new',
+    initial: 'again',
     options: [
-      { id: 'new', label: 'Committed; service books again', steps: lostReply('new') },
-      { id: 'lookup', label: 'Committed; service looks up R8', steps: lostReply('lookup') },
-      { id: 'never', label: 'Never committed; service looks up R8', steps: lostReply('never') },
+      { id: 'again', label: 'Book again', steps: reply.again },
+      { id: 'lookup', label: 'Look up R8 first', steps: reply.lookup },
+      { id: 'claim', label: 'Record R8 first', steps: reply.claim },
+      { id: 'claim-lost', label: 'Record R8 first; attempt lost', steps: reply['claim-lost'] },
     ],
   },
 };
@@ -316,7 +379,7 @@ export const claims = {
     { statement: 'UPDATE … WHERE remaining > 0', during: 'Waits for Mina', readCommitted: 'Changes no rows', repeatableRead: 'Fails with 40001' },
   ],
   // Stated variation from the example record: class 22's capacity is 2, so one place
-  // is left. Mina (R10) and Edda (R11) each lock and count class 22's reservations.
+  // is left. Mina (R13) and Edda (R14) each lock and count class 22's reservations.
   countingVariation: { capacity: 2, remaining: 1, bookingsAfter: 3 },
   // Mina's waiting update when her own transaction rolls back instead (the Prediction).
   rollbackPrediction: { tariqGets: [[0]], bookings: ['R7', 'R9'] },

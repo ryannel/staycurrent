@@ -149,3 +149,93 @@ No change to the tree is proposed.
 - Crash behaviour of `synchronous_commit = off`, `lock_timeout`/`NOWAIT`/`SKIP LOCKED` (55P03) and `statement_timeout` (57014) were not run here (a18's worksheet observed NOWAIT and SKIP LOCKED).
 - No production build (`pnpm build`) and no full-site link check; the page was checked in dev only. Download URLs were checked in dev, where Vite serves them; the built asset paths were not seen.
 - Headless Chromium only; no visible-window check, so animation smoothness of the hold bar was not seen, only its timer.
+
+## r01 repairs
+
+Fresh reviser, 21 October 2026, from `docs/article-work/relational-skill-trial-2026-10-21/r01/repair-decisions.md` (shared decision and "Accepted · a03"), applied to b5586b8/a81feed with staycurrent-revise, -continuity, -figures and the three reference articles. Word count (`wc -w` on `src/articles/relational-trial-2/a03.astro`): 8,146 before, 8,536 after. The growth is the reworked lost-reply section, the new deadlock figure, the new results section and the card data in the frontmatter; the counting variation, the savepoint-lock aside, the freeing-a-place paragraph, the Figure 1 caption sentence and the run record in the last teaching section were cut.
+
+### Findings and what changed
+
+| Finding | Change |
+| --- | --- |
+| Shared decision, visual-6, visual-7, teaching-7 | `render.mjs` history: a waiting statement keeps its row ("waiting for X…", then "waited for X" once resolved); its result gets its own row at the time it arrives, after the commit that released it, with the statement dimmed and "finished after the wait:". No height cap and no scroll-to-bottom (`ScheduleFigure.astro`). Phones keep both lanes. Figure 2's lead-in now builds on the introduction's race (both read before either writes) and asks the reader to predict the protections; the race itself is shown as the option "already seen". |
+| visual-9 | Committed tables stack below the history at every width and sit side by side with flex-wrap; no `.sched` overflow at 1280 or 375 px in any option. |
+| practitioner-3 (correctness) | Figure 5 (was 4) has two lanes, the first attempt and the service's repeat, and four options: Book again (committed, repeat says full); Look up R8 first (COMMIT still on its way; lookup finds nothing, take-first repeat waits and then says full); Record R8 first (repeat's insert waits on the uncommitted R8, then 23505 tells the service Mina is booked); Record R8 first, attempt lost (repeat books once). The booking listing now records R8 before taking the place, and the prose says a missing R8 means only "not committed so far", that the repeat must meet the first attempt through `request_id`, and that the wait must be bounded and treated as "not known yet", handing the full protocol to a22. Outcomes-table row changed. `verify.mjs` gained the `commit-held` step and an in-flight check that holds a COMMIT in the SyncRep wait (`synchronous_standby_names = 'ghost'`, reset in `finally`), reproducing the reviewer's case for both booking orders. |
+| editorial-8 | Plain noun headings, every registry anchor kept: Invariants; Transactions, autocommit and ACID; Constraints; Lost updates; Conditional updates; Repeatable Read and write skew; Choosing a protection; The complete booking and version checks; Rules that span several rows; Isolation levels; Snapshots, versions and locks; Serializable; How engines differ (new h3, `#how-engines-differ`); Aborts and deadlocks; Retrying a transaction; A lost reply to COMMIT; Durability; Emails and other external effects; Testing a protection; Where the results come from (new h2, `#where-the-results-come-from`). Each section's claim moved into its first sentences where the old heading carried it. |
+| editorial-9, editorial-11 | Every onward pointer is an ordinary sentence naming the article ("the article on locks…") with the link on a noun phrase for what the reader will find. Opening link is "the introduction's section on transactions" (live collection URL, anchor unchanged). |
+| editorial-10 | Opening short answer rewritten one idea per sentence; "domain answer" becomes "an answer about the data"; the "decides from the committed row" paragraph cut; engine lead-in rewritten (see editorial-13); "A protection is an argument" rewritten as what the argument contains; the load-test sentence split and moved to the results section. |
+| teaching-4, editorial-14 | Counting variation cut to its one point (a row lock covers rows that exist; a new booking is a new row), with the run handed to a18 at `#cover-every-change-that-could-invalidate-the-decision`. No request numbers in prose; `verify.mjs` uses R13 and R14 as the example record says. The `count(*) FOR UPDATE` aside was dropped. |
+| visual-8 | The anomaly table and the visibility table became labelled cards (`.cards`/`.card`, shared with the engine cards). The outcomes (3 columns), choosing (3) and email (2) tables stay tables. |
+| visual-10 | All listing lines, comments included, are 72 characters or fewer; no listing overflows at 1280 px. At 375 px listings scroll inside their block, as the Sql component does elsewhere. |
+| visual-11 | `instructors` marks `class_id` PK FK and `person` PK in the opening table and in Figure 3. |
+| practitioner-11 | Load results reported as the recorded run (392 of 400 accepted, overbooked in every round; two-client test 100 of 100), with the earlier run's 98 of 100 as the variation. |
+| practitioner-12 | Figure 3 option "Serializable, repeat only the write"; prose says the refused statement was COMMIT and the application repeated only its write. |
+| practitioner-13 | `innodb_rollback_on_timeout` attached to lock-wait timeouts only. InnoDB error scope is said once per place: duplicate key (statement) in the transactions section, deadlock and timeout in the aborts section. |
+| practitioner-14 | Durability paragraph adds that the promise holds only if the disks honour flushes, linking PostgreSQL's reliability page (added to Sources). |
+| teaching-5, editorial-15 | "Non-repeatable read"; the Phantom card says a rerun is stable at Repeatable Read but new rows can still break a checked rule (write skew). "Serialisable" for the concept (prose and SQLite card), "Serializable" for the level. NOWAIT, `lock_timeout`, `statement_timeout`, `fsync` and synchronous standby glossed where they first appear. |
+| teaching-6 | New Figure 4, the swap from the example record: opposite order (one 40P01, here Tariq's) and ascending order (both commit), in the shared history form with lane heads stating which class rows each move holds. The old prose-only deadlock check in `verify.mjs` was replaced by the figure replay; the conditional-update-does-not-wait check is kept separately. Full protocol handed to a18. |
+| teaching-8 | Opening says which introduction section it builds on and that terms are explained as they come; "session" defined in the example paragraph; error codes explained before Figure 1; waiting and row locks explained in the constraints section where the first wait (R11 on R10's key) occurs. |
+| editorial-12 | Error-code explanation moved before its first use; DDL and sequence aside reframed as "what a rollback does not undo"; savepoint-lock parenthesis cut; freeing-a-place paragraph cut; Figure 1 caption sentence about simultaneous clicks removed. |
+| editorial-13 | Engine cards moved under their own h3, "How engines differ", whose lead-in says the PostgreSQL cards are the baseline and that the SQLite cards assume WAL mode. |
+| editorial-16 | "Verification script" throughout (also in the script's own comments and database name); the run record, downloads and how to run moved to "Where the results come from"; provenance stated once there and in the figure kind line rather than in each caption and paragraph. The port number from this setup is gone from the page. |
+
+### Passages restructured beyond a finding
+
+- The constraints section now carries the first explanation of waiting and row locks (teaching-8), so the R10/R11 paragraph was rewritten as a supposed case rather than a run report.
+- "Rules that span several rows": the three approaches are now named first, second and third consistently after the counting paragraph was cut.
+- The aborts section's opening was reordered: outcomes table, InnoDB scope, then the deadlock figure and the move listing.
+- The lost-reply section was rewritten in full (practitioner-3) and the complete-booking section's listing and outcome paragraph changed to match the record-first order.
+- "Testing a protection" keeps only the method and the load-test lesson; the results section is new.
+
+### Continuity pass
+
+Terms, in reading order (first use → where explained):
+
+| Term | First use | Explained |
+| --- | --- | --- |
+| transaction | opening | opening ("makes a group of changes commit together or not at all"); detail in Transactions |
+| Serializable (level) | opening | same sentence; detail in Serializable |
+| session | example paragraph | same paragraph |
+| invariant | Invariants | same sentence |
+| autocommit | Transactions | same paragraph |
+| error code, 23505 | before Figure 1 | same paragraph |
+| 25P02 | after Figure 1 | same sentence |
+| BEGIN / COMMIT / ROLLBACK | Transactions (opening says "a commit" in plain words) | Transactions |
+| ACID letters, savepoint | Transactions | in place |
+| sequence, `nextval` | Transactions | glossed in place |
+| wait, row lock | Constraints | same paragraph |
+| history, lane, serial order | Lost updates | in place, before Figure 2 |
+| Read Committed, isolation level | Lost updates, before Figure 2 | same paragraph |
+| Repeatable Read | Figure 2 lead-in (named as "a stricter level, explained below") | Repeatable Read and write skew |
+| 23514, 40001 | Conditional updates / RR | in place |
+| snapshot, write skew, snapshot isolation | RR section | in place |
+| guard row, `FOR UPDATE` | Rules that span several rows | in place |
+| version check | Complete booking | in place |
+| anomaly names | Isolation levels cards | each card |
+| serialisable (concept) | Isolation levels | in place |
+| MVCC | Snapshots | in place |
+| SSI | Serializable | in place |
+| WAL mode, deferred BEGIN, BEGIN IMMEDIATE | How engines differ | lead-in and card |
+| deadlock, 40P01, `deadlock_timeout` | outcomes table / Aborts | table row and following paragraph |
+| `lock_timeout`, `statement_timeout`, NOWAIT, SKIP LOCKED | outcomes table / Retrying | glossed in table and paragraph |
+| `innodb_rollback_on_timeout` | Aborts | in place |
+| hot row | Retrying | in place |
+| write-ahead log, `synchronous_commit`, `fsync` | Durability (WAL earlier only as SQLite's mode name, glossed there) | in place |
+| outbox | email table | same row |
+| `pg_stat_activity` | Testing | in place |
+| synchronous standby | Where the results come from | glossed in place |
+
+Fixed during the pass: "COMMIT" in the opening became "a commit"; sequence glossed; Repeatable Read named before Figure 2's last option; "request id" in the outcomes table became `request_id`; the results section's check list names Mina's clicks and the two-statement report instead of shorthand; "synchronous standby" glossed.
+
+One name per thing: option labels quoted in prose match the buttons (Figure 3's renamed option included); "the service's repeat" and "first attempt" match Figure 5's lanes; "verification script" everywhere; conditional update, guard row, version check unchanged.
+
+Example check against `docs/coverage/relational-example.md`: starting rows, R7–R11 as recorded; the swap matches the record's extension (Mina moves R8 21→22, Tariq moves R7 22→21, after R8 holds class 21); load clients 101–120 appear only in the results section; the counting case uses R13/R14 in `verify.mjs` only. Outcomes agree across figures: R8 holds class 21 in Figures 2, 4 and 5. The record's request table still cites figure numbers from an earlier draft ("Figure 5" for the move, "Figure 3" for the double click); they now are Figure 4 and Figure 1 here. Not edited, as the record belongs to the orchestrator.
+
+### Checks run
+
+- `node verify.mjs --port 57632` on a disposable PostgreSQL 18.6 (initdb in the scratchpad, 127.0.0.1:57632): 299 checks, all passed (235 before). New: Figure 4 both options, Figure 5 four options with the held COMMIT, the in-flight SyncRep check for both booking orders (the server's warning "already committed locally" captured), R13/R14 counting check. `postgresql.auto.conf` confirmed empty afterwards. Load: read-then-write 392/400 accepted, overbooked 20/20; conditional 20 accepted, 0 overbooked; two clients 100/100.
+- `python3 -I verify-sqlite.py`: all passed on SQLite 3.54.0.
+- Rendered page on `pnpm astro dev --port 4532`, headless Chromium (Playwright 1.62.1; subagent browser panes are hidden): every option of every figure stepped to its end at 1280 and 375 px, light and dark. No `.sched` overflow, no history scroll, no committed table outside its card, no clipped cell, figure labels 1–5 in order, in-page anchors resolve, no console errors or warnings, no document overflow. At 375 px the listings scroll inside their blocks; the starting classes table now fits (phone padding reduced).
+- Contrast (computed against the painted background): all figure and card text 6.05:1 or higher in light, 6.15:1 or higher in dark.
+- Keyboard: option buttons and Next respond to Enter and Space with visible focus; Play advances on page timers; the text alternative includes every option.
+- Not run: `pnpm build` (instructed not to) and so the full-site link check; MySQL behaviour; the crash behaviour of `synchronous_commit = off`.
