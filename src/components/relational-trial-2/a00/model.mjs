@@ -369,6 +369,7 @@ export const liveChange = {
   oldInsert: "INSERT INTO orders (order_id, customer_id, placed_at, status)\nVALUES (105, 3, '2026-10-21 08:00+00', 'pending');",
   backfill: "UPDATE orders SET delivery_country = 'GB'\nWHERE delivery_country IS NULL;",
   contract: 'ALTER TABLE orders ALTER COLUMN delivery_country SET NOT NULL;',
+  stepBack: 'ALTER TABLE orders ALTER COLUMN delivery_country DROP NOT NULL;',
 };
 
 // ---------------------------------------------------------------- Figure 6

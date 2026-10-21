@@ -40,3 +40,16 @@ The version observed was PostgreSQL 18.6 (Homebrew) on aarch64-apple-darwin25.6.
 | The waiting `stock = stock - 1` update meets CHECK (stock >= 0) and is refused with 23514 | — | Observed, two concurrent sessions |
 | The left-join query keeps an order with no lines (order 105) with 0.00; inner joins drop it; before coalesce, order 103's paid and due are NULL | https://www.postgresql.org/docs/18/queries-table-expressions.html, https://www.postgresql.org/docs/18/functions-conditional.html | Observed |
 | Plan lines, estimates, bitmap index and heap scans, buffer counts that include child nodes | https://www.postgresql.org/docs/18/using-explain.html, https://www.postgresql.org/docs/18/planner-stats.html | Observed: every printed plan line matched the real EXPLAIN (ANALYZE, BUFFERS) output after normalising costs and widths; heap scan 3 pages = index 2 + table 1 |
+
+## Added in the r02 repairs (21 October 2026)
+
+| Claim | Source | Status |
+| --- | --- | --- |
+| Serializable guarantees the same effect as running the transactions one at a time in some order | https://www.postgresql.org/docs/18/transaction-iso.html | Fetched 21 Oct 2026 |
+| Repeatable Read sees a snapshot taken at the first non-transaction-control statement, and refuses a write to a row changed after it (40001, retry the whole transaction) | same page | Fetched; the 40001 refusal observed in r01's Repeatable Read case, still run by verify |
+| A statement wanting ACCESS EXCLUSIVE on `orders` waits for an open transaction that has read `orders`, and a later plain lookup of order 103 queues behind it | https://www.postgresql.org/docs/18/explicit-locking.html, https://www.postgresql.org/docs/18/sql-altertable.html | Observed: report session `BEGIN; SELECT … FROM orders` left open; the expand and a later lookup both showed wait event `Lock/relation` in `pg_stat_activity`; both completed when the report committed |
+| `lock_timeout` aborts a statement that waits longer than the limit to acquire a lock | https://www.postgresql.org/docs/18/runtime-config-client.html | Fetched; observed: with the report open again and `SET lock_timeout = '1s'`, the contract failed with `55P03: canceling statement due to lock timeout`, the queued lookup then succeeded while the report stayed idle in transaction, and a retry after the report committed succeeded |
+| `DROP NOT NULL` after the contract stage lets old code's inserts work again | https://www.postgresql.org/docs/18/sql-altertable.html | Observed: old-style insert of order 107 succeeded after `ALTER TABLE orders ALTER COLUMN delivery_country DROP NOT NULL` |
+| Figure 4: order 102's two blue mugs are shown, and after the read-then-write race orders 103 and 104 both hold the last mug | — | Observed: verify compares every P7 order line in the database, including (102, 2), with the lines the figure shows, and the verdict with the orders holding the last mug |
+| CockroachDB: a write commits once a majority of replicas agree (Raft) | https://docs.cockroachlabs.com/docs/stable/architecture/replication-layer | Fetched 21 Oct 2026 |
+| CockroachDB: surviving the loss of a region adds write latency of at least the round trip to the nearest other region | https://docs.cockroachlabs.com/docs/stable/multiregion-survival-goals | Fetched 21 Oct 2026; the article says only that cross-region agreement slows writes |

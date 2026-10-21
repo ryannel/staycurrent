@@ -298,3 +298,99 @@ One name per thing: "Read, then write" and "Conditional update" match the contro
 ### Word count
 
 `wc -w src/articles/relational-trial-2/a00.astro`: 6,265 before, 6,579 after. The growth comes from the in-flight explanation in section 5, reading the plans, the split isolation and engine paragraphs, the lock paragraph in section 7 and the distributed-database correction, partly offset by removing the child-contents endings, the duplicate data-design pointers, the separate due listing and the hard-coded plan strings.
+
+## r02 repairs (21 October 2026)
+
+A fresh writer repaired the article from "Accepted · a00" in `../r02/repair-decisions.md`, following staycurrent-revise, -continuity and -figures and the three reference articles. a03's committed components were read only through `git show 71b29a0:src/components/relational-trial-2/a03/…`; nothing in a03's folders, the shared components or the stepper was edited.
+
+### Findings and what changed
+
+| Findings | What changed |
+| --- | --- |
+| editorial-17, teaching-11, editorial-18 | The indexes section's set-up paragraph now gives only the scaled copy and what `EXPLAIN (ANALYZE, BUFFERS)` reports: the plan, "the steps it took to reach the rows, what each step actually did and how many pages it touched". The list of omissions is gone from it. The plan-reading paragraph is split in two. The first covers reading order, the sequential scan, `Buffers` and `hit`. The second covers the two row counts: actual rows, estimated rows, the planner and its statistics, and why a wide gap matters. It ends by saying that PostgreSQL prints the estimate among cost figures, that the plans here leave those and a few detail lines out, and that "estimated rows" is this article's label. "Running from statistics" no longer appears. |
+| teaching-9, practitioner-17 | Section 5 keeps the high-level answer. A lost reply leaves the outcome unknown, so the application looks order 103 up before acting. A missing row "is not quite proof that the first attempt failed, because on a slow network it may still be on its way". One sentence then hands over to a03's `#losing-the-reply-does-not-prove-rollback`, which "shows how a repeat that starts by inserting the same order number waits for such an attempt to finish, rather than racing it". The two paragraphs after Figure 5 are now one. The lead-in to the listing no longer says the insert comes first. Figure 5's step texts no longer explain insert-first or a claim-first repeat. |
+| practitioner-15, teaching-12, editorial-20 | The ACCESS EXCLUSIVE paragraph now sits directly after the stage table, before the backfill note. It links back to "Reading a row takes no row lock, as the section on transactions said". It says getting the lock can cost more than holding it: the statement waits for every open transaction that has used `orders`, and every later read and write queues behind it. It gives the observed run (report open; the column change and a later lookup of order 103 both waited) and recommends a short `lock_timeout` and a retry. The reversibility paragraph now states each of the article's own stages. The old code can run beside the new column, and after stage 5 `DROP NOT NULL` lets its inserts work again (new verify case). It then names the irreversible kind separately: contracting often ends by removing something no code reads, such as an old column, and only a backup restores dropped values. |
+| visual-14, visual-18 | Figures 1, 3, 4 and 5 (ShopFigure) now put the step label and explanation (`.t2-step`, one live region) directly above the transport, below the board, as a03 does. The largest distance from the top of the explanation to the bottom of Next is now 135 to 179 px at 1280 and 187 to 257 px at 375; it was up to 1,083 and 1,259 px. Histories follow a03's notation, copied into a00's own `render.mjs` and `figures.css`. A wait is a dashed gold left bar ("waiting for Mina…", then "waited for Mina"), with "still waiting" in the other lane. The resumed row shows the statement dimmed and "finished after the wait: X". This step's statements are outlined in `--control`. Errors have a coral bar. Changed values and rows are bold with a gold inset underline instead of a "new" tag. Option controls are pressed buttons (`aria-pressed`) in `--control`. |
+| visual-15 | Figure 4's mug lines now include order 102's line (2 × P7), taken from `m.orderItems`. Its verdict reads "Orders holding the last mug: 103 and 104" (wrong) or "103" (right). Verify compares every P7 line in the database with the lines shown, and checks the verdict value and its ok flag. |
+| practitioner-19, teaching-10 | Section 4: "the strictest, **Serializable**, promises the same result as if the transactions had run one at a time". Repeatable Read now "shows each transaction the data as it was at its first statement". The SQLite sentence now reads "gives every transaction Serializable, by letting only one transaction write at a time", so "serializably" is gone. |
+| teaching-13 | Section 9: "Each write waits for copies on several machines to agree, which slows it, most of all when those machines are in different regions, and there are more machines to run." CockroachDB's Replication layer and Multi-region survival goals pages are added to Sources. |
+| editorial-19 | Removed "The same race oversold the mug when each statement ran on its own without BEGIN." The paragraph now ends on "the gap between the application's read and its write". |
+| editorial-21 | The paragraph after Figure 6 now opens with its point: "Crash recovery and replicas keep every committed change, mistakes included." The crash sentence follows ("When the server was stopped abruptly, as a crash would stop it…"), and the restore sentence is split in two. The method sentence about a synchronous standby is removed from Sources. |
+| editorial-22 | Section 9's first paragraph no longer calls every section a contract. It says choosing means writing down what the application needs in each area the article covered, then testing candidates against that list. |
+| visual-17 | The refusals table's constraint names break only after underscores (`_<wbr>`, with `overflow-wrap: normal` on those cells). Checked at 375 px. |
+
+### Restructured beyond the findings
+
+- **Option controls in Figures 2, 3 and 6.** These became pressed-button groups too (KeysFigure, RecoveryFigure and ShopFigure), so the article uses one control style. Previously they were radio fieldsets.
+- **Figure 2 key marks.** These are plain small text, as in a03, and no longer boxed.
+- **Figure 3 changed cells.** These use the same underline as other changed values.
+- **Figure 5 step texts.**
+  - Step 2 no longer says "inserted first".
+  - The before-COMMIT ending reads: "With no order 103 to find, the application runs the whole transaction again from BEGIN, with the same order number. The first attempt really was rolled back, so this one commits, once…" The earlier wording claimed the application knew of the rollback.
+  - The after-COMMIT ending reads: "The lookup finds order 103 committed, so the application confirms it…"
+- **Figure 4 step text.** "Two orders now hold the shop's last mug"; the ROLLBACK result reads "tells Tariq: sold out".
+- **Section 4 isolation paragraph.** Rewritten around Serializable and Repeatable Read (above). The engine-defaults paragraph changed only in its SQLite sentence.
+- **Section 5 lead-in.** "Mina's order is one transaction:".
+- **Recovery opening.** The first rewrite, "Recovery brings back committed changes, mistakes included", contradicted the paragraph's own point that a restore undoes the mistake. On reread it became "Crash recovery and replicas keep every committed change…".
+- **Sources.**
+  - The Transaction isolation entry adds Serializable's guarantee and Repeatable Read's snapshot.
+  - The ALTER TABLE entry adds Client connection defaults (`lock_timeout`).
+  - A CockroachDB entry is added.
+  - The standby method sentence is removed.
+- **model.mjs.** Gains `liveChange.stepBack` (`DROP NOT NULL`) for verify.
+
+### Continuity term list (reading order: first use → explanation)
+
+Unchanged from r01 except as follows:
+
+- **Serializable.** Section 4, defined in the same sentence ("the same result as if the transactions had run one at a time").
+- **Repeatable Read.** Same paragraph, glossed by what it shows and what it refuses.
+- **Estimated rows, planner, statistics.** Second plan-reading paragraph. All three are defined there, and "estimated rows" is named as the article's label.
+- **Row lock.** Section 7 reuses the lock from section 4 ("Reading a row takes no row lock, as the section on transactions said").
+- **ACCESS EXCLUSIVE lock.** Section 7, first named as "PostgreSQL's strongest table lock", directly after the table that describes it as "a lock on the whole table".
+- **`lock_timeout`.** Section 7, glossed in the same sentence ("makes it give up rather than hold up checkout").
+- **`DROP NOT NULL`.** Section 7, glossed by its effect.
+- **Backup.** Plain use in section 7, before base backup is defined in section 8.
+- **Removed from the article:** "duplicate key" in section 5 and the insert-first and claim-first terms, now that the in-flight case belongs to a03. The 23505 row of the refusals table still defines a duplicate key.
+
+One name per thing:
+
+- **Figure controls.** "Read, then write" and "Conditional update" in Figure 4; "Reply arrives", "Breaks before COMMIT" and "Breaks after COMMIT" in Figure 5. Each matches the prose.
+- **Wait notation.** "waiting for Mina" and "waited for Mina" match a03's wait wording.
+- **The example.** Order 102 (Tariq, 2 × blue mug), order 104 (Tariq's race order), order 107 (the old-code insert after `DROP NOT NULL`, verify only) and the 10:09, 10:10 and 10:15 times agree with `docs/coverage/relational-example.md` and Figure 2.
+
+### Checks run
+
+- **Verification script.** `TMPDIR=<scratch>/r02-revise-a00/tmp A00_PG_PORT=57651 A00_EVIDENCE=… node src/components/relational-trial-2/a00/verify.mjs` gave **PASS, 290 checks on PostgreSQL 18.6 (Homebrew)**; the baseline was 268. It was rerun after the last scene edit with the same result. New cases:
+  - **Figure 4's lines.** The P7 lines shown, including (102, 2), match every P7 line in the database, and the verdict value and ok flag match the orders holding the last mug.
+  - **Going back after stage 5.** After the contract stage, `DROP NOT NULL` lets the old insert of order 107 succeed.
+  - **Lock queue.** The report session holds `orders` open. The expand waits, and a lookup issued after it queues; both show `Lock/relation`. Both complete (`103|pending`) once the report commits. After the backfill, with the report open again and `SET lock_timeout = '1s'`, the contract fails with `55P03`. The queued lookup then succeeds while the report is still idle in transaction, and a retry after the report commits succeeds.
+  - **Server clean-up.** Afterwards the server was stopped, the temporary directory was empty and nothing listened on 57651.
+- **Rendering.** The site ran under `pnpm astro dev --port 4551`. Checks used headless Chromium: Playwright's chrome-headless-shell 1234, driven over CDP, because the browser pane is hidden for subagents. They covered 375 and 1280 px, light and dark.
+  - **Stepping.** Every option of Figures 1, 3, 4 and 5 was stepped from the first step to the last, measuring the distance from the explanation to Next (figures above). There was no figure or table overflow at any step and no horizontal page scroll. No text in the figures or the refusals table fell below 4.5:1 contrast; aria-disabled controls were excluded. There were no console errors.
+  - **Screenshots.** These were read for Figure 1 (375), Figure 2 (1280), Figure 4 (both options), Figure 5 after COMMIT (1280 dark), Figure 6 (375 dark) and the refusals table (375).
+  - **Keyboard.** Enter and Space on Figure 4's Next advance (2/7, then 3/7) and keep focus. Space on an option button switches it (`aria-pressed="true"`) and keeps focus, and so does Enter on Figure 6's buttons. Back is aria-disabled at the first step.
+  - **Play timing.** Measured on Figure 1 with the page's own clock (`performance.now`): holds of 8.8, 16.0, 12.1, 11.5 and 10.1 s, set by the shared stepper's changed-text rule. It ends on Replay.
+  - **Edited text.** After the reread edits, Figure 5's before-COMMIT last step, the recovery paragraph and the hand-off sentence were confirmed on the page at 375 px.
+- **Documentation.** Fetched again on 21 October 2026 for the new claims: PostgreSQL Transaction isolation (Serializable; the Repeatable Read snapshot at the first non-transaction-control statement), Client connection defaults (`lock_timeout`) and the CockroachDB pages. They are recorded in `sources.md` under "Added in the r02 repairs".
+- **Not run.** `pnpm build` and `pnpm check`, as instructed.
+
+### Not repaired, or not checkable
+
+- **The NOT VALID not-null route.** practitioner-15's optional suggestion was to note that PostgreSQL 18 can add a not-null constraint `NOT VALID` and validate it under a weaker lock. It is left to Changing a live database, which the paragraph's closing link now promises covers "how to keep those table locks short". Adding it here would put a second mechanism into a paragraph that already introduces one.
+- **The in-flight cases in verify.** The `synchronous_standby_names` cases stay in verify as evidence for the hand-off sentence, which says a repeat that inserts the same order number waits for an attempt in flight. The article no longer teaches the mechanism.
+- **The "Time runs down the table" caption.** It is kept above the histories.
+- **Astro dev toolbar.** It appears in the screenshots and is a dev-server artefact.
+- **Earlier limits.** As in r01, replica promotion was not run, the lost reply is modelled, and no visible-window check was possible.
+
+### Word count
+
+`wc -w src/articles/relational-trial-2/a00.astro`: 6,579 before, 6,732 after. The growth comes from:
+
+- the lock-queue explanation and `lock_timeout` remedy;
+- the split estimate paragraph;
+- the per-stage reversibility;
+- the costs of a distributed database;
+- the new Sources entries.
+
+The in-flight paragraph cut from section 5, the trimming list and the autocommit sentence partly offset it.

@@ -233,8 +233,14 @@ try {
       const frames = scenes.race.frames(name);
       const shownStock = frames.at(-1).tables.find(t => t.name === 'products').rows[0].cells.at(-1);
       ok(assert.equal, Number(shownStock), final.p7);
-      const shownOrders = frames.at(-1).tables.find(t => t.name === 'order_items').rows.filter(r => r.state !== 'gone').map(r => Number(r.cells[0]));
-      ok(assert.deepEqual, shownOrders, final.holding);
+      // The figure's blue-mug lines, order 102's earlier sale included, against every P7 line in the database.
+      const shownLines = frames.at(-1).tables.find(t => t.name === 'order_items').rows.filter(r => r.state !== 'gone').map(r => [Number(r.cells[0]), Number(r.cells[3])]);
+      const realLines = json(db, "SELECT order_id, quantity FROM order_items WHERE product_id = 'P7' ORDER BY order_id").map(r => [r.order_id, r.quantity]);
+      ok(assert.deepEqual, shownLines, realLines);
+      ok(assert.deepEqual, realLines[0], [102, 2]);
+      const verdict = frames.at(-1).checks[0];
+      ok(assert.equal, verdict.value, final.holding.join(' and '));
+      ok(assert.equal, verdict.ok, final.holding.length === 1);
     }
   }
 
@@ -427,6 +433,9 @@ try {
     ok(assert.match, (await s.run(m.liveChange.contract)).out, /ALTER TABLE/);
     const oldAfter = await s.run(m.liveChange.oldInsert.replace('105', '106'));
     ok(assert.equal, oldAfter.code, '23502');
+    // Stepping back from stage 5: DROP NOT NULL lets the old code's inserts work again.
+    ok(assert.match, (await s.run(m.liveChange.stepBack)).out, /ALTER TABLE/);
+    ok(assert.match, (await s.run(m.liveChange.oldInsert.replace('105', '107'))).out, /INSERT 0 1/);
     await s.close();
     // Both ALTER TABLE stages take an ACCESS EXCLUSIVE lock: a plain read waits.
     const t = fresh('shop_after');
@@ -447,6 +456,43 @@ try {
     }
     await writer.close(); await reader.close();
     evidence.cases.liveChangeLocks = locks;
+
+    // Getting the lock: the column change waits behind a report's open
+    // transaction, and a checkout lookup issued after it queues behind it.
+    // With lock_timeout the change gives up (55P03) and the lookup goes ahead
+    // while the report is still open; retried later, the change succeeds.
+    const q = fresh('shop_after');
+    const report = new Session(q); const change = new Session(q); const checkout = new Session(q); const admin = new Session(q);
+    const changePid = await change.pid(); const checkoutPid = await checkout.pid();
+    await report.run('BEGIN;');
+    ok(assert.match, (await report.run('SELECT count(*) FROM orders;')).out, /^\d+$/);
+    const expand = change.run(m.liveChange.expand);
+    ok(assert.equal, await settled(expand), false, 'the column change should wait for the open report');
+    const lookup = checkout.run(m.lookup103);
+    ok(assert.equal, await settled(lookup), false, 'a lookup issued after the change should queue behind it');
+    const waiting = (await admin.run(`SELECT pid, wait_event_type || '/' || wait_event FROM pg_stat_activity WHERE pid IN (${changePid}, ${checkoutPid}) ORDER BY pid;`)).out.split('\n');
+    ok(assert.equal, waiting.length, 2);
+    for (const line of waiting) ok(assert.match, line, /\|Lock\/relation$/);
+    await report.run('COMMIT;');
+    ok(assert.match, (await expand).out, /ALTER TABLE/);
+    ok(assert.equal, (await lookup).out, '103|pending');
+    await change.run(m.liveChange.backfill);
+    await report.run('BEGIN;');
+    await report.run('SELECT count(*) FROM orders;');
+    await change.run("SET lock_timeout = '1s';");
+    const contract = change.run(m.liveChange.contract);
+    ok(assert.equal, await settled(contract, 300), false, 'the contract should wait for the open report');
+    const lookup2 = checkout.run(m.lookup103);
+    ok(assert.equal, await settled(lookup2, 300), false, 'the lookup should queue behind the waiting contract');
+    const gaveUp = await contract;
+    ok(assert.equal, gaveUp.code, '55P03');
+    ok(assert.equal, (await lookup2).out, '103|pending', 'the lookup goes ahead once the change gives up');
+    const reportStillOpen = (await admin.run(`SELECT state FROM pg_stat_activity WHERE pid = ${await report.pid()};`)).out;
+    ok(assert.equal, reportStillOpen, 'idle in transaction');
+    await report.run('COMMIT;');
+    ok(assert.match, (await change.run(m.liveChange.contract)).out, /ALTER TABLE/);
+    await report.close(); await change.close(); await checkout.close(); await admin.close();
+    evidence.cases.lockQueue = { waitingBehindReport: waiting, timedOut: gaveUp.err.split('\n')[0], lookupWhileReportOpen: '103|pending', reportStillOpen };
     evidence.cases.liveChange = { oneStep: oneStep.err.split('\n')[0], earlyContract: early.err.split('\n')[0], oldWriterAfterContract: oldAfter.err.split('\n')[0] };
   }
 

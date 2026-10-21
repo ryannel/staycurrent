@@ -148,6 +148,8 @@ async function replay(figureId, option) {
   const lane = async id => (sessions[id] && !sessions[id].closed ? sessions[id] : (sessions[id] = await connectAs(`${figureId}-${option.id}-${id}`)));
   for (const [index, step] of option.steps.entries()) {
     const label = `Figure ${figureId} · ${option.label} · step ${index + 1}${step.show ? ` (${step.lane}: ${step.show})` : ''}`;
+    // A new request in the same lane gets its own session, as Figure 1's R11 does.
+    if (step.fresh && sessions[step.lane]) { sessions[step.lane].close(); delete sessions[step.lane]; }
     if (step.lane && step.resume) {
       const outcome = await timeout(pending[step.lane], 4000);
       if (outcome.pending) check(false, label, 'the waiting statement did not finish');
@@ -392,6 +394,87 @@ async function inFlightCommit() {
   }
 }
 
+async function guardRowLevels() {
+  // "Rules that span several rows": the guard-row protocol relies on Read Committed's
+  // new snapshot for the count after the wait. At Repeatable Read the snapshot comes
+  // from the locking statement, before the wait, and a lock on a row nobody changed
+  // raises no 40001, so both requests commit. Making the guard a write restores a 40001.
+  const guards = [
+    { name: 'lock class 21 FOR UPDATE', guard: sql.lockClass(21), expectRavi: 'commits' },
+    { name: 'guard as an UPDATE of class 21', guard: 'UPDATE classes SET remaining = remaining WHERE class_id = 21;', expectRavi: '40001' },
+  ];
+  for (const g of guards) {
+    await reset();
+    const lena = await connectAs('guard-rr-lena'); const ravi = await connectAs('guard-rr-ravi');
+    await lena.query(`BEGIN ISOLATION LEVEL REPEATABLE READ; ${g.guard}`);
+    const p = ravi.send(`BEGIN ISOLATION LEVEL REPEATABLE READ; ${g.guard}`);
+    const waited = await waitingOnLock(ravi);
+    const lenaCount = (await lena.query(sql.countAvailable)).rows[0][0];
+    await lena.query(`${sql.leave('Lena')} COMMIT;`);
+    const got = (await p).at(-1);
+    if (g.expectRavi === 'commits') {
+      const raviCount = got.error ? null : (await ravi.query(sql.countAvailable)).rows[0][0];
+      const end = raviCount === 2 ? (await ravi.send(`${sql.leave('Ravi')} COMMIT;`)).at(-1) : (await ravi.send('ROLLBACK;')).at(-1);
+      const db = await committed();
+      const left = db.instructors.filter(i => i.available).length;
+      check(waited && lenaCount === 2 && !got.error && raviCount === 2 && end.tag === 'COMMIT' && left === 0,
+        `Guard row at Repeatable Read · ${g.name}: Ravi waits, gets the lock with no error, still counts 2, and both commit, leaving class 21 with nobody`,
+        `waited ${waited}, Lena counted ${lenaCount}, Ravi lock ${got.error ?? 'ok'}, Ravi counted ${raviCount}, end ${end.tag ?? end.error}, available ${left}`);
+    } else {
+      await ravi.send('ROLLBACK;');
+      const db = await committed();
+      const left = db.instructors.filter(i => i.available).length;
+      check(waited && got.error === '40001' && left === 1,
+        `Guard row at Repeatable Read · ${g.name}: Ravi waits, then fails with 40001; class 21 keeps Ravi`,
+        `waited ${waited}, Ravi ${got.error ?? got.tag}, available ${left}`);
+    }
+    lena.close(); ravi.close();
+  }
+}
+
+async function phantomAtRepeatableRead() {
+  // The Phantom card: at Repeatable Read a rerun sees the same rows, yet another
+  // transaction can commit a new row that breaks a rule checked from that view.
+  // Stated variation: class 22's capacity is 2. Mina (R13) and Edda (R14) count bookings.
+  await reset();
+  await observer.query('UPDATE classes SET capacity = 2, remaining = 1 WHERE class_id = 22;');
+  const mina = await connectAs('phantom-mina'); const edda = await connectAs('phantom-edda');
+  const count = 'SELECT count(*) FROM reservations WHERE class_id = 22;';
+  const m = (await mina.query(`BEGIN ISOLATION LEVEL REPEATABLE READ; ${count}`)).rows[0][0];
+  const e1 = (await edda.query(`BEGIN ISOLATION LEVEL REPEATABLE READ; ${count}`)).rows[0][0];
+  await mina.query(`${sql.book('R13', 22, 1)} COMMIT;`);
+  const e2 = (await edda.query(count)).rows[0][0];
+  const end = (await edda.send(`${sql.book('R14', 22, 3)} COMMIT;`)).at(-1);
+  const n = (await observer.query(count)).rows[0][0];
+  check(m === 1 && e1 === 1 && e2 === 1 && end.tag === 'COMMIT' && n === 3,
+    'Phantom card · at Repeatable Read Edda’s rerun still counts 1, and her new booking commits beside Mina’s: three bookings for capacity 2, no error',
+    `Mina ${m}, Edda ${e1} then ${e2}, end ${end.tag ?? end.error}, bookings ${n}`);
+  mina.close(); edda.close();
+}
+
+async function abandonedAttempt() {
+  // "A lost reply to COMMIT": an open first attempt holds class 21's row, so every other
+  // booking waits behind it. Server-side limits end such a transaction; both are off by default.
+  const defaults = (await observer.query("SELECT name, boot_val FROM pg_settings WHERE name IN ('idle_in_transaction_session_timeout', 'transaction_timeout') ORDER BY name;")).rows;
+  check(same(defaults, [['idle_in_transaction_session_timeout', 0], ['transaction_timeout', 0]]), 'Abandoned attempt · idle_in_transaction_session_timeout and transaction_timeout are off (0) by default', JSON.stringify(defaults));
+  for (const setting of ['idle_in_transaction_session_timeout', 'transaction_timeout']) {
+    await reset();
+    const first = await connectAs(`abandoned-${setting}`); const edda = await connectAs('abandoned-edda');
+    await first.query(`SET ${setting} = '600ms';`);
+    await first.query(`BEGIN; ${sql.book('R8', 21, 1)} ${sql.take(21)}`); // then the client goes quiet
+    const p = edda.send(`BEGIN; ${sql.take(21)}`);
+    const waited = await waitingOnLock(edda, 400);
+    const outcome = await timeout(p, 3000);
+    const got = outcome.pending ? null : outcome.value.at(-1);
+    await edda.send('ROLLBACK;');
+    await sleep(100);
+    check(waited && got && same(got.rows, [[0]]) && first.closed,
+      `Abandoned attempt · ${setting}: Edda’s booking waits behind the open attempt until the server ends that session, then takes the place`,
+      `waited ${waited}, Edda ${got ? JSON.stringify(got.rows ?? got.error) : 'still waiting'}, first session closed ${first.closed}`);
+    edda.close();
+  }
+}
+
 async function versionCheck() {
   // A decision made from an earlier read: change only if the value is still the one read.
   await reset();
@@ -506,6 +589,9 @@ try {
   await ddlAndSequences();
   await countingVariation();
   await conditionalDoesNotWait();
+  await guardRowLevels();
+  await phantomAtRepeatableRead();
+  await abandonedAttempt();
   await inFlightCommit();
   await versionCheck();
   await fracturedReport();

@@ -239,3 +239,57 @@ Example check against `docs/coverage/relational-example.md`: starting rows, R7�
 - Contrast (computed against the painted background): all figure and card text 6.05:1 or higher in light, 6.15:1 or higher in dark.
 - Keyboard: option buttons and Next respond to Enter and Space with visible focus; Play advances on page timers; the text alternative includes every option.
 - Not run: `pnpm build` (instructed not to) and so the full-site link check; MySQL behaviour; the crash behaviour of `synchronous_commit = off`.
+
+## r02 repairs
+
+Fresh reviser, 21 October 2026, from `docs/article-work/relational-skill-trial-2026-10-21/r02/repair-decisions.md` ("Accepted · a03"), applied to 71b29a0 with staycurrent-revise, -continuity, -figures and the three reference articles. The decisions asked for the smallest change that solves each problem. Word count (`wc -w` on `src/articles/relational-trial-2/a03.astro`): 8,536 before, 8,812 after. About half the growth is article titles replacing the shorter "the article on …" descriptions; the rest is the guard-row isolation paragraph, the abandoned-attempt sentences and one Sources entry.
+
+### Findings and what changed
+
+| Finding | Change |
+| --- | --- |
+| editorial-23 (required) | Every pointer to another article now names it by its registry title and links to it, with the anchor the old link used: Relational databases (and its section Transactions and competing buyers), Expressing rules with constraints, Changing data with SQL, Designing changes that coordinate with locks (four times, counting the reading list), Reading and testing isolation guarantees, How stored rows become physical work, Improving performance under concurrent load, Recovering database requests safely (two places), Operating replicas and partitioned data, Backing up and restoring relational data, Connecting transactions to background work and events, Managing connections and transaction lifetimes. The opening names the introduction by title, so later "the introduction" is a back-reference. One second mention in the same section reads "The same article works through complete guard-row protocols". The reading list in Sources uses the titles too. |
+| practitioner-16, editorial-28 (required) | "Choosing a protection", last row: "A shared row that every writer locks before reading, at Read Committed; …". "Rules that span several rows": a new paragraph straight after Lena's listing says the count's new snapshot is what makes the protocol work; at Repeatable Read the snapshot comes from the lock, before the wait, so Ravi still counts two, getting a lock on an unchanged row raises no 40001, and both commit with no error. Run it at Read Committed, or at Repeatable Read make the first statement a real change to the class row (an `UPDATE`), which then fails with 40001. The "locking the rows you counted" paragraph no longer switches to bookings as a counter-argument for rule 3: the guard-row paragraph says the guard row also works for rules that count rows which can be added, because a row lock covers only existing rows, and hands the bookings case to a18. Phantom card: "Another transaction can still commit a new row, such as a booking your count missed, that breaks a rule you checked" (no longer cites write skew, whose example updated existing rows). New verify cases for all three. |
+| practitioner-18 | "A lost reply to COMMIT": the first limit now says an open first attempt keeps class 21's row locked, so every booking for the class waits, not only the repeat; bound the repeat's wait with `lock_timeout`; PostgreSQL can end an abandoned transaction with `idle_in_transaction_session_timeout` or `transaction_timeout`, both off by default. The a22 pointer gains a link to its timeout table (`#establish-what-each-timeout-actually-limits`). PostgreSQL's client-defaults page added to Sources. New verify case. |
+| editorial-25 | The paragraph before Figure 2 defines isolation level first, then says "The first three options run at PostgreSQL's default level, Read Committed", calls the first option "the race just described" (the paragraph before describes it), and keeps "The last runs the same code at … Repeatable Read". |
+| teaching-14 | Figure 1's lane is "Mina's two requests, R10 then R11" and its caption opens "Each request has its own session, and R11 starts only after R10 has finished." The verification script now gives R11 its own connection (`fresh` on the step), so the caption describes the recorded run. The constraints paragraph adds: "In Figure 1, R11 started after R10 had finished, but two quick clicks can overlap, because each request has its own session." |
+| teaching-15, editorial-30, visual-19 | Figure 5: the prose before it says the first two options use a booking that takes the place before recording R8, as many applications would. The fourth step ("Whatever happened, the service sees the same thing") is gone; its point is the last sentence of each option's COMMIT step ("All the service sees is a broken connection and no reply."), so every step now changes the board. The held step says the COMMIT had already left and is still on its way to, or being processed by, the database; the later step reads "the COMMIT completes" / "The COMMIT sent before the failure now completes on the server". Option label "Record R8 first; COMMIT never arrives", and the prose after the figure matches it. |
+
+### Passages restructured beyond a finding
+
+- "Rules that span several rows" was reordered: listing, then the isolation-level paragraph, then the guard-row paragraph (now carrying the new-rows limit), then the participation paragraph, which took the complete-protocols pointer that used to close the "third approach" paragraph. The third-approach paragraph is now two sentences.
+- "A lost reply to COMMIT": the "Two limits remain" paragraph is now two paragraphs, one per limit.
+- "Where the results come from": check count (299 → 301), the recorded load result (all 400 read-then-write attempts accepted in this run), and the list of prose claims checked (adds the guard row at Repeatable Read and the abandoned attempt).
+- `idle_in_transaction_session_timeout` carries `<wbr />` after each underscore: unbroken, it widened the page to 388 px at 375 px.
+
+### Continuity pass
+
+Terms touched by the repairs, in reading order (first use → where explained):
+
+| Term | First use | Explained |
+| --- | --- | --- |
+| session | example paragraph | same sentence; Figure 1 caption and the constraints paragraph now use it consistently (one session per request) |
+| isolation level | before Figure 2 | same sentence, now before Read Committed |
+| Read Committed | before Figure 2 | same sentence |
+| Repeatable Read, snapshot, 40001 | Figure 2 lead-in / RR section | RR section, before the guard-row isolation paragraph that relies on them |
+| `FOR UPDATE`, row lock | constraints (lock) / spanning rows | in place, before the new paragraph |
+| guard row | spanning rows | defined in the paragraph that first uses the term; the isolation paragraph before it says "this protocol" and "the class row" |
+| phantom | Isolation levels card | the card's own description |
+| `lock_timeout` | outcomes table | same row |
+| `idle_in_transaction_session_timeout`, `transaction_timeout` | lost-reply limits | same sentence ("end an abandoned transaction from the server side") |
+| article titles | throughout | each named by registry title with a link |
+
+One name per thing: Figure 5's option labels match the prose ("Book again", "Look up R8 first", "Record R8 first", "Record R8 first; COMMIT never arrives"); "first attempt" and "the service's repeat" match the lanes; "Designing changes that coordinate with locks" is the only name for a18; "the introduction" only after the opening names Relational databases.
+
+Example check against `docs/coverage/relational-example.md`: Figure 1 still R10 and R11 (Mina, class 22); the guard-row Repeatable Read case uses Lena and Ravi in class 21; the Phantom-card check uses the record's stated variation (class 22 capacity 2, Mina R13, Edda R14, three bookings); the abandoned-attempt check has Edda's unnumbered booking wait behind an open R8, verify-only. Outcomes across figures unchanged: R8 holds class 21 in Figures 2, 4 and 5.
+
+### Checks run
+
+- `node verify.mjs --port 57652` (Node 24.16.0) on a disposable PostgreSQL 18.6 (Homebrew, aarch64-apple-darwin25.6.0; `LC_ALL=C initdb --auth=trust -U postgres --locale=C` in the scratchpad; `pg_ctl -o "-p 57652 -c listen_addresses=127.0.0.1 -c unix_socket_directories=''"`): 301 checks, all passed. New: guard row at Repeatable Read with `FOR UPDATE` (Ravi waits, gets the lock without error, counts 2, both commit, 0 available) and with an `UPDATE` guard (Ravi waits, then 40001, Ravi kept); the Phantom card at Repeatable Read (rerun counts 1, three bookings for capacity 2, no error); the abandoned attempt (both timeouts boot at 0; with either set to 600 ms in the first session, Edda's booking waited behind the open attempt and took the place once the server ended that session); Figure 1 replayed with R11 on its own connection. Four lane-less Figure 5 steps are gone. A first run failed only the defaults check, which compared numbers with strings; fixed and rerun. Load in the recorded run: read-then-write 400/400 accepted, overbooked 20/20; conditional 20 accepted, 0 overbooked; two clients 100/100. Server stopped and its directory removed.
+- `python3 -I verify-sqlite.py`: 3 checks passed on SQLite 3.54.0 (unchanged).
+- Rendered page on `pnpm astro dev --port 4552` (stopped afterwards), checked in headless Chromium (chrome-headless-shell 1234 driven over CDP from Node; subagent browser panes are hidden, so timing comes from page timers): every option of every figure stepped to its end at 1280 and 375 px, light and dark; final rule checks match the verified expectations; no step leaves the board unchanged in any option (Figure 5's old step 4 was the only one); nothing overflows a figure; no document overflow at either width once the setting name could wrap; 41 on-site links, every anchor resolves; heading anchors unchanged and in registry order; no console errors or exceptions. Keyboard: focus on Figure 5's Next, Enter presses reach 8 / 8 with `aria-disabled="true"` and focus kept. Play on Figure 5 (Record R8 first) held steps 3.6, 6.4, 13.4, 10.5, 8.0 and 9.3 s. Screenshots of Figure 5's COMMIT step (two options), Figure 1 and the guard-row section inspected in both themes. No colours changed, so contrast was not remeasured.
+- Not run: `pnpm build` (instructed not to). `pnpm check` reads the existing `dist`, built before these edits, so it says nothing about them. The structural checks above were done on the dev page instead. MySQL not run, as before.
+
+### Not repaired
+
+The declined findings (editorial-24, -26, -27, -29, -31, -32, teaching-16, visual-16, visual-20) were left as the decisions record. The Repeatable Read engine card was left unchanged. The guard-row condition is stated where the reader chooses: in the choosing table and in the section.

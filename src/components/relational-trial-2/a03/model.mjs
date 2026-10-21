@@ -119,7 +119,8 @@ const RC = 'BEGIN ISOLATION LEVEL READ COMMITTED;';
 const RR = 'BEGIN ISOLATION LEVEL REPEATABLE READ;';
 const SER = 'BEGIN ISOLATION LEVEL SERIALIZABLE;';
 
-// Figure 1: Mina's double click in class 22, R10 then R11.
+// Figure 1: Mina's double click in class 22, R10 then R11. Each request has its own
+// session (`fresh` opens a new connection in verify.mjs); R11 starts after R10 ends.
 const twoClicks = transaction => build([
   { lane: null, text: 'Class 22 has two places left. Tariq holds R7. Mina clicks Book, then clicks again by mistake: requests R10 and R11.' },
   {
@@ -133,7 +134,7 @@ const twoClicks = transaction => build([
     text: 'R10 records Mina’s booking. Both of its changes are now committed, and the rule holds.',
   },
   {
-    lane: 'A', run: (transaction ? 'BEGIN; ' : '') + sql.take(22), show: 'Take a place in class 22 (R11)', out: 'remaining is now 0', expect: { rows: [[0]] },
+    lane: 'A', fresh: true, run: (transaction ? 'BEGIN; ' : '') + sql.take(22), show: 'Take a place in class 22 (R11)', out: 'remaining is now 0', expect: { rows: [[0]] },
     commit: transaction ? undefined : [apply.remaining(22, 0)], pending: transaction ? 'class 22 remaining 0' : '',
     text: transaction ? 'The second click, R11, starts its own transaction and takes another place.' : 'The second click, R11, takes another place, and that change commits at once.',
   },
@@ -276,32 +277,33 @@ const recordFirst = [
   { lane: 'A', run: `${RC} ${sql.book('R8', 21, 1)}`, show: 'BEGIN; insert R8', out: 'inserted', expect: { count: 1 }, pending: 'R8', text: 'This time the booking records R8 before anything else.' },
   { lane: 'A', run: sql.take(21), show: 'take a place in class 21', out: 'remaining is now 0', expect: { rows: [[0]] }, pending: 'R8 · class 21 remaining 0', text: 'Then it takes class 21’s last place.' },
 ];
+// Each option's COMMIT step ends with what the service sees, which is the same in all four.
+const unknown = 'All the service sees is a broken connection and no reply.';
 const lostCommit = {
-  done: { lane: 'A', run: 'COMMIT;', action: 'commit-then-drop', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', pending: '', commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)], text: 'The service sends COMMIT. The database commits R8, then the connection fails before the reply arrives.' },
-  held: { lane: 'A', action: 'commit-held', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', text: 'The service sends COMMIT and the connection fails. The COMMIT has not reached the database yet, so the first attempt is still open there.' },
-  never: { lane: 'A', run: 'COMMIT;', action: 'drop-before-commit', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', pending: '', text: 'The service sends COMMIT, but the connection fails before the database receives it. The database rolls the first attempt back.' },
+  done: { lane: 'A', run: 'COMMIT;', action: 'commit-then-drop', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', pending: '', commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)], text: `The service sends COMMIT. The database commits R8, then the connection fails before the reply arrives. ${unknown}` },
+  held: { lane: 'A', action: 'commit-held', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', text: `The service sends COMMIT, then its connection fails. The COMMIT had already left: it is still on its way to the database, or being processed there, so the first attempt is still open. ${unknown}` },
+  never: { lane: 'A', run: 'COMMIT;', action: 'drop-before-commit', show: 'COMMIT', out: 'no reply: connection lost', status: 'error', pending: '', text: `The service sends COMMIT, but the connection fails before the database receives it, so the database rolls the first attempt back. ${unknown}` },
 };
-const blind = { lane: null, text: 'Whatever happened, the service sees the same thing: a broken connection and no answer. Mina is still waiting.' };
-const arrives = { lane: 'A', run: 'COMMIT;', show: 'COMMIT reaches the database', out: 'committed', expect: { tag: 'COMMIT' }, pending: '', commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)], text: 'The first attempt’s COMMIT reaches the database late, and R8 commits.' };
+const arrives = { lane: 'A', run: 'COMMIT;', show: 'the COMMIT completes', out: 'committed', expect: { tag: 'COMMIT' }, pending: '', commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)], text: 'The COMMIT sent before the failure now completes on the server, and R8 commits.' };
 const reply = {
-  again: build([...placeFirst, lostCommit.done, blind,
+  again: build([...placeFirst, lostCommit.done,
     { lane: 'B', run: `${RC} ${sql.take(21)}`, show: 'BEGIN; take a place', out: 'no row: class full', expect: { rows: [] }, status: 'refused', text: 'The service treats the failure as a rollback and books again. No place is left, because R8 took it.' },
     { lane: 'B', run: 'ROLLBACK;', show: 'ROLLBACK', out: 'tells Mina: class full', expect: { tag: 'ROLLBACK' }, status: 'error', text: 'Mina is told the class is full, while the database holds her booking.' },
   ]),
-  lookup: build([...placeFirst, lostCommit.held, blind,
+  lookup: build([...placeFirst, lostCommit.held,
     { lane: 'B', run: sql.lookup('R8'), show: 'look up R8', out: 'not found', expect: { rows: [] }, text: 'The service looks R8 up first. It isn’t there. That means only that the first attempt hasn’t committed yet.' },
     { lane: 'B', run: `${RC} ${sql.take(21)}`, show: 'BEGIN; take a place', out: 'waiting for the first attempt', expect: { waits: true }, status: 'wait', text: 'So the service books again. Its update waits, because the first attempt has changed class 21’s row and hasn’t ended.' },
     arrives,
     { lane: 'B', resume: true, show: 'BEGIN; take a place', out: 'no row: class full', expect: { rows: [] }, status: 'refused', text: 'The waiting update checks its condition against the committed row. No place is left.' },
     { lane: 'B', run: 'ROLLBACK;', show: 'ROLLBACK', out: 'tells Mina: class full', expect: { tag: 'ROLLBACK' }, status: 'error', text: 'Mina is told the class is full, while R8 holds her place. The lookup didn’t help.' },
   ]),
-  claim: build([...recordFirst, lostCommit.held, blind,
+  claim: build([...recordFirst, lostCommit.held,
     { lane: 'B', run: `${RC} ${sql.book('R8', 21, 1)}`, show: 'BEGIN; insert R8', out: 'waiting for the first attempt', expect: { waits: true }, status: 'wait', text: 'The service books again with the same request, R8, which the booking records first. The insert waits, because the first attempt has written R8 and hasn’t ended.' },
     arrives,
     { lane: 'B', resume: true, show: 'BEGIN; insert R8', out: 'refused: R8 exists (23505)', expect: { error: '23505' }, status: 'refused', text: 'The waiting insert now fails: R8 exists. That error is the answer the service needed.' },
     { lane: 'B', run: 'ROLLBACK;', show: 'ROLLBACK', out: 'tells Mina: booked', expect: { tag: 'ROLLBACK' }, text: 'The first attempt committed, so Mina is told she is booked. Nothing was booked twice.' },
   ]),
-  'claim-lost': build([...recordFirst, lostCommit.never, blind,
+  'claim-lost': build([...recordFirst, lostCommit.never,
     { lane: 'B', run: `${RC} ${sql.book('R8', 21, 1)}`, show: 'BEGIN; insert R8', out: 'inserted', expect: { count: 1 }, pending: 'R8', text: 'The service books again with R8. The first attempt has been rolled back, so the insert goes ahead. Had it still been open, the insert would have waited for it.' },
     { lane: 'B', run: sql.take(21), show: 'take a place in class 21', out: 'remaining is now 0', expect: { rows: [[0]] }, pending: 'R8 · class 21 remaining 0', text: 'It takes the place.' },
     { lane: 'B', run: 'COMMIT;', show: 'COMMIT', out: 'committed: tells Mina booked', expect: { tag: 'COMMIT' }, pending: '', commit: [apply.remaining(21, 0), apply.book('R8', 21, 1)], text: 'R8 commits, once, and Mina is told she is booked.' },
@@ -311,7 +313,7 @@ const reply = {
 export const figures = {
   clicks: {
     title: 'Mina’s double click in class 22',
-    lanes: { A: 'Mina’s browser, R10 then R11' },
+    lanes: { A: 'Mina’s two requests, R10 then R11' },
     tables: ['classes', 'reservations'],
     initial: 'separate',
     options: [
@@ -364,7 +366,7 @@ export const figures = {
       { id: 'again', label: 'Book again', steps: reply.again },
       { id: 'lookup', label: 'Look up R8 first', steps: reply.lookup },
       { id: 'claim', label: 'Record R8 first', steps: reply.claim },
-      { id: 'claim-lost', label: 'Record R8 first; attempt lost', steps: reply['claim-lost'] },
+      { id: 'claim-lost', label: 'Record R8 first; COMMIT never arrives', steps: reply['claim-lost'] },
     ],
   },
 };

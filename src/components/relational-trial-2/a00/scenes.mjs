@@ -4,8 +4,10 @@
 //
 // A frame: { label, explanation, history?, tables, checks?, outcome? }
 //   history: { columns: [who], rows: [[entry | null, ...]] }, time running down
-//            entry: { text, result?, state?, plain? }
-//            state: 'new' | 'wait' | 'waited' | 'error'; plain: prose, not SQL
+//            entry: { text, result?, state?, plain?, current?, resumed?, blocked? }
+//            state: 'wait' | 'waited' | 'error'; plain: prose, not SQL;
+//            current: added at this step; resumed: a waited statement's result;
+//            blocked: the column is still waiting while another works
 //   tables:  [{ name, note?, columns: [{ name, key? }], rows: [{ cells, state?, changed? }] }]
 //            row state: 'new' | 'pending' | 'gone' | 'rolledback' | 'dropped';
 //            changed: indexes of cells that changed
@@ -25,8 +27,11 @@ const paymentCols = col('payments', ['payment_id', 'order_id', 'amount']);
 // ------------------------------------------------------------- Shared
 const entry = (text, result, state) => ({ text, result, state });
 const says = (text, result, state) => ({ text, result, state, plain: true });
-/** Clears the 'new' marks from earlier rows, so only this step's additions stand out. */
-const settle = rows => rows.map(row => row.map(e => (e && e.state === 'new' ? { ...e, state: undefined } : e)));
+const blocked = { blocked: true };
+/** Marks the rows a step adds as this step's, so they stand out. */
+const now = rows => rows.map(row => row.map(e => (e && !e.blocked ? { ...e, current: true } : e)));
+/** Clears the marks from earlier steps, so only this step's additions stand out. */
+const settle = rows => rows.map(row => row.map(e => (e && e.current ? { ...e, current: false } : e)));
 
 // ------------------------------------------------------------- Figure 1
 function separateFrames() {
@@ -46,7 +51,7 @@ function separateFrames() {
     return {
       label,
       explanation: notes[n],
-      history: { columns: ['Shop application'], rows: m.order103Changes.slice(0, n).map((c, i) => [entry(c.sql, undefined, i === n - 1 ? 'new' : undefined)]) },
+      history: { columns: ['Shop application'], rows: m.order103Changes.slice(0, n).map((c, i) => [{ text: c.sql, current: i === n - 1 }]) },
       tables: [
         { name: 'products', columns: productCols, rows: m.productsBefore.map(p => {
           const stock = p.product_id === 'P7' ? s.p7 : p.product_id === 'P3' ? s.p3 : p.stock;
@@ -106,7 +111,11 @@ function dueFrames(option) {
 
 // ------------------------------------------------------------- Figure 4
 const mug = stock => ({ name: 'products', columns: col('products', ['product_id', 'name', 'stock']), rows: [{ cells: ['P7', 'Blue mug', String(stock.value)], changed: stock.changed ? [2] : undefined }] });
-const mugLines = rows => ({ name: 'order_items', note: 'blue-mug lines only', columns: col('order_items', ['order_id', 'line_no', 'product_id', 'quantity']), rows: rows.map(([order, state]) => ({ cells: [String(order), '1', 'P7', '1'], state })) });
+/** The blue mug's order lines: order 102's earlier sale of two, then any added in the race. */
+const sold102 = m.orderItems.find(i => i.order_id === 102 && i.product_id === 'P7');
+const mugLines = rows => ({ name: 'order_items', note: 'blue-mug lines only', columns: col('order_items', ['order_id', 'line_no', 'product_id', 'quantity']),
+  rows: [{ cells: ['102', String(sold102.line_no), 'P7', String(sold102.quantity)] }, ...rows.map(([order, state]) => ({ cells: [String(order), '1', 'P7', '1'], state }))] });
+const holding = orders => ({ label: 'Orders holding the last mug', value: orders.join(' and '), ok: orders.length === 1 });
 
 function raceFrames(option) {
   const p = m.raceProtocols[option];
@@ -120,37 +129,38 @@ function raceFrames(option) {
   let rows = [];
   const step = (label, explanation, add, tables, extra = {}, replace) => {
     rows = settle(replace ? replace(rows) : rows);
-    rows = [...rows, ...add];
+    rows = [...rows, ...now(add)];
     frames.push({ label, explanation, history: { columns: who, rows }, tables, ...extra });
   };
-  const addOrder = n => says(n === 103 ? 'Add order 103 and its lines' : 'Add order 104 and its line', 'INSERT', 'new');
+  const addOrder = n => says(n === 103 ? 'Add order 103 and its lines' : 'Add order 104 and its line', 'INSERT');
   // The waiting statement keeps its row and is marked as having waited once it can go on.
   const waited = rs => rs.map(row => row.map(e => (e && e.state === 'wait' ? { ...e, result: 'waited for Mina', state: 'waited' } : e)));
+  const resumed = (text, result) => ({ text, result, resumed: true });
   if (option === 'conditional') {
     step('Mina’s update takes the mug', 'Mina’s session subtracts one only where at least one mug remains. The check and the change are one statement, and once the row is changed her transaction holds a lock on it until it ends. One row matches.',
-      [[entry(`${p.begin}\n${p.write}`, 'UPDATE 1', 'new'), null]], [mug({ value: '0 (uncommitted)', changed: true }), mugLines([])]);
+      [[entry(`${p.begin}\n${p.write}`, 'UPDATE 1'), null]], [mug({ value: '0 (uncommitted)', changed: true }), mugLines([])]);
     step('Mina adds her order', 'Mina’s order and its lines are written, still inside her transaction. No other session can see them yet.',
       [[addOrder(103), null]], [mug({ value: '0 (uncommitted)' }), mugLines([[103, 'pending']])]);
     step('Tariq’s update waits', 'Tariq’s session runs the same conditional update. Mina’s transaction holds the mug’s row, so Tariq’s statement waits for her transaction to end.',
-      [[null, entry(`${p.begin}\n${p.write}`, 'waits for Mina', 'wait')]], [mug({ value: '0 (uncommitted)' }), mugLines([[103, 'pending']])]);
+      [[null, entry(`${p.begin}\n${p.write}`, 'waiting for Mina', 'wait')]], [mug({ value: '0 (uncommitted)' }), mugLines([[103, 'pending']])]);
     step('Mina commits; Tariq’s update finds no mug', 'When Mina commits, Tariq’s update goes on against her committed row. Stock is now 0, so its condition fails and it changes no rows.',
-      [[entry('COMMIT;', 'COMMIT', 'new'), null], [null, says('His UPDATE goes on: stock is 0, so the condition fails', 'UPDATE 0', 'new')]], [mug({ value: 0, changed: true }), mugLines([[103, 'new']])], {}, waited);
+      [[entry('COMMIT;', 'COMMIT'), blocked], [null, resumed(p.write, 'UPDATE 0')]], [mug({ value: 0, changed: true }), mugLines([[103, 'new']])], {}, waited);
     step('Tariq is told the mug has sold', 'Tariq’s application sees that no row changed, rolls back and tells him the mug has sold out. One mug, one order: the stock rule held.',
-      [[null, entry('ROLLBACK;', 'sold out', 'new')]], [mug({ value: 0 }), mugLines([[103]])], { checks: [{ label: 'Mugs promised', value: '1 of 1', ok: true }] });
+      [[null, entry('ROLLBACK;', 'tells Tariq: sold out')]], [mug({ value: 0 }), mugLines([[103]])], { checks: [holding([103])] });
     return frames;
   }
   step('Mina reads the stock', 'Mina’s session starts a transaction and reads stock 1. Her application decides there is a mug to sell.',
-    [[entry(`${p.begin}\n${p.read}`, '1', 'new'), null]], [mug({ value: 1 }), mugLines([])]);
+    [[entry(`${p.begin}\n${p.read}`, '1'), null]], [mug({ value: 1 }), mugLines([])]);
   step('Tariq reads the stock', 'Tariq’s session reads stock 1 as well, which is true: Mina has not changed anything yet. Reading takes no lock, so both applications have now decided to sell the same mug.',
-    [[null, entry(`${p.begin}\n${p.read}`, '1', 'new')]], [mug({ value: 1 }), mugLines([])]);
+    [[null, entry(`${p.begin}\n${p.read}`, '1')]], [mug({ value: 1 }), mugLines([])]);
   step('Mina writes her decision', 'Mina’s application writes the stock it calculated, 0, and adds her order. Her transaction now holds the mug’s row; none of this is visible to Tariq yet.',
-    [[entry(p.write, 'UPDATE 1', 'new'), null], [addOrder(103), null]], [mug({ value: '0 (uncommitted)', changed: true }), mugLines([[103, 'pending']])]);
+    [[entry(p.write, 'UPDATE 1'), null], [addOrder(103), null]], [mug({ value: '0 (uncommitted)', changed: true }), mugLines([[103, 'pending']])]);
   step('Tariq’s write waits', 'Tariq’s application writes its own calculated stock, also 0. The row is held by Mina’s transaction, so the statement waits for her to finish.',
-    [[null, entry(p.write, 'waits for Mina', 'wait')]], [mug({ value: '0 (uncommitted)' }), mugLines([[103, 'pending']])]);
+    [[null, entry(p.write, 'waiting for Mina', 'wait')]], [mug({ value: '0 (uncommitted)' }), mugLines([[103, 'pending']])]);
   step('Mina commits; Tariq’s write goes ahead', 'Mina commits. Tariq’s statement only says “set stock to 0”, and the row still exists, so it goes ahead and sets 0 again. Nothing connects this write to the 1 that Tariq’s application read earlier.',
-    [[entry('COMMIT;', 'COMMIT', 'new'), null], [null, says('His UPDATE goes on and sets stock to 0', 'UPDATE 1', 'new')]], [mug({ value: 0, changed: true }), mugLines([[103, 'new']])], {}, waited);
-  step('Tariq commits a second sale', 'Tariq’s order is added and committed. Two orders now hold the one mug the shop had, and the stock column says 0 as if all were well. No statement failed and no constraint was broken.',
-    [[null, addOrder(104)], [null, entry('COMMIT;', 'COMMIT', 'new')]], [mug({ value: 0 }), mugLines([[103], [104, 'new']])], { checks: [{ label: 'Mugs promised', value: '2 of 1', ok: false }] });
+    [[entry('COMMIT;', 'COMMIT'), blocked], [null, resumed(p.write, 'UPDATE 1')]], [mug({ value: 0, changed: true }), mugLines([[103, 'new']])], {}, waited);
+  step('Tariq commits a second sale', 'Tariq’s order is added and committed. Two orders now hold the shop’s last mug, and the stock column says 0 as if all were well. No statement failed and no constraint was broken.',
+    [[null, addOrder(104)], [null, entry('COMMIT;', 'COMMIT')]], [mug({ value: 0 }), mugLines([[103], [104, 'new']])], { checks: [holding([103, 104])] });
   return frames;
 }
 
@@ -165,35 +175,35 @@ function lostFrames(option) {
   const frames = [];
   let rows = [];
   const step = (label, explanation, add, tables, extra = {}) => {
-    rows = [...settle(rows), ...add];
+    rows = [...settle(rows), ...now(add)];
     frames.push({ label, explanation, history: { columns: who, rows }, tables, ...extra });
   };
   const confirmed = { checks: [{ label: 'What Mina was told matches the database', value: 'yes', ok: true }] };
   step('Mina presses Place order', 'The shop application opens a transaction for order 103. It chose the number 103 itself before sending anything, so it can ask about this order later.',
-    [[entry('BEGIN;', 'BEGIN', 'new'), says('Placing your order…', undefined, 'new')]], [stock(1), orders('none')]);
-  step('The order’s statements run', 'The order row is inserted first, then the conditional update takes the mug, the teas are taken from stock and the lines are added. All of it is still uncommitted.',
-    [[entry(m.placeOrder103[1], 'INSERT 0 1', 'new'), null], [entry(m.placeOrder103[2], 'UPDATE 1', 'new'), null], [says('Take the teas and add the two lines', 'done', 'new'), null]],
+    [[entry('BEGIN;', 'BEGIN'), says('Placing your order…', undefined)]], [stock(1), orders('none')]);
+  step('The order’s statements run', 'The order row is inserted, the conditional update takes the mug, the teas are taken from stock and the lines are added. All of it is still uncommitted.',
+    [[entry(m.placeOrder103[1], 'INSERT 0 1'), null], [entry(m.placeOrder103[2], 'UPDATE 1'), null], [says('Take the teas and add the two lines', 'done'), null]],
     [stock('0 (uncommitted)', true), orders('pending')]);
   if (option === 'replied') {
     step('COMMIT, and the reply arrives', 'The application sends COMMIT and receives the reply. It knows the order is stored, so it can tell Mina.',
-      [[entry('COMMIT;', 'COMMIT', 'new'), null]], [stock(0, true), orders('new')]);
+      [[entry('COMMIT;', 'COMMIT'), null]], [stock(0, true), orders('new')]);
     step('Mina is told the truth', 'The confirmation matches the database: order 103 is committed and the mug is hers. Nothing needs recovering.',
-      [[null, says('Order 103 confirmed', undefined, 'new')]], [stock(0), orders('kept')], confirmed);
+      [[null, says('Order 103 confirmed', undefined)]], [stock(0), orders('kept')], confirmed);
     return frames;
   }
   if (option === 'beforeCommit') {
     step('The connection breaks before COMMIT', 'The network drops before COMMIT reaches the database. When the database finds the session gone, it rolls back everything in it: order 103 never becomes visible and the mug is back in stock. The application sees only a connection error.',
       [[entry('COMMIT;', 'could not be sent: connection lost', 'error'), null]], [stock(1, true), orders('rolledback')]);
     step('Look up order 103', 'On a new connection, the application asks whether order 103 exists. No row comes back, so order 103 has not committed, at least so far.',
-      [[entry(m.lookup103, '0 rows', 'new'), null]], [stock(1), orders('none')]);
-    step('Repeat the whole order, insert first', 'The application runs the whole transaction again. Its first statement inserts order 103, so if an earlier attempt were somehow still running, the insert would wait for it and fail with a duplicate key if it committed. Here nothing is in the way: the order commits and Mina is told.',
-      [[says('Run the whole order transaction again', 'COMMIT', 'new'), null], [null, says('Order 103 confirmed', undefined, 'new')]], [stock(0, true), orders('new')], confirmed);
+      [[entry(m.lookup103, '0 rows'), null]], [stock(1), orders('none')]);
+    step('Repeat the whole order', 'With no order 103 to find, the application runs the whole transaction again from BEGIN, with the same order number. The first attempt really was rolled back, so this one commits, once, and Mina is told her order is placed.',
+      [[says('Run the whole order transaction again', 'COMMIT'), null], [null, says('Order 103 confirmed', undefined)]], [stock(0, true), orders('new')], confirmed);
     return frames;
   }
   step('COMMIT succeeds; its reply is lost', 'The database commits order 103, then the connection breaks before the reply reaches the application. The application sees the same connection error as when the break came before COMMIT, but this time the order is stored.',
     [[entry('COMMIT;', 'no reply: connection lost', 'error'), null]], [stock(0, true), orders('new')]);
-  step('Look up order 103, then confirm it', 'The lookup finds order 103 committed, so the application confirms it. Repeating blindly would have been worse: a repeat that claimed the mug before inserting the order would find no stock and tell Mina the mug had sold out, although she had bought it.',
-    [[entry(m.lookup103, '103 | pending', 'new'), null], [null, says('Order 103 confirmed', undefined, 'new')]], [stock(0), orders('kept')], confirmed);
+  step('Look up order 103, then confirm it', 'The lookup finds order 103 committed, so the application confirms it. Had it treated the connection error as a failure, it would have told Mina her order had failed while the mug was already hers.',
+    [[entry(m.lookup103, '103 | pending'), null], [null, says('Order 103 confirmed', undefined)]], [stock(0), orders('kept')], confirmed);
   return frames;
 }
 
