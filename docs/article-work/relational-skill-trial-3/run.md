@@ -50,3 +50,8 @@ Coordinator browser checks: all six a03 and both a00 option endpoints exercised 
 Withdrawn practitioner had read both articles and some plan/evidence inputs, but started no native servers/processes. Withdrawn teaching read a00 and part of a03/reference inputs; its hidden tab disappeared at interruption. Neither wrote a findings report. Neither is reused. The accepted r01 assignments are fresh `r01_practitioner_fixed`, `r01_teaching_fixed`, `r01_visual`, and a subsequently dispatched fresh editorial reviewer, on commit `80276a4`.
 
 Review input isolation: practitioner receives pieces, plan/context, example and primary sources/evidence; teaching receives pieces, all three reference articles/figures and plan/context; editorial receives only rendered pieces, audience and all three references; visual receives only rendered pieces, rendered reference figures and figures skill. Each starts its own finding sequence at1. Their prompts prohibit any earlier version/report/decision and other perspectives' reports. All subagents start with no inherited conversation.
+
+
+## Final outcome
+
+Round 3 ended at the critical floor with no critical findings. No source changes followed round 2. Final decisions/results and all assignment timings are recorded. Preview stopped at 20:15:38 UTC; disposable native clusters removed. All delivery commits are local; no push.
