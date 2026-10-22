@@ -64,3 +64,35 @@ then established the actual return shape, rather than leaving it as an assumptio
 Final continuity pass on r06: all canonical names, geometry, values and pivots
 remain consistent; technical terms prepare their later uses; controls, captions,
 data labels and the child boundary agree. The source remains a draft for review.
+
+
+## Repair r02 · 21 October 2026
+
+Applied the unchanged D-02 revise, figures and continuity skills. ART-04 changes
+only the four implementation listings' highlighting: a custom dual registration
+uses the site's text, secondary, accent and accent-strong tokens. ART-06 adds one
+sentence naming the V-to-browser-client conversion at its first explanation.
+No wider restructuring, technical claim, example, model, control or caption change.
+
+Read the whole root source and all five included figure components, then reread
+the complete repaired root (including listings, figure captions/text alternatives,
+control names and sources). Revisited relevant opening/figure passages in all
+three preserved references for calibration. Full continuity pass retains the
+existing first-use record above; browser bridge is now named before Figure 5,
+the inverse, browser recipe, live controls and half-size example reuse it. O/G/W/V/C,
+Review/Review lane, values, pivots and point/displacement rules match the
+[example record](../../coverage/coordinate-editor-example.md). No cross-article
+example change or dependency change is proposed. The child summary remains the
+same geometrical-core to gesture-lifecycle handoff.
+
+The initial setup accidentally loaded the decision/visual findings before the
+complete article read; the required pre-findings order was not achieved. The
+complete article/section reads and final continuity audit were still performed.
+Rendered listing/paragraph inspection completed on the coordinator's build-r02
+preview under an explicit browser lease. The first rebuilt check exposed Astro's
+highlighter cache reusing the old JavaScript palette; explicit css-variables
+fallback props separate this custom registration from that cached default. The
+second rebuilt check measures the actual intended colours in all four listings.
+Unchanged model/download execution is reused only for unchanged mechanics, not
+as syntax-contrast evidence. Final whole-article reread and full continuity audit
+were repeated after the cache-prop repair; no further prose repair was needed.

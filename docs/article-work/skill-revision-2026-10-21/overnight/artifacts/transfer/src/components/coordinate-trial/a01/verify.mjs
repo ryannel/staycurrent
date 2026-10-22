@@ -35,15 +35,15 @@ near(cardFor({x:37,y:23},{x:61,y:45}),{x:24,y:22},'arbitrary grab');
 // These are simulated inputs, not browser event-delivery observations.
 globalThis.DOMPoint = class { constructor(x,y){this.x=x;this.y=y;} matrixTransform(m){return point([m.a,m.b,m.c,m.d,m.e,m.f],this);} };
 function harness(mode='Card') {
-  let state=initialState(), commits=0, failed=false, missing=false, singular=false;
+  let state=initialState(), commits=0, failed=false, missing=false, singular=false, throwing=false, thrownInverses=0;
   const listeners=new Map(), captures=new Set(), reports=[];
-  const domMatrix = values => { const [a,b,c,d,e,f]=values; return {a,b,c,d,e,f,inverse(){return domMatrix(inverse(values) ?? Array(6).fill(NaN));}}; };
+  const domMatrix = values => { const [a,b,c,d,e,f]=values; return {a,b,c,d,e,f,inverse(){if(throwing){thrownInverses++;const error=Error('Matrix is not invertible');error.name='SVGException';throw error;}return domMatrix(inverse(values) ?? Array(6).fill(NaN));}}; };
   const element = key => ({ getScreenCTM(){return missing?null:singular?domMatrix([0,0,0,1,0,0]):domMatrix(matrices(state)[key]);} });
   const surface = Object.assign(element('C_from_V'),{addEventListener(type,fn){listeners.set(type,fn);},removeEventListener(type){listeners.delete(type);},
     setPointerCapture(id){if(failed)throw Error('capture');captures.add(id);},hasPointerCapture(id){return captures.has(id);},releasePointerCapture(id){captures.delete(id);listeners.get('lostpointercapture')?.({pointerId:id});}});
   const api=installGestures({surface,card:element('C_from_O'),parent:element('C_from_G'),world:{getScreenCTM(){ const v=matrices(state); return domMatrix(compose(v.C_from_V,v.V_from_W));}},getState:()=>state,commit(next){state=next;commits++;},getMode:()=>mode,report:message=>reports.push(message)});
   function fire(type,props={}) {listeners.get(type)?.({pointerId:7,button:0,buttons:1,clientX:440,clientY:400,...props});}
-  return {api,fire,get state(){return state;},get commits(){return commits;},captures,reports,set failed(v){failed=v;},set missing(v){missing=v;},set singular(v){singular=v;},resize(){state={...state,bridge:{...state.bridge,scale:.5}};}};
+  return {api,fire,get state(){return state;},get commits(){return commits;},captures,reports,set failed(v){failed=v;},set missing(v){missing=v;},set singular(v){singular=v;},set throwing(v){throwing=v;},get thrownInverses(){return thrownInverses;},resize(){state={...state,bridge:{...state.bridge,scale:.5}};}};
 }
 for(const mode of ['Card','Pan']) {
   const h=harness(mode); h.fire('pointermove',{clientX:480}); assert.equal(h.commits,0);
@@ -67,5 +67,38 @@ for(const mode of ['Card','Pan']) {
   for(let step=1;step<=8;step++)many.fire('pointermove',{clientX:440+step*5,clientY:400+step*2.5});
   assert.deepEqual(many.state,one.state);checks++;
   const final=harness(mode);final.fire('pointerdown');final.fire('pointermove',{clientX:460,clientY:410});const saved=structuredClone(final.state);final.singular=true;final.fire('pointermove',{button:0,buttons:2,clientX:480,clientY:420});assert.equal(final.api.active,null);assert.deepEqual(final.state,saved);final.fire('pointermove',{buttons:2,clientX:500});assert.deepEqual(final.state,saved);checks+=3;
+}
+// A simulated legacy SVGMatrix provider exercises its documented throwing inverse.
+// It does not claim an actual browser singular-state or physical-device reproduction.
+for (const mode of ['Card', 'Pan']) {
+  const start = harness(mode); start.throwing = true;
+  assert.doesNotThrow(() => start.fire('pointerdown'));
+  assert.equal(start.thrownInverses, 1); assert.equal(start.api.active, null);
+  assert.equal(start.commits, 0); assert.equal(start.captures.size, 0); checks += 5;
+  for (const ending of ['pointermove', 'pointerup', 'chord-release']) {
+    const h = harness(mode); h.fire('pointerdown');
+    h.fire('pointermove', {clientX:460,clientY:410});
+    const saved = structuredClone(h.state), commits = h.commits;
+    h.throwing = true;
+    const type = ending === 'chord-release' ? 'pointermove' : ending;
+    const buttons = ending === 'pointermove' ? 1 : ending === 'pointerup' ? 0 : 2;
+    assert.doesNotThrow(() => h.fire(type, {buttons,clientX:480,clientY:420}));
+    assert.equal(h.thrownInverses, 1); assert.equal(h.api.active, null);
+    assert.equal(h.captures.size, 0); assert.deepEqual(h.state, saved);
+    assert.equal(h.commits, commits);
+    assert.equal(h.reports.filter(message => /^(Completed|Cancelled)/.test(message)).length, 1);
+    h.fire('lostpointercapture'); h.fire('pointermove', {buttons:2,clientX:500}); h.fire('pointerup', {buttons:0});
+    assert.deepEqual(h.state, saved); assert.equal(h.commits, commits); checks += 9;
+  }
+}
+for (const preset of ['baseline', 'resized', 'turned']) {
+  const trace = comparison(preset, 'stale', 'Card');
+  near(trace.actualC, trace.targetC, `${preset}: cached inverse remains valid with unchanged mapping`);
+}
+for (const preset of ['baseline', 'resized', 'turned', 'resize-between']) {
+  for (const algorithm of ['derived', 'divide', 'stale']) {
+    const trace = comparison(preset, algorithm, 'Pan');
+    near(trace.actualC, trace.targetC, `${preset}: Pan ignores Card algorithm ${algorithm}`);
+  }
 }
 console.log(JSON.stringify({status:'pass',checks,scope:'Model arithmetic and simulated handler lifecycle; no browser event-delivery claim.'},null,2));

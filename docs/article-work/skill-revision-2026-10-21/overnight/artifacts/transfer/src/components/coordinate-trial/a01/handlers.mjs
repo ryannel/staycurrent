@@ -5,12 +5,16 @@ import { cardFor, panFor, validState } from './model.mjs';
 // Each call obtains the current element-local -> client mapping.
 export function localPoint(element, event) {
   if (![event.clientX, event.clientY].every(Number.isFinite)) return null;
-  const matrix = element.getScreenCTM();
-  if (!matrix) return null;
-  const back = matrix.inverse();
-  if (![back.a, back.b, back.c, back.d, back.e, back.f].every(Number.isFinite)) return null;
-  const p = new DOMPoint(event.clientX, event.clientY).matrixTransform(back);
-  return finitePoint(p) ? { x: p.x, y: p.y } : null;
+  try {
+    const matrix = element.getScreenCTM();
+    if (!matrix) return null;
+    const back = matrix.inverse(); // SVGMatrix may throw; DOMMatrix may return NaN.
+    if (![back.a, back.b, back.c, back.d, back.e, back.f].every(Number.isFinite)) return null;
+    const p = new DOMPoint(event.clientX, event.clientY).matrixTransform(back);
+    return finitePoint(p) ? { x: p.x, y: p.y } : null;
+  } catch {
+    return null; // Let the caller retain state and finish any active gesture.
+  }
 }
 
 // Rendering must commit synchronously before the next mapping is read.

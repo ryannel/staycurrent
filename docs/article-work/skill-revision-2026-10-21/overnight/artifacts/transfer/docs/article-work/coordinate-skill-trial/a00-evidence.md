@@ -106,3 +106,60 @@ retained as pre-fix receipts; they are not passing current-source evidence.
 [Final source hashes](a00-receipts/source-version.json) identify applicability to
 r06. The coordinator owns build/site-check receipts in [evidence.md](evidence.md).
 No build, server, commit or push was run by this author.
+
+
+## Repair r02 mechanical record
+
+- First explicit repair clock: 2026-10-21 22:23:31 UTC. Setup and initial reads
+  began before that clock; no exact assignment-start time is claimed.
+- Observable preparation/read/palette interval: 22:23:31–22:24:53 UTC.
+- Editing/coordination: 22:24:53–22:25:16 UTC. Only root index source changed.
+- Complete post-edit reread, reference calibration and continuity check:
+  22:25:16–22:25:50 UTC, with receipt writing interleaved (the
+  component/example preparation read preceded this).
+- Code-ready notification: 22:25:16 UTC. Render wait starts there, with records
+  and the final source reread interleaved until browser checking is granted.
+- [Projected palette and source hash](a00-receipts/repair-r02/pre-render.json)
+  is calculation evidence only; actual rendered tokens remain unchecked here.
+- Serena's Astro overview was unsupported and its edit rejected the isolated
+  root as outside its active project. Direct file patching was used afterwards.
+- No build, server, commit or push performed. Original r01 receipts untouched.
+
+
+### Rendered r02 completion
+
+- First explicit browser clock: 22:26:58 UTC. The browser opened before this
+  receipt, following the coordinator's build-r01 PASS and lease grant. The wait
+  from 22:25:16 includes final reread/record writing and browser setup, so no pure
+  waiting total is claimed.
+- Observable rendered-check/cache-repair interval: 22:26:58–22:29:34 UTC, including
+  the second build wait. At 22:27:51 the four Code calls received explicit
+  `theme="css-variables"` fallback props; palette registrations still come from
+  `themes`. Astro's cache key loses nested theme properties and reused the older
+  JavaScript highlighter without this distinct fallback.
+- [Build-r01 failed measurements](a00-receipts/repair-r02/build-r01-failed-token-measurement.json)
+  retain the actual 3.2458:1 dark comments from that first repair build. They are
+  not passing current-source evidence.
+- Reloaded the coordinator's second consolidated build at the same 4343 URL.
+  [Build-r02 measurements](a00-receipts/repair-r02/build-r02-token-measurements.json)
+  cover every non-empty leaf token span in all four listings, including comments,
+  parameters, punctuation and default text, at actual 960×929 and 375×812, both
+  Light and Dark. Four foreground colours occur; minimum contrasts are 5.5227:1
+  Light and 6.1478:1 Dark, at 13.12px, on actual rgb(240,237,229) and rgb(38,35,32).
+- Actual phone document scrollWidth 375; four code panel widths 343 and local
+  scrollWidths 459,632,538,585. Keyboard ArrowRight on the final listing produced
+  local scrollLeft 40. No document overflow observed.
+- Inspected the four listing appearances and surrounding browser explanation,
+  plus the bridge introduction/adjacent space-ladder caption on desktop and phone
+  in both themes. Representative images: [desktop](a00-receipts/repair-r02/build-r02-desktop-light-js.jpg),
+  [phone Dark](a00-receipts/repair-r02/build-r02-phone-dark-input.jpg),
+  [bridge Light](a00-receipts/repair-r02/build-r02-bridge-phone-light.jpg),
+  [bridge Dark](a00-receipts/repair-r02/build-r02-bridge-phone-dark.jpg).
+- In-app visible browsing is unavailable to this subagent; used a temporary Chrome
+  tab. No new timed playback or geometry check was required by these page-only
+  repairs. The mathematical/browser implementation and standalone download hashes
+  match the original record: [applicability](a00-receipts/repair-r02/final-applicability.json).
+- Lease explicitly released 22:29:34 UTC. Restored inherited Dark and reset viewport
+  to actual 960×929; closed only the temporary repair tab. [Restored receipt](a00-receipts/repair-r02/browser-restored.json).
+- Complete final article source reread and continuity audit after cache repair
+  completed 22:29:46 UTC. Final evidence/report packaging followed.

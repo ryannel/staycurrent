@@ -1,0 +1,32 @@
+---
+name: staycurrent-orchestrate
+description: From a topic and brief, plan a recursive article tree, then coordinate its review, writing and repair.
+---
+
+Serve the commission's goal: take an intelligent newcomer to expert practitioner in the commissioned subject, in the least reader time and effort. Each article contributes to that goal, without setting a separate specialist target. Run only commissioned stages.
+
+The orchestrator owns the tree, scheduling, review and integration. Every planning, writing, repair and review assignment goes to a fresh subagent and ends on return. Workers never arrange review teams; assigned reviewers perform their perspective directly. Apply [staycurrent-review](../staycurrent-review/SKILL.md) for the fixed modes, inputs, reports, acceptance and completion policy. Resolve disagreements against the commission and record why; bring the user genuine scope or publication choices.
+
+## Records and review inputs
+
+Keep one canonical YAML tree under `docs/coverage/`, its [example record](../staycurrent-continuity/SKILL.md) beside it, and a work record under `docs/article-work/`. Retain the commission, piece/version/status, assignments, start/end, original review reports, findings, decisions, changed locations, verification and limitations. Keep one decision ledger and one evidence index; link unchanged records rather than copy them. Map duplicate observations to one issue while preserving each report.
+
+Designate one preview/build owner; workers request builds from that owner. Freeze review inputs and preview only when articles, components, shared shell and applicable evidence agree. A manifest identifies the absolute source root, complete version, preview and dependencies. Evidence identifies relevant source, data, environment and verifier versions; reuse it only while they remain applicable. Text changes may invalidate technical meaning, layout or playback timing.
+
+Handoffs give task, version, relevant context and evidence links within the perspective's permitted inputs. Editorial receives no plans, repair history or writer's notes. Mechanical receipts exclude author teaching notes, earlier quality verdicts and review findings; extract relevant mechanical records and provenance from mixed writing records. Dispatch ready commissioned work as slots free up, starting long visual work early; do not commission extra reviews to occupy slots. Combine each piece's findings before repair. Route shared-layout findings to their owner and check every affected article.
+
+## Planning
+
+From a bare topic, infer a concrete commission from the publication context: audience, starting knowledge, useful outcomes and boundaries. State reasonable defaults; ask only when ambiguity materially changes the collection.
+
+Give each fresh planner its topic/brief, commission, parent/neighbouring scopes and example record. Apply [staycurrent-breakdown](../staycurrent-breakdown/SKILL.md). Settle the root example before planning children; integrate proposed tree/example changes centrally. Commission each `nested_article` stub until the provisional tree covers the outcomes at useful article boundaries.
+
+An orchestrated breakdown is provisional input, not an automatic review gate. Use an early breakdown review when an unresolved scope, prerequisite or technical decision would make further planning wasteful. Otherwise review the complete provisional tree once with fresh practitioner, value and teaching readers who have no planning/review history. Repair and confirm under the plan schedule in [staycurrent-review](../staycurrent-review/SKILL.md), including its fresh blind complete teaching reading. Do not repeat node reviews and whole-tree reviews for the same coverage by default. A planning-only commission returns the complete reviewed plan here.
+
+## Writing and integration
+
+Give each fresh writer its topic, title, brief and headings; children's briefs, headings, introduction points and finished articles; parent/neighbouring scopes; existing linkable articles; example record; and commission/expertise goal. Apply [staycurrent-write](../staycurrent-write/SKILL.md), returning the draft and proposed tree changes for batched article review.
+
+Review fixed article versions with perspective-specific inputs and a rendered preview for visual review, plus isolated figure routes where available. Reconcile findings, then give the article, plan context, work record and accepted problems together to a fresh writer using [staycurrent-revise](../staycurrent-revise/SKILL.md). Even a one-phrase prose fix uses that skill. Commission fresh confirmations of problems, surroundings and affected dependencies, widening invalidated checks, then the independent complete article reading under the review skill's schedule. Retain separate reports. Merge tree/example changes centrally and update affected articles.
+
+Review the assembled articles and tree in corpus mode with fresh reviewers. Send repairs to fresh writers; use article-mode confirmation/final-reading rules for affected articles and the corpus schedule for corpus findings. Return the tree, article locations, review outcomes and unresolved work. Keep reviewed drafts distinct from available reading; publication requires user authorisation.
