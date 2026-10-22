@@ -1,4 +1,20 @@
-# Planning schedule F-02: completed case
+# Planning candidate: final F-04 extension accepted
+
+Final plan **F-TREE-r04**, bound by [the current manifest](tree-r04-manifest.json) and [immutable current tree](snapshots/tree-v4/latency-flow.yaml). This is a reviewed two-article teaching plan, not articles or executed measurement tooling. The original F-02 result and its exact scope remain below; the F-04 extension is separate evidence.
+
+**Eleven fresh review assignments** completed: eight under the original planning schedule, one additional complete independent practitioner challenge, then fresh practitioner and teaching confirmations of its local repair. The final complete practitioner found medium F-PLAN04: the class-separated comparison required a discriminator the proposed retention route never retained. It was a real practical gap in material previously passed, not a wording preference. The root accepted it and a fresh planner repaired it.
+
+Root centrally merged four existing child briefs and the shared example extension, preserving all existing fixture values, W0 labels/query and article boundaries. The child now captures the predefined class from request options at caller start, retains it in complete duration/outcome records, selects matched windows, groups records and reconciles class/outcome totals and duration frequencies with pooled/independent caller totals. Unknown classes remain visible and incomplete capture leaves the comparison unresolved. A selected diagnostic trace collection does not substitute for this population.
+
+[Fresh practitioner confirmation](practitioner-r04-confirm.md) and [fresh teaching confirmation](teaching-r04-confirm.md) both pass, no new findings. Teaching checked every addition and its dependencies. Both state that the local retention repair preserves the earlier complete technical and whole-route judgements in their unchanged areas. I agree after reading the route and current additions: the repair supplies the promised evidence path inside existing measurement sections, rather than changing the learning goal, ownership or prerequisite route. No accepted substantive planning defect remains. Another automatic whole-tree reading is not required for this local change; invalidated judgements would require widening.
+
+The case therefore exercises F-04's separate complete practitioner and blind complete teaching roles, plus applicable fresh affected confirmations after their findings. It does not retrospectively make the original eight-assignment result a test of the later policy. It also does not demonstrate that the new runnable-file clarification prevents omissions in cold article drafts.
+
+The completed control used 26 assignments; this case used 11. See [the control results](../topic-probe/results.md). Different independently inferred examples and implementation depth prevent interpreting assignment counts as a causal speed estimate. Authorisation waiting and its associated queue are excluded from all assessment. No article prose, rendered figures, Prometheus query, load generator or service execution was commissioned here.
+
+---
+
+# Original F-02 eight-assignment result
 
 Final plan: **F-TREE-r03**, bound by [the final manifest](tree-r03-manifest.json) and preserved in [tree-v3](snapshots/tree-v3/latency-flow.yaml). This is a reviewed two-article teaching plan, not written articles or executed measurement tooling. It used the frozen F-02 planning schedule; the later F-03 figures clarification changes no planning instruction.
 
@@ -27,6 +43,6 @@ The last repair changes two local briefs inside the existing cause explanation a
 
 Root planning's recorded interval was22:40:44–22:44:29UTC; child planning22:45:27–22:50:07UTC: **8m25 summed recorded planner intervals**, before later central integration, repairs, review and records. First complete-tree reviews were recorded at01:17:11–01:20:10UTC on22October; that dispatch span is not the complete planning duration. Repair/model/record intervals are in their reports, including unmeasured initial preparation where declared.
 
-The long unseen-authorisation-prompt wait and associated queue are excluded from all speed, process and quality assessments, per the user. Do not calculate an end-to-end delivery speed from the elapsed overnight clock. The D control case still needs its whole-tree coverage, so a completed-workflow comparison is pending. Its fifteen completed node-review assignments alone already exceed F's eight reviews, but different independently inferred examples and tool depth prevent a causal or universal speed claim.
+The long unseen-authorisation-prompt wait and associated queue are excluded from all speed, process and quality assessments, per the user. Do not calculate an end-to-end delivery speed from the elapsed overnight clock. At this original F-02 checkpoint, the D control still needed whole-tree coverage; its completed result is recorded above. Its fifteen completed node-review assignments alone already exceed F's eight reviews, but different independently inferred examples and tool depth prevent a causal or universal speed claim.
 
 No prose, rendered media or native Prometheus/service/load execution was commissioned. Planned runnable examples still require versioned execution and rendered inspection if written. This case supports removing routine duplicated node/whole-tree review gates while retaining complete first coverage, required local confirmations and a genuinely fresh whole-journey reading. It establishes no articles-per-hour guarantee or arbitrary-topic reliability.

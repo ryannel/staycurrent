@@ -42,3 +42,15 @@ A fresh planner repairs locally using existing fixture values and an explicitly 
 All second full P/V/T complete; V/T pass. Practitioner-2 accepted critical LAT-TREE02: the unchanged brief falsely implies all native histograms use different interpolation. Native custom-boundary and zero buckets can use linear interpolation; the standard exponential non-zero schema uses exponential interpolation. First complete practitioner had missed this. A fresh planner repaired exactly one child brief, defining the schema terms locally and retaining the chosen classic path, all fixture/query data and article boundaries. Root centrally merged/synchronised and froze LAT-TREE-r03; no example delta needed. Third full freshPVT round follows fixedDcontrol.
 
 This late unchanged technical discovery limits the earlier inference about focused confirmations plus an editorial/teaching final read. It motivated proposedF04's independent complete practitioner challenge, tested separately. Do not silently change this control schedule or attribute the user authorisation wait to review performance.
+
+
+## Third complete-tree coverage and local value repair
+
+All third full P/V/T reports are complete. Practitioner and teaching pass all fixed checks. Value-1 accepted medium as LAT-TREE-03: the repair teaches a native-schema taxonomy that the classic-only implementation never uses. The concepts are technically qualified but spend newcomer attention without improving the commissioned action; the brief itself excludes a format survey. Retain a compact truthful format boundary and optional primary-source link, with the classic interpolation/exact-classification explanation intact. The repair must not revert to the old false native generalisation.
+
+There are now 24 completed fresh review assignments: 15 node and nine whole-tree. Fixed D policy ends automatic full rounds after round3 and requires fresh affected confirmations until substantive repairs pass. A fresh local planner proposes the trim, then fresh practitioner and value checkers confirm truth and proportion with surroundings/dependencies. Teaching whole-route applicability will be assessed for the local removal; widen if invalidated. No acceptance or publication implied yet.
+
+
+## Final LAT-TREE-r04 acceptance
+
+Root merged exactly one child brief, synced standalone child and froze r04. Fresh practitioner/value confirmations pass, no new findings, earlier whole route/owner/boundary judgements applicable. Coordinator agrees that removing unused native taxonomy while retaining truthful compact boundary and all classic teaching adds no prerequisite or learning-route change, so r03 complete teaching judgement remains applicable. No accepted substantive planning defect remains. Actual26reviews:9root+6child+9tree+2focused. All native/query examples remain plans. See results.md; no publication.

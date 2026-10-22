@@ -1,0 +1,31 @@
+# F-04 bounded policy scope audit
+
+Result: **pass within the checked scope**. No concrete conflict, lost required check, default duplicate gate or acceptance loophole found in the F-04 policy changes. No repair recommended.
+
+Completed: 22 October 2026, 02:21 UTC.
+
+## Scope and method
+
+Read the skill-creator guidance, repository `AGENTS.md`, `README.md` and `docs/site-direction.md`; all 14 files in `candidates/f04/.agents/skills/`; and the complete F-03 review and orchestration roots. Compared the complete F-03 and F-04 payloads. Only `staycurrent-review/SKILL.md` and `staycurrent-orchestrate/SKILL.md` differ; the other 12 files are byte-identical. The F-04 design note and earlier F-03 scope audit were background, not evidence of the new policy's effectiveness.
+
+This audit concerns the new final-check and coincident-coverage policy and its coherence with the rest of the pack. It is not a prose review, behavioural trial or general redesign of unchanged skills.
+
+## Rationale
+
+1. **Independent complete technical challenge is required at both final stages.** Review line 77 explicitly requires a fresh practitioner on the complete current article, applying all practitioner checks and permitted inputs after substantive repairs and specialist checks. Line 87 imposes the corresponding complete current-plan check. Neither is conditional on the first batch finding a defect. The assignment rule at line 19 requires a fresh agent without prior exposure; the new paragraphs additionally withhold earlier versions, findings, decisions and repair history. All five practitioner checks and the tree/corpus ownership requirement remain unchanged.
+
+2. **The blind complete reader remains a separate assignment.** Article editorial and plan teaching readers are expressly separate and fresh (lines 77 and 87), retain their permitted reference inputs, and must find new defects as well as judge the whole explanation or learning journey. Editorial receives the rendered article without plans or production history. Plan teaching retains all seven teaching checks. The final practitioner does not replace either reader, initial teaching/visual coverage, or specialist checks. The unchanged repair skill's singular reference to the final complete reading describes the surviving reader role; it does not override the review skill's explicit additional practitioner requirement.
+
+3. **Informed confirmation cannot stand in for complete independent coverage.** Line 19 distinguishes informed repair checkers from independent first readings; line 89 expressly forbids counting such a confirmation as an independent complete check. The new final practitioner paragraphs make the distinction explicit again. Applicable mechanical evidence can still be reused under provenance and input restrictions, but replaces no perspective check or fresh visual use.
+
+4. **Later repairs are checked proportionately without an automatic full-check loop.** Lines 76 and 79 require confirmation of problems, surroundings and dependencies, widening every invalidated judgement and affected article. Whole-argument or reading-order changes require complete teaching/editorial assessment; changed technical claims and media retain their specialist verification. Plan widening at line 85 covers scope, examples, prerequisites and order. Completion at line 93 now requires both independent complete checks to remain applicable after later repairs. Read together, these rules preserve unaffected coverage while requiring broader assessment wherever a local confirmation cannot sustain the earlier judgement. The singular repeat-reading wording refers to the whole-explanation reader; specialist widening and final-version applicability separately protect the practitioner judgement. There is no requirement to repeat both complete checks after every local repair, and no time/round waiver of necessary repair or confirmation.
+
+5. **Coincident final/corpus coverage preserves scope rather than removing a perspective.** Line 89 allows reuse only when the complete collection, frozen version, permitted inputs and every required check coincide, explicitly including cross-article checks. It requires both coverage roles to be recorded and missing corpus coverage to be commissioned. Thus a single-article final read cannot satisfy a wider corpus; matching wording alone cannot satisfy different inputs or checks. A corpus-mode assignment can carry a final-check coverage role without giving the reviewer a second perspective or a second mode. The unchanged corpus schedule still requires practitioner, value, teaching and editorial coverage, including its later-round requirements. No general exemption from corpus review was introduced.
+
+6. **The change stays inside the commissioned workflow.** Orchestration delegates detailed scheduling to review and now refers to independent complete checks for both planning and articles. Provisional node work still has no automatic gate before whole-tree review; duplicate node/tree coverage is still discouraged. Standalone breakdown/writing routes still arrange their applicable review, while assigned workers do not form teams. No additional reviewer perspective, model variant, prose template, word budget, publication permission or unrelated production obligation was added. Drafting and review remain distinct from publication.
+
+## Static verification and limits
+
+Fresh comparison confirmed 14 payload files, exactly two changed roots and 12 unchanged files. The five unchanged perspective files retain 29 numbered checks: practitioner 5, value 5, teaching 7, editorial 7 and visual 5. Checked all 41 relative Markdown links at their intended installation paths: F-04 files mapped into `.agents/skills/`, with external payload targets resolved against this repository. All targets exist. The archived candidate directory itself is not an installed skill root.
+
+No validators, builds, browser sessions, model executions or behavioural case evidence were run or evaluated. Existing trial summaries do not establish this audit's result. This pass establishes only the stated policy's static scope and coherence; it does not establish writing quality, detection reliability, elapsed-time savings or model performance. Only this report was written. Candidate and active skills were unchanged; no commit or push was made.

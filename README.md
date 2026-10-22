@@ -119,12 +119,21 @@ Seven skills in `.agents/skills/`, symlinked from `.claude/skills/`, define prod
 `staycurrent-figures`, `staycurrent-continuity`, `staycurrent-revise` and
 `staycurrent-review`. They take an intelligent newcomer to expert practitioner,
 optimising useful understanding against reader time and effort. The orchestrator
-builds and reviews the recursive article tree, then assigns article writers;
-the orchestrator batches independent reviews and workers repair their pieces.
+builds a provisional recursive article tree, reviews the complete learning route,
+then assigns article writers. Each planning, writing, repair and review assignment
+uses a fresh agent. Complete first reviews lead to coherent repairs and fresh
+checks of affected areas; a fresh complete practitioner and a separate blind
+editorial reader check the articles before completion. Plans have a corresponding
+complete practitioner and blind teaching check. Substantive defects require
+repair whenever found. The review skill owns the detailed schedule, including
+corpus coverage and when a later change invalidates an earlier judgement.
+
 Each collection keeps one running-example record beside its tree in `docs/coverage/`.
-The review skill fixes which of its five perspectives run at each stage, their
-checks and their report format, in `.agents/skills/staycurrent-review/perspectives/`. Article and heading nodes
-use the singular `heading` list and `nested_article` child stubs.
+The five perspective files fix their inputs and checks in
+`.agents/skills/staycurrent-review/perspectives/`. Article and heading nodes use
+the singular `heading` list and `nested_article` child stubs. Applicable mechanical
+evidence can be reused; fresh reader judgement and current rendered-media checks
+remain separate. Reviewed drafts require publication authorisation.
 
 The three chosen writing and teaching examples are fixed at their pre-rewrite
 revision in `src/reference-articles/`: Sequence diagrams, Indexes, and Storage and

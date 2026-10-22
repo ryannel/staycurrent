@@ -24,3 +24,17 @@ Fresh P confirms new timing/identity claims and fresh T checks all new explanati
 ## Final r03 acceptance
 
 Central settlement changed exactly two briefs and added independent W-overlap; embedded/standalone child synchronised, F-TREE-r03 frozen. Fresh P/T scoped confirmations bothpass/no newfindings. Root read complete route and finalchanges; the blindcomplete reader's coherentwhole-routejudgement remainsapplicable after these localcause/reminderrepairs, as freshT explicitlyconfirms. No heading/article/owner/prerequisiteroute or existingfixturechanged; no automatic extra whole-tree reread. All3acceptedsubstantiveissues resolved atplanlevel. See results.md for8reviewassignments, evidencedintervals, retainedcoverageandlimits. Dcompletedcontrolcomparisonstillpending. Noarticle/nativeexecution/publicationclaim.
+
+
+## F-04 complete technical extension and r04 settlement
+
+The original F-02 eight-assignment result remains a completed result under its original scope. F-04 adds a fresh complete practitioner challenge. That ninth reviewer found accepted medium F-PLAN-04 (practitioner-1): the promised matched class-separated comparison needs a request-class discriminator that the chosen measurement/retention route never preserves. The final worksheet could not reconstruct it from pooled duration data. Accept the reader-implementation gap; class must come from the requested variant, never be inferred from duration.
+
+A fresh planner read the complete current tree/example before the finding and proposed a local retention repair. Root compared the full YAML: exactly four existing child briefs changed, with no titles/headings/owners/other fixture changes. Centrally settled complete caller duration/outcome records carrying `request_class`, selected by the existing terminal-window rule, and worked class distributions/counts/outcomes reconciled to the pooled eligible population and independent caller ledger. Unknown classes remain explicit. Selected traces cannot substitute for the complete population. W0 labels, six possible worker/outcome groups, query and all numerical fixtures remain unchanged. Embedded/standalone child are synchronised; F-TREE-r04 is frozen in tree-r04-manifest.json and snapshots/tree-v4.
+
+Fresh practitioner and teaching confirmations are required before final F-04 acceptance. They must check all changed explanations, retained-field mechanism, completeness/grouping/reconciliation and downstream worksheet, and decide whether earlier whole-route judgements remain applicable. No automatic final acceptance from arithmetic alone.
+
+
+## F-04 extension final acceptance
+
+F-TREE-r04 fresh P/T confirmations both pass, no new findings. All four retention/capture/reconciliation briefs, the example extension, surroundings and final worksheet are checked. Both confirmations preserve applicable earlier whole technical/route judgements; coordinator agrees after reading the route and additions. No article boundary, outcome, owner, heading order or old fixture changed. All four accepted substantive issues resolved at plan level. Final observed count11freshreviewassignments (eightoriginal +onecompleteP +twofocused), not a universal latency benchmark. No native/article/publication claim.

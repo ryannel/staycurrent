@@ -12,6 +12,9 @@ F-04 also avoids duplicate complete reads. A final complete practitioner or edit
 
 The coordinate experiment actually ran separate final editorial and corpus editorial assignments, plus complete corpus practitioner coverage. Its reports permit a coverage comparison on unchanged r02. Do not retroactively reduce its thirteen actual assignments or claim an observed time saving for combining them. The rule preserves required coverage rather than dropping a perspective.
 
-Only review and orchestration roots change from F-03; the twenty-word runnable-handoff clarification remains. The complete pack has seven roots plus seven supporting files, **5,011 words versus 6,529 original (23.2% less)**. All seven validators, 41 local links and 29 fixed perspective checks pass. New final-check behaviour and local repair coverage remain in their case records. Static validation establishes instruction structure, not writing quality or model-specific performance.
+Only review and orchestration roots change from F-03; the twenty-word runnable-handoff clarification remains. The complete pack has seven roots plus seven supporting files, **5,011 words versus 6,529 original (23.3% less)**. All seven validators, 41 local links and 29 fixed perspective checks pass. New final-check behaviour and local repair coverage remain in their case records. Static validation establishes instruction structure, not writing quality or model-specific performance.
 
 No separate Sol/Astra pack, new reviewer role, word budget, prose template or banned-word list is introduced. The shared references and capable models still make the writing decisions. Original C check-time results, original F-02 eight-assignment result and the fixed D control remain separately identified; the revised acceptance policy is not used to rewrite those comparisons.
+
+
+Adopted after complete case checks and the fresh scoped instruction audit. Installed files hash-match this frozen pack; see adoption.json, installed-validation.json and results.md. Reduction rounded to one decimal is 23.3%. No article/site source was changed or published by adoption.
