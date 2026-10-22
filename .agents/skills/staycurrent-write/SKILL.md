@@ -7,7 +7,7 @@ Study [Sequence diagrams](../../../src/reference-articles/sequences.astro), [Ind
 
 Use the plan for coverage and relationships, in the context of parent, sibling and child articles. Reshape its headings, sequence, examples and depth wherever needed to meet the references' standard. Summarise and link relevant finished children. Follow the collection's [example record and continuity](../staycurrent-continuity/SKILL.md); propose extensions centrally.
 
-Use [staycurrent-figures](../staycurrent-figures/SKILL.md) and existing article components for figures, tables, code and interactive tools. Coordinate rendered checks with the designated preview/build owner.
+Use [staycurrent-figures](../staycurrent-figures/SKILL.md) for figures, tables, code and interactive tools. Coordinate rendered checks with the designated preview/build owner.
 
 Check consequential technical claims against primary sources listed under Sources and further reading. Distinguish illustrative models from observed results; keep applicable execution evidence with the work.
 

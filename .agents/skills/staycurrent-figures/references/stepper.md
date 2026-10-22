@@ -1,5 +1,7 @@
 # Stepped figures
 
+Reuse shared article infrastructure for presentation and controls; build the scene for the explanation.
+
 Use [stepper.mjs](../../../../src/components/figures/stepper.mjs) with the figure root, `steps()` and `draw(step)`; call returned `render` when options change.
 
 | Attribute | Element |
