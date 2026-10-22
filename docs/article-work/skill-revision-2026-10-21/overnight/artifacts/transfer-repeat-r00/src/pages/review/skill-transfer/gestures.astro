@@ -1,0 +1,122 @@
+---
+import { Code } from 'astro:components';
+import SkillTrial from '../../../layouts/SkillTrial.astro';
+import GestureComparison from '../../../components/coordinate-trial/a01/GestureComparison.astro';
+import gestureSource from '../../../components/coordinate-trial/a01/gesture.mjs?raw';
+import runtimeSource from '../../../components/coordinate-trial/a01/runtime.mjs?raw';
+import modelSource from '../../../components/coordinate-trial/a01/model.mjs?raw';
+const themes = { light: 'github-light', dark: 'github-dark' } as const;
+const sections = [['promises','Decide what the gesture must keep'],['pan','Pan in the view’s coordinates'],['zoom','Zoom and turn around the chosen point'],['card','Move the card in its parent’s space'],['mapping','Ask the right element for the mapping'],['lifecycle','Give the gesture a beginning and an end'],['check','Check the promise before storing the update'],['sources','Sources and further reading']];
+---
+<SkillTrial title="Keep a diagram under the pointer" description="Derive pan, anchored zoom, rotation and card dragging from the point each gesture keeps, then connect those equations to current SVG mappings and a complete pointer lifecycle.">
+  <p>You grab Review, move the pointer to the right, and the card moves down. Dividing the pointer’s movement by the zoom looked reasonable, but Review sits in a turned group: the coordinates used to store its position have turned too. Resizing the editor adds another conversion. A gesture works through both changes when it remembers what was grabbed and solves for where that point must go.</p>
+  <p>This article builds on <a href="/review/skill-transfer/">Coordinates in a zoomable editor</a>. Its space ladder follows one point through card space O, group space G, world space W, editor view space V and browser client space C. O holds Review’s geometry; G holds its placement inside Review lane; W is the board; V is the root SVG’s user space; C measures CSS pixels from the browser viewport’s origin. The parent explains how to compose these conversions and invert them to go backwards. Here we use those operations to implement the gestures.</p>
+  <nav aria-label="Contents"><ol>{sections.map(([id,label])=><li><a href={`#${id}`}>{label}</a></li>)}</ol></nav>
+
+  <h2 id="promises">Decide what the gesture must keep</h2>
+  <p>An <strong>invariant</strong> is a condition an update keeps true. For a card drag, it is “the point I grabbed is still under this pointer”. For zoom, it is “this board point stays at this spot in the editor”. Those promises identify both the value to remember and the parameter to change.</p>
+  <table class="responsive-table"><caption>Gesture promises</caption><thead><tr><th>Operation</th><th>Keep</th><th>Change</th></tr></thead><tbody>
+    <tr><th scope="row">Pan</th><td data-label="Keep">A world point W under a moving pointer</td><td data-label="Change">View pan in V</td></tr>
+    <tr><th scope="row">Zoom or turn the view</th><td data-label="Keep">A world anchor W at a chosen target V</td><td data-label="Change">Zoom or view angle, plus pan in V</td></tr>
+    <tr><th scope="row">Drag Review</th><td data-label="Keep">The grabbed point O under a moving pointer</td><td data-label="Change">Card translation in G</td></tr>
+  </tbody></table>
+  <p>Write the world-to-view conversion from the parent in a form that exposes these controls:</p>
+  <p class="equation"><code>v = z R(θ) w + t_V</code></p>
+  <p>Here <code>w</code> is a world point, <code>v</code> its view position, <code>z</code> the zoom, <code>θ</code> the view angle and <code>t_V</code> the pan. <code>R(θ)</code> turns the offset from the world origin without translating it; zoom scales that offset, then pan places it in V. As in the parent, the initial axes point right and down, positive angles turn clockwise in that frame, and controls use degrees. A turned local axis may point elsewhere.</p>
+  <p>Initially <code>z = 2</code>, <code>θ = 0°</code> and <code>t_V = (60, 40)</code>. The parent’s view turned 90° about the editor centre has <code>θ = 90°</code> and <code>t_V = (660, −40)</code>. These are two settings of the same world-to-view mapping.</p>
+
+  <h2 id="pan">Pan in the view’s coordinates</h2>
+  <p>At pointer-down, convert the pointer from C to W and remember the world point <code>w</code>. At each move, convert the new pointer from C to V, giving <code>v</code>. We want the remembered point to reach that new position. Substitute it into the view equation and move the scaled, turned offset to the other side:</p>
+  <p class="equation"><code>t′_V = v − z R(θ) w</code></p>
+  <p>The prime means the new value. Both terms on the right are in V, so their difference is a pan in V. With the zoom, angle and browser mapping unchanged, this amounts to adding the pointer’s V displacement to the old pan. Remembering the world point lets us solve from the current pointer each time, without adding up rounded movements.</p>
+  <table class="responsive-table"><caption>Move the view: turned view, half-size editor</caption><thead><tr><th>Quantity</th><th>Before</th><th>After</th></tr></thead><tbody>
+    <tr><th scope="row">Pointer C</th><td data-label="Before">(310, 190)</td><td data-label="After">(350, 210)</td></tr>
+    <tr><th scope="row">Pointer V</th><td data-label="Before">(380, 220)</td><td data-label="After">(460, 260)</td></tr>
+    <tr><th scope="row">Pan V</th><td data-label="Before">(660, −40)</td><td data-label="After">(740, 0)</td></tr>
+  </tbody></table>
+  <p>The client movement is (40, 20), but the root SVG is rendered at half its user-space size, so the movement in V is (80, 40). Adding client pixels directly would pan only half as far. Dividing by zoom would instead take us towards a world displacement; pan is stored after that scaling, in V. Changing pan moves the whole board, including Review lane and Review.</p>
+  <p>Read the root SVG’s current client-to-V conversion at every update. The browser bridge includes its layout and viewBox fitting. An inverse saved at pointer-down remains valid only while that bridge remains unchanged.</p>
+
+  <h2 id="zoom">Zoom and turn around the chosen point</h2>
+  <p>A zoom uses the same equation with a stationary target. First convert the chosen client position to <code>a_V</code>, its position in the editor. Apply the <em>old</em> view inverse to recover the world anchor <code>a_W</code>. Choose the new zoom <code>z′</code> and angle <code>θ′</code>, then require that anchor to land at the same target:</p>
+  <p class="equation"><code>a_V = z′ R(θ′) a_W + t′_V</code><br /><code>t′_V = a_V − z′ R(θ′) a_W</code></p>
+  <p>The subtraction is in V again. Keeping the old pan would leave the scaled or turned offset uncompensated, so the anchor would move. Leaving out <code>R</code> would compensate in the wrong direction when the view is turned.</p>
+  <p>In the baseline, the mark is W (130, 140) at V (320, 320). Zooming from 2 to 3 gives the new offset (390, 420), so the required pan is (320, 320) − (390, 420) = <strong>(−70, −100)</strong>. In the turned view, that same world anchor is at V (380, 220). Its new offset is 3 × (−140, 130) = (−420, 390), requiring pan <strong>(800, −170)</strong>.</p>
+  <p>Turning about an anchor is the same calculation. Reset to baseline and turn the view from 0° to 90° about the mark at V (320, 320): the new offset is 2 × (−140, 130) = (−280, 260), giving pan <strong>(600, 60)</strong>. The parent’s earlier turn used the editor centre V (400, 300) as its pivot, so it produced a different pan. Neither operation changes the stored group or card geometry.</p>
+  <p>The comparison below starts with the editor centre as target. Choose a pivot on the drawing, or use <em>Marked point as pivot</em>, then change zoom or angle. The target cross stays still. Select either labelled wrong anchor rule to see what the missing compensation does.</p>
+  <p><strong>Clamping</strong> limits a requested value to an allowed interval. This editor allows zoom from 0.25 to 4 as product policy. Reject a non-finite request; otherwise clamp it <em>before</em> solving for pan. At zoom 4, asking for 6 still uses 4 in the equation. The view and anchor therefore stay where they were.</p>
+
+  <h2 id="card">Move the card in its parent’s space</h2>
+  <p>At pointer-down, map the pointer C to card space O and retain the actual grabbed point <code>g_O</code>. At each move, map the current pointer C to its parent’s space G. Review’s placement is translation only, so a local point reaches G by adding the card translation:</p>
+  <p class="equation"><code>pointer_G = g_O + t′_G</code><br /><code>t′_G = pointer_G − g_O</code></p>
+  <p>This preserves the place you grabbed. Assigning <code>pointer_G</code> directly as the translation would put the card’s origin there and make the card jump on the first move. Although the worked snapshots grab (10, 10), the implementation keeps whichever local point the pointer actually chose.</p>
+  <p>From the full-size baseline, moving C (440, 400) to (480, 420) reaches G (50, 10). Subtracting the grab (10, 10) gives card translation <strong>(40, 0)</strong>. In the half-size editor, moving C (280, 240) to (320, 260) reaches G (60, −10), giving translation <strong>(50, −20)</strong>.</p>
+  <p>Now add the turned view. Before revealing the result below, predict which way Review must move in G when the client pointer moves right and down. Its parent axes and the view have both turned. The same client movement (40, 20) becomes V (80, 40), W (20, −40), then G (−40, −20). Add that G movement to the initial translation (30, 20): the new placement is <strong>(−10, 0)</strong>.</p>
+  <p>The tempting rule “add client movement divided by zoom” gives (50, 30). Its grab lands at client (290, 180), missing the pointer at (350, 210). The rule has ignored both the browser bridge and the turned axes. Even at full size, the turned group alone makes it fail.</p>
+  <GestureComparison />
+  <p>For a card with a fixed linear part <code>L</code>, such as the parent’s optional card rotation, the grab contributes <code>L g_O</code>, so subtract that instead. Any pivot translation already inside the placement must be represented consistently. The live editor keeps the translation-only case above.</p>
+
+  <h3 id="mapping">Ask the right element for the mapping</h3>
+  <p><code>getScreenCTM()</code> supplies an SVG element’s local-to-client conversion. Invert it once to map the pointer into that element’s coordinates; the browser bridge is already included. The <strong>DOM</strong>, or Document Object Model, is the browser’s tree of elements. Which element you ask determines what space you get.</p>
+  <table class="responsive-table"><caption>DOM roles and inverse destinations</caption><thead><tr><th>Ask this element</th><th>Inverse gives</th><th>Use</th></tr></thead><tbody>
+    <tr><th scope="row">Card group</th><td data-label="Inverse gives">O</td><td data-label="Use">Save the grab once</td></tr>
+    <tr><th scope="row">Parent group</th><td data-label="Inverse gives">G</td><td data-label="Use">Place the card on each move</td></tr>
+    <tr><th scope="row">World layer</th><td data-label="Inverse gives">W</td><td data-label="Use">Save a pan anchor</td></tr>
+    <tr><th scope="row">Root SVG</th><td data-label="Inverse gives">V</td><td data-label="Use">Pan target or chosen pivot</td></tr>
+  </tbody></table>
+  <p>Keep explicit references to the four elements above. <code>event.target</code> might be a text label inside Review, and capture later changes event delivery. Neither makes it the element whose coordinate system the equation needs.</p>
+  <p>In <em>Resize between moves</em>, the grab is first taken at C (440, 400) in the full-size editor. The editor then becomes half size, placing the unchanged mark at C (280, 240). On the next sample, C (320, 260), the current parent inverse gives G (60, −10), so the new card translation is (50, −20). The saved <code>g_O</code> stays (10, 10).</p>
+  <p>A cached full-size inverse instead gives G (−30, 90), and translation (−40, 80). Under the now half-size rendering, that candidate puts the grab at C (220, 170). Toggle the stale mapping to see the miss. Resizing itself does not dispatch a movement or keep a stationary pointer anchored: the absolute equation re-establishes the promise at the next update. A deliberate view or parent change works the same way.</p>
+
+  <h2 id="lifecycle">Give the gesture a beginning and an end</h2>
+  <p><strong>Pointer events</strong> describe mouse, pen or touch input with a <code>pointerId</code> identifying the pointer. <strong>Pointer capture</strong> directs that pointer’s subsequent events to a chosen element, including outside its bounds. Use a stable editor surface for capture, an explicit Card or Pan tool, and one active record containing the tool, pointer ID and retained point.</p>
+  <p>Start only while idle with <code>button === 0</code>: the primary mouse button or touch/pen contact. <code>buttons</code> combines flags for the buttons currently held; flag 1 represents that initiating button/contact. Test <code>(event.buttons &amp; 1)</code> on every matching move. Ignore other pointer IDs.</p>
+  <p>A mouse chord adds a second button while the first is down. Those button changes arrive as <code>pointermove</code>; <code>pointerup</code> waits for the last release. This editor therefore finishes as soon as flag 1 disappears, even when another button remains down.</p>
+  <table class="responsive-table"><caption>Gesture lifecycle: this editor’s completion policy</caption><thead><tr><th>Input</th><th>Event / buttons</th><th>Action</th></tr></thead><tbody>
+    <tr><th scope="row">Primary down</th><td data-label="Event / buttons">pointerdown / 1</td><td data-label="Action">Retain point; request capture</td></tr>
+    <tr><th scope="row">Secondary down</th><td data-label="Event / buttons">pointermove / 3</td><td data-label="Action">Continue the active gesture</td></tr>
+    <tr><th scope="row">Primary release</th><td data-label="Event / buttons">pointermove / 2</td><td data-label="Action">Attempt final update; complete and clear</td></tr>
+    <tr><th scope="row">Later movement</th><td data-label="Event / buttons">pointermove / 2</td><td data-label="Action">Idle; no placement change</td></tr>
+    <tr><th scope="row">Secondary release</th><td data-label="Event / buttons">pointerup / 0</td><td data-label="Action">Still idle; no second completion</td></tr>
+    <tr><th scope="row">Cancellation or unexpected capture loss</th><td data-label="Event / buttons">pointercancel / lostpointercapture</td><td data-label="Action">Clear; keep last valid placement; no final update</td></tr>
+  </tbody></table>
+  <p>Normal <code>pointerup</code> uses the same finish path. Completion tries one final update, then clears the record before releasing capture. If that conversion is invalid, it still clears and keeps the last valid placement. Releasing capture can cause capture loss, so cleanup must be safe to repeat. A failed capture request also leaves the editor idle.</p>
+  <p>Set <code>touch-action: none</code> on the editor surface before interaction, reserving its touch gestures for the editor. Capture alone does not stop browser cancellation. This example keeps the last valid position when cancelled; the API does not roll the diagram back.</p>
+  <details class="source"><summary>The complete event policy used by the editor</summary><Code code={gestureSource} lang="javascript" themes={themes} /></details>
+
+  <h2 id="check">Check the promise before storing the update</h2>
+  <p>The implementation reads the current mapping, computes a candidate and verifies the retained point before committing state and rendering together. A bad conversion must never partly change the card or pan. An unmappable active update ends the gesture and keeps the last valid state.</p>
+  <p>Check for a missing matrix, non-finite input, non-finite inverse and non-finite result. A singular <code>DOMMatrix</code> inverse can contain <code>NaN</code>, JavaScript’s not-a-number value, so a <code>try/catch</code> alone is insufficient. The parent’s <a href="/review/skill-transfer/">collapsed group example</a> explains why no unique backward mapping exists. The zoom bounds here are editor policy, and an arbitrary determinant cutoff would not establish numerical stability.</p>
+  <p>The expandable sources below form the connected route used by the figure. The model imports the canonical board data and geometry helpers. The runtime’s <code>localPoint</code> checks the browser conversion; <code>mount</code> binds the four DOM roles, supplies geometry updates to <code>createGesture</code>, and commits the SVG attributes synchronously. Its remaining functions operate the comparison controls. The same derived functions drive the snapshots and live editor.</p>
+  <details class="source"><summary>Geometry and recorded snapshots</summary><Code code={modelSource} lang="javascript" themes={themes} /></details>
+  <details class="source"><summary>Browser mappings, candidate updates, rendering and event bindings</summary><Code code={runtimeSource} lang="javascript" themes={themes} /></details>
+  <table class="responsive-table"><caption>Find the broken promise</caption><thead><tr><th>Symptom</th><th>Check</th></tr></thead><tbody>
+    <tr><th scope="row">Card travels in the wrong direction</th><td data-label="Check">Was the pointer mapped into the parent’s current axes?</td></tr>
+    <tr><th scope="row">Drag distance depends on editor size</th><td data-label="Check">Did the inverse include the current browser bridge?</td></tr>
+    <tr><th scope="row">Zoom drifts away from the chosen point</th><td data-label="Check">Was the world anchor recovered with the old view, then pan solved with the actual new zoom and angle?</td></tr>
+    <tr><th scope="row">A jump follows resize</th><td data-label="Check">Was a pointer-down inverse reused after the layout changed?</td></tr>
+    <tr><th scope="row">The editor stays in drag mode</th><td data-label="Check">Do completion, cancellation, capture loss and mapping rejection all clear the active record?</td></tr>
+  </tbody></table>
+  <p>Test by mapping the retained point forward after every candidate update: it must reach the pointer or chosen V target. Repeat the same path in one move and several smaller moves; try a grab away from the mark, change size between events, and request zoom beyond each bound. Then test event delivery separately: leaving the card under capture, cancellation, capture loss, and the five-event chord above for both tools, including an invalid final conversion.</p>
+  <p>The recorded values are exact quarter-turn model calculations. For arbitrary-angle checks, this implementation uses an absolute forward-error tolerance of 10<sup>−7</sup> units in the equation’s destination space, sufficient for this bounded example. That is a check of its arithmetic, not a guarantee for arbitrarily large scenes. Browser and rendered-control observations are recorded separately from model checks in the trial evidence; this local example does not establish cross-browser or physical-device coverage.</p>
+
+  <h2 id="sources">Sources and further reading</h2>
+  <ul>
+    <li><a href="/review/skill-transfer/">Coordinates in a zoomable editor</a>: the shared Review board, space ladder, composition, inverse and collapse.</li>
+    <li>W3C, <a href="https://www.w3.org/TR/pointerevents3/#button-states">Pointer Events 3 §4.1.1</a>, <a href="https://www.w3.org/TR/pointerevents3/#the-pointermove-event">§4.2.4</a> and <a href="https://www.w3.org/TR/pointerevents3/#the-pointerup-event">§4.2.6</a>: button flags and chorded button transitions.</li>
+    <li>W3C, <a href="https://www.w3.org/TR/pointerevents3/#the-pointercancel-event">pointercancel</a>, <a href="https://www.w3.org/TR/pointerevents3/#pointercapture">pointer capture</a> and <a href="https://www.w3.org/TR/pointerevents3/#the-touch-action-css-property">touch-action</a>: delivery, loss of capture and browser gesture policy.</li>
+    <li>W3C, <a href="https://www.w3.org/TR/SVG2/types.html#InterfaceSVGGraphicsElement">SVG 2: SVGGraphicsElement</a>: the coordinate conversions returned by <code>getScreenCTM()</code>, including viewBox and page layout.</li>
+    <li>W3C, <a href="https://drafts.csswg.org/geometry/#dom-dommatrix-invertself">Geometry Interfaces: invertSelf()</a>: a noninvertible matrix produces non-finite values.</li>
+  </ul>
+</SkillTrial>
+<style>
+  nav{font: .9rem/1.7 var(--font-sans);margin:1.5rem 0 2rem;}
+  .equation{padding:.8rem 1rem;background:var(--color-surface-alt);border-left:3px solid var(--color-accent);overflow-wrap:anywhere;}
+  .equation code{font-size:.95em;}
+  .responsive-table{width:100%;font:.85rem/1.6 var(--font-sans);margin:1.5rem 0;}
+  .responsive-table caption{text-align:left;font-weight:600;color:var(--color-text);padding-bottom:.6rem;}
+  .responsive-table :is(th,td){text-align:left;vertical-align:top;padding:.6rem;border-bottom:1px solid var(--color-rule-strong);}
+  .source{margin:1rem 0;max-width:100%;min-width:0;}.source summary{font:.9rem/1.6 var(--font-sans);cursor:pointer;}
+  .source :global(pre){overflow:auto;max-width:100%;font-size:.75rem;}
+  @media(max-width:600px){.responsive-table,.responsive-table tbody,.responsive-table tr,.responsive-table th,.responsive-table td{display:block;box-sizing:border-box;}.responsive-table thead{display:none;}.responsive-table tr{margin:0 0 1rem;border:1px solid var(--color-rule-strong);padding:.5rem;}.responsive-table :is(th,td){border:0;padding:.25rem;}.responsive-table td::before{content:attr(data-label) ': ';font-weight:600;}.responsive-table th{font-weight:700;}.responsive-table caption{display:block;}.equation{padding:.7rem;}}
+</style>

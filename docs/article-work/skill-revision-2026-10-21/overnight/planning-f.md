@@ -1,0 +1,11 @@
+# Candidate F · provisional tree and focused planning repair checks
+
+Status: untested, not adopted. Candidate D-02 and all its active trial archives remain unchanged. F copies all14Dfiles and changes only orchestration/review planning schedules and the bare-topic entrypoint. Writing, repair, figures, continuity, perspective criteria, article first coverage/final reader and corpus policy are unchanged.
+
+Question: can complete provisional-tree review, fresh focused repair checks and a fresh blind whole-tree teaching read preserve practical outcomes/prerequisite judgement with fewer repeated planning assignments? Current D requires node breakdown batches before whole-tree review, then full perspectives each repair round. The coordinate tree used12planning reviews; latency root alone9. These were concurrent observations, not isolated causal timing estimates. Real omissions surfaced late, so F deliberately keeps a second complete teaching opportunity rather than relying on focused checks alone.
+
+Test: independent static audit of changed ownership/coverage, then a fresh replay from bare topic Latency percentiles with the same repository context and2article ceiling (notquota), withholding earlier topic plans, examples, findings and opinions. Settle inferred commission/example centrally, recursively complete provisional child plans without automatic node review, one complete P/V/T tree batch, fresh repairs/affected confirmations and blind complete teaching reading. Keep a version/timing ledger. Existing D-topic commission picked Prometheus; F can choose a useful tool/path independently, so differing outputs prohibit causal speed/quality claims. No article writing policy changes follow from this planning-only experiment.
+
+Adoption requires no known substantive defect, appropriate complete journey judgement, and an honest observed assignment/time comparison. Do not claim arbitrary-topic reliability or manufacture savings by subtracting every reviewer interval from concurrent wall time. F has no publication authorisation.
+
+Independent static audit found two bounded medium conflicts. Root accepted both: scope inherited final-reading editorial instruction to articles, and restore corpus additions/placement-check handoff plus explicit every-check coverage. Changes remain confined to same2roots. Fresh confirmation pending; no behavioural claim.

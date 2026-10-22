@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en-GB">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review gesture editor</title>
+<style>
+  :root { color-scheme: light dark; font: 16px system-ui; }
+  body { max-width: 800px; margin: 1rem auto; padding: 0 1rem; }
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+  button, select { font: inherit; padding: .5rem; }
+  svg { width: 100%; height: auto; display: block; touch-action: none; user-select: none; }
+  rect, circle { fill: Canvas; stroke: CanvasText; }
+  text { fill: CanvasText; }
+  output { display: block; margin: 1rem 0; overflow-wrap: anywhere; }
+</style>
+<h1>Review gesture editor</h1>
+<p>Use Card to drag Review, or Pan to move the board. Zoom and turn keep the SVG centre fixed.</p>
+<div class="controls">
+  <label>Pointer tool <select id="tool"><option>Card</option><option>Pan</option></select></label>
+  <button id="zoom-in">Zoom ×1.5</button><button id="zoom-out">Zoom ÷1.5</button>
+  <button id="turn">Turn 15°</button><button id="reset">Reset</button>
+</div>
+<output id="status" aria-live="polite"></output>
+<svg viewBox="0 0 800 600" aria-label="Review board">
+  <rect width="800" height="600" />
+  <g data-world>
+    <circle cx="210" cy="130" r="16" />
+    <g data-parent>
+      <rect width="140" height="90" fill="none" stroke-dasharray="4 3" style="fill:none" />
+      <g data-card><rect width="80" height="40" /><text x="8" y="27" font-size="16">Review</text></g>
+    </g>
+  </g>
+</svg>
+<script type="module">
+// The collection's canonical Review board, in named coordinate spaces.
+const example = Object.freeze({
+  card: Object.freeze({ width: 80, height: 40, translation: Object.freeze({ x: 30, y: 20 }), centre: Object.freeze({ x: 40, y: 20 }) }),
+  p: Object.freeze({ x: 10, y: 10 }),
+  q: Object.freeze({ x: 20, y: 10 }),
+  group: Object.freeze({ translation: Object.freeze({ x: 160, y: 100 }), angle: 90, width: 140, height: 90 }),
+  view: Object.freeze({ zoom: 2, angle: 0, pan: Object.freeze({ x: 60, y: 40 }) }),
+  svg: Object.freeze({ width: 800, height: 600 }),
+  bridge: Object.freeze({ scale: 1, origin: Object.freeze({ x: 120, y: 80 }) }),
+  gesture: Object.freeze({ clientDelta: Object.freeze({ x: 40, y: 20 }), anchorZoom: 3 }),
+  zoomLimits: Object.freeze({ min: 0.25, max: 4 }),
+});
+const spaces = Object.freeze([
+  { id: 'O', name: 'Card', point: { x: 10, y: 10 } },
+  { id: 'G', name: 'Group', point: { x: 40, y: 30 } },
+  { id: 'W', name: 'World', point: { x: 130, y: 140 } },
+  { id: 'V', name: 'View', point: { x: 320, y: 320 } },
+  { id: 'C', name: 'Client', point: { x: 440, y: 400 } },
+]);
+
+// Six-value browser order [a,b,c,d,e,f]; column vectors; multiply(A,B) = A B.
+const identity = () => [1, 0, 0, 1, 0, 0];
+const translation = (x, y) => [1, 0, 0, 1, x, y];
+const scale = (x, y = x) => [x, 0, 0, y, 0, 0];
+function rotation(degrees) {
+  const angle = degrees * Math.PI / 180;
+  // Exact quarter turns keep the worked snapshots exact.
+  const quarter = degrees / 90;
+  const c = Number.isInteger(quarter) ? [1, 0, -1, 0][((quarter % 4) + 4) % 4] : Math.cos(angle);
+  const s = Number.isInteger(quarter) ? [0, 1, 0, -1][((quarter % 4) + 4) % 4] : Math.sin(angle);
+  return [c, s, -s, c, 0, 0];
+}
+function multiply(A, B) {
+  const [a,b,c,d,e,f] = A, [g,h,i,j,k,l] = B;
+  return [a*g+c*h, b*g+d*h, a*i+c*j, b*i+d*j, a*k+c*l+e, b*k+d*l+f];
+}
+const compose = (...matrices) => matrices.reduce(multiply, identity());
+const point = ([a,b,c,d,e,f], p) => ({ x: a*p.x+c*p.y+e, y: b*p.x+d*p.y+f });
+const displacement = ([a,b,c,d], p) => ({ x: a*p.x+c*p.y, y: b*p.x+d*p.y });
+const determinant = ([a,b,c,d]) => a*d-b*c;
+const finitePoint = p => !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
+const finiteMatrix = m => Array.isArray(m) && m.length === 6 && m.every(Number.isFinite);
+function inverse(m) {
+  if (!finiteMatrix(m)) return null;
+  const [a,b,c,d,e,f] = m, det = determinant(m);
+  if (!Number.isFinite(det) || det === 0) return null;
+  const result = [d/det, -b/det, -c/det, a/det, (c*f-d*e)/det, (b*e-a*f)/det];
+  return finiteMatrix(result) ? result : null;
+}
+const about = (pivot, degrees) => compose(translation(pivot.x,pivot.y), rotation(degrees), translation(-pivot.x,-pivot.y));
+const viewMatrix = ({ zoom, angle = 0, pan }) => compose(translation(pan.x,pan.y), rotation(angle), scale(zoom));
+const bridgeMatrix = ({ scale: size = 1, origin }) => compose(translation(origin.x,origin.y), scale(size));
+const svgMatrix = m => `matrix(${m.join(' ')})`;
+const add = (p,q) => ({ x: p.x+q.x, y: p.y+q.y });
+const subtract = (p,q) => ({ x: p.x-q.x, y: p.y-q.y });
+
+
+
+function initialState(preset = 'baseline') {
+  let view = { ...example.view, pan: { ...example.view.pan } };
+  if (preset === 'turned') {
+    const turned = compose(about({ x: example.svg.width / 2, y: example.svg.height / 2 }, example.group.angle), viewMatrix(view));
+    view = { zoom: view.zoom, angle: example.group.angle, pan: { x: turned[4], y: turned[5] } };
+  }
+  return { card: { ...example.card.translation }, view,
+    bridge: { ...example.bridge, scale: ['resized', 'turned'].includes(preset) ? 0.5 : 1 } };
+}
+
+function matrices(state) {
+  const G_from_O = translation(state.card.x, state.card.y);
+  const W_from_G = compose(translation(example.group.translation.x, example.group.translation.y), rotation(example.group.angle));
+  const V_from_W = viewMatrix(state.view);
+  const C_from_V = bridgeMatrix(state.bridge);
+  return { G_from_O, W_from_G, V_from_W, C_from_V,
+    C_from_G: compose(C_from_V, V_from_W, W_from_G),
+    V_from_O: compose(V_from_W, W_from_G, G_from_O),
+    C_from_O: compose(C_from_V, V_from_W, W_from_G, G_from_O) };
+}
+
+function validState(state) {
+  if (!finitePoint(state.card) || !finitePoint(state.view.pan) || !Number.isFinite(state.view.angle) ||
+      !Number.isFinite(state.view.zoom) || state.view.zoom < example.zoomLimits.min || state.view.zoom > example.zoomLimits.max) return false;
+  return Object.values(matrices(state)).every(m => finiteMatrix(m) && inverse(m));
+}
+
+// The anchor is in W; the target and both terms of the subtraction are in V.
+function panFor(anchorW, targetV, zoom, angle) {
+  if (![zoom, angle].every(Number.isFinite) || !finitePoint(anchorW) || !finitePoint(targetV)) return null;
+  const pan = subtract(targetV, displacement(compose(rotation(angle), scale(zoom)), anchorW));
+  return finitePoint(pan) ? pan : null;
+}
+
+// Translation-only O-to-G placement: pointer_G = grabbed_O + translation_G.
+function cardFor(grabO, pointerG) {
+  if (!finitePoint(grabO) || !finitePoint(pointerG)) return null;
+  const card = subtract(pointerG, grabO);
+  return finitePoint(card) ? card : null;
+}
+
+function anchoredView(state, targetV, requestedZoom, angle) {
+  if (!validState(state) || !finitePoint(targetV) || ![requestedZoom, angle].every(Number.isFinite)) return null;
+  const oldInverse = inverse(viewMatrix(state.view));
+  const anchorW = point(oldInverse, targetV);
+  const zoom = Math.max(example.zoomLimits.min, Math.min(example.zoomLimits.max, requestedZoom));
+  const pan = panFor(anchorW, targetV, zoom, angle);
+  const candidate = { ...state, view: { zoom, angle, pan } };
+  return validState(candidate) ? candidate : null;
+}
+
+function comparison(preset = 'baseline', algorithm = 'derived', mode = 'Card') {
+  const before = initialState(preset);
+  const old = matrices(before);
+  const startC = point(old.C_from_O, example.p);
+  const after = structuredClone(before);
+  if (preset === 'resize-between') after.bridge.scale = 0.5;
+  const current = matrices(after);
+  const targetC = preset === 'resize-between'
+    ? add(point(current.C_from_O, example.p), example.gesture.clientDelta)
+    : add(startC, example.gesture.clientDelta);
+  const pointerV = point(inverse(current.C_from_V), targetC);
+  const anchorW = point(compose(old.W_from_G, old.G_from_O), example.p);
+  if (mode === 'Pan') {
+    after.view.pan = panFor(anchorW, pointerV, after.view.zoom, after.view.angle);
+  } else if (algorithm === 'divide') {
+    after.card = add(before.card, { x: (targetC.x - startC.x) / before.view.zoom, y: (targetC.y - startC.y) / before.view.zoom });
+  } else {
+    const mapping = algorithm === 'stale' ? old.C_from_G : current.C_from_G;
+    after.card = cardFor(example.p, point(inverse(mapping), targetC));
+  }
+  const result = matrices(after);
+  const actualC = point(result.C_from_O, example.p);
+  const currentStartC = point(current.C_from_O, example.p);
+  const deltaC = subtract(targetC, currentStartC);
+  const deltaV = displacement(inverse(current.C_from_V), deltaC);
+  const deltaW = displacement(inverse(current.V_from_W), deltaV);
+  const deltaG = displacement(inverse(current.W_from_G), deltaW);
+  return { before, after, startC, currentStartC, targetC, actualC, anchorW,
+    targetV: pointerV, actualV: point(inverse(current.C_from_V), actualC),
+    deltas: { C: deltaC, V: deltaV, W: deltaW, G: deltaG } };
+}
+
+
+
+
+// Each call obtains the current element-local -> client mapping.
+function localPoint(element, event) {
+  if (![event.clientX, event.clientY].every(Number.isFinite)) return null;
+  try {
+    const matrix = element.getScreenCTM();
+    if (!matrix) return null;
+    const back = matrix.inverse(); // SVGMatrix may throw; DOMMatrix may return NaN.
+    if (![back.a, back.b, back.c, back.d, back.e, back.f].every(Number.isFinite)) return null;
+    const p = new DOMPoint(event.clientX, event.clientY).matrixTransform(back);
+    return finitePoint(p) ? { x: p.x, y: p.y } : null;
+  } catch {
+    return null; // Let the caller retain state and finish any active gesture.
+  }
+}
+
+// Rendering must commit synchronously before the next mapping is read.
+function installGestures({ surface, card, parent, world, getState, commit, getMode, report = () => {} }) {
+  let active = null;
+  function update(event) {
+    if (!active || event.pointerId !== active.pointerId) return false;
+    const state = getState();
+    const pointer = localPoint(active.mode === 'Card' ? parent : surface, event);
+    if (!pointer) { report('Invalid conversion: kept the last valid placement.'); return false; }
+    const candidate = active.mode === 'Card'
+      ? { ...state, card: cardFor(active.anchor, pointer) }
+      : { ...state, view: { ...state.view, pan: panFor(active.anchor, pointer, state.view.zoom, state.view.angle) } };
+    if (!validState(candidate)) { report('Invalid state: kept the last valid placement.'); return false; }
+    commit(candidate);
+    return true;
+  }
+  function finish(event, finalUpdate) {
+    if (!active || event.pointerId !== active.pointerId) return;
+    if (finalUpdate) update(event);
+    const id = active.pointerId;
+    active = null; // release may itself cause lostpointercapture
+    if (surface.hasPointerCapture(id)) surface.releasePointerCapture(id);
+    report(finalUpdate ? 'Completed; final valid sample retained.' : 'Cancelled; last valid placement retained.');
+  }
+  function down(event) {
+    if (active || event.button !== 0 || !(event.buttons & 1) || !validState(getState())) return;
+    const mode = getMode();
+    if (!['Card', 'Pan'].includes(mode)) return;
+    const anchor = localPoint(mode === 'Card' ? card : world, event);
+    if (!anchor || (mode === 'Card' && (anchor.x < 0 || anchor.x > example.card.width || anchor.y < 0 || anchor.y > example.card.height))) return;
+    try { surface.setPointerCapture(event.pointerId); }
+    catch { report('Capture failed; gesture did not start.'); return; }
+    active = { pointerId: event.pointerId, mode, anchor };
+    report(`${mode} started with pointer ${event.pointerId}.`);
+  }
+  function move(event) {
+    if (!active || event.pointerId !== active.pointerId) return;
+    if (!(event.buttons & 1)) finish(event, true);
+    else if (!update(event)) finish(event, false);
+  }
+  const up = event => finish(event, true);
+  const cancel = event => finish(event, false);
+  const listeners = { pointerdown: down, pointermove: move, pointerup: up, pointercancel: cancel, lostpointercapture: cancel };
+  for (const [type, handler] of Object.entries(listeners)) surface.addEventListener(type, handler);
+  return { get active() { return active; }, cancel() { if (active) finish({ pointerId: active.pointerId }, false); },
+    destroy() { this.cancel(); for (const [type, handler] of Object.entries(listeners)) surface.removeEventListener(type, handler); } };
+}
+
+const surface = document.querySelector('svg');
+const world = surface.querySelector('[data-world]'); // W coordinates
+const parent = surface.querySelector('[data-parent]'); // G coordinates
+const card = surface.querySelector('[data-card]'); // O coordinates
+const tool = document.querySelector('#tool');
+const status = document.querySelector('#status');
+let state = initialState();
+function commit(next) {
+  state = next;
+  const m = matrices(state);
+  world.setAttribute('transform', svgMatrix(m.V_from_W));
+  parent.setAttribute('transform', svgMatrix(m.W_from_G));
+  card.setAttribute('transform', svgMatrix(m.G_from_O));
+}
+commit(state);
+const gesture = installGestures({ surface, world, parent, card,
+  getState: () => state, commit, getMode: () => tool.value,
+  report: message => status.textContent = message
+});
+function changeView(factor, degrees) {
+  gesture.cancel();
+  const targetV = { x: 400, y: 300 };
+  const next = anchoredView(state, targetV, state.view.zoom * factor, state.view.angle + degrees);
+  if (next) {
+    commit(next);
+    status.textContent = `Zoom ${state.view.zoom}; angle ${state.view.angle}°; centre retained.`;
+  }
+}
+document.querySelector('#zoom-in').onclick = () => changeView(1.5, 0);
+document.querySelector('#zoom-out').onclick = () => changeView(1 / 1.5, 0);
+document.querySelector('#turn').onclick = () => changeView(1, 15);
+document.querySelector('#reset').onclick = () => {
+  gesture.cancel(); commit(initialState()); status.textContent = 'Reset.';
+};
+status.textContent = 'Ready. Choose Card or Pan.';
+</script>
+</html>

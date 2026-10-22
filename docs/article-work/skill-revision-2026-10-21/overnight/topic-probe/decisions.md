@@ -21,3 +21,12 @@ Root-v3 third full practitioner/value/teaching round passes all applicable check
 
 
 Child-v1 proposed example extensions centrally settled for breakdown review: explicit event/collection clocks, separately labelled older-start/later-terminal fixture, cumulative buckets/interpolation, synthetic query samples and separate six-intended-arrival pause model. No core root values changed. Source canonical child and example in isolated topic archive; frozen child-r01 manifest/snapshot. Planned runnable fixtures remain unexecuted.
+
+
+## Child breakdown r01 decisions
+
+P/V/T first full child coverage complete. Teaching all7pass; value all5pass. Practitioner-1 accepted required medium as LAT-CHILD-01: event reducer explicitly filters eligibility, but histogram terminal path omits the population gate; all-eligible fixtures cannot reveal synthetic checks entering the objective. Make the metric population explicitly match eligible logical history requests and include a separately labelled excluded-event counterexample without changing settled core data or their intentional time-attribution distinction. This is missing implementable judgement, not optional polish. Fresh planner repairs; unchanged D schedule requires fresh full P/V/T round2, then complete-tree review after acceptance. No article writing yet.
+
+Fresh child-r02 proposal centrally integrated: eligible-only observation gate, audit-only excluded events, isolated two-request fixture. Root/core arithmetic unchanged. Canonical plan references settled record rather than unavailable proposal filename; canonical example updates previous observation wording instead of keeping contradictory contracts. LAT-CHILD-r02 frozen for fresh full P/V/T round2. No executable observation yet.
+
+LAT-CHILD-r02 full fresh P/V/T allpass; LAT-CHILD-01 resolved for planning, fixture execution remains future work. Accepted full child centrally merged into root nested_article, preserving semantic root content. LAT-TREE-r01 frozen for first complete P/V/T tree review; no writing commissioned by this probe yet.
