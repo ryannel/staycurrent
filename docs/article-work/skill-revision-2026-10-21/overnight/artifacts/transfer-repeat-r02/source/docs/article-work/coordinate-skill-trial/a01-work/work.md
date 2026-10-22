@@ -1,0 +1,33 @@
+# a01 independent repeat: author record
+
+Keep a diagram under the pointer was written fresh under unchanged D-02 write, figures and continuity skills, from the raw commission, accepted parent/child plans, canonical [Review board example](../../../coverage/coordinate-editor-example.md), registry and centrally owned example/geometry. All three complete reference sources were read, including figures/listings. No first-child source/findings were supplied to initial writing. Parent prose/media were withheld until after initial sealing at 2026-10-21 22:38:02 UTC.
+
+## Teaching and continuity
+
+One retained-point equation carries pan into anchored zoom and chosen-pivot view rotation, then card dragging is derived in G from the actual grab in O. Numerical substitutions make each subtraction inspectable. One shared comparison covers normal/half/turned/resize snapshots and labelled wrong rules, alongside a working SVG editor. Actual connected source is expandable. A compact mapping/event disclosure helps distinguish wrong geometry from interrupted input.
+
+The final continuity audit covers article order, contents, captions, controls, text summaries and listings. The child explicitly builds on the root, reminds O/G/W/V/C before equations, defines view parameters/primes, and explains invariant, clamping, DOM, pointer events, capture, pointer ID, flags and NaN at first use. The parent owns multiplication, inverse and linear-part derivation. Precise parent section links were added after completed parent context was supplied; values/conventions and child scope agree. One name per entity/tool, fixed client offset only in mathematical snapshots, current browser bridge in live input. No shared example/tree change or further child proposed.
+
+## Author QA
+
+The first coordinator build found six figure headings; they became paragraph labels. Rendered text exposed duplicate manual contents and a resize control whose hidden styling was overridden. Actual Chrome input then exposed the raw SVGMatrix guard rejection, repaired through DOMMatrix normalisation and finite checks. Tiny phone SVG labels became an external legend. Dark source comments measured 3.25:1 and became site-token colours. Inherited 48px summary margins were removed after inspection.
+
+Final coordinator build-r06/all 13 rules pass. Model, browser, visual and driver-limit records are distinct in [the evidence index](../a01-evidence/index.md). Current rendered checks completed, original System theme/viewport restored, Chrome lease released and source frozen at 2026-10-22 01:24:20 UTC. No source edits followed.
+
+## Timing and independence
+
+Preparation: 22:31:35–22:32:32 UTC. Draft/model work: 22:32:32–22:37:26. Focused check: 22:37:26–22:37:27. Final source reread/recording: 22:37:27–22:38:02. Parent prose/media completion receipts are 22:39:12/22:39:16, not a measured typing interval. Later actual QA boundaries remain in the mechanical receipt; no typing-only duration is inferred.
+
+Per user correction, the unseen-authorisation-prompt wait and associated queue are excluded from speed, process and quality assessment. Raw receipts remain separately attributed, and intervening actual work has separate receipts.
+
+After sealing, agent-status inventory unexpectedly included the first repair author's final status summary. No referenced source/report/artifact was opened. Coordinator was notified; initial writing was already sealed and repairs above arose from this repeat's own build/render observations.
+
+Reviews are orchestrator-managed. Author spawned no agents, changed no shared data, started no build/server, made no commit/push and published nothing.
+
+## Orchestrator-managed repair r02
+
+The accepted repeat batch required a reader-usable implementation handoff. The child now offers one HTML download containing its actual SVG/control markup, styles, shared data/geometry, model, event policy, browser runtime and startup call. Build-time generation uses raw source imports; it makes no runtime fetch or package assumption. A focused verifier checks the generated reader file, module bodies, required DOM bindings and complete trace bounds. The figure now compares the already worked move without promising an unanswered prediction. Its trace retains a common client-unit scale while centring each preset on all compared outcomes. The final limits paragraph speaks directly to the reader instead of referring to internal evidence.
+
+Complete r02 continuity audit: reread the whole article, source disclosures, captions, control/readout strings and static text alternatives against the [canonical example](../../../coverage/coordinate-editor-example.md). O/G/W/V/C and the parent’s composition/inverse teaching are still recalled before use; invariant, angle/prime notation, clamping, DOM, pointer capture/buttons and NaN remain explained at first use. New handoff instructions name the file, dependencies, startup and edit/reload route at the point of use. “Compare”/“Reveal” wording agrees across initial markup and runtime. Review’s axes antecedent is explicit. Entity names, Card/Pan/pivot controls, values, translation-only assumption, quarter-turn snapshots and tolerance are unchanged. No shared example extension or cross-article term movement is needed; no parent/collection change is proposed.
+
+R02 technical/media changes are limited to the complete handoff, comparison wording and trace bounds; geometry and lifecycle policy are unchanged. [Repair checks](../a01-evidence/receipts/repair-r02/source-and-checks.json) bind the relevant sources. Fresh rendered handoff/bounds/phone checks and their limits are linked from [the evidence index](../a01-evidence/index.md#repair-r02-complete-reader-handoff-and-trace-bounds). The complete article and affected component/listings were reread again after verification; no further source repair was needed. Independent confirmations and final complete reading remain orchestrator-owned.

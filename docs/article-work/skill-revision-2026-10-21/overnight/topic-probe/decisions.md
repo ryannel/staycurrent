@@ -30,3 +30,15 @@ P/V/T first full child coverage complete. Teaching all7pass; value all5pass. Pra
 Fresh child-r02 proposal centrally integrated: eligible-only observation gate, audit-only excluded events, isolated two-request fixture. Root/core arithmetic unchanged. Canonical plan references settled record rather than unavailable proposal filename; canonical example updates previous observation wording instead of keeping contradictory contracts. LAT-CHILD-r02 frozen for fresh full P/V/T round2. No executable observation yet.
 
 LAT-CHILD-r02 full fresh P/V/T allpass; LAT-CHILD-01 resolved for planning, fixture execution remains future work. Accepted full child centrally merged into root nested_article, preserving semantic root content. LAT-TREE-r01 frozen for first complete P/V/T tree review; no writing commissioned by this probe yet.
+
+## First complete-tree coverage
+
+All three first whole-tree perspectives complete on LAT-TREE-r01. Practitioner and value pass all5checks with no findings. Teaching covers all7 and finds teaching-4; accept as LAT-TREE-01 required medium. The child defines labels through an unexplained time-series concept, then depends on series identity, repeated scrape samples and grouping. A newcomer must supply the relation between one eligible observation, the cumulative series it changes, sampled totals and query grouping. This is a local prerequisite/model gap in the measurement child, not a new monitoring article.
+
+A fresh planner repairs locally using existing fixture values and an explicitly isolated scrape illustration if needed; root will settle the tree/example centrally. Historical repair-r02.md remains unchanged; this repair uses tree-repair-r02.md. Under the frozen D-02 control policy, a second FULL fresh P/V/T tree round follows repair. Do not replace it with the F focused-confirmation policy or call the case complete from the eighteen assignments already performed. No native query/service execution is claimed.
+
+## Second complete-tree coverage
+
+All second full P/V/T complete; V/T pass. Practitioner-2 accepted critical LAT-TREE02: the unchanged brief falsely implies all native histograms use different interpolation. Native custom-boundary and zero buckets can use linear interpolation; the standard exponential non-zero schema uses exponential interpolation. First complete practitioner had missed this. A fresh planner repaired exactly one child brief, defining the schema terms locally and retaining the chosen classic path, all fixture/query data and article boundaries. Root centrally merged/synchronised and froze LAT-TREE-r03; no example delta needed. Third full freshPVT round follows fixedDcontrol.
+
+This late unchanged technical discovery limits the earlier inference about focused confirmations plus an editorial/teaching final read. It motivated proposedF04's independent complete practitioner challenge, tested separately. Do not silently change this control schedule or attribute the user authorisation wait to review performance.

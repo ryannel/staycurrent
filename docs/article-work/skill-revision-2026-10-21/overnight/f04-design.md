@@ -1,0 +1,17 @@
+# F-04: retain a complete independent technical challenge
+
+F-03 passed its bounded static audit, but a later behavioural result changed the recommended stopping policy. This is an evidence-driven amendment, not a silent relabelling of earlier results.
+
+The D planning control's second complete practitioner found a critical error in unchanged material: it implied that native histograms generally use different interpolation. Native custom-boundary and zero buckets can use linear interpolation; the distinction depends on the schema. The first complete practitioner had missed it. An editorial or teaching final reading is not a substitute for a fresh technical challenge. The older full-round policy provided this detection opportunity, even though repeating every other perspective was unnecessary for that specific discovery.
+
+F-04 therefore retains focused confirmations of repairs, and adds one fresh complete practitioner check at the final stage for articles and plans. The practitioner has no earlier versions, findings, decisions or repair history and applies all five fixed checks with the permitted primary-source/mechanical context. A separate blind reader still judges the complete explanation: editorial for articles, teaching for plans. New substantive findings require coherent repair and fresh affected confirmation, widening any invalidated judgement. There is no deadline or round-number waiver.
+
+The new check has already earned its place in the F latency case: it found that the final class-separated comparison required a discriminator the measurement design did not retain. That is a different gap from the control's interpolation error. It did not find a technical error in the relational C pair. These observations support keeping the opportunity for a fresh technical challenge; they do not prove that two reviewers catch every error.
+
+F-04 also avoids duplicate complete reads. A final complete practitioner or editorial assignment may supply the corresponding corpus perspective only if the complete collection, exact frozen version, permitted inputs and every check coincide, including the cross-article checks. Record both roles. If any coverage differs, commission the missing coverage; an informed repair confirmation never substitutes for an independent complete check.
+
+The coordinate experiment actually ran separate final editorial and corpus editorial assignments, plus complete corpus practitioner coverage. Its reports permit a coverage comparison on unchanged r02. Do not retroactively reduce its thirteen actual assignments or claim an observed time saving for combining them. The rule preserves required coverage rather than dropping a perspective.
+
+Only review and orchestration roots change from F-03; the twenty-word runnable-handoff clarification remains. The complete pack has seven roots plus seven supporting files, **5,011 words versus 6,529 original (23.2% less)**. All seven validators, 41 local links and 29 fixed perspective checks pass. New final-check behaviour and local repair coverage remain in their case records. Static validation establishes instruction structure, not writing quality or model-specific performance.
+
+No separate Sol/Astra pack, new reviewer role, word budget, prose template or banned-word list is introduced. The shared references and capable models still make the writing decisions. Original C check-time results, original F-02 eight-assignment result and the fixed D control remain separately identified; the revised acceptance policy is not used to rewrite those comparisons.
