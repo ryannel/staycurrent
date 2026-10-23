@@ -23,3 +23,5 @@ The writer’s first complete return and integration receipts will be added on d
 - input-isolation-audit.json: observable writer requests opened only fixed references/new preview; no original repository absolute path in executed tool requests. Input isolation is not an OS access sandbox.
 
 - template-update.md, template-navigation-check.json, collection-navigation.png: later user-requested template navigation, preserving all first-writer source files.
+
+- sources-template-update.md, collapsed-sources-check.json, collapsed-sources.png: subsequent user-requested sources placement and default-collapsed disclosure; authored first-return files unchanged.
