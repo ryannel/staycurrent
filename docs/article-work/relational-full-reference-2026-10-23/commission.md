@@ -1,0 +1,7 @@
+# Complete relational introduction
+
+User commission: try the full relational database introduction with a fresh writer and revised skills, references leading; do not patch old drafts. A complete new draft, author checks and the applicable article review schedule are commissioned here. No publication or child-article rewrite. First coordinator clock: 2026-10-23 16:42:08 UTC.
+
+The writer starts with no conversation history, previous drafts, trial outcomes, review findings, suggested wording or proposed visual. The brief supplies reader outcomes distilled from the current canonical root plan and child scopes. It replaces no canonical plan. Shared core-shop facts exclude historical discrepancies and unrelated class extensions. Current published child metadata gives navigation context; the writer does not imitate old article prose. Current skills are unchanged.
+
+Coordinator owns routes, builds, preview, evidence freeze, review and integration. Preserve the first complete return and distinguish it from author checks or later reviewed repairs. Every later review/repair assignment uses a fresh agent. Four first perspectives cover the same complete frozen draft; consolidate substantive problems before repair. Apply required confirmations and independent final complete readings under staycurrent-review. Keep one decision ledger and evidence index, reuse unchanged mechanical evidence only where applicable, and report actual limits. The complete draft and final reviewed version remain separate from published reading.

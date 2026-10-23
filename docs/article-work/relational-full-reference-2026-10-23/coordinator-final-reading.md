@@ -1,0 +1,9 @@
+# Coordinator final reading · v2/r07
+
+Read the complete current rendered article content in one untruncated 9,127-token output, including all prose, captions, labels, code, results, both complete text histories and source note. Viewed the new opening in its actual desktop page and saved evidence/v2-opening.png. Earlier v1 reading and image remain separate. This is coordinator judgement, not one of the independent final readers.
+
+The revised first encounter now establishes one product per row and one stock value per product before related facts. The selected identifier path performs the matching explicitly, and the agreed/current price distinction has a concrete consequence. The rewind and both purchase outcomes fit the same order. SQL is formatted and its four-row result is present; the transaction is explained as a protocol with a losing outcome, not as a magic protection word. The application duties now follow consequences rather than a list of names. The later shortlist states why a choice could change and what evidence is needed.
+
+I found no additional substantive reader problem in this complete reading. The text has concrete causes and outcomes rather than canned conclusions or unexplained metaphors. Some headings and roadmap phrasing remain formal and could be more economical; I do not treat those preferences as a reason to restart repair. This is not a claim of universal style reliability or an uncoached first-draft success.
+
+The initial full author version required substantive help, and its complete pre-design reference exposure was not established. The repaired version used accepted problems and fuller delivered reference content, so its quality cannot prove that the same skill set would independently produce this first time. No existing skill or earlier draft was changed in this trial. Full-article throughput must be judged from the whole recorded duration, including own checks, reviews and repair.

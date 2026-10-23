@@ -1,0 +1,452 @@
+ Databases and storage
+ Indexes
+ Deep diveAbout 35 minutesPostgreSQL 18, with InnoDB, SQLite and SQL Server comparisons AI-generated
+ An index lets a database find rows by their value without reading the whole table. Ask a database for customer 42’s orders with no index, and it reads every row in the table to find them. With an index on customer_id, it looks up 42 and goes straight to the matching rows.
+ It works like the index at the back of a book. The terms are sorted, so you can find one quickly, and each term lists the pages it appears on. A database index is a sorted list of values from one or more columns, and each entry records where its row is stored. The B-tree is the ordinary kind in PostgreSQL, MySQL’s InnoDB, SQLite and SQL Server, and it is this article’s subject.
+ Indexes speed up queries that filter on a column (WHERE customer_id = 42), ask for a range (BETWEEN 20 AND 34) or sort (ORDER BY placed_at). They also enforce uniqueness and speed up joins on a key. In return, each index takes space, and inserts and many updates have to change it as well.
+ Databases store a table in fixed-size blocks called pages: 8 kB in PostgreSQL, 16 kB in InnoDB. Each page holds many rows, and the database reads a whole page even when it needs only one row from it. So the work a query does is mostly the number of pages it reads.
+ An index helps when it lets the database read fewer pages than a scan of the whole table would. That takes two things. The query’s conditions and sort order have to line up with the index’s columns, starting from the first, and few enough rows have to match. The database’s planner judges both from its estimates and may decide a full scan is cheaper, so an index that exists isn’t always used.
+ Counting pages is how you choose an index, and how you check in a query plan that the database used it.
+ Sequential scan
+Index entries and row locations
+B-tree
+Range scans
+Searching a clustered table
+Selectivity and the planner’s choice of scan
+Composite (multicolumn) indexes
+Covering indexes and index-only scans
+Partial, expression and unique indexes
+Write cost and upkeep
+Checking an index with EXPLAIN
+Designing an index for a query
+Other index types
+Where the numbers come from
+ Sequential scan
+ A sequential scan, also called a full table scan, reads every page of a table in order and tests each row against the query’s conditions. In PostgreSQL a table’s pages make up its heap, so called because its rows sit in no particular order. The storage article’s Pages section looks inside one.
+ The figures in this article use an invented table of 36 orders, six to a page, so every row stays visible. Most figures also show, under their counters, the same measurement on the 60,000-order table, taken in PostgreSQL 18. It holds one order a minute from 1 January 2026, placed by 1,000 customers in turn, so each customer’s 60 orders are spread through the table, while consecutive customers share pages.
+ Figure 1 scans the invented table for customer 42. Watch the counters: only four rows match.
+ Figure 1
+Sequential scan for customer 42
+ <code>SELECT * FROM orders WHERE customer_id = 42;</code>
+ A sequential scan reads all six pages and checks all 36 rows. Four rows match customer 42: orders 3, 11, 21 and 36, on pages 0, 1, 3 and 5. The other 32 rows are discarded. On the 60,000-order table, the same scan read all 1,725 pages to return 60 rows.
+ Play Back Next Step Reset
+ The invented orders table that most figures use: 36 rows, six to a page. Each cell shows a row’s customer_id above its order number. Step through it, or play it and watch the counters.
+ The scan read 6 pages and checked 36 rows to return 4. Its cost follows the size of the table, not the size of the answer. On the 60,000-order table, the same lookup read all 1,725 pages to return 60 rows.
+ That count comes from EXPLAIN (ANALYZE, BUFFERS), which runs a query and reports the route PostgreSQL took and the pages each step read. The section on checking an index with EXPLAIN shows how to read its output.
+ Index entries and row locations
+ An index entry pairs a key with a row location. The key is the indexed column’s value. The row location is whatever the database needs to find the row again, and it depends on how the table is stored. Databases store tables in one of two ways.
+ Tables stored as a heap
+ Rows in a heap aren’t moved to keep an order, so an index entry can point straight at a row’s page and position. In PostgreSQL that location is a TID, short for tuple identifier; a tuple is PostgreSQL’s word for a stored row. A TID is a page number plus an item number on that page, and PostgreSQL shows it as the hidden column ctid. Order 3, the third row on page 0, has TID (0,3).
+ Figure 2 builds an index on customer_id. Customer 42’s rows are on four different pages. Watch where their entries go.
+ Figure 2
+Building an index on customer_id
+ <code>CREATE INDEX orders_customer ON orders (customer_id);
+SELECT * FROM orders WHERE customer_id = 42;</code>
+ The index copies each row’s customer ID and TID, then sorts the entries by customer ID. Customer 42’s four entries end up next to each other and point to rows (0,3), (1,5), (3,3) and (5,6), on four different pages. On the 60,000-order table, the lookup read 62 pages with the index (2 index pages and 60 table pages) against 1,725 without it.
+ Play Back Next Step Reset
+ Each index entry holds a customer_id and the row’s TID, written (page, item). Watch where customer 42’s entries go when the entries are sorted.
+ After sorting, customer 42’s entries sit side by side. Finding them means finding the first 42 and reading forward until the key changes. The table itself is not reordered: the index holds the order, and the TIDs lead back to the rows.
+ On the 60,000-order table, an index on customer_id cut the lookup from 1,725 pages to 62. It read 2 index pages to find the 60 entries, then the 60 table pages they point to, because customer 42’s orders sit on 60 different pages.
+ Clustered tables
+ The other design keeps the table itself sorted by its primary key. The table is stored as a B-tree, the structure the next section describes, and is called a clustered table. MySQL’s InnoDB stores every table this way, and its documentation calls the table the clustered index. SQLite stores tables this way too, and so does SQL Server whenever a table has a clustered index, which a primary key creates by default.
+ A row in a clustered table moves when its page fills up and divides in two, so it has no fixed page and position to point at. Each entry in another index stores the row’s primary key instead. Finding a row through such an index then takes two searches: one in the index, then one in the table for the key the entry carries. The section on searching a clustered table follows both, once the B-tree has been explained.
+ B-tree
+ So far, nothing says how a search finds the first 42. A B-tree is a tree of index pages that lets a search jump there instead of reading the entries from the start. The sorted entries live on leaf pages. Above them, branch pages hold one key for each page below, marking where that page’s range begins; PostgreSQL’s documentation calls them internal pages. The single page at the top is the root.
+ Figure 3 draws the invented index as a B-tree on its side, with the root on the left. Pick a customer and count the index pages the search reads.
+ Figure 3
+B-tree search for one customer_id
+ <code>SELECT * FROM orders WHERE customer_id = <span data-key-echo>42</span>;</code>
+ For customer 42, the root page sends the search to the branch page for 42 and above. That branch page sends it to leaf page 4 (below 53), where four entries point to rows on table pages 0, 1, 3 and 5. The search reads one index page per level: three in all. On the 60,000-order table, the index has two levels, so any customer’s lookup reads 2 index pages, then 60 table pages.
+ Find customer5111620232731344247536064667179
+ Play Back Next Step Reset
+ The index from Figure 2 as a B-tree: a root page, two branch pages and six leaf pages, one per line. Pick a customer and count the pages read.
+ Every search in this tree reads three index pages, whatever the key: root, branch and leaf. That count is the tree’s depth, and it grows very slowly. A real leaf page holds hundreds of entries, so each extra level multiplies the rows the tree can reach by hundreds. The 60,000-order table’s customer index has only two levels, a root and its leaf pages, which is why its lookup read 2 index pages.
+ To see how slowly depth grows, the table below indexes a single integer column in three separate tables of 100,000, 1 million and 10 million rows.
+ B-tree depth for an index on one integer column, measured in PostgreSQL 18
+RowsLevelsIndex pages
+100,000
+2
+276
+1,000,000
+3
+2,745
+10,000,000
+3
+27,422
+ A freshly built leaf page held 367 integer entries, and going from 1 million rows to 10 million added no level. A lookup for one key among the 10 million read 4 pages: 3 in the index and 1 in the table. InnoDB’s 16 kB pages hold about twice as many entries of the same size, so its trees are no deeper for the same rows.
+ Range scans
+ A range scan descends to the first entry at or above a lower bound, then reads entries in order until it passes the upper bound. B-trees serve <, <=, =, >=, >, BETWEEN, IN and IS NULL this way.
+ Figure 4 runs a range scan for customers 20 to 34. Watch how many times the search descends, and what it does at the end of a leaf page.
+ Figure 4
+Range scan along the leaf pages
+ <code>SELECT * FROM orders
+WHERE customer_id BETWEEN <span data-lo-echo>20</span> AND <span data-hi-echo>34</span>
+ORDER BY customer_id;</code>
+ For customers 20 to 34, the search descends to leaf page 2, reads 20, 20, 23 and 23, follows the link to leaf page 3, reads 27 to 34, and stops at the first entry of leaf page 4, which is 42. On the 60,000-order table, customers 40 to 45 have 360 entries, read from 3 index pages.
+ From 5111620232731344247536064667179 to 5111620232731344247536064667179
+ Play Back Next Step Reset
+ The tree from Figure 3, with each leaf page linked to the next. Table fetches are left out. Choose a range and watch where the scan starts, which links it follows and where it stops.
+ The search descended once, to the first 20. At the end of each leaf page it followed the link to the next, and it stopped at 42, the first key past the range. The entries came out in key order, so the ORDER BY needed no extra work.
+ The links let PostgreSQL and InnoDB step from one leaf page to the next without going back up the tree, so a range scan descends only once.
+ On the 60,000-order table, customers 40 to 45 have 360 orders, and the index search read 3 pages to collect them: the root and two leaf pages. PostgreSQL then sorted the 360 rows again. It had fetched them with a bitmap heap scan, which collects the matching row locations from the index and reads the table pages in page order, so the rows lose the index order. The section on selectivity returns to it.
+ Searching a clustered table
+ With the B-tree in hand, a clustered table is easy to picture: its rows sit on the leaf pages, in primary key order. A lookup by primary key is one descent, like the searches above. Rows with neighbouring keys share pages, so a range of keys reads few pages. In a heap, rows land wherever there is room, so the key says nothing about the page.
+ Any other index on the table is a secondary index, and each of its entries carries the row’s primary key. Figure 5 follows customer 42 through a secondary index on customer_id, with order_id as the table’s key.
+ Figure 5
+Finding customer 42’s orders in a clustered table
+ Index on customer_id: four entries
+ Orders table, stored in order_id order: bottom pages
+ 42order 3
+ Search the table’s tree for order 3: through its upper levels to bottom page 0. upper levels
+ Page 0 123456
+ 42order 11
+ Search the table’s tree for order 11: through its upper levels to bottom page 1. upper levels
+ Page 1 789101112
+ 42order 21
+ Search the table’s tree for order 21: through its upper levels to bottom page 3. upper levels
+ Page 3 192021222324
+ 42order 36
+ Search the table’s tree for order 36: through its upper levels to bottom page 5. upper levels
+ Page 5 313233343536
+ The same 36 orders, with order_id as the key of the table itself. Each index entry holds the order’s key instead of a page and slot, so every entry sends the search back down the table’s own tree, through its upper levels, to one of four different bottom pages. The unmarked numbers are the other orders stored on each page.
+ Compare Figure 2, where each entry led straight to a page. Here each entry starts a second descent, through the table’s upper levels to the page holding that order, so customer 42’s four entries meant four descents of the table.
+ The rest of this article counts PostgreSQL’s pages, and its figures draw a heap. The engines that cluster their tables differ in the details:
+ Heaps and clustered tables in four engines
+QuestionPostgreSQLMySQL (InnoDB)SQLiteSQL Server
+ How is a table stored?
+As a heap
+Clustered by its primary key
+Clustered by a hidden integer key, the rowid; WITHOUT ROWID tables by their primary key
+Clustered when it has a clustered index, which a primary key creates by default; otherwise a heap
+ What orders a table without a primary key?
+Nothing
+Its first unique index on non-null columns, or else a hidden row ID
+The rowid, even when another primary key is declared
+Nothing, unless a clustered index is created on other columns
+ What does a secondary index entry carry?
+A TID
+The primary key columns
+The rowid, or the primary key in a WITHOUT ROWID table
+The clustered index key, or a row ID in a heap
+ PostgreSQL’s CLUSTER command sorts a heap into an index’s order once, but later rows go wherever there is room. In a clustered table the primary key orders the table and travels in every secondary entry, so choosing it matters more, as Choosing the primary key of a clustered table explains.
+ Selectivity and the planner’s choice of scan
+ Selectivity is the fraction of a table’s rows that a condition matches. A condition matching 60 rows out of 60,000 is very selective; one matching half the table is not. The planner, the part of the database that chooses how to run a query, estimates selectivity from statistics that a command such as ANALYZE collects. Then it picks one of three routes:
+ An index scan follows each entry to its row, in index order.
+ A bitmap heap scan collects the matching TIDs from the index, sorts them by page, then reads each table page once. It saves repeat visits but returns rows in page order, not index order. MySQL’s Multi-Range Read does the same job, sorting row lookups before it makes them; its plan says Using MRR.
+ A sequential scan ignores the index and reads every page.
+ Figure 6 widens a range one customer at a time. Watch how quickly the matching rows spread across the pages. Then switch the table order to “By customer” and step through again.
+ Figure 6
+Page visits as the range widens
+ <code>SELECT * FROM orders WHERE customer_id <= <span data-bound-echo>5</span>;</code>
+ With the rows scattered, one customer matched (3 rows) means an index scan visits 3 pages and a sequential scan reads all 6. By the third customer, 8 rows or 22% of the table, the matches already sit on all six pages. With every row matched, an index scan makes 36 page visits, a bitmap heap scan still reads all 6 pages, and the sequential scan reads 6 pages in order without touching the index. With the same rows stored in customer order, the matches fill one page before reaching the next: 22 rows, 61% of the table, sit on 4 pages, and they reach all six only at 32 rows, 89%. The 60,000-order table is closer to the second order, because neighbouring rows have neighbouring customer numbers. There PostgreSQL chose a bitmap heap scan up to customer_id 500, reading 922 of the 1,725 pages, and a sequential scan from 550. On a copy with the rows shuffled, the same bitmap scan read all 1,715 of the copy’s pages.
+ Table order ScatteredBy customer
+ Play Back Next Step Reset
+ Each step widens the range by one customer. The bars count table page visits for an index scan, a bitmap heap scan and a sequential scan. The same 36 rows, stored in two orders, reach every page at very different points.
+ With the rows scattered, every page held a match by the third step, when 8 rows (22% of the table) matched. From there the index can only add work. A bitmap heap scan reads all six pages anyway, and an index scan reads some of them more than once.
+ Stored by customer, the same rows filled one page before reaching the next, and the matches reached every page only at 89% of the table. Where the matching rows sit matters as much as how many there are.
+ The 60,000-order table is laid out like the “By customer” order: one customer’s rows are spread out, but consecutive customers share pages, about 35 to a page. PostgreSQL chose a bitmap heap scan up to customer_id <= 500, half the table, reading 922 of the 1,725 pages, and a sequential scan from 550. On a copy with the rows shuffled, the same bitmap scan read every page, yet the planner switched at the same point. Its estimate treats the matches as spread at random, so it can’t see the difference. When the choice matters, compare the pages each plan actually read.
+ The order of reads matters too. A sequential scan reads pages one after another, which storage serves quickly, while index lookups jump around, so planners price a jumping read higher. PostgreSQL makes that price two settings, seq_page_cost and random_page_cost, which you can change.
+ Selectivity belongs to the value, not the column. Four in five of the 60,000 orders are paid and the rest pending. With an index on status, a query for the paid orders was still a sequential scan of all 1,725 pages. The pending orders used the index.
+ Their layout helped: they arrived in blocks of 1,000 consecutive orders, so the fifth of the table they make up sits on 365 pages. Scattered, a fifth of the rows would have touched nearly every page.
+ The planner knows this only through its statistics, so a skewed value or an out-of-date count can send it the wrong way. Indexing queries shows how to tell.
+ Composite (multicolumn) indexes
+ A composite index has more than one key column. Its entries sort by the first column, then by the second among entries that tie on the first, and so on. The column order decides which entries sit together.
+ The rest of this article often returns to one query on the 60,000-order table. The history query asks for customer 42’s ten newest orders since 1 February:
+ <code><span class="line"><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-foreground)"> order_id, placed_at, total</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">FROM</span><span style="color:var(--astro-code-foreground)"> index_orders</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">WHERE</span><span style="color:var(--astro-code-foreground)"> customer_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-token-constant)"> 42</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> AND</span><span style="color:var(--astro-code-foreground)"> placed_at </span><span style="color:var(--astro-code-token-keyword)">>=</span><span style="color:var(--astro-code-token-keyword)"> timestamptz</span><span style="color:var(--astro-code-token-string-expression)"> '2026-02-01 00:00:00+00'</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">ORDER BY</span><span style="color:var(--astro-code-foreground)"> placed_at </span><span style="color:var(--astro-code-token-keyword)">DESC</span><span style="color:var(--astro-code-foreground)">, order_id </span><span style="color:var(--astro-code-token-keyword)">DESC</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">LIMIT</span><span style="color:var(--astro-code-token-constant)"> 10</span><span style="color:var(--astro-code-foreground)">;</span></span></code>
+ Figure 7 asks a small version of it: customer 42’s two newest orders since 10 January. Switch between the three indexes and count the entries each one reads.
+ Figure 7
+Column order in a composite index
+ <code>SELECT * FROM orders WHERE customer_id = 42 AND placed_at >= '10 Jan'
+ORDER BY placed_at DESC LIMIT 2;</code>
+ With an index on customer_id alone, the database reads 4 entries, fetches 4 rows to check their dates, rejects one, then sorts the other three. With (customer_id, placed_at DESC) it reads 2 entries and stops. With (placed_at DESC, customer_id) it reads 16 entries, newest first, to find customer 42’s two. On the 60,000-order table, the history query (customer 42’s ten newest orders since 1 February) read 62 pages with the customer index, 13 with the customer and date index, and 54 with the date first, after passing about 11,000 entries.
+ Index on customercustomer, datedate, customer
+ Play Back Next Step Reset
+ The same 36 orders indexed three ways. Switch the index and watch the entries re-sort.
+ With customer_id alone, the index found customer 42’s four orders but knew nothing about their dates, so every row was fetched, checked and sorted. With (customer_id, placed_at DESC), the entries were already newest first, and the scan stopped after two. With the date first, every customer’s entries were interleaved by date, and the scan read 16 to find two.
+ An index on (a, b) helps a query that filters on a, or on a and b, because entries with the same a sit together. It generally doesn’t help a query on b alone, because the matching b values are spread through every a.
+ More precisely, equality conditions on the leading columns, plus a range condition on the next one, limit how much of the index is read. So put the columns compared with = first, then the column used for the range or the sort.
+ When the leading column has no condition, PostgreSQL 18 can still search the index once for each distinct value of that column. This is a skip scan, and MySQL and SQLite have narrower versions of it. It pays only when the leading column has few distinct values, so don’t design an index around it.
+ The history query read these pages with each index in place:
+ The history query on the 60,000-order table with each index in place
+IndexPlanPages read
+ None
+Sequential scan, then sort
+1,725
+ (customer_id)
+Bitmap heap scan: 60 rows fetched, 45 rejected, then sort
+62
+ (placed_at DESC, customer_id)
+Index scan through about 11,000 entries, then a partial sort
+54
+ (customer_id, placed_at DESC, order_id DESC)
+Index scan, stops after 10 rows, no sort
+13
+ Pages dominate the work, but page counts alone can mislead. The reversed index’s 54 pages look cheap beside the customer index’s 62, yet it read about 11,000 entries, every customer’s newest first, to find ten rows. When page counts are close, compare the entries or rows read with the rows returned. Reading 11,000 to return 10 says the index doesn’t fit the query.
+ The composite index read 13 pages: 3 index pages, one per level, and 10 table pages, one per row. Its entries are wider than the customer index’s, so its tree has three levels. The order_id DESC column breaks ties between orders placed in the same instant, as the query’s ORDER BY does.
+ What an index does with each condition
+ The history query’s two conditions both decided where the scan started and stopped. A paid-only version adds a third:
+ <code><span class="line"><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-foreground)"> order_id, placed_at, total</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">FROM</span><span style="color:var(--astro-code-foreground)"> index_orders</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">WHERE</span><span style="color:var(--astro-code-foreground)"> customer_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-token-constant)"> 42</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> AND</span><span style="color:var(--astro-code-foreground)"> placed_at </span><span style="color:var(--astro-code-token-keyword)">>=</span><span style="color:var(--astro-code-token-keyword)"> timestamptz</span><span style="color:var(--astro-code-token-string-expression)"> '2026-02-01 00:00:00+00'</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> AND</span><span style="color:var(--astro-code-token-keyword)"> status</span><span style="color:var(--astro-code-token-keyword)"> =</span><span style="color:var(--astro-code-token-string-expression)"> 'paid'</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">ORDER BY</span><span style="color:var(--astro-code-foreground)"> placed_at </span><span style="color:var(--astro-code-token-keyword)">DESC</span><span style="color:var(--astro-code-foreground)">, order_id </span><span style="color:var(--astro-code-token-keyword)">DESC</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">LIMIT</span><span style="color:var(--astro-code-token-constant)"> 10</span><span style="color:var(--astro-code-foreground)">;</span></span></code>
+ With an index that lacks status (the covering index of the next section), PostgreSQL fetched 12 rows and threw away 2 pending ones to return 10. Its plan listed status under Filter. For a customer whose recent orders were mostly pending, it would read much further.
+ That Filter line is one of three things a condition can do, and the plan tells you which:
+ It narrows the scan. Equality on the leading key columns, plus one range on the next, decides where in the index the scan starts and stops. In the history query, customer_id = 42 and the date since 1 February did this.
+ It is checked inside the index. A condition on a later key column is tested against each entry the scan reads. It saves table visits for the entries it rejects, but the scan reads just as many entries.
+ It is checked at the table. A condition on a column the index lacks can be tested only after the row is fetched, so every rejected row costs a table visit. This is where status was.
+ Adding status as the last key column moves its check into the index, as the end of the next section measures. Putting status before placed_at would narrow the scan as well, but it splits each customer’s history by status, so it suits only queries that always name a status.
+ PostgreSQL lists the first two under Index Cond and the third under Filter. MySQL calls the second index condition pushdown and reports it as Using index condition. SQL Server lists the first under Seek Predicates and the others under Predicate.
+ A condition reaches the index only when it compares the bare column with a value of a matching type. lower(email) = ..., customer_id + 0 = 42 or a cast applied to the column leave it to be checked at the table at best, and usually lead to a full scan. Indexing queries measures each case.
+ Indexes and ORDER BY
+ The history query needed no sort step, because its index entries came out in the order it asked for. So an index can answer an ORDER BY as well as a WHERE.
+ The rule is the composite one: the columns the query fixes with = come first, and the columns it sorts by follow in the index’s order. An index can be read backwards as well as forwards, so reading customer 42’s entries from the end serves ORDER BY placed_at DESC from an index declared ascending.
+ Four things decide whether the match works:
+ Direction in a composite key. A whole index can be read forwards or backwards, but a mixed request needs a matching index. With an index on (customer_id, placed_at), ORDER BY customer_id, placed_at DESC was not served, and PostgreSQL added an Incremental Sort. An index declared (customer_id, placed_at DESC) serves it.
+ Where NULLs sort. PostgreSQL puts NULLs last in ascending order and first in descending order, and an index stores them the same way. On a nullable column such as a shipped_at date, ORDER BY shipped_at DESC NULLS LAST needs a sort unless the index is declared (shipped_at DESC NULLS LAST).
+ Collation. Text sorts by a collation, a set of rules for ordering strings, and an index serves only an ORDER BY in its own collation. In a database using en_US.UTF-8, ORDER BY email LIMIT 10 used the index and ORDER BY email COLLATE "C" LIMIT 10 sorted. The two orders really differ: "C" puts every capital letter first, so 'Zoe' comes before 'adam', while en_US puts 'adam' first.
+ LIMIT. Reading a whole table in index order costs a table visit per row, which is more than a scan and one sort. Without a LIMIT, ORDER BY customer_id, placed_at was planned as a sequential scan and a sort. The index pays when the query stops early, as the history query does after ten rows.
+ The other engines follow the same rules with their own defaults. SQLite reports a mixed-direction order it can’t serve as USE TEMP B-TREE FOR LAST TERM OF ORDER BY. MySQL can declare DESC key parts for a mixed order, and it puts NULLs first in ascending order, the opposite of PostgreSQL.
+ Keep the ORDER BY in the SQL, because the index only makes it cheap. Indexing queries works through the cases that break it.
+ Combining indexes
+ A query with conditions on two columns doesn’t need one composite index for them. PostgreSQL can search two indexes, turn each result into a bitmap of row locations and combine the bitmaps: BitmapAnd when both conditions must hold, BitmapOr when either may.
+ On the 60,000-order table, with separate indexes on customer_id and status, customer 42’s pending orders came from a BitmapAnd. It read 2 pages of the customer index and 12 of the status index, collecting all 12,000 pending entries only to narrow 60 rows down to 12. A composite index on both columns would have gone straight to the 12.
+ In the other direction, customer_id = 42 OR order_id = 7 became a BitmapOr over two indexes, which no single composite index could serve.
+ The planner adds a second index only when reading it looks cheaper than the table visits it saves. For order_id = 7 AND status = 'pending', the primary key led to one row in 3 pages, so the plan checked status on that row and left the status index alone.
+ Choose by how the conditions combine. Conditions joined by AND that appear together in most queries belong in one composite index. Conditions joined by OR, or columns filtered in many different combinations, are better served by separate indexes the planner can combine.
+ MySQL calls combining index merge, and its plan says Using intersect, Using union or Using sort_union in Extra. SQLite normally uses one index for each table in a query, so on SQLite conditions joined by AND want the composite index. Its exception is a condition joined by OR, where it can search each branch with its own index (MULTI-INDEX OR in the plan).
+ Covering indexes and index-only scans
+ An index-only scan answers a query from the index without visiting the table. The first requirement is columns: every column the query uses must be in the index. An index holding them is a covering index for that query.
+ The history query returns total, which the composite index lacks, so each of its ten rows needs a table visit. PostgreSQL’s INCLUDE clause adds columns to every entry as stored values that are not part of the sort, as in (customer_id, placed_at DESC, order_id DESC) INCLUDE (total).
+ Holding the columns is not always enough. When PostgreSQL updates or deletes a row, it keeps the old version while a transaction that began earlier might still need it. So an index entry may lead to a row version the current transaction can’t see, and the entry alone can’t say which.
+ PostgreSQL therefore checks the table unless a bit in its visibility map says every row on that page is visible to every transaction. VACUUM, its cleanup of old row versions, sets the bit, and any change to the page clears it.
+ Figure 8 runs a small version of the history query against one leaf page of that index. Include total, then change the state of the table, and watch the heap fetches beside each page’s bit.
+ Figure 8
+Index-only scan and the visibility map
+ <code>SELECT placed_at, total FROM orders
+WHERE customer_id = 42 AND placed_at >= '10 Jan'
+ORDER BY placed_at DESC LIMIT 2;</code>
+ Without total in the index, both rows must be fetched from the table. With INCLUDE (total) but before VACUUM, the scan still visits the table, because the visibility map bits are not set. After VACUUM, the scan answers from the index alone, with zero heap fetches. After an update to order 19, which is also on page 3, that page’s bit is cleared, so the scan visits the table for order 21 only: one heap fetch. On the 60,000-order table, the history query read 13 pages with 10 heap fetches before VACUUM, 4 pages with none after it, and 5 pages with one heap fetch after an update to another order on the same page as one of its rows.
+ total in index NoINCLUDE Table Not vacuumedVacuumedThen updated
+ Play Back Next Step Reset
+ Leaf page 4 of the composite index, beside the table. The box by each page number is its visibility bit, ticked when set. Try each table state with total included, and watch the heap fetches. 
+ With total included but no bits set, the scan still visited both rows’ pages. After VACUUM it answered from the index alone. Then one update to order 19, which belongs to another customer, cleared page 3’s bit, and the scan went back to the table for order 21 on that page. Each Heap Fetches is one such visit.
+ On the 60,000-order table, adding total took the history query from 13 pages to 4 once VACUUM had run. It also grew the index from 2.3 to 2.9 MiB, and changing total now changes the index too. A covering index pays for a frequent query on a table that changes slowly, where most pages stay all-visible between vacuums.
+ The other engines cover a query in the same way but differ in how you add a column and in when they still visit the table. In SQL Server, a query the index doesn’t cover shows a Key Lookup for each row:
+ Covering indexes in four engines
+QuestionPostgreSQLMySQL (InnoDB)SQLiteSQL Server
+ How do you add a returned column?
+INCLUDE (total)
+At the end of the key: (customer_id, placed_at, order_id, total)
+At the end of the key
+INCLUDE (total)
+ What does every entry cover already?
+Only its key columns
+The primary key, which every secondary entry carries
+The rowid, which every entry carries
+The clustered key, which every nonclustered entry carries
+ When does a covered query still visit the table?
+When the page’s visibility bit is not set
+When the record is marked deleted, or a newer transaction changed its index page
+Never: a reader never sees the index and the table at different versions
+Never
+ Covering also changes what a condition costs. With the covering index, the paid-only query from What an index does with each condition fetched 12 rows to return 10 and read 15 pages. Adding status as the last key column made it an index-only scan of 5 pages:
+ <code><span class="line"><span style="color:var(--astro-code-token-keyword)">CREATE</span><span style="color:var(--astro-code-token-keyword)"> INDEX</span><span style="color:var(--astro-code-token-function)"> index_orders_cover_status</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">ON</span><span style="color:var(--astro-code-foreground)"> index_orders (customer_id, placed_at </span><span style="color:var(--astro-code-token-keyword)">DESC</span><span style="color:var(--astro-code-foreground)">, order_id </span><span style="color:var(--astro-code-token-keyword)">DESC</span><span style="color:var(--astro-code-foreground)">, </span><span style="color:var(--astro-code-token-keyword)">status</span><span style="color:var(--astro-code-foreground)">)</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">INCLUDE</span><span style="color:var(--astro-code-foreground)"> (total);</span></span></code>
+ Most of that drop came from skipping the table, not from the check itself. The scan still read the same entries as before, pending ones included; status decided only which of them to return.
+ Partial, expression and unique indexes
+ Partial indexes
+ A partial index holds entries only for rows that match its own WHERE clause. A fifth of the 60,000 orders are pending:
+ <code><span class="line"><span style="color:var(--astro-code-token-keyword)">CREATE</span><span style="color:var(--astro-code-token-keyword)"> INDEX</span><span style="color:var(--astro-code-token-function)"> index_orders_pending</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">ON</span><span style="color:var(--astro-code-foreground)"> index_orders (placed_at)</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">WHERE</span><span style="color:var(--astro-code-token-keyword)"> status</span><span style="color:var(--astro-code-token-keyword)"> =</span><span style="color:var(--astro-code-token-string-expression)"> 'pending'</span><span style="color:var(--astro-code-foreground)">;</span></span></code>
+ This index is 35 pages, against 166 for a full index on placed_at, and inserts of paid orders skip it. A query for the ten newest pending orders read it backwards and touched 4 pages. The planner uses a partial index only when the query’s own conditions imply the index’s WHERE clause.
+ Two patterns come up often. A queue of unprocessed work is a small slice of a large table, so an index on only the rows still waiting stays small however many finished rows pile up.
+ Soft deletion is the other. A unique partial index such as CREATE UNIQUE INDEX ON users (email) WHERE deleted_at IS NULL refuses a second live user with the same address, but a deleted user’s address can be used again. Indexing queries works it through.
+ Expression indexes
+ An expression index indexes the result of an expression instead of a column. A report of one day’s orders can’t use an index on placed_at through placed_at::date, and that cast can’t be indexed either. Its result depends on the session’s time zone, so one stored moment could give two different dates, and the index could not hold a single value for it. A fixed time zone makes it indexable:
+ <code><span class="line"><span style="color:var(--astro-code-token-keyword)">CREATE</span><span style="color:var(--astro-code-token-keyword)"> INDEX</span><span style="color:var(--astro-code-token-function)"> index_orders_day</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">ON</span><span style="color:var(--astro-code-foreground)"> index_orders (((placed_at </span><span style="color:var(--astro-code-token-keyword)">AT</span><span style="color:var(--astro-code-token-keyword)"> TIME</span><span style="color:var(--astro-code-token-keyword)"> ZONE</span><span style="color:var(--astro-code-token-string-expression)"> 'UTC'</span><span style="color:var(--astro-code-foreground)">)::</span><span style="color:var(--astro-code-token-keyword)">date</span><span style="color:var(--astro-code-foreground)">));</span></span></code>
+ A query that repeats the expression exactly, (placed_at AT TIME ZONE 'UTC')::date = date '2026-02-01', used the index and touched 47 pages to count 1,440 orders. The same question written as placed_at::date = date '2026-02-01' read all 1,725 pages. The planner matches the expression as written, in SQLite as in PostgreSQL, so even x+y and y+x count as different expressions.
+ Unique indexes, foreign keys and joins
+ A unique index also refuses a second entry with the same key. That is why a unique constraint is built on an index: checking for an existing copy of a key is a search in the index. PostgreSQL creates one for every primary key and UNIQUE constraint, so index_orders_pkey is one. An index on (customer_id, placed_at) declared UNIQUE would refuse two orders for one customer in the same instant.
+ NULL is the exception, and the engines disagree about it. PostgreSQL, MySQL and SQLite treat NULLs as distinct from each other, so any number of rows can have a NULL key; PostgreSQL 15 and later accept NULLS NOT DISTINCT to allow only one. SQL Server allows only one NULL in a unique index, so an optional column such as a second email address needs a filtered unique index, WHERE email IS NOT NULL, to allow the rest.
+ A foreign key’s referencing column wants an index of its own. If customer_id referenced a customers table, deleting a customer would have to find that customer’s orders, and without an index that is a scan of the whole orders table. InnoDB creates that index for you; PostgreSQL, SQL Server and SQLite don’t. Indexing queries measures the difference.
+ The same index serves joins. Joining orders to customers, a nested-loop join takes each customer and looks up that customer’s orders through the index on orders.customer_id. A hash join or merge join reads both sides in full instead, so an index helps them only by filtering rows or supplying order. How a query runs explains the join methods.
+ Support in other engines
+ The engines differ in which of these variants they offer, and in two defaults that change a design:
+ Partial, expression and unique indexes across four engines
+PostgreSQLMySQL (InnoDB)SQLiteSQL Server
+ Partial index
+Yes
+No
+Yes
+Yes, called a filtered index
+ Expression index
+Yes
+Yes, called functional key parts
+Yes
+Through an indexed computed column
+ NULLs allowed in a unique index
+Any number; one with NULLS NOT DISTINCT
+Any number
+Any number
+One; a filtered unique index with WHERE email IS NOT NULL allows any number
+ Index on a foreign key’s column
+Not created
+Created if none exists
+Not created
+Not created
+ Write cost and upkeep
+ Each index is another copy of some of the table’s data, so a write to the table is also a write to its indexes. Figure 9 follows one insert and one update through a PostgreSQL table with up to four indexes: the primary key, customer_id, (customer_id, placed_at DESC) and total. Change the number of indexes and count the pages the insert writes, then switch the statement to UPDATE.
+ Figure 9
+One insert, one update, up to four indexes
+ <code data-sql>INSERT INTO orders (order_id, customer_id, placed_at, total)
+VALUES (37, 42, '6 Feb', 30);</code>
+ The four indexes are orders_pkey on order_id, orders_customer on customer_id, orders_history on (customer_id, placed_at DESC) and orders_total on total. Inserting one order with all four changes 8 pages: one table page, one leaf page in three of the indexes, and four pages in orders_history, whose full leaf page splits. With only the primary key, the same insert changes 2 pages. Updating a total changes 1 page while no index contains total, and 5 pages once one does. On the 60,000-order table, inserting 10,000 orders wrote 3.3 MB of write-ahead log with one index, 4.2 MB with two, 5.6 MB with three and 6.7 MB with all four.
+ Statement INSERTUPDATE Indexes 1234
+ Play Back Next Step Reset
+ Each row of boxes is one structure: the table’s pages, then the leaf pages of each index, added in order. Shading shows how full each page is; the fill levels are invented. Branch pages are not drawn, but the one a split changes is counted. Change the statement and the number of indexes, and watch the pages-written counter.
+ With four indexes, the insert wrote 8 pages, four of them because a full index page had to divide in two. With only the primary key, it wrote 2.
+ PostgreSQL also records every change in its write-ahead log, which it replays after a crash; InnoDB’s redo log does the same job. On the 60,000-order table, inserting 10,000 orders wrote 3.3 MB of write-ahead log with only the primary key, and 6.7 MB with all four indexes.
+ The update wrote 1 page until an index held total, then 5. While no index contained the changed column, PostgreSQL wrote the new row version beside the old one on the same page, with a pointer from old to new. The index entries still lead to the old version, and through it to the new one, so no index had to change.
+ PostgreSQL calls this a heap-only tuple (HOT) update. It works only when the new version fits on the same page, which a table fill factor below 100 makes more likely, as Storage’s Free space and fill factor explains. Any other update adds an entry to every index on the table, including indexes on columns it didn’t change.
+ InnoDB updates the row in place in the clustered index and leaves a secondary index alone unless one of its columns changed. Then it marks the old record deleted and inserts a new one.
+ Page splits
+ When the leaf page where an entry belongs is full, the page splits: half its entries move to a new page, and the branch page above gains a pointer to it. A split can travel upwards when the branch page is full too, and a split of the root adds a level to the tree. Where new keys land decides how often this happens.
+ Figure 10 inserts the same 75 keys into two indexes, once in order, as an auto-increment key arrives, and once shuffled, as random UUIDs arrive. Watch the bottom row.
+ Figure 10
+The same keys, inserted in order and at random
+ <code>-- top: order_id 1, 2, 3 … 75 (an auto-increment key)
+-- bottom: the same 75 values, shuffled (like random UUIDs)</code>
+ Two indexes receive the same 75 keys. Keys in order always go at the end: each page fills to 15 of its 16 slots, then the next key starts a new page, so the keys end on 5 pages, each 15/16 full. Keys in random order land on whichever page covers their value. When that page is full it splits, and half its entries move to a new page beside it. After six splits the same keys take 7 pages, each between 8 and 15 of 16 slots full. On the 60,000-order table, PostgreSQL’s primary key took 166 pages with the keys inserted in order and about 225 with the same keys inserted at random.
+ Play Back Next Step Reset
+ Each box is one leaf page with room for 16 entries. The shading shows how full it is, and the tick marks the one slot InnoDB tries to keep free. The fill levels follow InnoDB’s documented figures; the keys are invented. Play it and watch the bottom row split.
+ Keys in order always land on the last page. When it fills, the next key starts a new page and the full one is left alone, so every page ends nearly full.
+ Random keys land all over the index. Each full page they hit splits into two half-full pages, which fill again only as later keys happen to land on them. The same keys end up on more pages, and every scan of the index reads more of them.
+ PostgreSQL leaves pages 90% full when keys arrive in order. On the 60,000-order table, its primary key took 166 pages with the keys inserted in order and about 225 with the same keys at random.
+ That 90% is the index’s fill factor. You can lower it with WITH (fillfactor = 70) on CREATE INDEX, to leave more room on each page for keys that land in the middle. SQL Server’s FILLFACTOR and InnoDB’s innodb_fill_factor apply only when an index is built or rebuilt. Microsoft advises keeping the default except for an index that splits heavily under random keys, and a lower fill factor makes every scan read more pages.
+ Choosing the primary key of a clustered table
+ In a clustered table the primary key does three jobs at once. It orders the table, it is the row locator stored in every other index, and it decides where new rows land. A choice that suits one job can hurt another, so check all three.
+ Width. Every secondary index entry carries the key, so a 4-byte or 8-byte integer adds that much to each of them. A UUID written as 36 characters of text adds 36 bytes, or 16 if stored as a binary value, and a composite key adds the sum of its columns. A table with six secondary indexes carries the key seven times.
+ Insert pattern. A key that grows with time, such as an auto-increment integer or a time-ordered identifier like UUIDv7 (PostgreSQL 18 has a uuidv7() function), puts new rows at the end of the table. A random UUID puts each row on an arbitrary page, so inserts split table pages across the whole table, as Figure 10 showed for an index.
+ Stability. A key that never changes keeps secondary indexes still. Changing it moves the row and rewrites its entry in every secondary index, so a value people edit, such as an email address, makes a poor key.
+ Some systems need identifiers that can’t be guessed, or that several clients generate. The usual compromise is a short integer primary key for the table, with the public identifier in a unique secondary index. In a heap table such as PostgreSQL’s, the primary key is one index among several, so width and randomness cost only that index and not all of them.
+ Deleted rows and index bloat
+ An index grows when rows arrive and does not reliably shrink when they leave. Figure 11 deletes two-thirds of the rows behind the primary key index in two ways: scattered through the table, or as one block of the oldest orders. Watch the pages in the file.
+ Figure 11
+Deleting two-thirds of the rows from an index
+ <code data-sql>DELETE FROM orders WHERE order_id % 3 <> 0;
+VACUUM orders;
+REINDEX INDEX orders_pkey;</code>
+ The primary key index holds 36 entries on six leaf pages. Deleting two rows in every three leaves 12 rows, two on every page: after VACUUM removes the dead entries, all six pages are still in use, each a third full. Deleting the oldest 24 rows instead empties the first four pages, which VACUUM takes out of the tree and keeps for reuse, but the file still has six pages. In both cases REINDEX builds the index again from the 12 rows, on two pages. On the 60,000-order table, deleting two rows in three left the primary key at 166 pages after VACUUM, and deleting the oldest 40,000 emptied 109 of its 164 leaf pages without shrinking the file. REINDEX brought both to 57 pages.
+ Delete 2 rows in every 3the oldest 24
+ Play Back Next Step Reset
+ The primary key index of the same 36 orders, one leaf page per line, with the number of entries on each page beside it. Both choices delete 24 rows. Step through the delete, the vacuum and the rebuild, and watch the pages in the file.
+ Deleting scattered rows thinned every page and emptied none. After VACUUM removed the dead entries, all six pages were still in use, each a third full. A page holding a third of its entries is still a whole page to read, cache and back up.
+ Deleting the oldest rows emptied whole pages instead. PostgreSQL takes an empty page out of the tree and reuses it later, but the file kept its size. Only REINDEX, which builds the index again from the surviving rows, made it smaller. An index carrying that much empty space is called bloated.
+ On the 60,000-order table, deleting two rows in three left the primary key at 166 pages after VACUUM, and REINDEX brought it to 57. PostgreSQL removes a B-tree page only when every entry on it is gone, and it never merges two partly full pages.
+ Later inserts refill gaps only where their keys land. New orders, with the highest IDs, fill the last pages, while the gaps in the older ones stay.
+ InnoDB tries to merge a page with a neighbour when a delete leaves it less than half full (MERGE_THRESHOLD, default 50). That holds sparseness down but does not remove it.
+ A bloated index costs more pages for every range scan and more memory for the same hot entries. Maintaining indexes shows how to measure the bloat and repair it without blocking writes.
+ Building, finding and dropping indexes
+ Loading a lot of data into a new or empty table goes faster without its indexes, which would otherwise be updated row by row. PostgreSQL’s documentation advises loading first and creating the indexes afterwards: the build sorts every entry at once and fills each page in turn, and InnoDB builds a new index the same way. Run ANALYZE after the load, so the planner sees the new rows.
+ On a live table a build can hold up writes until it finishes, and each engine has its own way round that, which Maintaining indexes covers.
+ An index that no query reads still costs every write, so the list of indexes needs pruning as well as growing. To find indexes worth removing, look for ones no query has read since the usage counters were last reset, ones made redundant by a wider index (an index on (a) beside one on (a, b)), and invalid leftovers from failed builds. Maintaining indexes covers each check in every engine and the safe order of steps for a drop.
+ Checking an index with EXPLAIN
+ Databases can show the plan they chose for a query: EXPLAIN in PostgreSQL and MySQL, EXPLAIN QUERY PLAN in SQLite, the estimated or actual execution plan in SQL Server. The details below are PostgreSQL’s. Indexing queries gives the equivalent terms in the others.
+ In PostgreSQL, EXPLAIN (ANALYZE, BUFFERS) also runs the query and reports what each step did and how many pages it touched. Here ANALYZE means run and measure; the separate ANALYZE command collects the planner’s statistics. Since PostgreSQL 18, ANALYZE reports pages without BUFFERS, but older versions need it.
+ <code><span class="line"><span style="color:var(--astro-code-foreground)">EXPLAIN (ANALYZE, BUFFERS)</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-foreground)"> order_id, placed_at, total</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">FROM</span><span style="color:var(--astro-code-foreground)"> index_orders</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">WHERE</span><span style="color:var(--astro-code-foreground)"> customer_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-token-constant)"> 42</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> AND</span><span style="color:var(--astro-code-foreground)"> placed_at </span><span style="color:var(--astro-code-token-keyword)">>=</span><span style="color:var(--astro-code-token-keyword)"> timestamptz</span><span style="color:var(--astro-code-token-string-expression)"> '2026-02-01 00:00:00+00'</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">ORDER BY</span><span style="color:var(--astro-code-foreground)"> placed_at </span><span style="color:var(--astro-code-token-keyword)">DESC</span><span style="color:var(--astro-code-foreground)">, order_id </span><span style="color:var(--astro-code-token-keyword)">DESC</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">LIMIT</span><span style="color:var(--astro-code-token-constant)"> 10</span><span style="color:var(--astro-code-foreground)">;</span></span></code>
+ With the covering index in place and the table vacuumed, the important part of the plan looks like this. Costs, timings and a few details are left out, and long lines are wrapped.
+ <code data-astro-cid-k54kizxp>Limit (actual rows=10.00 loops=1) Buffers: local hit=4 -> Index Only Scan using index_orders_cover on index_orders (actual rows=10.00 loops=1) Index Cond: ((customer_id = 42) AND (placed_at >= '2026-02-01 00:00:00+00')) Heap Fetches: 0 Buffers: local hit=4</code>
+ Read it from the most indented line outwards. The index-only scan produces rows in order, and Limit stops asking for more after ten. Four parts of a plan tell you what an index did:
+ The node type. Seq Scan, Index Scan, Index Only Scan or Bitmap Heap Scan names the route.
+ Index Cond against Filter. Conditions under Index Cond were checked against index entries: the leading ones narrowed the scan, and the rest were tested entry by entry, as What an index does with each condition described. Conditions under Filter were checked on rows after fetching them, and Rows Removed by Filter counts the wasted fetches.
+ Heap Fetches. In an index-only scan, the rows that still needed a table visit.
+ Buffers. The shared hit and read counts are pages found in memory and pages read from storage. The 60,000-order table is a temporary table, which lasts only as long as the session that made it, so its pages appear under local instead.
+ An index is doing its job when the conditions that should narrow the scan do, the pages read come to about the tree’s depth plus one table page per row returned (fewer for an index-only scan), and Heap Fetches is near zero. A condition can appear under Index Cond while the scan reads the whole index, so trust the page count over the plan’s wording.
+ Of the four engines, PostgreSQL and SQL Server report pages: SQL Server through SET STATISTICS IO, as logical reads. MySQL and SQLite let you check the route but not this arithmetic.
+ Designing an index for a query
+ Choosing an index starts from a query, and it can be done in a fixed order. The worked case is the history query, customer 42’s ten newest orders since 1 February, which reached 13 pages once the index was shaped for it.
+ Sort the query’s columns into roles. Equality conditions, the range or sort, and the columns the query only returns.
+ Build the key from the roles in that order. Equality columns first, then the range or sort column, then a tie-breaker if the order needs one.
+ Ask whether the equality columns narrow the table. Together they should cut it to a small fraction. If they don’t, the index will lead to much of the table anyway, as the selectivity section showed.
+ Add returned columns only if the query earns it. Covering columns pay for a frequent query on a table that changes slowly.
+ Create it on production-shaped data and read the plan. The conditions meant to narrow the scan should appear under Index Cond, the sort step should be gone, and the pages read should drop, as in the plan of the previous section.
+ Count what it costs. Check which existing indexes it makes redundant, as Building, finding and dropping indexes describes, and what it adds to every write.
+ Where each part of the history query goes in the index key
+The query saysRoleIn the index
+ customer_id = 42
+Equality
+First key column
+ placed_at >= ... and ORDER BY placed_at DESC
+Range and sort on one column
+Second key column, DESC to match
+ ORDER BY ... order_id DESC
+Tie-breaker
+Third key column
+ LIMIT 10
+Early stop
+Nothing, but it is why the sort order pays
+ SELECT ... total
+Returned only
+INCLUDE (total), if the query is frequent enough
+ status = 'paid' (the paid-only variant)
+Equality, optional
+After the sort columns, to check it inside the index; before them only if every query supplies it
+ A condition on a column with one fixed value changes step 2. A dashboard of the ten newest pending orders has status = 'pending' as its only equality, and a fifth of the table is pending. Rather than lead with status, index placed_at alone with WHERE status = 'pending'. That is the partial index from earlier, which holds only the rows the query wants and was read in 4 pages.
+ Stop when the plan shows no work you can point to: no rows fetched and thrown away, no entries read beyond the answer, and no sort. What remains is a few index pages and about one table page per row returned, as in the composite index’s 13.
+ A further index that saves one more page on a query that runs rarely is not worth its write cost. Before adding one, ask whether an index you already have can be widened instead. The history query’s composite index can replace the plain customer_id index, because an index on (a) is redundant beside one on (a, b). Then every write pays for one index instead of two.
+ Designing for several queries
+ A real table serves several queries, so design the set of indexes together rather than one per query. Suppose the orders table answers four: the history query; a customer’s order list, newest first with no date bound; the foreign-key check when a customer is deleted; and the pending dashboard. The composite index (customer_id, placed_at DESC, order_id DESC) serves the first three, because each fixes customer_id and needs at most the columns that follow it, in that order. The partial index on pending orders serves the fourth. Two indexes answer four queries, where one index per query would have made four, and Figure 9 showed what each extra index adds to every insert.
+ Queries that join tables, page through results or combine many optional conditions follow the same steps with a few more rules. For those, and for plans that ignore an index you expected them to use, see Indexing queries: diagnosis and patterns.
+ Other index types
+ A B-tree serves any value with one sort order. Some questions have no such order, and each engine offers other index types for them. In PostgreSQL, USING chooses one: CREATE INDEX ON products USING gin (tags).
+ Words inside text, or a substring. A full-text index lists every row containing each word: GIN in PostgreSQL, FULLTEXT in InnoDB, the FTS5 module in SQLite. PostgreSQL’s pg_trgm extension indexes substrings for LIKE '%mug%'. See full-text search.
+ Values that hold many keys. Arrays and JSON documents, searched by containment such as tags @> ARRAY['gift'], want GIN in PostgreSQL. See GIN indexes and JSON.
+ Overlap and distance. Booking ranges, geometry and network addresses want GiST or SP-GiST in PostgreSQL, spatial R-trees in InnoDB and the R*Tree module in SQLite.
+ Nearest neighbours among embeddings. PostgreSQL’s pgvector extension adds HNSW and IVFFlat indexes. See Vector search.
+ Very large tables in time order. A BRIN index records only the smallest and largest value in each range of table pages, so it stays tiny on an append-only log. See BRIN indexes.
+ Reports over most of a table. No index helps a query that reads most rows of a few columns. A column store does; see Column stores.
+ Partial and expression indexes work with any of these types.
+ Where the numbers come from
+ Every page count for the 60,000-order table was taken in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3, the same engine the site’s SQL sandbox runs in your browser. Count the pages an index saves, a guided sandbox lesson, builds the 60,000-order table and repeats the measurements, with the number to expect at every step. The sandbox’s database uses the C collation.
+ To run them on your own PostgreSQL server, download the experiment script and run it with psql -f index-experiment.sql. It also has the status-last index from Covering indexes and index-only scans, which the lesson leaves out, and the diagnosis cases from Indexing queries. It leaves out the write-ahead log test in Figure 9, because that test creates permanent tables and runs CHECKPOINT. Page counts may differ slightly, and none of the numbers are timings.
+ A few results needed something else. The collation results in Indexes and ORDER BY need a database using en_US.UTF-8, so they were measured with the same table on a local PostgreSQL 18.6 server. The depth table used its own tables in PGlite.
+ Three figure lines come from extra runs in the same PGlite build, outside the lesson:
+ the shuffled copy in Figure 6
+ the write-ahead log for two and three indexes in Figure 9
+ the delete of the oldest rows in Figure 11.
+ SQLite plan wording was checked on SQLite 3.51. No number comes from InnoDB, whose behaviour is described from the MySQL 8.4 manual.
+ Sources and further reading
+ Checked on 17 and 18 October 2026 against the PostgreSQL 18, MySQL 8.4, SQLite and SQL Server documentation. The 36-order table is invented; the measurements come from PGlite 0.5.8 (PostgreSQL 18.3), except the en_US.UTF-8 collation results, which come from a local PostgreSQL 18.6 server.
+ Index Types, with the Hash, GiST, SP-GiST, GIN and BRIN chapters and the bloom module: which conditions each type serves.
+ B-Tree Indexes: page structure, deduplication into posting lists, and bottom-up deletion. The nbtree README in PostgreSQL’s source: entries with equal keys sorted in table order, and why a page is deleted only when it is empty and partly full pages are never merged.
+ Multicolumn Indexes and Index-Only Scans and Covering Indexes: column order, skip scan, INCLUDE and the visibility map.
+ Indexes and ORDER BY, Operator Classes and Operator Families and CREATE INDEX: sort direction and NULL placement, the leaf-page fill factor, and the invalid index a failed concurrent build leaves behind.
+ Partial Indexes, Indexes on Expressions and Unique Indexes.
+ Using EXPLAIN: estimated and actual rows, and buffer counts. CLUSTER: why a PostgreSQL table does not stay in an index’s order.
+ Clustered and Secondary Indexes and InnoDB Multi-Versioning in the MySQL 8.4 manual: what the clustered index holds, what secondary index records carry, and when a covering index falls back to the table. Physical Structure of an InnoDB Index: page fill under sequential and random inserts. Configuring the Merge Threshold for Index Pages. Online DDL Operations: secondary index builds that allow writes. FOREIGN KEY Constraints: the index MySQL creates on a referencing column. ORDER BY Optimization, Index Merge, Index Condition Pushdown and Multi-Range Read.
+ Clustered Indexes and the WITHOUT ROWID Optimization, The SQLite Query Planner and EXPLAIN QUERY PLAN: rowid tables, the two searches behind an index lookup, covering indexes and how plans read. Query Optimizer Overview: skip-scan, covering indexes, the OR optimization and the one-index-per-table rule. Indexes On Expressions, Partial Indexes and Foreign Key Support, which advises indexing child key columns yourself.
+ Populating a Database: create indexes after a bulk load, then ANALYZE. Sorted Index Builds in the MySQL 8.4 manual: how InnoDB builds an index in bulk, and innodb_fill_factor.
+ Clustered and Nonclustered Indexes in the SQL Server documentation: heaps against clustered tables, and what a row locator is in each. Primary and foreign key constraints: the clustered index a primary key creates by default, and the index a foreign key does not. Unique constraints: one NULL per column. Filtered indexes, Indexes on computed columns and SET STATISTICS IO. Specify fill factor for an index and Perform index operations online.
+ Indexing queries: diagnosis and patterns: the companion for why an index goes unused, plans in four engines, sorting with a limit, joins and foreign keys and recurring query shapes.
+ Maintaining indexes: the companion for building indexes safely, measuring bloat, rebuilding, dropping and rolling out a change.
+ Large results: keyset pagination over an index, and what each page costs.
+ Storage and durability: pages, what a row costs, where old row versions live, the table’s fill factor, and the log behind every write.
+ How a query runs: how PostgreSQL combines scans, joins and sorting.
+ Indexes in PostgreSQL: the planner’s page costs, index-only scans and the visibility map, HOT updates, concurrent builds, and B-tree, GIN and BRIN compared.
