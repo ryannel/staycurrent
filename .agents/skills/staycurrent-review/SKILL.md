@@ -62,7 +62,7 @@ Full perspectives cover every listed check. Confirmations declare scope, applied
 
 - **Critical:** the reader would come away believing or doing something wrong, cannot follow the argument past this point, or a figure contradicts its own text. A false sentence, a figure note that is wrong in some of its states, and a claim the evidence does not support are critical.
 - **Medium:** the reader stalls, rereads or has to supply something themselves. A term used before it is explained, a passage that reads as a patch, a figure that is hard to follow, and a section that spends the reader's time without return are medium.
-- **Low:** a change that would make reading a little easier, such as wording, a heading or a small layout point.
+- **Low:** a change that would make reading a little easier, such as minor local wording or spacing.
 
 Length alone is not a finding: every part must earn its place; a part that does not is medium.
 

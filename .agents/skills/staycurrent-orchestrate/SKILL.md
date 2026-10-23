@@ -3,7 +3,7 @@ name: staycurrent-orchestrate
 description: From a topic and brief, plan a recursive article tree, then coordinate its review, writing and repair.
 ---
 
-Serve the commission's goal: take an intelligent newcomer to expert practitioner in the commissioned subject, in the least reader time and effort. Each article contributes to that goal, without setting a separate specialist target. Run only commissioned stages.
+Serve the commission's goal: take an intelligent newcomer to expert practitioner in the commissioned subject, in the least reader time and effort. Each article contributes to that goal, without setting a separate specialist target. Run only commissioned stages. For a first-version experiment, return the first complete writer version before commissioning review or repairs.
 
 The orchestrator owns the tree, scheduling, review and integration. Every planning, writing, repair and review assignment goes to a fresh subagent and ends on return. Workers never arrange review teams; assigned reviewers perform their perspective directly. Apply [staycurrent-review](../staycurrent-review/SKILL.md) for the fixed modes, inputs, reports, acceptance and completion policy. Resolve disagreements against the commission and record why; bring the user genuine scope or publication choices.
 
@@ -25,7 +25,7 @@ An orchestrated breakdown is provisional input, not an automatic review gate. Us
 
 ## Writing and integration
 
-Give each fresh writer its topic, title, brief and headings; children's briefs, headings, introduction points and finished articles; parent/neighbouring scopes; existing linkable articles; example record; and commission/expertise goal. Apply [staycurrent-write](../staycurrent-write/SKILL.md), returning the draft and proposed tree changes for batched article review.
+Give each fresh writer its topic, audience, purpose, independent learning outcomes, neighbouring scopes, relevant finished reading and example facts. Distinguish what this article teaches from what it introduces for deeper reading; child scopes are context, not a coverage checklist. Supply detailed plans or child prose when needed for its boundaries. Confirm complete reference delivery before writing begins. Apply [staycurrent-write](../staycurrent-write/SKILL.md), returning the draft and proposed tree changes for batched article review.
 
 Review fixed article versions with perspective-specific inputs and a rendered preview for visual review, plus isolated figure routes where available. Reconcile findings, then give the article, plan context, work record and accepted problems together to a fresh writer using [staycurrent-revise](../staycurrent-revise/SKILL.md). Even a one-phrase prose fix uses that skill. Commission fresh confirmations of problems, surroundings and affected dependencies, widening invalidated checks, then the independent complete article checks under the review skill's schedule. Retain separate reports. Merge tree/example changes centrally and update affected articles.
 

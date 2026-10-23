@@ -4,12 +4,14 @@
 
 ## Checks
 
-1. **Titles and headings.** Say what the section covers in reader-facing words.
+1. **Titles and headings.** Give the reader clear, economical names for the subject or question, judged against the references.
 2. **Plain sentences.** Plain, precise, connected prose; no compressed, decorative or writerly wording needing decoding.
 3. **Terms.** Explain at first use and use consistently.
 4. **Openings.** Give enough context to understand the question or claim and why it matters.
 5. **Reader-facing text only.** Exclude planning language, editing history and production notes.
 6. **Captions and labels.** Captions explain what is shown; labels explain what controls change.
 7. **One piece.** The article reads as if written in one go. Name passages that read as later patches: hypothetical objections, stacked conditions or interrupting asides. Necessary qualifications belong with the reasoning they change.
+
+Judge whether the whole piece could sit beside the references in its selection, explanatory development and prose. Support that judgement with passages; an article-wide failure of the commissioned standard is substantive even when individual sentences are understandable.
 
 In corpus mode, also check cross-article consistency of terms, names and running example.
