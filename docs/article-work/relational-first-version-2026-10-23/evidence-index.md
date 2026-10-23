@@ -27,3 +27,5 @@ The writer’s first complete return and integration receipts will be added on d
 - sources-template-update.md, collapsed-sources-check.json, collapsed-sources.png: subsequent user-requested sources placement and default-collapsed disclosure; authored first-return files unchanged.
 
 - collapsed-subjects-check.json, collapsed-subjects.png: user-requested closed default for all ten subject groups; r05 preview.
+
+- design-pass/record.md, integration-check.json, layout-metrics.json, final-menu-height.json and PNGs: subsequent user-requested design pass for navigation and end matter; final r08 preview, preserving all first-writer and earlier sample sources.
