@@ -21,3 +21,5 @@ The writer’s first complete return and integration receipts will be added on d
 - first-version.png: saved unchanged first figure in context.
 - experiment-result.md: first-return result, elapsed production and explicit unreviewed status.
 - input-isolation-audit.json: observable writer requests opened only fixed references/new preview; no original repository absolute path in executed tool requests. Input isolation is not an OS access sandbox.
+
+- template-update.md, template-navigation-check.json, collection-navigation.png: later user-requested template navigation, preserving all first-writer source files.

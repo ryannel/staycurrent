@@ -1,0 +1,11 @@
+# Collection navigation template update
+
+The user accepted the new writing direction and requested a list of nested articles at the bottom plus the existing “You’re here” indication in the greater tree. This is a subsequent template change, not a writer repair. All nine frozen article/component source hashes still match the original first return.
+
+The published site already supplies a grouped relational collection map, a collection switcher and current-page markers. The experiment’s generic shell omitted collection identity, so its /review/ path was not recognised. Base/ReadingNavigation/CollectionPager now accept an optional reading path, preserving the actual URL for indexing and draft status. SkillTrial accepts that identity and a collection slot. The first-version route supplies the relational introduction identity and the existing map after the article. No duplicate article registry or invented hierarchy was created.
+
+The preview shows 57 existing articles grouped by subject; the map’s optional task-based reading paths remain available by default on the published introduction. The current introduction is labelled “You’re here” in both the collection switcher and the footer map. The collection-menu link jumps to the local #collection; published child navigation still marks its current article.
+
+The original r01 immutable build is retained at /private/tmp/staycurrent-relational-first-version-r01. The same local preview URL now serves r03 with these template changes; source prose and figures are identical to r01. Server session 79809 serves r03 on loopback port 4364.
+
+Validation: preview and normal builds pass; the actual draft has no existing structural-rule issues; the normal build still excludes the preview. Static integration checks confirm both markers, 57 footer links, correct local anchor, unchanged first source, and no collection map on the isolated figure route. Browser inspection confirms both marker contexts, local-anchor navigation, grouped nested links and mouse/Enter disclosure operation at the current in-app width/System-dark appearance. Browser settings were not changed. Screenshot: collection-navigation.png. This does not claim a new exhaustive phone/theme/accessibility audit or article-quality review. No publication.
