@@ -266,3 +266,15 @@ Root fully read single37preparation receipt: whole37beforefindings, relevant act
 ## D087 · user requests review-process audit
 
 User challenges repeated review overhead. Root holds queued full corpus3 work and interrupts same ongoing clean practitioner reference preparation; no new corpus inputs released. Two completed four-perspective58piece rounds already provide464article-perspective readings on top of initial coverage/confirmations; a third would add232. Audit review-process-audit.md identifies overlapping article/final/corpus gates and root orchestration overhead, recommending retained coverage and change-dependent confirmation. No skill edit or hidden waiver applied. Active37writer may finish the already accepted local factual correction, build/render and incremental push; no extra broad review commissioned.
+
+## D088 · simplified workflow applied and local correction confirmed
+
+User authorises simplifying review, finishing the local check and delivery with no further full collection review. Review/orchestrate/revise skills and matching AGENTS handoff now retain unaffected checks, permit scoped coordinator/original-checker confirmation, remove routine final/full-repeat gates and require a concrete reason for widening. Skill validator passes all3. Reading the new policy against local factual repair, shared-layout change and substantially rewritten argument yields respectively local evidence/context checking, affected rendering, and optional justified wider/blind reading; no new blanket gate. Writing/figures/continuity references remain intact.
+
+Root completed local37factual/context confirmation, record repairs/local-note-v04/coordinator-confirmation.md: practitioner-2passes, no new finding. Unchanged native verifier/results remain applicable; no rerun. All accepted substantive findings are now resolved. Prior completed article/corpus coverage and relevant confirmations retained; thirdfullcollectionreview withdrawn explicitly. No quality issue waived or downgraded.
+
+Previous local root-check download tally is2actualserving comparisons, not50; other retained-source identities are separately unchanged. Publication check will explicitly verify all current download endpoints rather than overstate that narrow prior receipt.
+
+## D089 · full publication authorised
+
+User explicitly requests all articles fully published, notdraft. Authorisation now includes the58currentarticle normalroutes, discoverability, navigation and exact download endpoints. Fresh publication implementer owns sharedrouting/layout/metadata only; articlebodies/nativefigures/dataprotected. Root owns normalbuild/currentrender/commit/push/deployment. No further collectionqualityreview.

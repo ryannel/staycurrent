@@ -10,7 +10,7 @@ export interface RelationalDraftEntry {
   group: string;
 }
 export interface RelationalDraftState extends RelationalDraftEntry {
-  status: 'draft' | 'planned';
+  status: 'draft' | 'planned' | 'published';
 }
 export interface RelationalDraftGroup { id: string; title: string }
 export const relationalDraftHome = '/review/relational-collection/';

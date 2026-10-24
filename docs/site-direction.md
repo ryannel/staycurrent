@@ -7,6 +7,20 @@ overview and the database guide's linked reading, while removing obsolete conten
 and unused infrastructure. The [earlier direction](history/site-direction-2026-10-02.md)
 records the wider coverage discussion.
 
+## Relational collection publication, 24 October 2026
+
+The user authorised publication of the complete 58-article collection, replacing
+its review-only state. The current Astro articles in `src/articles/relational-collection/`
+use the normal `/learn/databases/relational/` URLs and join available reading,
+search and collection navigation. Their native worksheets are public downloads.
+The compact tree shows the current article; subject groups and Sources and further
+reading start closed, with sources at the bottom. Older useful routes and the
+practice, checkout and sandbox remain available.
+
+The review workflow now retains completed checks and confirms repairs in context;
+there is no additional full collection review for the final local correction.
+See the [publication record](article-work/relational-collection-2026-10-24/publication.md).
+
 ## Relational replacement publication, 19 October 2026
 
 The user authorised publication of all 54 revised articles once the learning-tools
@@ -74,8 +88,7 @@ is rebuilt with the site and follows the reading directory's available routes. `
 sandbox; future technologies can join this entrance when useful experiments exist.
 `/articles/` lists available reading with a subject filter. Breadcrumbs expose the hierarchy on reading pages,
 and a compact collection switcher connects relational articles without requiring
-a return through the introduction. Available groups in the collection map open
-by default. Within that
+a return through the introduction. The current relational collection groups start closed. Within that
 field, `/learn/databases/choosing/` introduces the problems storage solves and helps
 readers find an approach worth understanding. Its family sections link to deeper
 explanations.

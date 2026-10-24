@@ -68,6 +68,14 @@ and four new lessons, is recorded in `docs/article-work/relational-depth-review/
 Review alone does not
 authorise publication of a new commission.
 
+The 24 October commission publishes the current 58-article Astro collection from
+`src/articles/relational-collection/` at the normal relational URLs. Its collection
+navigation, reading directory, search and native downloads use published routes;
+review previews remain optional. The [publication record](docs/article-work/relational-collection-2026-10-24/publication.md)
+records the retained reviews, final local correction and deployment checks.
+
+The following paragraph records the previous replacement.
+
 The 19 October relational replacement commission publishes 54 reviewed articles
 from `src/articles/relational/`: 31 general and distributed relational articles,
 13 PostgreSQL articles and ten CockroachDB articles. The user authorised publication

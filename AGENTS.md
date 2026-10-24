@@ -19,10 +19,12 @@ useful understanding against reader time and effort. Use the seven skills in
 - `staycurrent-revise`: repair an article from review findings so it still reads as one piece.
 - `staycurrent-review`: arrange independent reviews or perform an assigned perspective.
 
-The orchestrator maintains the shared tree and schedules independent batch
-reviews. Every subagent assignment, including a repair or a later review
-round, goes to a fresh subagent; standalone assignments manage
-their own reviews. Keep briefs and results with the work in `docs/`.
+The orchestrator maintains the shared tree and coordinates review under
+`staycurrent-review`. Use independent readers for first reviews; later repairs
+and confirmations may reuse a worker or be checked by the coordinator. Retain
+unaffected checks and do not repeat collection-wide review after local repairs.
+Standalone assignments arrange proportionate review. Keep briefs and results
+with the work in `docs/`.
 Use plain British English. Check consequential technical claims against primary
 sources and distinguish illustrative models from observed execution. Use the
 existing Astro article components and check rendered figures and controls.

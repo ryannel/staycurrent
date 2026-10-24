@@ -131,7 +131,7 @@ WHERE order_id = 'O12' AND line_no = 1;`,
     id: 'checkout',
     title: 'Record a complete checkout',
     description: 'Reserve two mugs, record their purchase and commit all three changes together.',
-    articleHref: '/learn/databases/relational/transaction-boundaries/#working-through-checkout',
+    articleHref: '/learn/databases/relational/transaction-boundaries/#one-purchase-one-commit',
     steps: [
       {
         title: 'Inspect the starting state',
@@ -179,7 +179,7 @@ VALUES ('O14', 1, 'P7', 2, 20.00);`,
     id: 'rollback',
     title: 'Recover from a rejected order line',
     description: 'Let a checkout fail after its first changes, then end the failed transaction with rollback.',
-    articleHref: '/learn/databases/relational/transaction-boundaries/#failure',
+    articleHref: '/learn/databases/relational/transaction-boundaries/#one-purchase-one-commit',
     steps: [
       {
         title: 'Start a separate attempt',

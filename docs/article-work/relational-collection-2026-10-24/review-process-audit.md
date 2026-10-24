@@ -1,5 +1,7 @@
 # Review process audit · 24 October 2026
 
+Status: the user accepted this recommendation. The review/orchestration/repair skills and AGENTS.md are simplified; the local correction passes scoped confirmation. No further full collection review will run. Full publication is explicitly authorised.
+
 The collection is substantially written. The process is prolonging delivery beyond the scope of the remaining defects. Root holds queued collection-wide work while the user considers this audit; this is not a claim that the existing skill schedule has been completed.
 
 ## Evidence
@@ -20,4 +22,4 @@ Review the assembled collection once for coverage, ownership, duplication, prere
 
 Finish when accepted substantive findings are fixed and applicable checks cover the delivered version. Optional polish is not a delivery gate. For this collection, retain the completed coverage and confirmations, check the local37correction and its downstream meaning, then deliver with honest evidence limits. No third whole-collection pass is justified by that edit.
 
-This is a recommendation, not an applied skill edit or a waiver hidden in the record. The writing, figures and continuity skills need no expansion to solve this process problem.
+At the time of the audit this was a recommendation, not a skill edit or waiver; the subsequent authorised changes are recorded above. The writing, figures and continuity skills need no expansion to solve this process problem.

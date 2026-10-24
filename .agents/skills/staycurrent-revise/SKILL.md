@@ -1,16 +1,14 @@
 ---
 name: staycurrent-revise
-description: Repair a written article from accepted review findings so that it reads as if it had been written that way, with the same standard and proportionate verification.
+description: Repair accepted reader problems coherently, preserving the reference standard and checking what the change affects.
 ---
 
-Anyone changing article prose uses this skill, including a coordinator making a one-phrase fix. Repairs must read as one article at first-draft standard.
+Read the whole article before designing a repair, with relevant audience, plan and example context. Treat findings as reader problems, not wording to insert. Follow earlier history only when needed.
 
-Read the whole article before the findings, with relevant plan context and current decisions/evidence from its work record. Follow earlier history only as needed. Treat accepted findings as reader problems, not wording to insert. Reread the whole affected section before changing it.
+Make the smallest coherent repair. Reword, reorder, cut or move existing material; restructure when the reader's problem requires it. Keep conditions beside the decisions they change and link moved teaching to its owner. The result should read as one article, without patch-like asides or repeated lessons.
 
-Prefer the smallest coherent repair. Reword, reorder, cut or move existing material; restructure a section when the accepted reader problem needs it, regardless of severity. Declare wider changes so confirmation can widen with them. Link material moved to its owning article. Integrate missing points into the explanation. State correctness repairs as simply as the evidence allows, placing decision-changing conditions where the reader acts; edge cases may belong with their owner or in Sources.
+Reread the finished explanation against the relevant passages and figures in [staycurrent-write](../staycurrent-write/SKILL.md); a repair need not reload the three references. Run [continuity](../staycurrent-continuity/SKILL.md), checking surrounding explanation and downstream uses. Use [staycurrent-figures](../staycurrent-figures/SKILL.md) for changed media and coordinate rendering with the build owner.
 
-After repair, reread the complete article, including contents, captions and controls, against the three references in [staycurrent-write](../staycurrent-write/SKILL.md). Revisit relevant reference passages/figures when calibration is needed; repairs need not reload all three in full. Remove patch-like passages: hypothetical objections, stacked conditions and interrupting asides. Preserve necessary qualifications with the reasoning or decision they change.
+Recheck affected claims and behaviour. Reuse native evidence while its code, data, environment and verifier remain applicable; otherwise verify the affected change or state the limit. Record changed locations, any wider restructuring and verification links, referencing unchanged evidence.
 
-Run the [continuity pass](../staycurrent-continuity/SKILL.md). Recheck every affected claim, term, example and figure, including downstream uses. Use [staycurrent-figures](../staycurrent-figures/SKILL.md) for changed figures and request builds from the preview/build owner. Reuse verification only while relevant source, data, environment and verifier remain applicable; otherwise rerun affected checks. Prose can change technical meaning, layout or playback timing. Add verification cases only when a repair changes a figure/listing's claim.
-
-Update the canonical work record with repairs and verification links, without copying unchanged evidence or the continuity record. Name every passage restructured beyond the finding and affected dependencies or overall argument, so the coordinator can widen confirmation under [staycurrent-review](../staycurrent-review/SKILL.md). Return the repaired version and applicable verification for fresh checking. Your complete reread and full continuity audit remain required; neither replaces specialist confirmation or the independent final complete reading.
+Return the repair for scoped confirmation under [staycurrent-review](../staycurrent-review/SKILL.md). The checker may be the original reviewer or a suitably informed coordinator. Do not initiate a new full review or final reading merely because a repair is complete.

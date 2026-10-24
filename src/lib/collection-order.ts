@@ -2,14 +2,14 @@
 // of its pages. The order matches the collection switcher at the top: the
 // introduction, then each deep dive followed by its companions.
 import { drawingCollection, drawingHref } from './drawing-collection';
-import { relationalCollection, relationalArticleHref } from './relational-collection';
+import { relationalCollection, relationalArticleHref, relationalIntroduction } from './relational-collection';
 import { objectArticles, objectHome } from './object-storage-collection';
 import { relationalHome } from './reading';
 
 export interface PagerEntry { href: string; title: string }
 
 const relational: PagerEntry[] = [
-  { href: relationalHome, title: 'Relational databases: introduction and choices' },
+  { href: relationalHome, title: relationalIntroduction.title },
   ...relationalCollection.flatMap((group) => {
     const available = group.articles.filter((a) => !!a.status);
     const main = available.filter((a) => a.slug === group.main);

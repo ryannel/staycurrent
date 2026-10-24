@@ -5,7 +5,7 @@ export const relationalDepthChoicesTutorials: Tutorial[] = [
     id: 'policy-composition',
     title: 'See how two row policies combine',
     description: 'Add a policy that unexpectedly widens a worker’s view, then repair the combination and test it.',
-    articleHref: '/learn/databases/relational/access-control/#composition',
+    articleHref: '/learn/databases/relational/postgresql/access-control/#combine-command-rights-with-row-rights',
     steps: [
       {
         title: 'Prepare a tenant worker and three orders',

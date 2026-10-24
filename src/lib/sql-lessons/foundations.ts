@@ -6,7 +6,7 @@ export const foundationsTutorials: Tutorial[] = [
     id: 'history',
     title: 'Keep the price a customer agreed to',
     description: 'Change a catalogue price, compare two receipts, and decide which facts belong to a purchase.',
-    articleHref: '/learn/databases/relational/modelling/#history',
+    articleHref: '/learn/databases/relational/modelling/#when-a-copy-is-a-different-fact',
     steps: [
       {
         title: 'Create a product and its purchase',
@@ -146,7 +146,7 @@ FROM lesson_json_products AS p JOIN lesson_json_details AS d USING (product_id);
     id: 'join-totals',
     title: 'Find why a join doubled the total',
     description: 'Follow the rows through a join, repair an inflated aggregate, and retain an order with no lines.',
-    articleHref: '/learn/databases/relational/query-results/#multiplied-rows',
+    articleHref: '/learn/databases/relational/query-results/#two-independent-collections',
     steps: [
       {
         title: 'Create orders, lines and deliveries',
@@ -262,7 +262,7 @@ ORDER BY placed_at DESC, order_id DESC LIMIT 2;`,
     id: 'query-plans',
     title: 'Follow rows through an execution plan',
     description: 'Read filtering, grouping and sorting as connected operations, then compare estimates with execution.',
-    articleHref: '/learn/databases/relational/query-execution/#reading-a-plan',
+    articleHref: '/learn/databases/relational/query-execution/#the-two-plans-to-read',
     steps: [
       {
         title: 'Create a report with a known answer',
@@ -353,7 +353,7 @@ SELECT price FROM lesson_tx_prices WHERE product_id = 'P7';`,
     id: 'retry-identity',
     title: 'Recover a checkout without reserving twice',
     description: 'Use a stable operation key, follow the returned-row branch, and reject a retry whose details changed.',
-    articleHref: '/learn/databases/relational/conflicts-and-retries/#operation-identity',
+    articleHref: '/learn/databases/relational/conflicts-and-retries/#name-the-logical-request',
     steps: [
       {
         title: 'Prepare the operation record and stock',
