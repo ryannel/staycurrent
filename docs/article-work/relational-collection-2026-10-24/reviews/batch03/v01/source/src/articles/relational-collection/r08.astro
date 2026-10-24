@@ -1,0 +1,183 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import VersionFlow from '../../components/relational-collection/r08/VersionFlow.astro';
+import feed from '../../components/relational-collection/r08/downloads/feed.json';
+---
+
+<p>A write should say both what to change and when the change is allowed. Taking the last mug means reducing stock only while enough remains. Saving a catalogue edit may mean changing the price only while it still has the value the editor saw. Importing a file adds another condition: which incoming record is entitled to replace the one already stored?</p>
+
+<p>SQL can enforce these conditions at the write, where a separate application check would leave a gap. The application still has to interpret the result. A successful command that changes no rows can be the expected refusal, and a duplicate key can mean either an innocent replay or contradictory data.</p>
+
+<p>The examples use PostgreSQL 18 and the shop’s products. We begin with a single edit, then build a replayable catalogue import. The import is a labelled extension: <code>catalogue-office</code> supplies source versions 1, 2 and 3 of P7’s prices 20.00, 25.00 and 24.00. These numbers order that source’s payloads. They are not database transaction IDs or commit times. Order 103’s agreed mug price remains 20.00.</p>
+
+<h2 id="put-the-precondition-in-the-write">Put the precondition in the write</h2>
+
+<p>The introduction’s stock reservation combines a test with a change:</p>
+
+<Sql label="Reserve one mug only while it remains available" code={`UPDATE products
+SET stock = stock - 1
+WHERE product_id = 'P7' AND stock >= 1
+RETURNING stock;`} />
+
+<p>One returned row means this transaction took the mug. No returned row means it did not. A missing product and an existing product with insufficient stock both fail this condition; the application can choose a suitable refusal. In the purchase, that refusal must roll back any earlier reservations and prevent the order from being accepted.</p>
+
+<p>This is different from reading stock, subtracting in the application and writing the saved answer. <code>stock = stock - 1</code> derives the change from the row being updated. At PostgreSQL Read Committed, a competing updater waits and then rechecks the condition against the committed replacement row. The complete purchase and other isolation levels are developed in <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a>.</p>
+
+<p>A catalogue edit has a different intention. An editor who saw 20.00 may want to say “replace that price with 25.00, provided nobody has changed it meanwhile”. The old value belongs in the condition:</p>
+
+<Sql label="Save only the catalogue value the editor actually saw" code={`UPDATE products
+SET price = 25.00
+WHERE product_id = 'P7' AND price = 20.00
+RETURNING product_id, price;`} />
+
+<p>In a separate disposable edit test, the first update returned 25.00. A second editor’s attempted change to 24.00, still conditional on 20.00, returned no row. The application must report the conflict or reload and make a fresh decision. Resending an unconditional update would discard the protection.</p>
+
+<p>Comparing an old value detects a changed value, not every intervening edit. If a price goes from 20.00 to 25.00 and back to 20.00, this condition passes again. When the rule is “nobody has edited this record since I read it”, use a dedicated revision field that every writer advances, and compare the saved revision instead. An import writer must participate too.</p>
+
+<p><code>RETURNING</code> gives the values of rows actually changed by the command; the driver also exposes an affected-row count. State the expected cardinality. A key-qualified edit expects at most one row; a batch may deliberately change many. PostgreSQL counts an updated row even if its new values equal its old ones. To avoid an unnecessary replacement, add a condition such as <code>price IS DISTINCT FROM 25.00</code>, while recognising that zero rows now also includes “already equal”.</p>
+
+<h2 id="a-duplicate-is-a-question">A duplicate is a question</h2>
+
+<p>An <em>upsert</em> tries to insert a row and takes a specified action if its unique identity already exists. PostgreSQL provides <code>INSERT … ON CONFLICT</code>. The conflict target names the key that decides whether this is the same identity.</p>
+
+<p>For the import, add <code>product_feed</code>, with one current source position per product:</p>
+
+<Sql label="The current position in the catalogue feed" code={`CREATE TABLE product_feed (
+  product_id text PRIMARY KEY REFERENCES products,
+  source_id text NOT NULL,
+  source_version bigint NOT NULL CHECK (source_version > 0),
+  price numeric(8,2) NOT NULL CHECK (price >= 0)
+);`} />
+
+<p>The import starts with each core product at source version 1 and its core price. Only <code>catalogue-office</code> is allowed to supply this feed. For this example, one source supplies the catalogue. A different source is refused, rather than having its version number compared with this one. Product identities still come from <code>products</code>; the feed is not allowed to create a new product by accident.</p>
+
+<Sql label="An upsert that advances only to a newer source version" code={`INSERT INTO product_feed AS current
+  (product_id, source_id, source_version, price)
+VALUES ('P7', 'catalogue-office', 3, 24.00)
+ON CONFLICT (product_id) DO UPDATE
+SET source_version = excluded.source_version,
+    price = excluded.price
+WHERE current.source_id = excluded.source_id
+  AND current.source_version < excluded.source_version
+RETURNING product_id, source_version, price;`} />
+
+<p><code>excluded</code> is the proposed incoming row. The primary key decides which current row conflicts. The condition decides whether the proposed version may replace it. P7 at version 2 advances to version 3; a later delivery of version 2 does not move it backwards. No row is returned when the conflict action’s condition prevents an update.</p>
+
+<p>The unique-key conflict is handled within the command, including a concurrent insertion of that identity. A separate “look up, then insert if absent” sequence would still need the key to close its race. But the upsert cannot invent the right conflict policy: omitting its version condition would make the last arrival win.</p>
+
+<p>Step through Arrival wins in Figure 1, then switch to Source versions. The last two deliveries are the revealing ones.</p>
+
+<VersionFlow />
+
+<p>After version 3, a repeated version 2 at 25.00 is old input. A version 2 claiming 26.00 is something worse: the source has used the same identity for two different payloads. Comparing only with the current row cannot tell those cases apart once version 3 has replaced it.</p>
+
+<h3 id="remember-what-a-version-meant">Remember what a version meant</h3>
+
+<p>The import therefore retains a small <em>seen-version ledger</em>. Its key is <code>(source_id, product_id, source_version)</code>, and its payload here is the exact price. Before accepting an input, compare it with any row already stored at that key. Same key and same price is a repeat; same key and a different price is a conflict.</p>
+
+<Sql label="Find a contradictory already-seen source version" code={`SELECT s.product_id, s.source_version
+FROM validated_stage AS s
+JOIN feed_seen AS seen
+  ON seen.source_id = s.source_id
+ AND seen.product_id = s.product_id
+ AND seen.source_version = s.source_version
+WHERE seen.price IS DISTINCT FROM s.price;`} />
+
+<p>This check must include older incoming versions, not just the winner chosen for each product. An old contradictory payload should not disappear merely because a newer version in the same file supersedes it. The ledger records valid observations of versions; it does not claim every observed version became the live catalogue price.</p>
+
+<p><code>DO NOTHING</code> is useful when ignoring an existing key is the intended result. It is not a payload comparison. Used alone on this ledger, it would silently hide a contradictory price. Likewise, <code>stock = stock + excluded.stock</code> would apply an incoming increment again on replay. Repeating an upsert is safe only if the entire operation’s meaning makes it safe.</p>
+
+<p>A source version orders updates only within its declared scope. Two unrelated suppliers both sending version 12 do not thereby agree which is newer. A timestamp assigned on arrival measures arrival. If a source can reset its counter, the identity needs a source epoch or another explicit rule before a lower number can be accepted. The worksheet deliberately uses one source with a stable, increasing version sequence.</p>
+
+<h2 id="stage-the-file-before-changing-the-catalogue">Stage the file before changing the catalogue</h2>
+
+<p>A bulk transfer and a correct import are different jobs. PostgreSQL’s <code>COPY FROM STDIN</code> can stream rows from the application into a table. It does not decide whether a repeated business identity is the same observation, whether an older source version should win or whether an omitted product was deleted.</p>
+
+<p>Load into a staging relation first. The worksheet stages the source fields as text with a row number. That preserves enough of the incoming representation to explain which row has an invalid price or version before changing the live tables. A structurally malformed file may fail even this first load; staging cannot repair a file whose rows cannot be parsed.</p>
+
+<Sql label="Receive raw fields without changing products" code={`CREATE TEMP TABLE raw_stage (
+  row_no integer,
+  source_id text,
+  product_id text,
+  version_text text,
+  price_text text
+) ON COMMIT DROP;
+
+COPY raw_stage FROM STDIN;`} />
+
+<p><code>STDIN</code> means the bytes travel through the database connection. A server-side filename instead names a path on the database server, not the uploader’s computer. Declare the input format, column order, encoding and missing-value rules. In CSV mode, an unquoted empty field and a quoted empty string have different default meanings; do not let a blank price become zero by accident.</p>
+
+<p>For this feed, validation requires a known product, the allowed source, a positive integer version and a present finite non-negative price representable exactly in two decimal places. PostgreSQL <code>numeric(8,2)</code> can round extra fractional digits on assignment, so the worksheet rejects an input that would require rounding before storing it. The source has promised hundredths; accepting 24.005 as 24.01 would change its payload.</p>
+
+<p>Next examine duplicate identities within the file. Collapse repeated identical rows. Reject two different prices for the same source, product and version. Only then select the highest source version per product for the current-state update. This ensures one candidate per target row; an <code>UPDATE … FROM</code> with several matching source rows otherwise leaves a choice the application should have made explicitly.</p>
+
+<table>
+<caption>Batch-a’s four input rows, before reconciliation</caption>
+<thead><tr><th scope="col">Row</th><th scope="col">Product</th><th scope="col">Source version</th><th scope="col">Price</th><th scope="col">Meaning</th></tr></thead>
+<tbody>{feed.batch_a.map((row,i)=><tr><td>{i+1}</td><td>{row[1]}</td><td>{row[2]}</td><td>{row[3]}</td><td>{['Superseded by version 3 in this batch','Highest version for P7','Identical repeat of row 2','Already current for P3'][i]}</td></tr>)}</tbody>
+</table>
+
+<p>The four rows contain three distinct version observations and only two products. P7 has one current-state candidate, version 3 at 24.00. P3’s candidate is the already-current version 1 at 4.50. A row count saying “four loaded” would tell us almost nothing about what changed.</p>
+
+<h2 id="publish-the-batch-and-its-receipt-together">Publish the batch and its receipt together</h2>
+
+<p>The validation reads and the final writes must agree even when two import jobs overlap. The worksheet uses a deliberately simple protocol: one guard row for <code>catalogue-office</code>. Every writer of this feed locks it inside a Read Committed transaction before comparing persistent version state or applying changes.</p>
+
+<p>The guard serialises this source’s publication, not the whole database. The important detail is that the comparison statements run after acquiring it and get fresh Read Committed snapshots. Waiting for a lock would not refresh an already-established Repeatable Read snapshot. All writers of this feed state must follow the protocol; a bypass can invalidate its assumptions.</p>
+
+<Sql label="The guard and the atomic publication boundary" code={`BEGIN ISOLATION LEVEL READ COMMITTED;
+
+SELECT source_id FROM source_guard
+WHERE source_id = 'catalogue-office'
+FOR UPDATE;
+
+-- Compare batch identity and all seen version payloads.
+-- Add valid observations to feed_seen.
+-- Apply one newest candidate per product to product_feed.
+-- Copy accepted prices to products, leaving stock untouched.
+-- Store this batch's content and reconciliation receipt.
+
+COMMIT;`} />
+
+<p>Those comments are the application’s recipe, not executable validation by themselves. The downloadable Python implementation performs the checks, branches and writes within this boundary. Its coarse source guard makes the first implementation easy to reason about. A higher-throughput design can coordinate per product, but then batch lock ordering and every competing writer need the same care.</p>
+
+<p>The receipt belongs in the same transaction as the changes. Otherwise a stopped process could leave the prices changed without a record that the batch completed, or a “completed” receipt without the changes. Batch-a’s successful receipt accounts for all four rows:</p>
+
+<table>
+<caption>Batch-a reconciled from the displayed input</caption>
+<thead><tr><th scope="col">Classification</th><th scope="col">Rows</th><th scope="col">Effect</th></tr></thead>
+<tbody><tr><td>Identical repeat in the batch</td><td>1</td><td>One version observation retained</td></tr><tr><td>Superseded within the batch</td><td>1</td><td>Seen version recorded; current state follows version 3</td></tr><tr><td>Already current</td><td>1</td><td>P3 stays 4.50</td></tr><tr><td>Advances current state</td><td>1</td><td>P7 becomes version 3 at 24.00</td></tr></tbody>
+</table>
+
+<p>The batch ID identifies the input being retried. Store its canonical content as well: the same ID with the same normalised rows returns the previous receipt; the same ID with different content is refused. The worksheet’s canonical representation ignores row order but preserves duplicate multiplicity. Replaying the same batch does not describe four new changes; it retrieves the original outcome.</p>
+
+<p>The source-version key answers a different question from the batch ID. The same valid observation can arrive in another batch. Batch-b, containing only P7 version 2 at 25.00 after batch-a completed, is a new batch with stale input. It completes without regressing the catalogue. Its receipt says one stale row.</p>
+
+<p>On PostgreSQL 18.6, an injected failure after applying prices but before storing the receipt rolled back the price, ledger and receipt together. The complete replay then succeeded. Two import workers forced to wait at the source guard subsequently completed with P7 at version 3 and 24.00. An unguarded arrival-wins upsert let delayed version 2 restore 25.00. These are recorded local schedules, not a throughput comparison.</p>
+
+<h2 id="decide-what-absence-and-failure-mean">Decide what absence and failure mean</h2>
+
+<p>This import is a stream of updates, not a complete inventory of products. An absent P9 row means “no P9 update in this batch”, not “delete the teapot”. Deletion from absence is safe only when the source declares a complete snapshot of a precisely defined scope and the importer verifies it received that complete snapshot. A partial download is a poor deletion instruction.</p>
+
+<p>The same choice applies to invalid rows. This worksheet rejects the whole batch. A best-effort import can quarantine invalid rows and commit valid ones, but its receipt must distinguish applied, rejected and unfinished work, and retries must not reapply increments or external effects. “The file loaded” is not enough of a result.</p>
+
+<p>Large inputs also need a resource boundary. One huge transaction holds its locks and unfinished work until commit; many tiny commits can leave half a logical batch published. If the work must be chunked, give chunks durable identities and progress, make each chunk replayable, and define when readers may see the new dataset. Building a new version alongside the old one and switching a publication pointer can be appropriate when readers require a whole snapshot at once. It is a different design from pretending several commits are atomic.</p>
+
+<p><code>MERGE</code> can express insert, update and delete branches against a source relation, but it does not remove these choices. In PostgreSQL it also has different concurrent behaviour from <code>ON CONFLICT</code>; do not assume its unmatched insert automatically becomes the same upsert on a concurrent key conflict. Start with the source’s identity and publication contract, then choose the command that implements it.</p>
+
+<p>Once the data is committed, a search index, cache or external catalogue may still need updating. That work does not become atomic because the import used <code>COPY</code>. Record any required follow-up in the same database transaction and deliver it with its own retry protocol, as <a href="/learn/databases/relational/outboxes-and-jobs/">Outboxes and database-backed jobs</a> develops. Live schema backfills have a different coexistence problem, covered in <a href="/learn/databases/relational/schema-changes/">Live schema changes and backfills</a>.</p>
+
+<h2 id="repeat-the-import">Repeat the import</h2>
+
+<p>Download <a href="/review/relational-collection/evidence/r08/run-imports.py/" download="run-imports.py">the import experiment</a>, <a href="/review/relational-collection/evidence/r08/shop.json/" download="shop.json">the core shop data</a> and <a href="/review/relational-collection/evidence/r08/feed.json/" download="feed.json">the displayed feed records</a> into one directory. Install <code>psycopg[binary]==3.2.12</code> in a disposable Python environment and run <code>python run-imports.py --bindir /path/to/postgresql/bin</code>. It creates, verifies and cleans up its own local PostgreSQL cluster.</p>
+
+<p>The verified run used PostgreSQL 18.6, Python 3.14.5 and Psycopg 3.2.12. It checks a stale conditional edit, an interrupted batch, exact replay, delayed input, a changed batch payload, contradictory versions both within and across batches, an invalid price, an unknown product and overlapping publishers. Stock stays at the core post-103 values. The catalogue replay is a separate illustrative import history; it does not recreate all business activity between the source versions.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+<ul>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-update.html">UPDATE</a>: conditions, affected rows, <code>RETURNING</code> and multiple source matches; <a href="https://www.postgresql.org/docs/18/sql-insert.html">INSERT</a>: conflict targets, <code>excluded</code> and the conditional conflict action.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-copy.html">COPY</a>: streaming, formats and missing values; <a href="https://www.postgresql.org/docs/18/datatype-numeric.html">Numeric Types</a>: scale coercion and special values.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction Isolation</a> and <a href="https://www.postgresql.org/docs/18/sql-merge.html">MERGE</a>: concurrent conflict handling and the limits of treating commands as interchangeable.</li>
+<li>Psycopg 3, <a href="https://www.psycopg.org/psycopg3/docs/basic/copy.html">Using COPY</a>: the client streaming interface used by the experiment.</li>
+<li>On this site, <a href="/learn/databases/relational/application-sql/">SQL at the application boundary</a> follows result and transaction ownership; <a href="/learn/databases/relational/data-lifecycle/">History, correction and deletion</a> separates the latest catalogue value from the history of its corrections.</li>
+</ul>

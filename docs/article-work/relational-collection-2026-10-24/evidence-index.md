@@ -35,3 +35,9 @@
 - dependency-copy-hygiene.json: reproducible copied package environments excluded from work/review records; active author environments untouched.
 - normal-build-delivery1.json: current11-article source passes normal build/all13rules, draft/reference routes excluded.
 - assignments/: exact public fresh-agent dispatch arguments and timestamps, without private reasoning or encrypted message content.
+
+- reviews/batch02/practitioner-v01.md and practitioner-v01-snapshot.json: initial complete six-piece technical coverage; independent owned PostgreSQL18.6 probe demonstrates the snapshot-timing exception. Findings remain for consolidation with all first perspectives.
+- reviews/batch02/teaching-v01-reference-delivery.json: exact19/19 public reference delivery and separate34-drawing study receipt for initial teaching reader.
+- reviews/batch02/dependency-observations.json: coordinator tracks wider same-runner portability exposure and prepared-but-undispatched snapshot prerequisites, without contaminating blind review inputs.
+- writers/r10,r11,r12/: one fresh calibrated performance-writing assignment; final consolidated author build at4394, zero structural issues. Author finishing is in progress; not independent review.
+- writers/change-and-access-assignment.txt: prepared two-article fresh assignment for r22/r25, not yet dispatched.

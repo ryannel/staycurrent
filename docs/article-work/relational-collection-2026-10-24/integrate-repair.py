@@ -29,7 +29,9 @@ for key in config['keys']:
         raise SystemExit('Invalid article key')
     article = Path(f'src/articles/relational-collection/{key}.astro')
     namespace = Path(f'src/components/relational-collection/{key}')
-    incoming = [article] + [p.relative_to(workspace) for p in (workspace / namespace).rglob('*') if p.is_file()]
+    incoming = [article] + [p.relative_to(workspace) for p in (workspace / namespace).rglob('*')
+                            if p.is_file() and p.suffix != '.pyc'
+                            and not {'venv', '.venv', '__pycache__', 'node_modules'}.intersection(p.parts)]
     if not (workspace / article).is_file():
         raise SystemExit(f'Missing repaired article {key}')
     if (root / namespace).exists():
@@ -47,7 +49,8 @@ for key in config['keys']:
 if (workspace / 'repair-record.md').is_file():
     shutil.copyfile(workspace / 'repair-record.md', record / 'repair-record.md')
 if (workspace / 'evidence').exists():
-    shutil.copytree(workspace / 'evidence', record / 'evidence', dirs_exist_ok=True)
+    shutil.copytree(workspace / 'evidence', record / 'evidence', dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns('venv', '.venv', '__pycache__', 'node_modules', '*.pyc'))
 receipt = {'integrated_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
            'workspace': str(workspace), 'protected_inputs_verified': len(config['protected_files']),
            'files': files, 'removed_files': removed, 'scope': 'Preview integration, not review completion'}

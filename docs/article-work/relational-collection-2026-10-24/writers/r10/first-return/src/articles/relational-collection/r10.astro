@@ -1,0 +1,143 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Entries from '../../components/relational-collection/r10/Entries.astro';
+import KeyOrder from '../../components/relational-collection/r10/KeyOrder.astro';
+---
+<p>An index gives the database another way to reach rows. Without an index on <code>orders.customer_id</code>, finding Mina’s orders means checking every order. With one, the database can find entries for customer 1 and follow them to her rows. The answer is the same; the work needed to produce it changes.</p>
+
+<p>The extra route costs something. The index occupies space, competes for memory with table pages and must be maintained as rows change. An index that saves a large read once a day might still be a poor exchange for work added to every purchase. Choosing indexes means identifying the work a query can avoid, then deciding whether that saving earns the ongoing cost.</p>
+
+<p>This article follows ordinary ordered indexes, usually B-trees, through the shop’s order queries. PostgreSQL 18 supplies the concrete SQL and measured plans. The small drawings explain the mechanism; a separate generated table makes the difference in work visible on a running PostgreSQL 18.6 server.</p>
+
+<h2 id="a-second-order">A second order for the same rows</h2>
+
+<p>A table has no guaranteed display order. PostgreSQL stores its rows in a <em>heap</em>: pages with space for rows, without keeping them sorted by customer or placement time. A page is the fixed-size block the database reads into memory; a normal PostgreSQL page is 8 kB. Several rows usually share one, so finding one row can still require reading a whole page.</p>
+
+<p>A <em>sequential scan</em> visits the table’s pages and tests the rows against the query. It needs no additional structure. Its work grows with the table, even if the answer remains two orders.</p>
+
+<Sql label="Find Mina's orders" code={`SELECT order_id, placed_at, status
+FROM orders
+WHERE customer_id = 1
+ORDER BY placed_at DESC, order_id DESC;`} />
+
+<p>An index keeps the search values with a way to find each row again. Its entries can be in customer order while the table remains in its existing arrangement. Follow customer 1 through Figure 1: the adjacent entries lead to orders 101 and 103, whose rows need not be adjacent.</p>
+
+<Entries />
+
+<p>The <em>key</em> of this index is <code>customer_id</code>. It is not a unique key: several entries may carry 1. The row location distinguishes which row each entry reaches. In PostgreSQL that location is a page and an item number, called a tuple identifier or TID. It describes a stored row version, rather than a business identity you should retain in the application.</p>
+
+<p>Other storage designs use another route back. In MySQL’s InnoDB, a secondary index carries the primary key, and the table itself is stored as a tree ordered by that key. Finding a row through a secondary index then involves a search in the table’s tree too. The useful question remains the same: after finding a matching entry, what work is still needed to obtain the requested row?</p>
+
+<h2 id="jump-then-walk">Jump to the start, then walk</h2>
+
+<p>A sorted list alone would still need a way to find its first 1. A <em>B-tree</em> arranges the index into pages. The bottom, or <em>leaf</em>, pages hold the ordered entries. Pages above them hold separators that direct a search towards the appropriate range. The search starts at one root page and follows a choice at each level until it reaches a leaf.</p>
+
+<p>A real page holds many entries, so each extra level makes a large increase in the number of entries the tree can reach. The descent is usually a small part of a large result. After finding the first matching key, a scan can continue along the leaves until it reaches a key outside the requested range.</p>
+
+<p>That gives a B-tree both equality searches and ordered ranges. An index on <code>placed_at</code> can find the first order at or after a specified instant, then continue until a second bound. It can also supply rows in time order. The database may still choose a different route, and SQL still needs <code>ORDER BY</code> whenever result order matters. An access path makes an order cheaper; it does not turn an unordered query into a promise.</p>
+
+<p>The table rows reached by successive entries may be scattered. Ten matches can mean ten different table pages, while ten neighbouring rows might share one. Count the pages and rows reached after the descent, as well as the depth of the tree.</p>
+
+<h2 id="design-from-the-query">Put the query in the key</h2>
+
+<p>The shop now wants Mina’s two newest orders since 15 October. For this example, add the later illustrative orders 105 and 106: Mina and Edda each place an order at 12:00 UTC on 21 October. Equal timestamps make the tie-breaker necessary. Ordering by time alone would leave their relative order unspecified.</p>
+
+<Sql label="Two newest orders for one customer" code={`SELECT order_id, placed_at, status
+FROM orders
+WHERE customer_id = 1
+  AND placed_at >= timestamptz '2026-10-15 00:00:00+00'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 2;`} />
+
+<p>A <em>composite index</em> has several key columns. It sorts by the first, then by the second among entries that tie on the first, and so on. For this query, customer equality should put one customer’s entries together; placement time should put that run newest first; order ID should settle equal times in the same direction as the query.</p>
+
+<Sql label="An index shaped for customer history" code={`CREATE INDEX orders_customer_history
+ON orders (customer_id, placed_at DESC, order_id DESC);`} />
+
+<p>Compare that key with customer alone and date first in Figure 2. Step through each route and count the entries passed before the answer is known.</p>
+
+<KeyOrder />
+
+<p>The history key can stop at orders 105 and 103. Customer alone has no date in its entries, so all three of Mina’s rows must be fetched, checked and the survivors sorted. Date first gives the required global order, but Mina’s rows are mixed with everyone else’s. Here it passes only Edda’s 106. On a busy shop it might pass thousands of other customers’ orders before finding two of Mina’s.</p>
+
+<p>The general rule for a multicolumn B-tree is leading equalities, followed by the first range. Those conditions bound a contiguous part of the index. Later key conditions can reject entries without fetching the table row, but do not necessarily reduce how much index the scan traverses. PostgreSQL 18 can sometimes use repeated searches, called a <em>skip scan</em>, when a missing leading condition has few possible values. That is an additional option for the planner, rather than a reason to ignore key order.</p>
+
+<p>Do not put the most selective column first as an automatic rule. If both customer and status are always fixed with equality, either can precede the time range. But an index beginning <code>(status, customer_id, …)</code> splits a customer’s history into separate status runs. A query that omits status loses the simple single run. Design for the questions the application actually sends, including which conditions are optional.</p>
+
+<p>The requested sort has details too. A B-tree can be read backwards, reversing all its key directions. That serves ascending time and ID from the history key when customer is fixed. Mixed directions, missing-value placement and text collation need a compatible index order. Keep them in the query’s contract rather than assuming that every index on the same columns is equivalent.</p>
+
+<h2 id="few-rows-or-most-pages">Few rows, or most of the pages?</h2>
+
+<p><em>Selectivity</em> is the fraction of rows a condition matches. Customer 42 has 60 rows in our generated 60,000-order table: one in a thousand. A lookup can avoid most of the table. A query returning all paid orders has a different shape, even if <code>status</code> also has an index.</p>
+
+<p>Matching half the table can put at least one match on nearly every page. Following index entries to scattered rows then adds index work to a read of most of the table anyway. A sequential scan can be the cheaper route. There is no universal percentage at which an index stops helping: row width, physical arrangement, cache state, storage costs and the columns returned all change the comparison.</p>
+
+<p>PostgreSQL also has a middle route, a <em>bitmap heap scan</em>. It collects row locations from an index, groups them by table page and visits the pages in page order. That avoids repeatedly jumping back to the same page. It loses the original index order, so an ordered result may need a sort afterwards. Separate indexes can sometimes contribute bitmaps that are intersected or combined; they do not behave like a composite key that directly describes one ordered range.</p>
+
+<p>The <em>planner</em> chooses among these routes before running the query. It uses statistics to estimate how many rows will match and a cost model to compare the work. An unused index can therefore mean the planner has sensibly chosen a scan. It can also mean the estimate is wrong. <a href="/learn/databases/relational/query-execution/">Query execution and bad plans</a> follows how to tell those cases apart.</p>
+
+<h2 id="reading-the-saving">Read the work the index saved</h2>
+
+<p>The native experiment asks for customer 42’s ten newest generated orders since 1 February. It creates <code>access_orders</code>, a separate synthetic table with 60,000 orders, 1,000 anonymous customer IDs and one order a minute from 1 January 2026 UTC. These are test rows, with no lines or payments, and do not extend the shop’s purchase history.</p>
+
+<Sql label="Measure the generated history query" code={`EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)
+SELECT order_id, placed_at, status
+FROM access_orders
+WHERE customer_id = 42
+  AND placed_at >= timestamptz '2026-02-01 00:00:00+00'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;`} />
+
+<p><code>EXPLAIN</code> displays the chosen plan. Its <code>ANALYZE</code> option executes the statement and measures what happens; it is separate from the standalone <code>ANALYZE</code> command that collects statistics. Use it with a query you are prepared to run. Here <code>TIMING OFF</code> removes per-node clock measurements while retaining counts and the total execution time.</p>
+
+<table><caption>Observed on PostgreSQL 18.6 · the same generated history query</caption><thead><tr><th scope="col">Available additional index</th><th scope="col">Chosen route</th><th scope="col">Buffer accesses at Limit</th></tr></thead><tbody><tr><td>None</td><td>Scan all 60,000 rows, keep 15, sort, return 10</td><td>984</td></tr><tr><td><code>(customer_id)</code></td><td>Bitmap: fetch 60 rows, reject 45 by date, sort</td><td>62</td></tr><tr><td>Customer, time, ID</td><td>Index scan: return 10, no sort</td><td>13</td></tr><tr><td>Same key, include status; vacuumed</td><td>Index-only scan: return 10, no heap fetches</td><td>4</td></tr></tbody></table>
+
+<p>These are buffer accesses, found in memory or read into it, rather than milliseconds or a claim about physical drive reads. The temporary table uses PostgreSQL’s <code>local</code> buffers. Repeated visits can count more than once, and an operating-system cache may satisfy a read. Compare the route and the work, then measure elapsed time under the workload that matters.</p>
+
+<p>The plain customer index saved most of the scan, but it still fetched 45 rows the date condition would discard. The composite key removed that work and the sort. <code>LIMIT 10</code> mattered: the ordered scan stopped after ten qualifying entries. A sort over unordered input must examine the candidates before it can know which ten come first.</p>
+
+<h2 id="holding-the-answer">When the index holds the answer</h2>
+
+<p>The query returns status, which is absent from the history key. PostgreSQL must fetch each order row for it. Adding <code>INCLUDE (status)</code> stores that value in the index without making it part of the search order.</p>
+
+<Sql label="Store the returned status without changing key order" code={`CREATE INDEX access_cover
+ON access_orders (customer_id, placed_at DESC, order_id DESC)
+INCLUDE (status);`} />
+
+<p>This is a <em>covering index</em> for this query: it contains every column the query needs. An <em>index-only scan</em> can return values from the entries. PostgreSQL still has to establish that each row version is visible to the transaction. It consults the table unless the page’s visibility-map bit says that every row there is visible to all transactions. Cleanup with <code>VACUUM</code> can set that bit; a subsequent change to the page clears it.</p>
+
+<p>The experiment vacuumed the table before its final measurement, giving <code>Heap Fetches: 0</code>. A busy, frequently updated table can show an index-only plan with many heap fetches. Holding the columns is necessary for this route, but does not promise that every table visit disappears.</p>
+
+<p>Covering also enlarges the index and makes changes to the included value index maintenance. Wide text copied into several covering indexes can cost more than the table visits it saves. Use it for a specific frequent read, after checking that the columns and visibility state allow the intended saving.</p>
+
+<h2 id="other-ways-to-limit-entries">Other ways to limit entries</h2>
+
+<p>A <em>partial index</em> holds only rows satisfying a declared condition. A pending-order dashboard might use an index on <code>(placed_at DESC, order_id DESC) WHERE status = 'pending'</code>. Finished orders need no entry there. Moving an order out of pending also removes its eligibility. The planner must be able to prove from the query that the required rows lie inside the index’s predicate; a generic prepared plan with an unknown status parameter cannot assume it means pending.</p>
+
+<p>An <em>expression index</em> stores the result of an expression, such as <code>lower(name)</code>. It suits a query using that expression and its matching operators. An ordinary index on the original column does not automatically provide the same search. For a time interval, prefer direct typed bounds such as <code>placed_at &gt;= … AND placed_at &lt; …</code> when that expresses the question; wrapping the column in a date conversion can hide the range and introduce a session time-zone dependency.</p>
+
+<p>A <em>unique index</em> additionally rejects repeated keys. PostgreSQL builds one for a primary-key or unique constraint. A foreign key is different: it establishes a relationship and does not automatically create an index on the referencing columns. An index on <code>orders.customer_id</code> can serve the search for a customer’s orders, a join and the lookup needed when deleting a referenced customer. Its usefulness is a workload question even when its correctness rule is already declared.</p>
+
+<p>B-trees are not the right structure for every operator. Words inside documents, array membership, spatial overlap and nearest-neighbour searches need other methods. <a href="/learn/databases/relational/postgresql/indexes/">PostgreSQL index methods and operators</a> matches those questions to their structures. Choosing the method begins with what comparison the query asks the index to make.</p>
+
+<h2 id="paying-for-the-route">Paying for the extra route</h2>
+
+<p>Every insert into an indexed table must make the corresponding entries. Updates may change keys, included values or whether a partial-index predicate holds. Full pages may split, and deleted or superseded entries need cleanup. The index also has to be read during construction, backed up and kept in memory if it is hot. Read savings and write costs concern the whole workload, rather than one attractive plan.</p>
+
+<p>In PostgreSQL, an update can avoid new entries through a heap-only tuple, or HOT, update when indexed values do not require maintenance and the new version fits on the same table page. Adding an often-changing column to an index can remove that opportunity. <a href="/learn/databases/relational/storage/">Row versions, storage and cleanup</a> develops why updates leave old versions and when their space can be reused.</p>
+
+<p>Design the set of indexes together. The customer-history key can serve a customer’s newest-order list and a lookup of all their orders. A separate customer-only index may add little, though its narrower entries can still make it cheaper for some scans. Check usage, sizes, constraints and real plans before dropping an apparent duplicate. Never remove the index behind a correctness rule just because one query has another route.</p>
+
+<p>Begin with a query and name the avoided work: scanning unrelated rows, fetching rejected rows, sorting an answer or visiting the table for returned columns. Derive the key and any predicate from that work, check it on representative data, then account for the writes it adds. Live construction and removal have locking and failure behaviour of their own; <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a> handles that operational step.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+
+<p>Checked on 24 October 2026. <a href="/review/relational-collection/evidence/r10/access-paths.sql/" download="access-paths.sql">Download the access-path experiment</a> and run <code>psql -X -v ON_ERROR_STOP=1 -f access-paths.sql</code> in a disposable database. It creates temporary tables and indexes that disappear when the connection closes. The complete file was run on an owned PostgreSQL 18.6 instance. Its page counts depend on the fixture and engine; they are not expected production timings.</p>
+
+<ul>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/indexes-intro.html">Introduction to Indexes</a>, <a href="https://www.postgresql.org/docs/18/indexes-multicolumn.html">Multicolumn Indexes</a> and <a href="https://www.postgresql.org/docs/18/indexes-ordering.html">Indexes and ORDER BY</a>: the saved searches, leading equalities, range bounds, skip scan and early stopping.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/indexes-bitmap-scans.html">Combining Multiple Indexes</a> and <a href="https://www.postgresql.org/docs/18/using-explain.html">Using EXPLAIN</a>: bitmap page order, estimated work and actual row and buffer counts.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/indexes-index-only-scans.html">Index-Only Scans and Covering Indexes</a>, <a href="https://www.postgresql.org/docs/18/indexes-partial.html">Partial Indexes</a> and <a href="https://www.postgresql.org/docs/18/indexes-expressional.html">Indexes on Expressions</a>: the extra eligibility conditions and maintenance costs.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>, <a href="https://www.postgresql.org/docs/18/storage-hot.html">Heap-Only Tuples</a> and <a href="https://www.postgresql.org/docs/18/btree.html">B-Tree Indexes</a>: automatically created unique indexes, referencing-column indexes, updates and tree pages.</li>
+ <li>MySQL 8.4, <a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-index-types.html">Clustered and Secondary Indexes</a>: why a secondary entry carries a primary key in InnoDB.</li>
+</ul>

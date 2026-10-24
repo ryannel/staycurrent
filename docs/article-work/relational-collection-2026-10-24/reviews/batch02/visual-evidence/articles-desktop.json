@@ -1,0 +1,582 @@
+{
+  "r03": {
+    "text": "RELATIONAL COLLECTION · DRAFT FOR REVIEW\n\nConstraints and tenant boundaries\nDeep dive\nAbout 12 minutes\nAI-generated\n\nA constraint makes a rule part of the table’s definition. A positive order-line quantity, an order number used only once and a product reference that reaches an existing product are different rules, but they share one useful property: the database can refuse a write that breaks them. The checkout application, an import and an administrator’s SQL all meet the same boundary.\n\nChoosing that boundary starts with the state you want to forbid. “A line has a positive quantity” concerns one row. “No two lines have the same order and line number” compares identities across rows. “This line belongs to an order in the same shop” follows a reference. Each needs a declaration that expresses the whole rule.\n\nThe examples use PostgreSQL 18 and the shop from the introduction. Later, a labelled tenant variant lets the application serve two shops. It reveals why a reference that merely reaches an existing row can still be the wrong reference. The figure illustrates reference matching; the downloadable SQL checks their accepted and rejected cases on PostgreSQL 18.6.\n\nRules about one row\nOne identity, one row\nA reference in both directions\nThe shop is part of the identity\nIntegrity does not grant access\nRules that need a protocol\nTrying the boundary\nRules about one row\n\nOrder 103’s first line contains one blue mug. Its quantity must be present and greater than zero. Those are two separate requirements:\n\nquantity integer NOT NULL\n  CONSTRAINT\n    order_items_quantity_positive\n  CHECK (quantity > 0)\n\nNOT NULL refuses an absent quantity. CHECK evaluates a condition for the row being inserted or changed. Here it refuses zero and negative quantities. Naming the check gives an error a useful identity: order_items_quantity_positive says which rule failed.\n\nAs Values, missing data and equality showed, a PostgreSQL check rejects false and accepts true or unknown. A missing quantity makes quantity > 0 unknown, so the check alone would allow it. The two declarations work together.\n\nFour attempted quantities under that definition\nQuantity\tPositive check\tResult\n1\tTrue\tAllowed\n0\tFalse\tRefused\n−1\tFalse\tRefused\nNULL\tUnknown\tRefused by NOT NULL\n\nA check can use several columns of the same row. The shop’s status check allows only pending, paid and cancelled. A table storing two ends of an interval could require its end to follow its start. Neither rule needs to read another row.\n\nThe declaration says exactly that much. Allowing the word paid does not establish that the order has enough payments. Requiring stock >= 0 does not establish that every sale reduced stock. A constraint can preserve a property of the stored representation without proving the whole business process correct.\n\nA default is different again. DEFAULT 'pending' supplies a status when an insert omits it; it does not restrict what an explicit value may be. Keep the check if other statuses must be impossible.\n\nOne identity, one row\n\nThe rule for line identity concerns a pair. Order 103 has lines 1 and 2, and order 101 also has a line 1. The database must permit those repetitions while refusing another line 1 on order 103:\n\nPRIMARY KEY (order_id, line_no)\n\nThis primary key makes the pair unique and requires both columns. Separate declarations of UNIQUE (order_id) and UNIQUE (line_no) would mean something else: at most one line per order, and at most one line numbered 1 in the entire table. Composite means that the combination is the identity.\n\nUNIQUE can preserve another identity beside the primary key. If a variant introduces a generated line_id, it still needs UNIQUE (order_id, line_no) and required values for that business identity. Generating different IDs for two inserts does not stop them recording the same line twice. Relations, keys and normalisation develops the choice of keys; constraints carry that choice into every write.\n\nThe comparison rule matters too. Uniqueness on text uses the column’s equality rules, so a rule that considers two spellings the same must be reflected in the constrained value or its comparison. Ordinary PostgreSQL uniqueness also permits several missing values. Use NOT NULL for a required identity; choose NULLS NOT DISTINCT when an optional unique value should allow at most one absence.\n\nA preflight query is not the key\n\nFor a separate insertion experiment, start with line (103, 1) absent. A checkout writer and an import both intend to create it. Each can ask whether the line exists and get no row before either inserts it. A check in application code has now passed twice.\n\nOne possible schedule for two writers of the same line identity\nStep\tCheckout writer\tImport writer\n1\tFinds no (103, 1)\tFinds no (103, 1)\n2\tInserts (103, 1); transaction remains open\t\n3\t\tAttempts the same key; waits\n4\tCommits\tDuplicate-key error; rolls back\n\nWith an immediate primary key, PostgreSQL’s second insert waits for the conflicting transaction’s outcome. If the first commits and keeps the row, the second is refused. If the first rolls back, the second can proceed. The key’s enforcement includes the overlap that the separate lookup missed.\n\nA disposable PostgreSQL 18.6 run checked the commit case: the second insert waited on the first transaction, then received a duplicate-key error, and one row remained. Without the key, two empty preflight results followed by two inserts left two copies. This is a constraint doing concurrent enforcement, rather than a reason to avoid constraints whenever transactions overlap.\n\nA reference in both directions\n\nAn order line’s product_id names a product. A foreign key makes the database preserve that connection:\n\nproduct_id text NOT NULL\n  REFERENCES products (product_id)\n\nThe parent, products, must offer a unique identity for the reference to target. Its primary key does that. The child, order_items, can repeat P7 on many lines, because each is a separate purchase of that product. The foreign key requires a match; it does not make the child’s product ID unique.\n\nEnforcement works in both directions. Inserting a line for a nonexistent product is refused. Changing a line to that product is refused too. On the parent side, deleting P7 or changing its key would leave existing lines pointing nowhere, so the database must either refuse the change or carry out a declared action that preserves the rule.\n\nWith the core schema’s default action, deleting P7 while its lines remain fails. The same is true of deleting order 103 while its lines remain. The foreign keys protect those relationships; they do not decide whether the shop ought to retain an order forever.\n\nWhat a delete should mean\n\nAn order line is a component of an order. If a separate deletion policy allows an order and all its lines to be removed together, the order reference can say so:\n\nFOREIGN KEY (order_id)\n  REFERENCES orders (order_id)\n  ON DELETE CASCADE\n\nCASCADE removes the child lines when their order is deleted. Applying that action to the product reference would have a different consequence: deleting a catalogue product would erase lines from old purchases. The references look similar, but the relationships mean different things.\n\nPostgreSQL foreign-key actions when a referenced parent is deleted\nAction\tEffect on referencing rows\nNO ACTION, the default\tThe reference must be valid when checked; otherwise the delete fails.\nRESTRICT\tRefuses deleting a referenced parent without postponing that check.\nCASCADE\tDeletes the referencing rows.\nSET NULL or SET DEFAULT\tChanges the reference; the resulting row must still satisfy its other rules.\n\nSET NULL suits an optional association, rather than the required product on this line. It cannot override NOT NULL. A default is no escape either: a non-missing default reference still needs its parent. ON UPDATE actions make the corresponding choice when the parent’s referenced key changes.\n\nReferences also need a practical access path. PostgreSQL creates an index for a primary or unique key, but does not automatically create one on the child’s foreign-key columns. Deleting a product requires finding its lines. On a large line table an index on product_id can make that search cheaper; the line primary key already starts with order_id for the order-side search. Indexes and access paths develops that cost.\n\nWhen the reference may be checked at commit\nThe shop is part of the identity\n\nNow enter the collection’s tenant-scoped variant. The application serves shop 10, the original shop, and shop 20, Harbour Tea. Each shop is a tenant: one customer organisation whose data shares the application with others. Mina is a customer of shop 10; she is not a tenant herself.\n\nShop 10’s P7 is the Blue mug at 20.00. Shop 20 has its own P7, a Copper mug at 18.00. P7 alone no longer identifies a product. The pair (shop_id, product_id) does. Orders are identified by (shop_id, order_id), and lines by (shop_id, order_id, line_no).\n\nA line therefore needs the shop ID in its references as well as its own key. These small definitions show the identity and reference columns; descriptive order columns and the customer reference are omitted here. The worksheet includes the same-shop customer reference and the line’s quantity and price.\n\nCREATE TABLE products (\n  shop_id integer,\n  product_id text,\n  name text NOT NULL,\n  PRIMARY KEY (shop_id, product_id)\n);\nCREATE TABLE orders (\n  shop_id integer,\n  order_id integer,\n  PRIMARY KEY (shop_id, order_id)\n);\nCREATE TABLE order_items (\n  shop_id integer,\n  order_id integer,\n  line_no integer,\n  product_id text NOT NULL,\n  PRIMARY KEY (\n    shop_id, order_id, line_no\n  ),\n  FOREIGN KEY (shop_id, order_id)\n    REFERENCES orders (\n      shop_id, order_id\n    ),\n  FOREIGN KEY (shop_id, product_id)\n    REFERENCES products (\n      shop_id, product_id\n    )\n);\n\nThe same shop_id participates in both foreign keys. A line in shop 10 must find both an order in shop 10 and a product in shop 10. Giving the line independent shop IDs for its order and product would let those two parents belong to different shops unless another rule tied the IDs together.\n\nFigure 1 follows the mug line on order 103. Start with shop 10, then change the attempted line’s shop to 20. Watch the two lookups separately: the product exists in both shops, but the order does not.\n\nFIGURE 1\nOne shop ID, two references\n\nOrder line · stored line\n\nshop_id\n10\norder_id\n103\nline_no\n1\nproduct_id\nP7\n\n↓ (10, 103)\n\nOrders\n\n(10, 103)\nMina’s order\n\nOrder reference not yet followed\n\n↓ (10, P7)\n\nProducts\n\n(10, P7)\nBlue mug\n(20, P7)\nCopper mug\n\nProduct reference not yet followed\n\nFollow the same shop ID into both parent keys.\n\nThe line carries shop 10. Both references use that same 10, together with their own parent ID.\n\nLine to follow\nStored: shop 10\nAttempted: shop 20\nPlay\nBack\nNext\nReset\n1 / 4\nThe relevant parent rows from the tenant variant. Shop 10 follows the stored mug line on order 103. Shop 20 is an invalid attempted line: its product exists, but order (20, 103) does not. The steps illustrate reference matching, not PostgreSQL’s check order or a complete insert.\nThe two lookups, as text\n\nAt shop 10 the line reaches order (10, 103) and the Blue mug (10, P7). At shop 20 it reaches the Copper mug, but there is no order (20, 103). The order foreign key refuses that attempted line. Finding order 103 in shop 10 cannot satisfy a reference asking for shop 20.\n\nThis is more than putting a shop label on a row. Every tenant-owned relationship must carry the scope: an order to its customer, a line to its order and product, a payment to its order. In this variant the order-to-customer reference is FOREIGN KEY (shop_id, customer_id) REFERENCES customers (shop_id, customer_id). Keeping an old unscoped reference leaves that relationship outside the boundary.\n\nPostgreSQL will not accept REFERENCES products (product_id) against the composite product key above: product_id alone is not unique. Adding global uniqueness merely to make that declaration work would prohibit the two valid P7s. Preserve the intended identity, then reference all of it.\n\nQueries need the same meaning. A join on i.product_id = p.product_id would pair shop 10’s mug line with both P7 products. Include i.shop_id = p.shop_id in that match. Foreign keys protect stored relationships; they do not insert the missing condition into a query.\n\nRequired and optional pairs\n\nThe tenant line’s primary key already requires its shop and order IDs, and product_id is explicitly NOT NULL. Those required values matter. Under PostgreSQL’s default MATCH SIMPLE, a composite reference with any missing component does not require a parent match. A nullable product ID could therefore leave a line with no checked product reference at all.\n\nFor a wholly optional composite association, MATCH FULL allows either a complete matching pair or an entirely missing pair; it rejects a half-missing pair. It still permits both values to be missing. The shop’s required product association needs required columns, rather than treating a missing pair as another way to pass.\n\nIntegrity does not grant access\n\nThe composite foreign keys answer whether stored relationships stay inside one shop. They do not answer whether the caller is entitled to act for that shop. A caller allowed to insert arbitrary values could supply a completely consistent shop 20 order and product pair. Every reference could pass while the caller had no authority over Harbour Tea.\n\nThe application must establish the caller’s authorised shop and carry that identity through its requests. Database privileges determine which operations its connection may perform. In PostgreSQL, row security policies can additionally restrict which rows that connection may read or change. These are access rules applied under a particular runtime identity, with their own behaviour for owners and privileged roles.\n\nKeeping those questions distinct makes testing clearer. Try a shop 10 line with a parent from another shop to test integrity. Try a well-formed shop 20 operation through a shop 10 caller to test authority. The latter should fail even though the data would be internally consistent. Database access and least privilege develops runtime authority; PostgreSQL roles, policies and privileged code works through policy tests.\n\nRules that need a protocol\n\nThe shop can declare a positive payment amount and a reference to an order. Neither declaration establishes that an order marked paid has enough payments. If marking an order paid must mean that its payments cover its line total, that rule compares several changing rows, and a write affecting any of them could change its truth.\n\nPostgreSQL row checks are not a supported way to enforce such a rule by reading other rows. Hiding that read in a function does not make it safe: changing a different row does not cause the original row’s check to run again. The same problem applies to a time-dependent check that is expected to become false merely because the clock advances.\n\nLook first for a declarative form the engine supports. A unique key already expresses a cross-row rule. A foreign key expresses an existence rule. PostgreSQL exclusion constraints can forbid certain conflicting pairs, such as overlapping reservations for the same room. These declarations have enforcement designed for their particular relationships.\n\nA class-session capacity limit is different: count several booking rows and keep the total within the session’s capacity. Two transactions can both count a free place before either adds its booking. Each new row can pass all its own checks while the combined result exceeds capacity. A trigger that simply repeats that count can make the same mistake.\n\nSuch a rule needs a complete write protocol: which changes belong in one transaction, how competing writers coordinate, what each reads after waiting and which failures require a complete retry. The introduction’s conditional stock update is one protocol for one stock row; it is not a general solution to counting bookings. Transactions and isolation develops these concurrent multi-row rules.\n\nKeep the simpler constraints alongside that protocol. A booking protocol should not also have to remember to reject every missing reference or duplicate identity itself. Declarations preserve the parts they can express; transaction logic carries the remaining business rule.\n\nTrying the boundary\n\nTest a constraint with a valid write and the smallest write that would break its promise. For a composite key, repeat the whole key and also repeat just one component in a valid new combination. For a reference, try an absent parent, a changed child reference and a parent deletion. For tenant scope, use a parent that exists in the other shop; an entirely nonexistent ID would not distinguish a scoped reference from an unscoped one.\n\nCheck the returned error as well as the unchanged data. PostgreSQL reports 23502 for a not-null violation, 23514 for a check violation, 23505 for uniqueness and 23503 for a foreign key. Drivers expose the SQLSTATE and relevant object fields. Use those fields and named constraints to recognise an expected refusal, rather than parsing the wording of an error message.\n\nIn an explicit PostgreSQL transaction, an ordinary statement error leaves the transaction failed until it is rolled back, or recovered to an appropriate savepoint. The application should turn the refusal into a meaningful result and end or recover that transaction. Repeating the same invalid write is not a useful retry strategy.\n\nDownload the PostgreSQL worksheet to repeat the row, identity, reference, deletion and tenant examples with psql -X -v ON_ERROR_STOP=1 -f constraints.sql. It creates temporary objects, checks expected refusals by SQLSTATE and rolls the work back. Counterexamples remove the relevant rule so that the difference is visible. The separate concurrent-key run used two writer connections to a disposable local server; it is described above rather than claimed by this single-session download.\n\nThe relational database collection\n\nDrafts for review. Browse by subject; planned articles will become available here as they are written.\n\nRelational databases\n\nDesign facts and guarantees\n3 drafts · 1 planned\nQuery and change the right rows\n5 drafts\nMake query work affordable\n0 drafts · 3 planned\nConcurrency and durable application work\n1 draft · 4 planned\nDurability, copies and recovery\n0 drafts · 4 planned\nChange and operate the service\n0 drafts · 4 planned\nDistribute relational work\n0 drafts · 5 planned\nPostgreSQL implementation\n0 drafts · 13 planned\nCockroachDB implementation\n0 drafts · 10 planned\nFurther PostgreSQL reading\n0 drafts · 4 planned",
+    "media": [
+      {
+        "box": {
+          "height": 111,
+          "width": 640,
+          "x": 320,
+          "y": 1292
+        },
+        "i": 0,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 224,
+          "width": 640,
+          "x": 320,
+          "y": 1688
+        },
+        "i": 1,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 52,
+          "width": 640,
+          "x": 320,
+          "y": 2480
+        },
+        "i": 2,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 224,
+          "width": 640,
+          "x": 320,
+          "y": 3255
+        },
+        "i": 3,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 72,
+          "width": 640,
+          "x": 320,
+          "y": 3943
+        },
+        "i": 4,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 92,
+          "width": 640,
+          "x": 320,
+          "y": 4595
+        },
+        "i": 5,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 293,
+          "width": 640,
+          "x": 320,
+          "y": 4838
+        },
+        "i": 6,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 229,
+          "width": 640,
+          "x": 320,
+          "y": 5639
+        },
+        "i": 7,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 583,
+          "width": 640,
+          "x": 320,
+          "y": 5994
+        },
+        "i": 8,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 769,
+          "width": 640,
+          "x": 320,
+          "y": 6856
+        },
+        "i": 9,
+        "tag": "FIGURE"
+      }
+    ]
+  },
+  "r05": {
+    "text": "RELATIONAL COLLECTION · DRAFT FOR REVIEW\n\nJoins and the meaning of a result row\nDeep dive\nAbout 8 minutes\nAI-generated\n\nA join returns a row for each matching pair of input rows. That small rule explains both its usefulness and its most expensive mistakes. Adding a customer name to each order may leave the row count unchanged. Adding payments to order lines may multiply it. Both queries can be valid SQL, and both can return plausible amounts.\n\nThe first question is therefore what one result row should mean. A receipt wants one row per order line. A list of orders wants one per order. A list of customers who have ordered wants one per customer, however many orders they have. Keep that meaning in view while choosing the matches.\n\nThis article builds the shop’s still-due report: the value of each order, its recorded payments and the difference. It uses PostgreSQL 18 and the same three orders as the introduction. The figures illustrate result construction; the downloadable SQL checks the results on PostgreSQL 18.6.\n\nOne row for each match\nTwo independent collections\nTotal before combining\nKeeping unmatched rows\nWhether a match exists\nChecking the question\nOne row for each match\n\nBegin with orders and customers. Each order carries a customer_id, and the customer primary key makes that value unique on the other side.\n\nSELECT o.order_id, c.name\nFROM orders AS o\nJOIN customers AS c ON c.customer_id = o.customer_id\nORDER BY o.order_id;\nOne result row per order\nOrder\tCustomer\n101\tMina Shah\n102\tTariq Aziz\n103\tMina Shah\n\nOrder 101 finds Mina, order 102 finds Tariq, and order 103 finds Mina again. Mina appears twice because she has two orders. These are different order rows carrying the same customer fact, rather than duplicate customers in the source table.\n\nThe key tells us that each order finds at most one customer. The non-missing foreign key tells us that the customer exists, so in this schema every order finds exactly one. A join condition alone promises neither. Joining on a non-unique name could find several people, and joining to an optional relation could find none.\n\nNow join orders to their lines instead. Order 101 has two matching lines, 102 has one and 103 has two. The result has five rows. One row now means one order line, identified by (order_id, line_no). The order’s date and customer ID repeat on each of its lines because they describe the order to which those lines belong.\n\nThis meaning is often called the result’s grain. Write it as “one row per …” before adding a sum or another join. It gives you a concrete check: if one row should mean an order, why does order 101 appear twice?\n\nTwo independent collections\n\nOrder 101 has two lines, worth 4.50 and 35.00, and two payments, 30.00 and 9.50. The line numbers identify what was bought. The payment IDs identify payments towards the order; no payment belongs to a particular line.\n\nJoining these collections on order_id therefore matches every line with every payment for that order. Read the four pairs in the drawing, then choose Total each side first.\n\nFIGURE 1 Two lines meet two payments\n\nOrder 101’s lines\n\nLine 1\nP3 · 4.50\n\nLine 2\nP9 · 35.00\n\nOrder 101’s payments\n\nPayment 501\ncard · 30.00\n\nPayment 502\ngift card · 9.50\n\nJoin the details\nTotal each side first\n\nOne result row = one line–payment pair.\n\nLine 1 × payment 501\nLine amount\n4.50\nPayment\n30.00\nLine 1 × payment 502\nLine amount\n4.50\nPayment\n9.50\nLine 2 × payment 501\nLine amount\n35.00\nPayment\n30.00\nLine 2 × payment 502\nLine amount\n35.00\nPayment\n9.50\n\n4 pairs → line sum 79.00; payment sum 79.00\n\nEvery line matches both payments on order_id. Read down either amount: each original contribution appears twice.\n\nThe matches as text\n\nThe detailed join has four rows: two lines times two payments. With three lines and four payments, it would have twelve. The match is a pair of facts about the same order, not evidence that one payment paid for that particular line.\n\nSELECT i.order_id,\n       SUM(i.quantity * i.unit_price) AS order_total,\n       SUM(p.amount) AS paid\nFROM order_items AS i\nJOIN payments AS p ON p.order_id = i.order_id\nGROUP BY i.order_id\nORDER BY i.order_id;\n\nFor 101 this reports 79.00 for the order and 79.00 paid. Subtracting gives zero, the correct balance for the wrong reason. Order 102 also looks correct because it has one line and one payment. Order 103 disappears because it has no payment. Testing only a single-line paid order would miss both defects.\n\nGROUP BY does not undo the multiplication. It adds the values on the rows it receives, including every repeated contribution. Nor does SUM(DISTINCT amount) repair it. That removes repeated values, so two legitimate payments of the same amount would be counted once. The identities are different even when their amounts agree.\n\nSELECT DISTINCT removes identical projected result rows. It is useful when that is the requested answer, but it cannot decide which line or payment each amount belongs to. Keep the right identities through the calculation instead of asking a duplicate-removal step to reconstruct them.\n\nTotal before combining\n\nThe report wants one row per order, so first make each collection have that grain. Total the lines by order_id, and separately total payments by order_id. Each derived result then has at most one row for any order. Combining them cannot multiply an order’s amounts.\n\nWITH lets us name these intermediate query results. Such a name is a common table expression, or CTE. It is available to this statement, rather than being a stored report table.\n\nWITH line_totals AS (\n  SELECT order_id, SUM(quantity * unit_price) AS order_total\n  FROM order_items\n  GROUP BY order_id\n), payment_totals AS (\n  SELECT order_id, SUM(amount) AS paid\n  FROM payments\n  GROUP BY order_id\n)\nSELECT o.order_id, c.name, l.order_total,\n       COALESCE(p.paid, 0::numeric) AS paid,\n       l.order_total - COALESCE(p.paid, 0::numeric) AS due\nFROM orders AS o\nJOIN customers AS c ON c.customer_id = o.customer_id\nLEFT JOIN line_totals AS l ON l.order_id = o.order_id\nLEFT JOIN payment_totals AS p ON p.order_id = o.order_id\nORDER BY o.order_id;\nThe still-due report, using recorded line prices and payments\nOrder\tOrder total\tPaid\tDue\n101\t39.50\t39.50\t0.00\n102\t40.00\t40.00\t0.00\n103\t29.00\t0.00\t29.00\n\nOrder 101 now combines one line-total row with one payment-total row. Order 103 has a line total but no payment-total row. A LEFT JOIN retains its order row and supplies NULL for the missing payment columns. COALESCE turns that missing total into zero: no recorded payments contributed to it.\n\nWe do not apply the same substitution to a missing line total. This schema does not enforce that every order has a line. An order with no lines would remain in this report with a missing total and balance, signalling that its value has not been established. Treating it as a free order would be a different business rule. The three core orders all have lines.\n\nThe calculation uses the agreed unit_price on each line. Joining today’s product price into the sum would change old receipts when the catalogue changed. Likewise, the status text is not a substitute for summing payments. Here 101 and 102 are paid, but a status field does not prove that recorded amounts equal what is owed.\n\nThe CTEs make the reasoning readable. They do not require PostgreSQL to execute the clauses as a series of stored temporary tables. The planner may combine work while preserving the result. Query execution and bad plans follows the physical choices; Aggregates, windows and ordered results develops the grouped calculations.\n\nKeeping unmatched rows\n\nAn ordinary JOIN, also called an inner join, retains matches only. A left join additionally keeps each left-side row with no match, filling the right side with missing values. It does not add one missing row alongside existing matches. If an order has two matching payments, it still produces two result rows.\n\nThat preservation happens at the join. A later WHERE can discard the preserved row again. Suppose we want every order alongside its card payments, if any. Compare the position of the card condition in the next figure.\n\nFIGURE 2 Where does the card condition act?\nIn ON\nIn WHERE\n\nON p.order_id = o.order_id AND p.method = 'card'\n\nOrders after the left join and filter\nOrder\tPayment\tAmount\n101\t501\t30.00\n102\t503\t40.00\n103\tNULL\tNULL\n\nOrder 103 has no card match. The left join preserves it, with missing payment columns.\n\nBoth answers as text\nSELECT o.order_id, p.payment_id, p.amount\nFROM orders AS o\nLEFT JOIN payments AS p\n  ON p.order_id = o.order_id AND p.method = 'card'\nORDER BY o.order_id, p.payment_id;\n\nIn ON, the condition defines a match. Order 103 has no card payment, so the left join keeps it with missing payment columns. Move p.method = 'card' to WHERE, and it tests the joined rows instead. The condition on 103 is unknown, and WHERE retains only true, so 103 disappears.\n\nAdding OR p.payment_id IS NULL in WHERE is not generally equivalent to putting the card restriction in ON. An order with only non-card payments already found matches at the join, so no missing placeholder row was created. The later filter would remove every one of those matches and lose the order. Make the join’s matching rule express the optional fact you want.\n\nA condition on the preserved side can still belong in WHERE. For example, WHERE o.customer_id = 1 deliberately selects Mina’s orders while retaining missing payments on them. Decide whether each condition chooses the parent rows, defines an optional match or filters the final result.\n\nA right join preserves the right input instead. A full join preserves unmatched rows from both sides, useful for comparing two independently supplied lists. Neither changes the pairing rule. Choosing a different outer join will not make two many-sided collections safe to sum together.\n\nWhether a match exists\n\nSometimes we need no columns from the other side. “Which customers have ordered?” asks whether an order exists for each customer. Joining customers to orders would return Mina twice. EXISTS tests for at least one matching row without adding a result row for every match.\n\nSELECT c.customer_id, c.name\nFROM customers AS c\nWHERE EXISTS (\n  SELECT 1\n  FROM orders AS o\n  WHERE o.customer_id = c.customer_id\n)\nORDER BY c.customer_id;\n\nThe answer is Mina and Tariq, one row each. The inner query refers to c.customer_id from the outer query; this makes it a correlated subquery. SELECT 1 is conventional because only the existence of a result matters. It does not count orders or choose a particular one.\n\nReverse the test with NOT EXISTS to find customers without orders: Edda. For orders without any payment, change the outer table and the matching condition:\n\nSELECT o.order_id\nFROM orders AS o\nWHERE NOT EXISTS (\n  SELECT 1\n  FROM payments AS p\n  WHERE p.order_id = o.order_id\n)\nORDER BY o.order_id;\n\nThis returns 103. It asks a different question from “which orders still have an amount due?” A partly paid order has a payment, so it fails this absence test while still owing money. To find positive balances, name the completed report as another CTE and filter its due > 0. In the core snapshot both questions happen to select 103.\n\nThe matching condition is essential. Without p.order_id = o.order_id, the query asks whether the entire payments table is empty. Since payment 501 exists, every order would fail NOT EXISTS, including 103.\n\nA left join followed by WHERE p.payment_id IS NULL can express the same absence test. Test a right-side column guaranteed non-missing in a real match, such as its primary key. A nullable note or reference could be missing on a real payment and would give a false absence.\n\nNOT IN needs more care. If its right-hand result contains a NULL, an otherwise unmatched value can produce unknown rather than true. The shop’s payments.order_id is non-missing, but a later union or optional relation could change that guarantee. NOT EXISTS keeps “no matching row” explicit; Values, missing data and equality follows the three-valued comparisons.\n\nChecking the question\n\nCheck a query with rows that separate its possible meanings: a parent with no children, one with one child and one with several children on both joined sides. The shop deliberately contains all three payment shapes. Compare identities as well as totals; a plausible balance can hide doubled contributions.\n\nAt each join, identify the key of each input and how many matches a row can find. Before each sum, say what one input row means and whether the same fact has already repeated. Before each absence test, say exactly which match must not exist. These checks continue to work as queries grow, because they follow the meaning of the rows rather than the length of the SQL.\n\nThe relational database collection\n\nDrafts for review. Browse by subject; planned articles will become available here as they are written.\n\nRelational databases\n\nDesign facts and guarantees\n3 drafts · 1 planned\nQuery and change the right rows\n5 drafts\nMake query work affordable\n0 drafts · 3 planned\nConcurrency and durable application work\n1 draft · 4 planned\nDurability, copies and recovery\n0 drafts · 4 planned\nChange and operate the service\n0 drafts · 4 planned\nDistribute relational work\n0 drafts · 5 planned\nPostgreSQL implementation\n0 drafts · 13 planned\nCockroachDB implementation\n0 drafts · 10 planned\nFurther PostgreSQL reading\n0 drafts · 4 planned",
+    "media": [
+      {
+        "box": {
+          "height": 111,
+          "width": 640,
+          "x": 320,
+          "y": 1286
+        },
+        "i": 0,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 207,
+          "width": 640,
+          "x": 320,
+          "y": 1417
+        },
+        "i": 1,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 751,
+          "width": 640,
+          "x": 320,
+          "y": 2509
+        },
+        "i": 2,
+        "tag": "FIGURE"
+      },
+      {
+        "box": {
+          "height": 170,
+          "width": 640,
+          "x": 320,
+          "y": 3404
+        },
+        "i": 3,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 367,
+          "width": 640,
+          "x": 320,
+          "y": 4328
+        },
+        "i": 4,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 207,
+          "width": 640,
+          "x": 320,
+          "y": 4715
+        },
+        "i": 5,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 522,
+          "width": 640,
+          "x": 320,
+          "y": 5893
+        },
+        "i": 6,
+        "tag": "FIGURE"
+      },
+      {
+        "box": {
+          "height": 213,
+          "width": 606,
+          "x": 337,
+          "y": 6055
+        },
+        "i": 7,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 131,
+          "width": 640,
+          "x": 320,
+          "y": 6454
+        },
+        "i": 8,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 190,
+          "width": 640,
+          "x": 320,
+          "y": 7369
+        },
+        "i": 9,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 190,
+          "width": 640,
+          "x": 320,
+          "y": 7815
+        },
+        "i": 10,
+        "tag": "PRE"
+      }
+    ]
+  },
+  "r06": {
+    "text": "RELATIONAL COLLECTION · DRAFT FOR REVIEW\n\nAggregates, windows and ordered results\nDeep dive\nAbout 9 minutes\nAI-generated\n\nAn aggregate combines values from several rows: a sum of order lines, a count of orders or an average purchase value. A window calculation can put that same kind of answer beside each original row. The difference is whether the rows should collapse into groups or remain individually visible.\n\nBoth depend on the input’s meaning. Adding the right amounts from multiplied join rows still gives the wrong total. Ordering brings another choice: two orders placed at the same instant can share a rank, contribute together to a running calculation, or take separate positions in a sequence. Those are different questions.\n\nWe start with the shop’s three orders and their agreed line values. Later, two explicitly added orders let us inspect a time tie without inventing more sales amounts. The SQL uses PostgreSQL 18; a downloadable experiment checks the results on PostgreSQL 18.6.\n\nFrom lines to orders\nWhat is being counted?\nFilter inputs or filter groups\nKeep the orders\nAn order within the window\nTies and frames\nPositions or shared ranks\nFrom lines to orders\n\nThe input table order_items has one row per order line. SUM(quantity * unit_price) adds the amount of each line. GROUP BY order_id makes a separate group for each order, so no line contributes to another order’s total.\n\nSELECT order_id,\n       COUNT(*) AS lines,\n       SUM(quantity * unit_price) AS order_total\nFROM order_items\nGROUP BY order_id\nORDER BY order_id;\nOne output row per order represented in the lines\nOrder\tLines\tOrder total\n101\t2\t39.50\n102\t1\t40.00\n103\t2\t29.00\n\nThe five input rows have become three output rows. Within a group, order_id has one value, while line number and product can vary. Returning an arbitrary product beside the order total would imply that the whole order belonged to that product. PostgreSQL normally requires selected values to be grouped, aggregated or known to depend on the grouped key; make the intended meaning explicit.\n\nThe ORDER BY is separate from grouping. It requests 101, 102, 103 as the display order. GROUP BY itself promises no sorted output, even if a particular plan happens to return groups in key order.\n\nTo use these totals in later examples, give them the name order_values with a CTE. Carry each order’s customer and placement time alongside its total:\n\nWITH order_values AS (\n  SELECT o.order_id, o.customer_id, o.placed_at,\n         SUM(i.quantity * i.unit_price) AS order_total\n  FROM orders AS o\n  JOIN order_items AS i ON i.order_id = o.order_id\n  GROUP BY o.order_id, o.customer_id, o.placed_at\n)\nSELECT * FROM order_values ORDER BY order_id;\n\nEvery core order has lines, so all three appear. This definition deliberately contains orders whose value can be calculated from their lines; an order without lines would be absent. Decide how to expose incomplete orders in a production report. The earlier join article keeps them visible with a missing total instead of silently calling them zero.\n\nWhat is being counted?\n\nCOUNT(*) counts input rows. COUNT(expression) counts only rows on which that expression is non-missing. The distinction matters after a left join, where an unmatched parent still contributes one row.\n\nSELECT c.customer_id, c.name,\n       COUNT(*) AS joined_rows,\n       COUNT(o.order_id) AS orders\nFROM customers AS c\nLEFT JOIN orders AS o ON o.customer_id = c.customer_id\nGROUP BY c.customer_id, c.name\nORDER BY c.customer_id;\n\nMina has two joined rows and two orders; Tariq has one of each. Edda has one joined row, the placeholder retained by the left join, but zero orders. Counting the non-missing order key answers the question. Counting a nullable order attribute would instead count orders on which that attribute had a value.\n\nSUM and AVG also ignore missing inputs. An aggregate over no input values returns NULL for these functions, while COUNT returns zero. With payments, substituting zero for an empty sum is useful because no recorded payment contributed. With an unknown measurement, substituting zero changes the answer.\n\nThe denominator matters for an average. The five line amounts total 108.50, so their mean is 21.70 per line. The same amount spread over three orders gives about 36.17 per order. Neither is a more accurate version of the other. To find mean order value, average the three rows of order_values, rather than the five lines or repeated customer totals.\n\nFilter inputs or filter groups\n\nWHERE chooses rows before aggregation. HAVING chooses completed groups. Suppose we want customers whose orders in the core snapshot are worth at least 50 in total. Group the order values by customer, then test the sum with HAVING.\n\nWITH order_values AS (\n  SELECT o.order_id, o.customer_id,\n         SUM(i.quantity * i.unit_price) AS order_total\n  FROM orders AS o\n  JOIN order_items AS i ON i.order_id = o.order_id\n  GROUP BY o.order_id, o.customer_id\n)\nSELECT customer_id, SUM(order_total) AS customer_total\nFROM order_values\nGROUP BY customer_id\nHAVING SUM(order_total) >= 50\nORDER BY customer_id;\n\nMina qualifies with 68.50 from orders 101 and 103. Neither order reaches 50 by itself. WHERE order_total >= 50 would remove both before they could be combined and answer a different question.\n\nA condition that applies to one measure can go inside the aggregate with FILTER. On the orders table, COUNT(*) FILTER (WHERE status = 'pending') counts pending orders while COUNT(*) still counts every order. Filtering the entire query to pending orders would change both measures. For a day-based report, also choose the time zone and boundaries before filtering; Values, missing data and equality shows why a calendar day is more than a timestamp cast.\n\nKeep the orders\n\nA customer summary has one row per customer. A screen comparing each order with its customer’s total still needs one row per order. Put OVER after an aggregate to make it a window calculation; PARTITION BY customer_id says which other orders belong with the current one.\n\nSwitch between the grouped and window results. Watch what happens to order IDs 101 and 103.\n\nFIGURE 1 A total beside a group, or beside each order\nGROUP BY customer\nWindow by customer\n\nInput: orders 101 (Mina, 39.50), 102 (Tariq, 40.00), 103 (Mina, 29.00).\n\nOne row per customer with orders\nCustomer\tTotal\nMina Shah\t68.50\nTariq Aziz\t40.00\n\nMina’s two orders collapse to one group, worth 68.50. The three input rows become two output rows.\n\nBoth results as text\nWITH order_values AS (\n  SELECT o.order_id, o.customer_id,\n         SUM(i.quantity * i.unit_price) AS order_total\n  FROM orders AS o\n  JOIN order_items AS i ON i.order_id = o.order_id\n  GROUP BY o.order_id, o.customer_id\n)\nSELECT order_id, customer_id, order_total,\n       SUM(order_total) OVER (PARTITION BY customer_id)\n         AS customer_total\nFROM order_values\nORDER BY order_id;\n\nThe window has not changed the grain. Order 101 still means order 101, but can see order 103 when calculating Mina’s total. The same 68.50 appears on both rows. Summing the customer_total output would count Mina’s total twice, so a later consumer must retain that meaning too.\n\nA partition is the set of rows sharing the window’s partition values. It is unrelated to physically partitioning a database table. With no PARTITION BY, all input rows form one partition. With no order inside OVER, this sum covers the whole customer partition at every row.\n\nWindows see the rows that remain after this query level’s WHERE, grouping and HAVING. If we filter order_values to order 103 before applying the window, Mina’s total becomes 29.00. To calculate over all her orders and then display one, put the window calculation in a CTE or subquery and filter its output outside.\n\nAn order within the window\n\nSome windows need a sequence. LAG reads a value from the preceding row, and ROW_NUMBER assigns successive positions. Give them an order that says what “preceding” means.\n\nSELECT order_id, customer_id, placed_at,\n       LAG(placed_at) OVER (\n         PARTITION BY customer_id\n         ORDER BY placed_at, order_id\n       ) AS previous_order_at\nFROM orders\nORDER BY customer_id, placed_at, order_id;\n\nFor Mina’s order 103, the previous instant is 101’s 2026-10-12 09:30Z. For her first order, there is no preceding row, so the result is missing. Tariq’s only order has the same absence. Partitioning prevents his order from becoming Mina’s previous one just because it falls between hers in global time.\n\nThe order inside OVER chooses the calculation’s sequence. The final ORDER BY chooses how the result is presented. Write both when both matter; a window’s sort does not promise the output order. Include a unique tie-breaker when individual positions must be stable.\n\nTies and frames\n\nNow extend the illustration with later orders 105 for Mina and 106 for Edda, both placed at 2026-10-21 12:00:00Z. They have no assigned lines or amounts here and do not alter the earlier still-due report. We need only their identities and times.\n\nOrdering by placed_at alone leaves these two rows tied. They are peers: equal under the window’s ordering expressions. An ordered window aggregate has a default frame, the subset of its partition used for the current calculation. That default runs from the partition’s start through the current row’s last peer.\n\nChoose order 105 in the figure. Compare the default frame with ROWS, with tie-breaker, then move the current row to 106.\n\nFIGURE 2 Which rows does this count include?\nFrame\nDefault RANGE\nROWS, with tie-breaker\nWhole partition\nCurrent order\n105\n106\n\ncount(*) OVER (ORDER BY placed_at)\n\nThe five-order illustration, shown in time and ID order\nOrder\tPlaced (UTC)\tFrame\n101\t10-12 09:30\tincluded\n102\t10-14 16:05\tincluded\n103\t10-20 10:15\tincluded\n105 ← current\t10-21 12:00\tincluded\n106\t10-21 12:00\tincluded\n\nCount at this row: 5\n\nOrders 105 and 106 have the same placed_at. The default ordered frame reaches through both peers, so the count at 105 includes both.\n\nFrame membership as text\nSELECT order_id, placed_at,\n       COUNT(*) OVER (ORDER BY placed_at) AS through_peers,\n       COUNT(*) OVER (\n         ORDER BY placed_at, order_id\n         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n       ) AS through_row\nFROM orders\nORDER BY placed_at, order_id;\n\nThe default count is 1, 2, 3, 5, 5. It jumps across both orders at noon together. The explicit ROWS count is 1, 2, 3, 4, 5. UNBOUNDED PRECEDING means the start of the partition; CURRENT ROW ends at this row. The tie-breaker makes the fourth row unambiguously 105.\n\nThere are two changes in that second expression, and each has a job. ROWS uses row positions rather than peer boundaries. Adding order_id fixes the order of those positions. ROWS alone with ORDER BY placed_at would still allow either tied order to receive count 4. Conversely, adding a unique tie-breaker to the default frame separates these peers and also produces successive counts. Write the frame that expresses the question.\n\nFrames can also look a fixed number of rows back. ROWS BETWEEN 2 PRECEDING AND CURRENT ROW covers up to three orders, not three days. A time-based frame such as RANGE BETWEEN INTERVAL '7 days' PRECEDING AND CURRENT ROW, ordered by a single timestamp, covers a time interval and includes ties at its boundaries. An average over orders in that frame still weights orders, not days without orders.\n\nLAST_VALUE is a common surprise. It returns the last value in the current frame, so the default ordered frame usually does not reach the partition’s last row. For the last order ID across the whole sequence, use LAST_VALUE(order_id) OVER (ORDER BY placed_at, order_id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING). For a whole-partition sum that needs no sequence, omit the window order altogether.\n\nPositions or shared ranks\n\nROW_NUMBER, RANK and DENSE_RANK answer different tie questions. On the five-order time sequence, the position numbers with the ID tie-breaker are 1, 2, 3, 4, 5. Ranking on time alone gives 1, 2, 3, 4, 4: the noon orders share fourth place. Dense ranking gives the same numbers in this example, because the tie is last.\n\nThe difference appears after a tie. In a separate four-value illustration, scores 40, 30, 30 and 20 have ranks 1, 2, 2, 4 but dense ranks 1, 2, 2, 3. RANK leaves the gap occupied by the tied rows; DENSE_RANK counts distinct peer groups. Do not add an ID to the ranking order when equal scores are supposed to share a rank: the ID would make them different peers. You can still add it to the final display order.\n\nFor exactly one latest order per customer, use a position with a deliberate tie-breaker, then filter outside the window calculation:\n\nWITH numbered AS (\n  SELECT order_id, customer_id, placed_at,\n         ROW_NUMBER() OVER (\n           PARTITION BY customer_id\n           ORDER BY placed_at DESC, order_id DESC\n         ) AS position\n  FROM orders\n)\nSELECT order_id, customer_id, placed_at\nFROM numbered\nWHERE position = 1\nORDER BY customer_id;\n\nOn the five-order illustration this returns Mina’s 105, Tariq’s 102 and Edda’s 106. If the question instead wants every order tied for a customer’s latest instant, use RANK ordered only by placed_at DESC and keep rank 1. The placement of the tie-breaker follows the business meaning, not a universal rule to append IDs everywhere.\n\nThe same care applies when returning only the first few rows. A total order makes their selection deterministic within one view of the data; it does not freeze that view while another transaction changes it. Pagination and consistent exports follows the order across requests.\n\nThe relational database collection\n\nDrafts for review. Browse by subject; planned articles will become available here as they are written.\n\nRelational databases\n\nDesign facts and guarantees\n3 drafts · 1 planned\nQuery and change the right rows\n5 drafts\nMake query work affordable\n0 drafts · 3 planned\nConcurrency and durable application work\n1 draft · 4 planned\nDurability, copies and recovery\n0 drafts · 4 planned\nChange and operate the service\n0 drafts · 4 planned\nDistribute relational work\n0 drafts · 5 planned\nPostgreSQL implementation\n0 drafts · 13 planned\nCockroachDB implementation\n0 drafts · 10 planned\nFurther PostgreSQL reading\n0 drafts · 4 planned",
+    "media": [
+      {
+        "box": {
+          "height": 151,
+          "width": 640,
+          "x": 320,
+          "y": 1345
+        },
+        "i": 0,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 207,
+          "width": 640,
+          "x": 320,
+          "y": 1515
+        },
+        "i": 1,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 190,
+          "width": 640,
+          "x": 320,
+          "y": 2114
+        },
+        "i": 2,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 170,
+          "width": 640,
+          "x": 320,
+          "y": 2660
+        },
+        "i": 3,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 269,
+          "width": 640,
+          "x": 320,
+          "y": 3510
+        },
+        "i": 4,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 443,
+          "width": 640,
+          "x": 320,
+          "y": 4423
+        },
+        "i": 5,
+        "tag": "FIGURE"
+      },
+      {
+        "box": {
+          "height": 151,
+          "width": 606,
+          "x": 337,
+          "y": 4569
+        },
+        "i": 6,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 0,
+          "width": 0,
+          "x": 0,
+          "y": 0
+        },
+        "i": 7,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 269,
+          "width": 640,
+          "x": 320,
+          "y": 4906
+        },
+        "i": 8,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 170,
+          "width": 640,
+          "x": 320,
+          "y": 5796
+        },
+        "i": 9,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 698,
+          "width": 640,
+          "x": 320,
+          "y": 6686
+        },
+        "i": 10,
+        "tag": "FIGURE"
+      },
+      {
+        "box": {
+          "height": 268,
+          "width": 606,
+          "x": 337,
+          "y": 6893
+        },
+        "i": 11,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 190,
+          "width": 640,
+          "x": 320,
+          "y": 7423
+        },
+        "i": 12,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 269,
+          "width": 640,
+          "x": 320,
+          "y": 8834
+        },
+        "i": 13,
+        "tag": "PRE"
+      }
+    ]
+  },
+  "r07": {
+    "text": "RELATIONAL COLLECTION · DRAFT FOR REVIEW\n\nPagination and consistent exports\nDeep dive\nAbout 9 minutes\nAI-generated\n\nA large result usually arrives in pieces. An order list asks for the next page when someone scrolls. An export reads batches until it has written every matching row. Both need an order in which to continue, but they need not make the same promise about changes during the read.\n\nA live list can follow rows after a saved position in the current data. An export may need every value from one consistent view, even while writers continue. A cursor that remembers a position solves the first problem. A snapshot that fixes which versions are visible solves the second.\n\nThe examples use PostgreSQL 18 and the shop’s order headers. Extend the three core orders with later orders 105 for Mina and 106 for Edda, both placed at 2026-10-21 12:00:00Z. Both later headers begin with status pending. No lines, payments or stock effects are assigned to those two orders here. The changing-list histories below are separate illustrations and do not amend the core still-due report.\n\nA position in a result\nContinue after a key\nWhat the cursor carries\nThe work behind a page\nA boundary is not a snapshot\nOne view for an export\nWhat a long view costs\nRepeat the experiments\nA position in a result\n\nLIMIT caps how many rows a query returns. OFFSET skips that many result rows first. For a page size of two, the first request uses offset zero and the second offset two.\n\nSELECT order_id, placed_at\nFROM orders\nWHERE status <> 'cancelled'\nORDER BY placed_at, order_id\nLIMIT 2 OFFSET 2;\n\nWith the five unchanged orders, page one is 101 and 102; page two is 103 and 105. The final order_id breaks the time tie between 105 and 106. Without it, the database can put either noon order first, even without a concurrent change. A total order gives every row a distinct position in this result.\n\nThe offset counts positions in the result of this particular query. It has no memory of the previous response. In the next figure, page one has already returned 101 and 102. Cancel 101 between requests, then compare OFFSET 2 with After the saved key.\n\nFIGURE 1 The second page after the list changes\n\nFirst response, before any change: 101, 102. The boundary is order 102 at 14 October, 16:05 UTC.\n\nBetween requests\nNo change\n101 is cancelled\n103 moves before 102\nContinue with\nOFFSET 2\nAfter the saved key\n\nEligible order IDs now, earliest first\n\n101\n102\n103\n105\n106\n\nSecond response\n\n103, 105\n\nThe list has not changed. Skipping two rows and continuing after order 102 return the same next two orders.\n\nAll outcomes as text\n\nAfter 101 leaves the eligible list, its first two rows are 102 and 103. Skipping two now skips 103 before it has ever been delivered. In a different history, moving 103 before 102 shifts 102 into the second page, so the client receives 102 twice and misses 103. The SQL is correctly applying an offset to a changed result.\n\nOffset pagination can still be a sensible contract for a small, stable result or a screen that accepts movement between numbered pages. It also allows a direct request for page 40 without having visited page 39. Say what stability the application offers; an ordered query alone does not preserve the rows between requests.\n\nContinue after a key\n\nKeyset pagination saves the last row’s ordering values and asks for rows after them. It is also called seek pagination. The cursor is the saved boundary, rather than the number of rows that used to precede it.\n\nUse the pair (placed_at, order_id), the same pair as the ORDER BY. Suppose a larger first page ends at order 105. Its boundary is noon on 21 October and ID 105. This request continues after it:\n\nSELECT order_id, placed_at\nFROM orders\nWHERE status <> 'cancelled'\n  AND (placed_at, order_id) >\n      (timestamptz '2026-10-21 12:00:00Z', 105)\nORDER BY placed_at, order_id\nLIMIT 2;\n\nThe answer is 106. PostgreSQL compares the pair from left to right. A later time qualifies; at the same time, a larger order ID qualifies. In expanded form, the condition is placed_at > saved_time OR (placed_at = saved_time AND order_id > saved_id).\n\nSaving only the timestamp would lose 106: its time is equal, not greater. Changing the test to >= would instead repeat 105 and could keep returning the same first row of a large tie. The unique pair makes strict continuation possible.\n\nBuild the cursor from the last row actually returned. On the first request, omit the boundary condition. To indicate that another page exists, an application can request one extra row, return only the page’s requested size and use the last returned row for its cursor. Saving the look-ahead row would skip that row on the next request.\n\nFor ORDER BY placed_at DESC, order_id DESC, continuing towards older rows uses < on the pair. Mixed directions need the equivalent explicit branches, with each comparison following its own direction. For a previous page, reverse the comparisons and fetch direction, then reverse the fetched rows for display. Test ties at both boundaries.\n\nThe simple pair assumes non-missing keys, as the shop schema supplies. With a nullable sort field, NULLS LAST places missing values but does not make a tuple comparison with NULL true. Define separate continuation branches for the missing-value region, or choose a non-missing order. Text ordering must use the same collation on every request.\n\nWhat the cursor carries\n\nAn API cursor usually packages the boundary into an opaque token. Its contents need to preserve the exact values and the query they belong to: ordering, direction, filters and any shop scope. A timestamp rounded from database microseconds to a coarser application format may move the boundary. Serialise enough precision to compare the same instant again.\n\nPass decoded values as query parameters, just as for other application inputs. Validate the cursor’s format and version, cap the page size, and reject a cursor supplied for a different filter or order. A signature can detect altered tokens. It does not grant permission to read another shop: apply authorisation and shop restrictions to every query independently.\n\nThe token need not point to a row that still exists. Its saved values still define a boundary after that row is cancelled or deleted. This is why cancelling 101 in Figure 1 does not disturb continuation after 102.\n\nA numeric ID alone is a valid boundary only for a list ordered by that ID. An increasing sequence is not proof of commit order: one transaction can allocate a lower number and commit after another. Likewise, a placed_at supplied by an application need not reflect when the database made the row visible.\n\nThe work behind a page\n\nAn offset also costs work. The server still has to produce the skipped rows. With OFFSET 10000 LIMIT 2, even an index supplying the right order must pass over 10,000 rows before returning the next two. A matching keyset condition can begin at the boundary instead.\n\nOn a separate scratch table of 20,000 numbered rows, the experiment’s PostgreSQL index-only scan produced 10,002 rows for that offset query. The equivalent WHERE n > 10000 LIMIT 2 scan produced two. Those are observed row counts on a deliberately simple indexed fixture, not timings or a guarantee that every keyset query reads exactly one page.\n\nThe shop list can use an index on (placed_at, order_id). A list restricted to one customer may instead benefit from (customer_id, placed_at, order_id), putting the fixed equality first. Other filters can force the scan to inspect and reject many entries before it finds a full page. Joins, sorting, row visibility and the cost of returned columns still matter. Indexes and access paths develops that match, and Query execution and bad plans checks the work with EXPLAIN.\n\nKeysets trade arbitrary page numbers for efficient continuation. Finding page 40’s boundary still requires a previous boundary, an additional index of saved boundaries or another way to locate it. An exact total count is a separate query over the matching set; the next-page token does not provide it for free.\n\nA boundary is not a snapshot\n\nReturn to 103 moves before 102 in Figure 1. Keyset continuation does not repeat 102, but it also cannot find 103 once that row has moved behind the saved boundary. A delivered row moved forwards can appear again. If membership changes, an as-yet unread order can cease to qualify altogether.\n\nImmutable ordering values remove movement of the key, but not all changes to the set. A newly committed row can carry a key behind the boundary. A row can change status before the reader reaches it. Values on already-delivered rows can be changed after they were read. Each request can be internally consistent while the concatenated responses describe no single database view.\n\nFor a live browsing list, that may be exactly the intended contract: continue through what currently qualifies, with refresh available to see earlier changes. Deduplicating IDs in the client can suppress repeats but cannot recover omissions. Do not describe this as an exact export of the starting set.\n\nA saved upper time or maximum ID limits how far a traversal goes; it does not freeze it. Late commits can appear below that upper bound, existing rows can change and deletions can remove them. An upper bound works as a complete export boundary only with additional guarantees about how the data is admitted and retained.\n\nOne view for an export\n\nAn export that promises one consistent view needs to keep that view across batches. PostgreSQL’s ordinary Read Committed queries take a new statement snapshot each time. A read-only Repeatable Read transaction keeps the snapshot established by its first query for later reads.\n\nThe next schedule starts afresh with all five eligible orders. The first batch reads 101 and 102. Then a writer cancels 103. Follow the next read under each snapshot choice.\n\nFIGURE 2 Which view supplies the next batch?\nNew statement snapshot\nOne fixed snapshot\n\nReader’s eligible rows\n\n101 · 102 · 103 · 105 · 106\n\nCurrent committed eligible rows\n\n101 · 102 · 103 · 105 · 106\n\nStart before the writer changes anything.\n\nNo batch read yet.\n\nBoth views contain all five orders. Advance to the first batch.\n\nPlay\nBack\nNext\nReset\n1 / 4\nThe complete schedule as text\n\nThe fixed view still includes 103, because it qualified before the writer’s commit. The writer is free to commit; the report’s view remains older. This is the snapshot promise developed in Transactions and isolation, applied to an entire result rather than a repeated stock read.\n\nKeep the export transaction on one database connection. It can issue successive keyset queries, or declare a database cursor and fetch from that one query in batches:\n\nBEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n\nSELECT COUNT(*) FROM orders WHERE status <> 'cancelled';\n\nDECLARE export_orders NO SCROLL CURSOR FOR\n  SELECT order_id, customer_id, placed_at, status\n  FROM orders\n  WHERE status <> 'cancelled'\n  ORDER BY placed_at, order_id;\n\nFETCH FORWARD 2 FROM export_orders;\n-- Repeat FETCH until it returns no rows.\nCLOSE export_orders;\nCOMMIT;\n\nThis database cursor is a server-side query position, distinct from an API token carrying key values. Its batches continue the same query. A plain non-locking PostgreSQL cursor already keeps its query’s view across fetches; Repeatable Read here also makes the separate count and any related report queries share that view. Starting independent Read Committed queries would not.\n\nThe cursor closes at the end of this transaction. A lost connection ends the transaction and its cursor; reopening a new transaction with the last key gets a new snapshot. It can resume a live traversal, but cannot honestly continue the same exact export without another mechanism retaining the original result.\n\nWhat a long view costs\n\nOld versions visible to an open snapshot cannot yet be removed by PostgreSQL’s normal cleanup. A slow export can therefore retain dead row versions while writers continue, increasing storage pressure and the work cleanup must do later. A cursor limits the rows delivered to the client at once; it does not automatically bound the database’s sorting, retained versions or total work.\n\nDo not leave this transaction open while a person decides whether to click “next”. For a bounded export, read promptly into an output file or other controlled destination, close the transaction, then let the user download that finished result. Limit duration, batch size and concurrency, and handle cancellation by closing the cursor and ending the transaction. Connections, overload and capacity follows the resource budgets.\n\nA durable export job can materialise the required rows from one snapshot, then serve or retry delivery from that stored result. Freeze the actual fields promised by the export. Saving only IDs and later joining them to current orders preserves a membership list, but lets field values change underneath it. Record the export’s query, schema/version and snapshot description alongside the output so its meaning remains clear.\n\nPostgreSQL also offers WITH HOLD cursors that survive a successful commit within the same session. It copies their result into memory or temporary storage. That exchanges snapshot retention for materialisation cost; it is still lost with the session, so it is not a durable background-job record.\n\nChoose the contract before choosing the batching mechanism. A scrolling list usually needs a clear continuation order and honest behaviour under movement. An exact report needs a fixed view, a bounded way to read it and a durable finished output if delivery must survive a retry. Neither “cursor” nor “page size” by itself states all three.\n\nRepeat the experiments\n\nDownload the pagination experiment. It uses Python 3’s standard library and an installed PostgreSQL binary directory: python3 run-pagination.py --bindir /path/to/postgresql/bin. The directory needs initdb, pg_ctl, postgres and psql. The script creates and verifies its own temporary cluster on a private local socket, runs the checks, then stops and removes it. It never connects to an existing database.\n\nThe experiment contains only the five order headers needed here. Each change resets that input, so cancelling 101, moving 103’s time and cancelling 103 are separate histories. It checks the missing tied row with a timestamp-only boundary, both continuation methods, new and fixed snapshots, cursor fetches and the separate 20,000-row plan comparison. PostgreSQL 18.6 produced the stated outcomes. No throughput, network or distributed-snapshot result is claimed.\n\nThe relational database collection\n\nDrafts for review. Browse by subject; planned articles will become available here as they are written.\n\nRelational databases\n\nDesign facts and guarantees\n3 drafts · 1 planned\nQuery and change the right rows\n5 drafts\nMake query work affordable\n0 drafts · 3 planned\nConcurrency and durable application work\n1 draft · 4 planned\nDurability, copies and recovery\n0 drafts · 4 planned\nChange and operate the service\n0 drafts · 4 planned\nDistribute relational work\n0 drafts · 5 planned\nPostgreSQL implementation\n0 drafts · 13 planned\nCockroachDB implementation\n0 drafts · 10 planned\nFurther PostgreSQL reading\n0 drafts · 4 planned",
+    "media": [
+      {
+        "box": {
+          "height": 131,
+          "width": 640,
+          "x": 320,
+          "y": 1297
+        },
+        "i": 0,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 536,
+          "width": 640,
+          "x": 320,
+          "y": 1735
+        },
+        "i": 1,
+        "tag": "FIGURE"
+      },
+      {
+        "box": {
+          "height": 170,
+          "width": 640,
+          "x": 320,
+          "y": 2912
+        },
+        "i": 2,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 567,
+          "width": 640,
+          "x": 320,
+          "y": 6191
+        },
+        "i": 3,
+        "tag": "FIGURE"
+      },
+      {
+        "box": {
+          "height": 308,
+          "width": 640,
+          "x": 320,
+          "y": 7035
+        },
+        "i": 4,
+        "tag": "PRE"
+      }
+    ]
+  },
+  "r09": {
+    "text": "RELATIONAL COLLECTION · DRAFT FOR REVIEW\n\nSQL at the application boundary\nDeep dive\nAbout 10 minutes\nAI-generated\n\nA query has a meaning in SQL and a life in the application that sends it. The application supplies values, borrows a connection, reads the answer and decides what to tell its caller. A purchase can use sound SQL and still go wrong if a helper writes on another connection, an empty result is mistaken for success or a timeout leaves work running after the request has gone.\n\nThe boundary is a database driver, a library that carries commands and results between application code and a database session. Here the application uses Python with Psycopg 3 and PostgreSQL 18. The syntax belongs to that driver; the questions recur in others. Which parts of the command are values? Who owns the transaction? When has the connection finished its work?\n\nWe follow the shop’s orders and products. P7 is the blue mug at 20.00. The examples begin with order 103 already recorded; a later purchase fragment explicitly rewinds to before it. The downloadable experiment checks the driver behaviour on a disposable server. The drawing illustrates the application’s ownership, rather than running a database in the browser.\n\nSend values as values\nA result is a contract\nOne connection owns the transaction\nA refused purchase is not a SQL error\nA timeout must end the work\nThe work behind a convenient method\nRepeat the driver checks\nSend values as values\n\nSuppose a product page receives the product ID P7. SQL needs a condition comparing the product’s key with that value. Building the command by joining strings gives incoming text the same power as SQL you wrote yourself:\n\n# Do not build queries this way.\nquery = \"SELECT name, price FROM products WHERE product_id = '\" + product_id + \"'\"\nrow = conn.execute(query).fetchone()\n\nFor P7, the resulting text happens to be a valid lookup. For P7' OR true --, the inserted quote ends the string value, OR true makes the condition true for every row and -- comments out the closing quote. The caller has changed the question. This is SQL injection.\n\nGive the driver the SQL and its values separately instead:\n\nrow = conn.execute(\n    \"SELECT name, price FROM products WHERE product_id = %s\",\n    (product_id,),\n).fetchone()\n\n%s is Psycopg’s value placeholder. The tuple in the second argument supplies one value; its trailing comma makes it a one-element tuple. Do not put quotes around the placeholder or replace it with Python string formatting. The driver sends a parameter whose value is the supplied text, including any quote marks.\n\nFIGURE 1 The same command, two different values\nSQL structure\nWHERE product_id = parameter 1\nParameter 1\nP7\nMatches the Blue mug\nParameter 1\nP7' OR true --\nMatches no product\n\nThe bound text occupies one value position in both cases. Its quote and comment marks do not become SQL operators.\n\nIn the native experiment, the concatenated command returned all three products for that incoming text; the parameterised command returned none. It asked for a product with that entire ID, which the shop does not have. A string that merely breaks the unsafe command is also a failure, but this example makes the changed meaning visible without changing any stored data.\n\nBinding preserves the command’s structure. It does not prove that an ID belongs to the caller, that a quantity is sensible or that the query is cheap. Establish the caller’s authority and validate the business input too. In a tenant variant, a safely bound but unauthorised shop ID is still the wrong shop.\n\nChoosing SQL structure\n\nA value placeholder cannot stand for a column name or the keyword DESC. ORDER BY %s with the value price supplies a text value, not a request to sort by the price column. When a screen lets the caller choose a sort, first map the screen’s options to the few structures the application supports.\n\nfrom psycopg import sql\n\nsort_columns = {\"name\": \"name\", \"price\": \"price\"}\ncolumn = sort_columns[requested_sort]  # reject an unknown option\nquery = sql.SQL(\n    \"SELECT product_id, name, price FROM products \"\n    \"ORDER BY {}, product_id LIMIT %s\"\n).format(sql.Identifier(column))\nrows = conn.execute(query, (20,)).fetchall()\n\nIdentifier quotes a SQL name correctly. The mapping makes the product decision: these are the two sorts the screen permits. The limit remains a value. If direction is selectable too, choose between fixed ASC and DESC fragments through another mapping. Putting unchecked incoming text into sql.SQL(...) would reopen the original problem.\n\nA result is a contract\n\nThe driver converts database values to application values. In this Psycopg configuration, PostgreSQL numeric becomes Python Decimal, an integer becomes int, and SQL NULL becomes None. A returned row is a tuple by default. fetchone() returning None means there is no next row; a row containing a missing column is a tuple containing None. Those are different results.\n\nDecide what the query promises before unpacking it. A lookup by a primary key can return zero or one row. An order-line query can return several. A count returns one row even when the count is zero. Give a missing order, an empty list of orders and a database error distinct meanings in the application.\n\nrow = conn.execute(\n    \"SELECT order_id, status FROM orders \"\n    \"WHERE order_id = %s AND customer_id = %s\",\n    (order_id, authorised_customer_id),\n).fetchone()\nif row is None:\n    return None  # the caller has no visible matching order\norder_id, status = row\n\nThe customer ID comes from the application’s established authority, rather than trusting a customer ID beside the order ID in incoming data. Whether an API reveals the difference between an absent order and one the caller may not see is a separate interface choice.\n\nChoose returned columns deliberately. SELECT * lets a schema addition silently change the result’s shape and may fetch large fields the screen never uses. Preserve exact amounts when serialising them to JSON: turning Decimal('20.00') into a binary floating-point number discards the representation chosen for money. A documented decimal string or an explicit fixed-scale representation makes that boundary visible. Timestamp values need an equally deliberate timezone and output format.\n\nfetchall() is convenient for the small lists here. It is also a promise to bring the whole remaining result into application memory. Exports need bounded reading and a defined view of changing data; Pagination and consistent exports develops that contract.\n\nOne connection owns the transaction\n\nA connection represents a database session. A transaction belongs to that session, not to the application’s call stack. Two cursors on the same connection share its transaction; two connections do not. A helper that borrows a fresh connection is outside its caller’s transaction even if the helper is called between the caller’s begin and commit.\n\nA pool keeps connections ready to lend to requests. Treat a borrowed connection as a resource owned by one operation until that operation finishes. Pass it into the helpers that participate in the transaction. Do not have those helpers borrow their own connections, commit independently or keep using the borrowed connection after it has been returned.\n\nPsycopg normally starts a transaction even for a plain SELECT. An application that reads, then waits for the next HTTP request can therefore sit idle inside a transaction. This example makes the choice explicit: the pool creates autocommit connections, and each multi-statement operation uses a transaction context.\n\nfrom psycopg_pool import ConnectionPool\n\n# Create once at application startup; conninfo is deployment configuration.\npool = ConnectionPool(conninfo, kwargs={\"autocommit\": True}, open=False)\npool.open()\npool.wait(timeout=5)\n\n# During one request:\nwith pool.connection(timeout=2) as conn:\n    with conn.transaction():\n        reserve_and_record(conn, purchase)\n# Report success only after the transaction context has exited.\n\n# At application shutdown, after requests have finished:\n# pool.close()\n\nThe outer context borrows and returns the connection. The inner context begins a transaction, commits on a normal exit and rolls back when an exception leaves it. reserve_and_record stands for the complete purchase operation: every reservation, the order and its lines. It receives conn. The pool’s waiting limit bounds acquisition; it is not a limit on the SQL once a connection has been obtained.\n\nAutocommit outside the inner block does not split the statements inside it. Conversely, omitting that block would let each successful write commit separately. Drivers and transaction frameworks have different defaults, so read the actual context-manager contract. In Psycopg, opening conn.transaction() after an implicit transaction has already begun can create a savepoint inside that transaction, rather than owning the outer commit.\n\nFigure 2 keeps the ownership visible. Step through Success, then choose No stock or Statement cancelled. Watch when C can return to the pool.\n\nFIGURE 2 One borrower until the transaction ends\nRequest outcome\nSuccess\nNo stock\nStatement cancelled\nConnection lost\nPool\nConnection C ready\n↓ borrow C\nPurchase request\nNot started\nConnection C\nIdle\nReturn waits for the outcome\n\nThe pool has an idle connection. The request has not borrowed it yet.\n\nPlay\nBack\nNext\nReset\n1 / 6\n\nA model of ownership, not a capture of protocol messages. C denotes one database session. A broken session leaves the pool; a replacement is a different session.\n\nRead the paths as text\n\nThere is one borrower throughout the active transaction. In the experiment, a helper writing through a second autocommit connection changed the teapot’s price to 36.00 even though the first connection’s stock change rolled back. This separate counterexample changes disposable scratch state; it is not a later event in the shop’s shared history. A rollback can discard only the work in its own transaction.\n\nA refused purchase is not a SQL error\n\nRewind to before order 103 for the purchase fragment. The mug has stock 1. The conditional update from Transactions and isolation can return one row, or none. Both are successful SQL execution. Only the first means that this attempt reserved stock.\n\nclass OutOfStock(Exception):\n    pass\n\ndef reserve(conn, product_id, quantity):\n    if quantity <= 0:\n        raise ValueError(\"quantity must be positive\")\n    row = conn.execute(\n        \"UPDATE products SET stock = stock - %s \"\n        \"WHERE product_id = %s AND stock >= %s RETURNING stock\",\n        (quantity, product_id, quantity),\n    ).fetchone()\n    if row is None:\n        raise OutOfStock(product_id)\n    return row[0]\n\nThe caller invokes it inside the transaction context for each product, then writes the order and its lines. Catch OutOfStock outside that context so it has already rolled back. Catching it inside and continuing normally would tell the context to commit any earlier successful work. In the experiment, raising an application refusal after reducing P3 restored stock 10 before the same pooled session was borrowed again.\n\nA database error is another path. PostgreSQL reports a stable five-character SQLSTATE; Psycopg exposes it as error.sqlstate, with fields such as error.diag.constraint_name. Use the code and named constraint to recognise an expected refusal. Parsing the English error message depends on wording that may change or be translated.\n\nA check violation such as 23514 usually requires fixing the input or the operation. A serialization failure, 40001, requires rerunning the complete transaction and its decisions. A transport failure during commit can leave the outcome uncertain. These are different instructions, not one generic “retry database error” branch. Retries when a commit reply is missing handles that last distinction.\n\nA timeout must end the work\n\nThere are several waits in one request: for a pooled connection, for a lock, for a query result and for commit. An HTTP deadline expiring only says the caller stopped waiting. It does not, by itself, cancel the database command or roll back its transaction.\n\nPostgreSQL’s statement_timeout stops a statement that exceeds its allowed server time, including time spent waiting for a lock. Set it locally inside the transaction when the limit belongs to this operation:\n\nwith pool.connection(timeout=2) as conn:\n    with conn.transaction():\n        conn.execute(\n            \"SELECT set_config('statement_timeout', %s, true)\",\n            (\"2s\",),\n        )\n        reserve_and_record(conn, purchase)\n\nThe third argument to set_config makes the setting local to the transaction, so it expires at its end. Two seconds applies per statement, not to the whole purchase. Choose it within a request budget that also allows acquisition, other statements and cleanup.\n\nIn the experiment, a 30 ms statement limit cancelled a deliberate pg_sleep with 57014. Trying an ordinary query before rollback then failed with 25P02, “failed transaction”. Handling the cancellation exception was not enough; the transaction still needed to end. Letting it leave the transaction context performed that rollback.\n\nA caller’s explicit cancellation needs the same ownership discipline. Psycopg’s cancel_safe() requests cancellation through the driver. The experiment waited until its own session was sleeping, cancelled it from another thread, then waited for the query thread and transaction cleanup to finish. Only then did the same connection successfully answer SELECT 1. A cancel request can race with a command finishing, so the command’s eventual result still matters.\n\nDo not return a connection while another task is still using it, or issue a late cancellation against a connection already lent to the next request. If the connection is broken, discard it; the pool can establish a replacement. Replacement restores capacity, not knowledge of an uncertain commit. That purchase still needs resolution before a blind replay.\n\nThe work behind a convenient method\n\nAn object-relational mapper, or ORM, turns database rows into application objects and generates SQL for operations on them. It can handle parameter binding and connection scopes well. It can also hide the number of commands and the moment a transaction begins.\n\nConsider a page listing 20 orders. A first query gets the orders; accessing each order’s lazily loaded lines then sends one query per order. That is 21 queries for one page, commonly called N+1. It is visible as a repeated remote call even when the application code is a short loop. A batched query for all the selected order IDs can return the lines together.\n\nFetching everything in one join changes a different thing: the result has one row per line, so order columns repeat. Preserve the row meaning when reconstructing objects and paginating the orders. A query count alone does not establish that the new result is correct. Inspect the generated SQL, its parameters and its transaction boundary, then measure the work for a representative request. Joins and the meaning of a result row supplies the needed result reasoning.\n\nRepeat the driver checks\n\nDownload the driver experiment and its shop data into one directory. In a disposable Python environment install psycopg[binary]==3.2.12 and psycopg_pool==3.3.3, then run python run-boundary.py --bindir /path/to/postgresql/bin. The script creates and checks an owned temporary PostgreSQL cluster through a private local socket and removes it afterwards.\n\nChecked with PostgreSQL 18.6, Python 3.14.5, Psycopg 3.2.12 and psycopg_pool 3.3.3. The checks cover bound text, identifier composition, decimal conversion, zero returned rows, implicit transactions, rollback on an application refusal and a constraint error, statement timeout, explicit cancellation and replacement of a closed pooled connection. They are local functional checks, not measurements of production latency, pool sizing or behaviour through a connection proxy.\n\nThe relational database collection\n\nDrafts for review. Browse by subject; planned articles will become available here as they are written.\n\nRelational databases\n\nDesign facts and guarantees\n3 drafts · 1 planned\nQuery and change the right rows\n5 drafts\nMake query work affordable\n0 drafts · 3 planned\nConcurrency and durable application work\n1 draft · 4 planned\nDurability, copies and recovery\n0 drafts · 4 planned\nChange and operate the service\n0 drafts · 4 planned\nDistribute relational work\n0 drafts · 5 planned\nPostgreSQL implementation\n0 drafts · 13 planned\nCockroachDB implementation\n0 drafts · 10 planned\nFurther PostgreSQL reading\n0 drafts · 4 planned",
+    "media": [
+      {
+        "box": {
+          "height": 92,
+          "width": 640,
+          "x": 320,
+          "y": 1402
+        },
+        "i": 0,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 111,
+          "width": 640,
+          "x": 320,
+          "y": 1692
+        },
+        "i": 1,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 283,
+          "width": 640,
+          "x": 320,
+          "y": 1970
+        },
+        "i": 2,
+        "tag": "FIGURE"
+      },
+      {
+        "box": {
+          "height": 210,
+          "width": 640,
+          "x": 320,
+          "y": 2770
+        },
+        "i": 3,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 190,
+          "width": 640,
+          "x": 320,
+          "y": 3555
+        },
+        "i": 4,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 328,
+          "width": 640,
+          "x": 320,
+          "y": 4805
+        },
+        "i": 5,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 707,
+          "width": 640,
+          "x": 320,
+          "y": 5622
+        },
+        "i": 6,
+        "tag": "FIGURE"
+      },
+      {
+        "box": {
+          "height": 308,
+          "width": 640,
+          "x": 320,
+          "y": 6755
+        },
+        "i": 7,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 170,
+          "width": 640,
+          "x": 320,
+          "y": 7932
+        },
+        "i": 8,
+        "tag": "PRE"
+      }
+    ]
+  },
+  "r13": {
+    "text": "RELATIONAL COLLECTION · DRAFT FOR REVIEW\n\nTransactions and isolation\nDeep dive\nAbout 11 minutes\nAI-generated\n\nA transaction makes a group of changes all or nothing. Isolation governs how that group interacts with other transactions. The distinction matters whenever a decision depends on a value that another writer can change. Two purchases can each be complete and still sell the same last mug.\n\nThe introduction fixed that race with a conditional stock update. Here we use it to separate three promises: keeping the purchase together, deciding which committed data a query sees, and making concurrent decisions agree with some order of taking turns. A stable view of the data supplies the second promise. It does not, by itself, supply the third.\n\nThe examples use PostgreSQL 18. They begin with the shop’s purchase, then add two instructors covering a tea class. The drawings follow chosen schedules rather than elapsed time or physical storage. A downloadable experiment repeats the relevant schedules on an owned, disposable PostgreSQL instance.\n\nWhat must stay true\nOne purchase, one commit\nTake stock from the row\nWhat a snapshot keeps\nA rule spread over two rows\nSerializable keeps the decision\nChoosing the protection\nRepeat the schedules\nWhat must stay true\n\nBefore choosing an isolation level, state the rule the transactions must preserve. Such a rule is an invariant: a condition that must hold after every successful change. “Stock must never be negative” and “sell no more units than are available” sound similar, but the introductory race showed that they are different.\n\nWith one mug left, Mina and Tariq both read stock 1. Each calculates 0. Mina writes 0 and records order 103; Tariq later writes his saved 0 and records order 104. Stock is non-negative throughout, so CHECK (stock >= 0) has no reason to reject either write. Yet two mug lines have been sold from one remaining mug. The rule concerns the relationship between the stock change and the admitted purchases.\n\nRewind to before order 103. Mina wants one P7 and two P3s. For this purchase to succeed, each product must have enough stock, both reductions must take effect, and the order and both lines must be recorded together.\n\nThe stock effects that belong to order 103\nProduct\tBefore purchase\tTaken\tAfter purchase\nP7 · Blue mug\t1\t1\t0\nP3 · Green tea, 50 g\t12\t2\t10\n\nOrder 103 remains pending, with a mug line at 20.00 and two packs of tea at 4.50 each. Taking stock does not mean receiving a payment. The transaction boundary follows the business action being accepted: reserving this purchase, rather than completing every later part of its life.\n\nA row constraint is still valuable. It catches negative stock however a writer arrived there. Primary and foreign keys catch duplicate identities and missing parents. Use those constraints alongside the transaction protocol; each closes a different way to reach an invalid state. Constraints and tenant boundaries develops the rules the schema can enforce directly.\n\nOne purchase, one commit\n\nBEGIN starts the transaction. The application then takes stock, inserts the order and inserts its lines. COMMIT accepts the group; ROLLBACK discards it. This is atomicity. A failure after taking the mug must not leave the mug gone while its order is missing.\n\nIn PostgreSQL, other connections cannot read those uncommitted row changes. The purchasing connection can read its own work, which lets it continue building the order. When it commits, the changes become available together. A reader’s snapshot may still be older than that commit; atomic visibility does not mean every already-running reader immediately switches to the new state.\n\nWithout an explicit transaction, PostgreSQL normally commits each successful statement separately. A successful stock update followed by a failed order insert would then be two separate outcomes. Some drivers manage transactions for you, so check the driver’s behaviour and keep the entire operation on its transaction connection. SQL at the application boundary follows that boundary into application code.\n\nAn application can also decide to stop a purchase without a SQL error: perhaps the mug update returned no row. It must roll back explicitly in that case. A database statement error normally leaves a PostgreSQL transaction unable to continue until rollback; a savepoint can provide a smaller rollback boundary when the operation deliberately permits partial recovery. Neither a savepoint nor a caught exception makes a missing stock reservation acceptable.\n\nKeep human input and calls to other services outside this short database transaction. A card provider cannot roll its charge back because PostgreSQL rolled back. A transaction can instead record work to be done later, alongside the order, as Outboxes and database-backed jobs explains. The separate question of a commit whose reply disappears belongs to Retries when a commit reply is missing.\n\nTake stock from the row\n\nThe mug’s rule fits in one row. Combine the test and the change in the same UPDATE, deriving the new stock from that row rather than from an application’s earlier copy.\n\nBEGIN ISOLATION LEVEL READ COMMITTED;\n\nUPDATE products\nSET stock = stock - 1\nWHERE product_id = 'P7' AND stock >= 1\nRETURNING stock;\n\nA returned row means that this transaction took the mug. No returned row means it did not. The application must test that result before it does any more purchase work. For Mina, it next reserves two packs of P3 with stock = stock - 2 and stock >= 2, again requiring one returned row. If either reservation fails, roll back the whole purchase, including any reservation that succeeded earlier.\n\nOnly after both succeed does it insert order 103 and its two lines, then commit. A later insert error also rolls the stock changes back. These statements describe the transaction recipe; the application’s checks and branches are part of its correctness. Pasting the statements into a straight-line script and committing regardless of their results would omit that protection.\n\nAt PostgreSQL’s default level, Read Committed, a competing updater of P7 waits while Mina holds its row lock. If Mina commits stock 0, the waiting update tests stock >= 1 against that updated row and changes nothing. If Mina rolls back, the waiting transaction can take the still-available mug. The lock prevents the two row changes from passing each other, and the condition decides whether the second sale is allowed.\n\nA saved-value write such as SET stock = 0 would still write 0 after waiting. Waiting alone cannot repair its stale calculation. Nor does a stock condition protect an unrelated count across several rows. PostgreSQL’s recheck applies to the target row; it does not refresh every other fact a transaction has read.\n\nWith Repeatable Read or Serializable, an update of a row changed since the transaction’s snapshot can fail with a serialization error instead of taking the Read Committed path. The application must handle that outcome too. The isolation level and the update protocol form one design; choosing a stronger level changes the failures the application must expect.\n\nWhat a snapshot keeps\n\nA snapshot determines which committed row versions a read may see. PostgreSQL keeps older versions so an ordinary query can read a consistent view while another transaction changes the rows. It does not have to wait for the writer’s new values. The physical versions and their eventual cleanup are followed in Row versions, storage and cleanup.\n\nRead Committed gives each ordinary SELECT a snapshot taken when that statement starts. A query that began before Mina committed does not see half of her purchase. But a second query in the same transaction, starting after her commit, can see the whole new purchase. The two statements can legitimately return different stock values.\n\nRepeatable Read keeps one snapshot for the transaction, established by its first query or other non-transaction-control statement, rather than by BEGIN alone. Later reads continue to see that view, plus the transaction’s own changes. A report can calculate several related results without another writer’s commit entering halfway between its queries.\n\nThe next drawing rewinds again to P7 stock 1. A report reads it, checkout commits stock 0, and the report reads it once more. Play Read Committed, then switch to Repeatable Read at the last step. Watch which view carries Read 2.\n\nFIGURE 1\n\nWhich snapshot answers the second query?\n\nCurrent committed stock\n1\n\nReport reads\nCheckout commits\nReport reads again\n\nBefore checkout\n\nP7 · stock 1\n\nNo read yet\n\nAfter checkout\n\nP7 · stock —\n\nNo commit yet\n\nReport transaction is open.\n\nBefore the purchase, P7 has stock 1. The report opens a transaction. Neither report query has run.\n\nRead Committed\nRepeatable Read\nPlay\nBack\nNext\nReset\n1 / 4\nSteps as text\nTwo logical views of the same product, retained here for comparison. The read labels show which committed state answered each query. They are not copies of a physical page, and the columns do not measure time.\n\nRead Committed returned 1, then 0. Repeatable Read returned 1 twice. In both cases, the first result was correct for its snapshot. Repeatable Read did not stop checkout committing, reserve the mug for the report or make stock 1 available again. It kept the report’s view stable.\n\nThis distinction also matters for a result split across queries. An order total read before a payment commits and a payment total read afterwards can describe different moments at Read Committed. One statement combining those reads uses one statement snapshot; a multi-query report can use Repeatable Read when it needs a shared view. Choosing that view is separate from deciding whether to allow a purchase.\n\nIsolation names are not a portable list of identical implementations. PostgreSQL’s Repeatable Read uses snapshot isolation and also prevents a repeated query from acquiring new matching rows, often called phantoms. The SQL standard permits weaker Repeatable Read implementations. PostgreSQL also treats Read Uncommitted as Read Committed. Check the engine’s actual promises when moving a protocol.\n\nA rule spread over two rows\n\nA stable snapshot becomes less reassuring when the transaction writes a decision based on it. The shop also runs tea classes. In this separate example, session S502 has two instructors: Ada Lind, I1, and Tomas Ek, I2. Both start on duty. The rule is that at least one must remain.\n\nUse a small duty table with one row per session and instructor. Its primary key is (session_id, instructor_id); on_duty is a non-null Boolean. The two starting rows are (S502, I1, true) and (S502, I2, true). These staff rows are separate from customers and shop orders.\n\nEach instructor’s transaction counts the on-duty instructors. While both are on duty, a count of 2 lets either one leave. Here is Ada’s decision; Tomas’s version names I2 in the update.\n\nBEGIN ISOLATION LEVEL REPEATABLE READ;\n\nSELECT count(*)\nFROM duty\nWHERE session_id = 'S502' AND on_duty;\n\n-- Only if the count is greater than 1:\nUPDATE duty\nSET on_duty = false\nWHERE session_id = 'S502' AND instructor_id = 'I1';\n\nCOMMIT;\n\nIf Ada runs first and finishes before Tomas starts reading, Ada sees 2 and leaves. Tomas then sees 1 and stays. If Tomas runs first, the reverse happens. Either serial order preserves one instructor.\n\nNow let both read 2 before either writes. Ada changes I1 and commits. Tomas changes I2 and commits. Their writes affect different rows, so there is no competing update of the same row to reject. At PostgreSQL Repeatable Read, both can succeed, leaving nobody on duty. This is write skew: transactions read overlapping facts, then make different writes whose combined result breaks their rule.\n\nStep through Repeatable Read in the drawing. Each transaction’s top box is the fact it read about the other instructor; the bottom shared rows show what has actually committed. Then switch to Serializable and follow the rejected attempt and its fresh decision.\n\nFIGURE 2\n\nTwo decisions from the same starting state\n\nCommitted instructors on duty\n2\nRule: at least 1\n\nAda · I1\n\nHas not read yet\n\n↓\n\nNo change yet\n\nTomas · I2\n\nHas not read yet\n\n↓\n\nNo change yet\n\nShared rows · session S502\n\nAda on\nTomas on\n\nEach transaction plans to change only its own row.\n\nSession S502 starts with Ada and Tomas both on duty. At least one instructor must remain.\n\nRepeatable Read\nSerializable\nPlay\nBack\nNext\nReset\n1 / 6\nSteps as text\nChosen two-transaction schedules for S502. At Repeatable Read, each instructor relies on the other’s old on-duty state. The Serializable schedule keeps Ada’s commit and rejects Tomas’s attempt; a real execution need not choose that same victim or reject at that same statement.\n\nThere is no serial order that explains both leaving under this decision rule. For Ada to leave, she must read Tomas before he leaves: Ada must come first. For Tomas to leave, he must read Ada before she leaves: Tomas must come first. Those requirements form a cycle. A transaction can keep every read repeatable and still participate in that cycle.\n\nA row-level CHECK cannot express this minimum across the other duty rows. Reading a count does not lock the answer against change, and locking only the row being turned off leaves these two writers on separate rows. A multi-row rule needs protection that covers the facts on which the decision depends.\n\nSerializable keeps the decision\n\nSerializable promises that the successful transactions have an effect consistent with running them one at a time in some order. It need not execute them one at a time. PostgreSQL runs them with snapshots and tracks read/write dependencies, rejecting transactions when necessary to prevent a result that cannot have a serial explanation.\n\nFor S502, change both transactions’ opening statement to BEGIN ISOLATION LEVEL SERIALIZABLE. Keep the read, decision and update in that transaction. In the experiment’s schedule Ada commits first, and Tomas receives SQLSTATE 40001, serialization_failure. His change does not commit. Detection may happen during a statement or at commit, so a successful UPDATE alone is not success for the transaction.\n\nTomas must start a new transaction and rerun the count and the decision, not merely resend the failed update. The fresh count is 1. The correct outcome is to stay on duty, so this new attempt can commit without changing his row. Reusing the earlier count of 2 would throw away the information the retry exists to obtain.\n\nThe application still owns the rule. Serializable would happily run an unconditional “turn myself off” transaction after Ada’s transaction; that is a valid serial order of incorrectly designed actions. Every writer capable of reducing cover must participate in the chosen protocol, including administrative and background jobs. If a rule assumes all its competing transactions are Serializable, a bypass at another level needs separate protection.\n\nSerializable has a cost. Tracking dependencies takes work, and rejected attempts repeat work; a busy rule can cause many retries. The application needs a bounded retry policy and a way to report that it could not complete. It must also keep irreversible external effects out of attempts that may be discarded. Retries when a commit reply is missing develops retry control and distinguishes a known serialization failure from an uncertain commit reply.\n\nExplicit locking offers another design: make every decision for the same rule coordinate through a common protected row or set of rows. The lock, the time the snapshot is taken and every participating writer must agree. In particular, waiting for a lock does not refresh an existing Repeatable Read snapshot. Locks, contention and deadlocks works through complete protocols, empty matching sets, waits and lock ordering.\n\nChoosing the protection\n\nThe choice starts with the smallest complete rule, then the reads and writes that can invalidate it. A single-row limit often admits a conditional update. A report may need a stable snapshot. A decision across several rows needs a protocol that protects the whole decision.\n\nPromises used by the worked examples\nNeed\tDesign\tApplication must handle\nKeep order and stock changes together\tOne explicit transaction\tRollback on any failed reservation or write\nTake at most the remaining mug\tConditional stock update in that transaction; Read Committed rechecks the row after a competing commit\tZero changed rows; transaction errors\nRead several report results from one view\tRead-only Repeatable Read transaction\tAn older view; resources retained by a long snapshot\nKeep at least one instructor on duty\tRead, decision and write at Serializable for all participating transactions; or a complete locking protocol\tWhole-transaction retry, or waits and deadlocks under locking\n\nCheck the choice by constructing a failing overlap. Have both buyers read before either writes; have both instructors count before either leaves. Then run the protected version with the same starting data. A test that only runs one transaction at a time cannot distinguish the broken protocol from the sound one.\n\nAlso check the transaction boundary in the application. A count before BEGIN, a write on a different connection or a branch that commits after a failed reservation can defeat the design even though each SQL statement is valid. Keep transactions short enough that they do not wait on a person or a remote service, and keep the rule visible enough that a later writer can follow it.\n\nRepeat the schedules\n\nDownload the isolation experiment. It uses Python 3’s standard library and PostgreSQL’s installed command-line tools. Run it with python3 run-isolation.py --bindir /path/to/postgresql/bin. It creates its own temporary database cluster, connects through a private local socket, checks its ownership, then removes the cluster after the checks. It does not connect to an existing database. The binary directory must contain initdb, pg_ctl, postgres and psql.\n\nThe experiment starts with the displayed products and customers, empty order tables, and the two duty rows. Orders 101 and 102 are historical context and are not replayed as fresh stock deductions. Each purchase race resets to the state before order 103; the snapshot and instructor tests are separate histories.\n\nChecked on PostgreSQL 18.6: rollback left no order or stock effect; the unsafe saved-value writes committed orders 103 and 104 with P7 stock 0; the conditional update waited, then admitted only 103, leaving P3 stock 10 and P7 stock 0. The repeated reads returned 1, 0 at Read Committed and 1, 1 at Repeatable Read. Both instructor changes committed at Repeatable Read; at Serializable the second attempt failed with 40001, and its fresh decision preserved Tomas’s cover. These are outcomes of the recorded schedules on one local engine, not latency measurements or a guarantee about which concurrent attempt always loses.\n\nThe relational database collection\n\nDrafts for review. Browse by subject; planned articles will become available here as they are written.\n\nRelational databases\n\nDesign facts and guarantees\n3 drafts · 1 planned\nQuery and change the right rows\n5 drafts\nMake query work affordable\n0 drafts · 3 planned\nConcurrency and durable application work\n1 draft · 4 planned\nDurability, copies and recovery\n0 drafts · 4 planned\nChange and operate the service\n0 drafts · 4 planned\nDistribute relational work\n0 drafts · 5 planned\nPostgreSQL implementation\n0 drafts · 13 planned\nCockroachDB implementation\n0 drafts · 10 planned\nFurther PostgreSQL reading\n0 drafts · 4 planned",
+    "media": [
+      {
+        "box": {
+          "height": 144,
+          "width": 640,
+          "x": 320,
+          "y": 1620
+        },
+        "i": 0,
+        "tag": "TABLE"
+      },
+      {
+        "box": {
+          "height": 151,
+          "width": 640,
+          "x": 320,
+          "y": 3193
+        },
+        "i": 1,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 768,
+          "width": 640,
+          "x": 320,
+          "y": 4903
+        },
+        "i": 2,
+        "tag": "FIGURE"
+      },
+      {
+        "box": {
+          "height": 269,
+          "width": 640,
+          "x": 320,
+          "y": 6657
+        },
+        "i": 3,
+        "tag": "PRE"
+      },
+      {
+        "box": {
+          "height": 839,
+          "width": 640,
+          "x": 320,
+          "y": 7387
+        },
+        "i": 4,
+        "tag": "FIGURE"
+      },
+      {
+        "box": {
+          "height": 408,
+          "width": 640,
+          "x": 320,
+          "y": 9940
+        },
+        "i": 5,
+        "tag": "TABLE"
+      }
+    ]
+  }
+}
