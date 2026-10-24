@@ -1,0 +1,7 @@
+# r49 opening · consolidated v02 confirmation finding
+
+All four relevant confirmations of the current r49 are complete: practitioner/teaching and affected visual pass, and editorial confirms the prepared health branch while finding one earlier first-use problem. Root read all complete reports, including the early current49 visual report. Preserve the successful two-route/health preparation and all technical mechanisms.
+
+Accept r49 editorial-1 medium: opening paragraph1 says “A range may still have a majority, but no room for another failure.” The independently useful security entry assumes only general least privilege/tenant ownership, so the reader need not know what a range is or what this majority counts. Its useful operational preparation arrives after the two security sections. The reader must supply that model to understand the initial comparison. Express the opening example intelligibly from that actual starting point, without teaching the operational model twice or attaching another caveat. The writer chooses the smallest coherent repair; no prescribed wording.
+
+No other accepted new problem. Preserve the independently useful security route, later explicit range/rebalancing preparation and removal explanation. Do not change canonical facts, SQL, fixture/verifier, native result, data, components or state functions. Qualify unchanged evidence; no ceremonial native rerun. Reread the whole article and continuity before return. All source/claim/layout invalidations must be reported honestly.
