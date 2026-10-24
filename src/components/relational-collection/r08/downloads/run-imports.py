@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Replayable catalogue import, on a newly created owned PostgreSQL instance.
-Requires Psycopg3; put shop.json beside this file. No existing database connection.
+For macOS/Linux with Python 3 and PostgreSQL 18.
+Requires psycopg[binary]. Put shop.json and feed.json beside this file.
+No existing database connection.
 """
 import argparse,json,os,pathlib,shutil,subprocess,tempfile,threading,time
 from decimal import Decimal,InvalidOperation
 import psycopg
 parser=argparse.ArgumentParser();parser.add_argument('--bindir',required=True);args=parser.parse_args()
 binpath=pathlib.Path(args.bindir).resolve();env={k:v for k,v in os.environ.items() if not k.startswith('PG')}
-base=pathlib.Path(tempfile.mkdtemp(prefix='sc-r08-owned-',dir='/private/tmp')); data=base/'data';sock=base/'sock';sock.mkdir();started=False
+base=pathlib.Path(tempfile.mkdtemp(prefix='sc-r08-owned-',dir='/tmp')); data=base/'data';sock=base/'sock';sock.mkdir();started=False
 
 def tool(name,*args):return subprocess.run([str(binpath/name),*map(str,args)],env=env,check=True,text=True,capture_output=True).stdout
 
@@ -68,6 +70,9 @@ try:
     ci=f'host={sock} port=55438 dbname=postgres user=sc_owner connect_timeout=5'
     with psycopg.connect(ci,autocommit=True) as conn:
         assert pathlib.Path(conn.execute('SHOW data_directory').fetchone()[0]).resolve()==data.resolve()
+        assert conn.execute('SELECT current_user').fetchone()[0]=='sc_owner'
+        assert conn.execute('SHOW listen_addresses').fetchone()[0]==''
+        report('owned endpoint',{'data_directory':str(data.resolve()),'socket':str(sock),'port':55438,'user':'sc_owner','listen_addresses':''})
         report('environment',{'server':conn.execute('SELECT version()').fetchone()[0],'driver':psycopg.__version__,'transport':'owned private Unix socket'})
         core=json.loads(pathlib.Path(__file__).with_name('shop.json').read_text())
         conn.execute('CREATE TABLE products(product_id text PRIMARY KEY,price numeric(8,2) NOT NULL CHECK(price>=0),stock integer NOT NULL CHECK(stock>=0))')

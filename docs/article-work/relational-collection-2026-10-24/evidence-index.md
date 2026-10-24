@@ -54,3 +54,10 @@
 - writers/r14,r16,r17/: three frozenauthor firstreturns with ownedPG18.6 concurrency/unknownoutcome/outbox evidence. Late agentinventory exposure occurred aftersourcesclosed; timestamp/hashprovenance preserved, no postexposure edits.
 - writers/r22,r25/: complete sources/nativePG18.6 actualexperiment/login evidence; current authorfinishing4412 then refreshed4416; firstreturns not yet frozen.
 - writers/storage-recovery-replicas-assignment.txt: next prepared fresh writing assignment r15/r18/r20 with concise outcomelevel context and no known disputed prerequisite drafts.
+
+## Storage first returns and focused repair progress
+
+- Five storage/recovery first returns: batch06/v01/manifest.json, immutable preview 4440, exact final author output 4442. Per-piece native commands, result, verifier, source/dependency hashes and current mechanical render evidence are included; stale broad r21 images and duplicated rendered prose were removed. No independent initial verdict is implied.
+- Batch03 consolidated author repair: batch03/v02/manifest.json at4430. Fresh visual confirmation passes; other affected confirmations remain pending.
+- Batch04 practitioner reproduced a critical claim-number reuse after rollback: reviews/batch04/practitioner-v01-r17-claim-aba.{py,json}. Fresh repair retires uncertain returned claims rather than inferring authority from token equality. Native author proof and source integrated; fresh confirmation pending.
+- New review packets include bounded per-node plan JSON alongside the canonical tree. This prevents recursive plan duplication from clipping a reviewer's context; it adds no writing rule.

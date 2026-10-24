@@ -1,0 +1,176 @@
+Home
+Relational draft
+Replicas, lag and read routing
+Relational databases: draft articles
+
+RELATIONAL COLLECTION · DRAFT FOR REVIEW
+
+Replicas, lag and read routing
+Deep dive
+About 6 minutes
+AI-generated
+
+A replica keeps another copy of a database's changes. That copy can provide a place to read, a candidate to take over after a failure, or both. Its usefulness depends on how far those changes have travelled and what the replica has done with them.
+
+A write can be committed on the primary while a replica still answers from an earlier state. It can also be safely stored in the replica's log without yet being visible to its queries. “The replica is connected” is therefore too weak a promise for Mina opening the order she just placed.
+
+This article follows physical log replication: a primary sends recovery records to a standby, which applies them to its copy of the files. PostgreSQL 18 supplies the concrete terms. Logical replication sends selected data changes instead and has different boundaries; logical replication and change feeds develops that design.
+
+Three kinds of progress
+What a synchronous commit waits for
+Route the read from its promise
+A barrier before the snapshot
+Read load can delay replay
+The log has to wait somewhere
+Three kinds of progress
+
+Rewind to before purchase 103 in a separate replication drill. The mug's stock is 1 and tea stock is 12. Mina's transaction commits order 103, its two lines and stock P7 0/P3 10 on the primary. Asynchronous replication lets the primary acknowledge that commit without waiting for the standby.
+
+The log then crosses several boundaries. Received means the bytes have arrived at the replica. Durable means the replica has flushed them under its storage contract. Replayed, also called applied, means it has performed the recovery work that changes its database state. Receiving a commit is not applying it.
+
+Follow those boundaries below. Watch the query answer when the durable log catches up but replay does not.
+
+FIGURE 1 The copy has the bytes before its reader has the order
+
+Chosen log positions: 0 before purchase · 1 purchase changes · 2 commit record
+
+Primary durable log
+0 ✓
+1 —
+2 —
+Replica received
+0 ✓
+1 —
+2 —
+Replica durable log
+0 ✓
+1 —
+2 —
+Replica replayed
+0 ✓
+1 —
+2 —
+Fresh replica query for 103
+
+No order 103
+
+Both copies start before Mina's purchase. The replica can answer queries from its earlier consistent state.
+
+Play
+Back
+Next
+Reset
+1 / 5
+All progress states as text
+All positions are 0; no purchase103.
+The primary durably commits through position2 and can return success. Replica positions remain0.
+The replica receives through2. That says bytes arrived, not that its storage or queries reached2.
+The replica flushes through2. Its copy can survive its own process and storage flush contract, but replay remains0 and fresh queries still lack103.
+Replay reaches2. A new snapshot can see103, its two lines and P3stock10/P7stock0. A previously retained old snapshot need not see it.
+
+Conceptual positions, not PostgreSQL LSN values or measured delays. Separate receive and flush steps explain the promise; the native check observes PostgreSQL's durable receive position while replay is deliberately paused.
+
+At the fourth state, the replica can possess a durable copy of the commit and still return no order 103. Waiting for durable receipt protects a copy of history; a reader needs replay and a suitable snapshot. These are different requirements even when they often happen close together.
+
+The owned PostgreSQL 18.6 check paused replay on a physical standby, then committed the complete purchase on the primary. The standby's durable receive position reached 0/300DC58, while replay remained at 0/3000000. A fresh query still found zero rows for 103. After replay resumed and crossed the recorded barrier, a fresh query found the order and stock P3 10/P7 0. These are one run's positions, not a measured network-delay claim.
+
+What a synchronous commit waits for
+
+Synchronous replication adds a remote condition to acknowledging a commit. It can reduce the history lost when another server must take over, while adding a wait and a dependency on the selected replicas. The useful question is exactly which remote condition is required.
+
+PostgreSQL acknowledgement levels when synchronous standbys are configured
+Setting	Remote condition before success	What a later read still needs
+remote_write	The selected standby has written the WAL to its operating system	Replay and a new enough snapshot; an OS crash can still lose unflushed remote writes
+on	The selected standby has flushed the WAL durably	Replay and a new enough snapshot
+remote_apply	The selected standby has replayed the commit	A suitable snapshot on that standby, with routing to the intended copy
+
+These levels also wait for the normal local flush. They do not all mean “visible everywhere”. The configured synchronous set determines which standbys count. Another asynchronous standby can lag behind, and without synchronous standby configuration the default on does not invent a remote durability guarantee.
+
+If the required standby is unavailable, a synchronous commit can wait. Changing the configuration to let writes proceed is a change to the failure promise, not merely a routing adjustment. Choose it deliberately from the service's availability and loss requirements. A timeout while waiting can also leave the client unsure about its transaction's outcome; resolve the request before blindly repeating it.
+
+Route the read from its promise
+
+A catalogue page may accept slightly older descriptions. Mina's order confirmation usually should show the purchase she just completed. An inventory decision must not authorise another sale from stale stock. Give each read an explicit promise before sending it to an arbitrary healthy replica.
+
+Read routes for the shop
+Read	Required view	A possible route
+Public catalogue browsing	Product-defined bounded or tolerated staleness	An eligible replica, with a policy for excessive lag
+Mina opens the just-confirmed order	Include her committed purchase	Current primary with a fresh snapshot, or a replica past a verified replay barrier
+Take the last mug	Enforce the stock rule with the write	The authoritative transaction protocol, rather than a stale-read decision
+One export requiring a fixed view	One defined snapshot	A chosen server and snapshot protocol; arbitrary per-page routing is insufficient
+
+The simplest read-your-write policy sends the follow-up to the current primary. That still needs a fresh enough snapshot. Reusing an old Repeatable Read transaction can hide the purchase even there. After a failover, “primary” also needs to mean the current authorised primary whose accepted history contains the purchase, not an old address that happens to accept connections.
+
+A fixed period of “sticky” routing to the primary can be useful operationally, but “wait two seconds” is not proof the replica caught up. Slow replay, an outage or a paused standby can exceed any chosen sleep. If the contract is to include this write, use progress evidence or fall back to an authority that can satisfy it.
+
+A barrier before the snapshot
+
+A replication barrier identifies progress at or beyond the required commit. In a physical PostgreSQL design, the application can capture a suitable WAL position on the primary after successful commit. It then waits until the chosen standby's replay position reaches that barrier before starting the read's snapshot. Capturing a later position may wait for extra work but still covers the commit.
+
+The native drill captured the primary's flushed position after the purchase and compared it with pg_last_wal_replay_lsn() on the standby. Its pre-barrier query was the visible counterexample: durable receipt had caught up, but 103 was absent. After the replay check, a new snapshot found it.
+
+Order those steps carefully. A report transaction that took its Repeatable Read snapshot before the barrier can remain old after replay catches up. The native check retained precisely that snapshot: it still found zero rows for 103 after a separate fresh query found one. A progress check does not refresh an already-established snapshot.
+
+The barrier also needs a history identity. An LSN number alone is not a globally meaningful application token. Verify the expected cluster and replication lineage, handle timeline changes and promotion, and invalidate or resolve tokens when the selected history no longer contains their commit. Comparing numbers from unrelated databases cannot establish read-your-write.
+
+Bound the wait. If the standby does not reach the barrier within the request's budget, choose the documented fallback: route to the current authority, return a pending state or fail the read. Do not silently turn a strict confirmation into an arbitrary stale answer. The driver and pool must acquire the intended server for the whole operation; a generic pool that randomly changes endpoints can undo the routing decision.
+
+Read load can delay replay
+
+Adding replicas distributes eligible read work. It does not make writes disappear: each physical replica must receive and replay the changes, and each has its own memory and I/O limits. A replica already busy serving large reports can have less capacity left for replay.
+
+PostgreSQL standby queries can also conflict with recovery. For example, the primary may vacuum versions a standby report still needs. The standby may cancel the query so replay can proceed, or delay replay within its configured policy. Hot-standby feedback can ask the primary to retain needed versions, moving some of the cost back into primary cleanup and space.
+
+That creates a choice between report continuity, freshness and retained history. A replica designated for long exports may need a different policy from one serving order confirmations. It is not enough to call both “read replicas” and send every read to whichever connection is free.
+
+Lag can arise in transmission, flushing or replay, so inspect the positions separately. PostgreSQL exposes sent, written, flushed and replayed positions in replication monitoring. Time-based lag fields describe particular observations; they are not a universal forecast of how long catch-up will take. A quiet primary can have no recent replayed transaction timestamp without the replica being behind.
+
+The log has to wait somewhere
+
+A disconnected replica needs the missed history before it can catch up. If the primary recycles required WAL and no archive can supply it, the standby may need a new base backup. Retention is therefore part of the replication design, rather than just backup housekeeping.
+
+A PostgreSQL replication slot can retain WAL needed by a consumer. An abandoned or stalled slot can retain enough to exhaust primary storage. Putting a limit on retained slot WAL changes the other side of that trade: exceeding the limit can invalidate the consumer's ability to continue from its old position. Monitor both retained bytes and whether the consumer is making progress.
+
+The right response depends on the replica's job. Rebuilding a disposable read copy may be preferable to threatening the primary's disk. A recovery candidate may need a stronger retained-history arrangement. Neither choice can be made from “replication connected” alone.
+
+A replica also reproduces committed mistakes. It is not an earlier clean backup merely because it is on another server. Keep backup and restore for recovering an earlier history, and continue with failover and fencing for transferring write authority to a candidate whose available history you have checked.
+
+The relational database collection
+
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+
+Relational databases
+
+Design facts and guarantees
+4 drafts
+Query and change the right rows
+5 drafts
+Make query work affordable
+3 drafts
+Concurrency and durable application work
+5 drafts
+Durability, copies and recovery
+4 drafts
+Change and operate the service
+2 drafts · 2 planned
+Distribute relational work
+0 drafts · 5 planned
+PostgreSQL implementation
+0 drafts · 13 planned
+CockroachDB implementation
+0 drafts · 10 planned
+Further PostgreSQL reading
+0 drafts · 4 planned
+PREVIOUS
+Backup, restore and reconciliation
+NEXT
+Failover and fencing
+Sources and further reading
+
+Checked against PostgreSQL 18 documentation. Native checks use PostgreSQL 18.6 with an owned local primary and physical standby, private Unix sockets, deliberately paused replay and separate old/fresh snapshots. Both servers and their files were removed after the run. The exercise demonstrates progress and visibility; it measures no geographic latency, failover loss rate or independent-storage durability. Synchronous levels and retention policies are documented mechanisms, not additional native measurements here.
+
+PostgreSQL, Log-shipping standby servers: streaming replication, slots and synchronous replication.
+PostgreSQL, synchronous_commit and Replication settings: remote acknowledgement levels and standby selection.
+PostgreSQL, Replication monitoring and Recovery control functions: progress positions, lag fields and pause/resume.
+PostgreSQL, Hot standby: query/recovery conflicts and feedback trade-offs.
+PostgreSQL, Transaction isolation: why an older snapshot stays older after replay advances.

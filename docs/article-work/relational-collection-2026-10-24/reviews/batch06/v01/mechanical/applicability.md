@@ -1,0 +1,3 @@
+# Mechanical evidence applicability
+
+This packet contains frozen source and mechanical observations, not independent quality verdicts. Preview 4440 serves the exact accepted 4442 output. r15, r18 and r19 rendering observations were taken at 4436 and their source was unchanged thereafter. The r20 rail styles were corrected before its current 4438 observations. r21 final table observations and mobile table images were taken at 4442 after its header wording changed; earlier broad r21 screenshots and rendered prose copies were removed. Its earlier control observations apply to unchanged controls. Native verifiers and output identify their versions, owned environments and limits. None of these five articles offers a download. Browser actual saving is outside these records.

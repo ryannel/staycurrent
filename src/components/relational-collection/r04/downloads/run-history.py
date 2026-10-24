@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Temporal and deletion-policy drills on a newly owned disposable PostgreSQL.
+For macOS/Linux with Python 3 and PostgreSQL 18, including btree_gist.
 Requires psycopg[binary]. Put shop.json and history.json beside this file.
+No existing database connection.
 """
 import argparse,json,os,pathlib,shutil,subprocess,tempfile
 from decimal import Decimal
 import psycopg
 parser=argparse.ArgumentParser();parser.add_argument('--bindir',required=True);args=parser.parse_args()
 binpath=pathlib.Path(args.bindir).resolve();env={k:v for k,v in os.environ.items() if not k.startswith('PG')}
-base=pathlib.Path(tempfile.mkdtemp(prefix='sc-r04-owned-',dir='/private/tmp'));data=base/'data';sock=base/'sock';sock.mkdir();started=False
+base=pathlib.Path(tempfile.mkdtemp(prefix='sc-r04-owned-',dir='/tmp'));data=base/'data';sock=base/'sock';sock.mkdir();started=False
 
 def tool(name,*args):return subprocess.run([str(binpath/name),*map(str,args)],env=env,check=True,text=True,capture_output=True).stdout
 
@@ -19,6 +21,9 @@ try:
     ci=f'host={sock} port=55437 dbname=postgres user=sc_owner connect_timeout=5'
     with psycopg.connect(ci,autocommit=True) as conn:
         assert pathlib.Path(conn.execute('SHOW data_directory').fetchone()[0]).resolve()==data.resolve()
+        assert conn.execute('SELECT current_user').fetchone()[0]=='sc_owner'
+        assert conn.execute('SHOW listen_addresses').fetchone()[0]==''
+        report('owned endpoint',{'data_directory':str(data.resolve()),'socket':str(sock),'port':55437,'user':'sc_owner','listen_addresses':''})
         report('environment',{'server':conn.execute('SELECT version()').fetchone()[0],'driver':psycopg.__version__,'python':os.sys.version})
         core=json.loads(pathlib.Path(__file__).with_name('shop.json').read_text());h=json.loads(pathlib.Path(__file__).with_name('history.json').read_text());t0=h['baseline'];eff=h['effective'];correct=h['correction_recorded']
         conn.execute('CREATE EXTENSION btree_gist')

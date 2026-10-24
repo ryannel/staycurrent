@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 import sys
+import yaml
 
 root = Path(__file__).resolve().parents[3]
 work = Path(__file__).resolve().parent
@@ -62,6 +63,33 @@ for src, name in [(work / 'commission.md', 'commission.md'),
     shutil.copyfile(src, context / name)
 articles = json.loads((work / 'planning/articles.json').read_text())
 (context / 'briefs.json').write_text(json.dumps([a for a in articles if a['key'] in keys], indent=2) + '\n')
+# Keep each article's actual plan independently readable. The canonical tree is
+# retained, but readers need not emit its entire recursive body in one tool call.
+def local_plan(value):
+    if isinstance(value, list):
+        return [local_plan(item) for item in value]
+    if isinstance(value, dict):
+        return {name: ({field: item[field] for field in
+                       ('id', 'key', 'slug', 'title', 'brief', 'outcomes', 'entry')
+                       if field in item}
+                      if name == 'nested_article' and isinstance(item, dict)
+                      else local_plan(item)) for name, item in value.items()}
+    return value
+
+plans = context / 'plans'
+plans.mkdir()
+def collect_plans(value):
+    if isinstance(value, dict):
+        if value.get('id') and value.get('key'):
+            (plans / f"{value['id']}.json").write_text(
+                json.dumps(local_plan(value), indent=2) + '\n')
+        for item in value.values():
+            collect_plans(item)
+    elif isinstance(value, list):
+        for item in value:
+            collect_plans(item)
+
+collect_plans(yaml.safe_load((context / 'tree.yaml').read_text()))
 for key in keys:
     evidence = work / 'writers' / key / 'evidence'
     if evidence.exists():
