@@ -6,7 +6,7 @@ import Prepared from '../../components/relational-collection/r34/Prepared.astro'
 <p>There are several distinct reasons for excessive work: wrong counts, an unsuitable access path, information lost through parameters, repeated inner work or an operation that spills. A single change rarely fixes them all. We will keep those causes separate while repairing one generated workload, checking the answer alongside the plan.</p>
 <p>The fixture uses the collection’s shop labels in a separate synthetic workload: shop 10 has 99,000 paid records; shop 20 has 1,000 pending records. It contains no purchase lines, payments or stock effects and is not a new history of the shop. Its deliberate skew lets a small test expose decisions that are hard to see with evenly distributed rows.</p>
 
-<h2 id="capture-the-query-that-runs">Capture the query that runs</h2>
+<h2 id="capture-the-query-that-runs">Capturing a PostgreSQL plan</h2>
 <p>Keep the SQL text, parameter values and types, relation definitions, statistics state and relevant session settings with the plan. A console query with a literal is not necessarily the same planning problem as a prepared application query with unknown parameters. Roles, row policies and search paths can change which work is required too.</p>
 <Sql label="Measure execution work without per-node clocks" code={`EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SETTINGS)
 SELECT order_id
@@ -16,12 +16,12 @@ WHERE shop_id = 20 AND status = 'pending';`} />
 <p><code>TIMING OFF</code> preserves counts and whole-query execution time while avoiding repeated node clock reads. <code>SETTINGS</code> exposes relevant non-default planning settings, but is not a complete environment manifest. JSON output is useful for tools that need the plan tree without parsing wrapped text.</p>
 <p>First establish whether execution work is actually the delay. A query can wait for a lock, sit behind a connection queue or deliver rows to a slow client. Operator improvements cannot remove an application queue. <a href="/learn/databases/relational/postgresql/operations/">Operating and diagnosing PostgreSQL</a> establishes that service boundary.</p>
 
-<h2 id="read-the-counters-at-their-scope">Read counters at their scope</h2>
+<h2 id="read-the-counters-at-their-scope">Plan counters</h2>
 <p>Keep the general <a href="/learn/databases/relational/query-execution/">plan-reading rules</a> in view: a parent can stop its child early, actual rows and times are per-loop averages, and buffer counts already accumulate repeated accesses and child work. They count accesses, not distinct pages. Read from the inputs towards the result, checking each counter’s scope before combining it with another.</p>
 <p><code>shared read</code> counts blocks brought into shared buffers, including reads satisfied from the operating-system cache. <code>local</code> refers to session-local relations such as this fixture’s temporary tables. <code>temp read</code> and <code>temp written</code> describe temporary work files, such as a spilling sort. These categories answer different questions.</p>
 <p>Parallel plans add worker scopes: inspect worker detail, launched versus planned workers and imbalance before adding or multiplying counts. One slow worker can hold up a gather even when totals look reasonable.</p>
 
-<h2 id="fix-the-first-wrong-estimate">Fix the first wrong estimate</h2>
+<h2 id="fix-the-first-wrong-estimate">Row estimates and extended statistics</h2>
 <p>For branches consumed to completion, compare expected and actual outputs from the leaves upward. A join’s error can have arrived from an earlier scan. Find the earliest material disagreement before changing the join method.</p>
 <p>Fresh single-column statistics in the fixture know that about one percent of records belong to shop 20, and about one percent are pending. They do not describe that these are the same records. Treating the conditions independently predicts roughly ten matches; execution returns 1,000.</p>
 <Sql label="Collect the relationship that separate column summaries miss" code={`CREATE STATISTICS plan_joint (mcv)
@@ -30,7 +30,7 @@ ANALYZE plan_orders;`} />
 <p>The joint most-common-value summary changed the observed scan estimate from 10 to 977 rows for 1,000 actual rows. Sampling explains why the new estimate was close rather than exact. The route remained a sequential scan over the same table: improved knowledge had not yet created a cheaper access path.</p>
 <p>Choose statistics from the error. Stale counts after a bulk load suggest analyze. A rare but important skewed value may need a larger target. Correlated conditions can need joint common values or dependency statistics; grouping estimates can need distinct-count statistics. PostgreSQL 18 does not use extended statistics to estimate cross-table joins, so do not expect a within-table object to repair every join estimate.</p>
 
-<h2 id="knowledge-is-not-an-access-path">Knowledge is not an access path</h2>
+<h2 id="knowledge-is-not-an-access-path">Expressions and index access</h2>
 <p>Now put a B-tree on integer <code>shop_id</code>, but ask for <code>shop_id::text = '20'</code>. The planner has an index for integer comparison, while the query compares text produced by an expression. In the experiment this remained a scan.</p>
 <Sql label="An expression summary improves knowledge without adding an index" code={`CREATE STATISTICS plan_shop_text
 ON (shop_id::text) FROM plan_orders;
@@ -39,7 +39,7 @@ ANALYZE plan_orders;`} />
 <p>If the application’s intended operation is integer equality, keep the column as an integer and type the parameter accordingly. The fixture’s corrected condition, <code>shop_id = '20'::integer</code>, became an index scan with 25 local buffer accesses, compared with 2,048 for the cast-column scan. For a real parameterised query, bind an integer rather than accepting arbitrary text as an identity.</p>
 <p>If text conversion really is the application’s required operation, an expression index is a different candidate. Choose it for that meaning and verify matching expressions and operators. Rewriting arbitrary comparisons just to make an index appear can change collation, missing-value or conversion-error behaviour.</p>
 
-<h2 id="a-partial-index-needs-a-proof">A partial index needs a proof</h2>
+<h2 id="a-partial-index-needs-a-proof">Partial indexes and prepared plans</h2>
 <p>The pending list now gets a specialised index:</p>
 <Sql label="Store only the records in the pending list" code={`CREATE INDEX pending_history
 ON plan_orders (shop_id, order_id)
@@ -56,13 +56,13 @@ LIMIT 10;`} />
 <p>The generic two-parameter plan scanned 2,048 heap pages and used a top-N sort. Top-N kept only ten rows in sort memory, but still consumed the 1,000 candidates to identify the first ten. The custom pending plan touched three local buffers at Limit and stopped after ten index outputs. Its label was <code>Index Only Scan</code>, yet it reported ten heap fetches: covering columns did not eliminate visibility checks on this unvacuumed fixture.</p>
 <p>A generic plan for the revised pending-only statement could also use the partial index. The status predicate was now known before binding the shop parameter. Its scan estimate described the possible complete run, while Limit still consumed only ten rows. The returned IDs were 99001 through 99010, the same pending result as before.</p>
 
-<h2 id="test-both-sides-of-the-skew">Test both sides of the skew</h2>
+<h2 id="test-both-sides-of-the-skew">Testing skewed parameters</h2>
 <p>The pending-only query is not a replacement for a paid-order query. In the general statement’s custom paid case, shop 10 returned 99,000 candidates before Limit’s final ten; the pending index could not help. An additional full ordered index might remove that scan too, but would maintain entries for every record. The workload must earn it.</p>
 <p>To expose plan contexts, the worksheet uses <code>plan_cache_mode = force_custom_plan</code> and <code>force_generic_plan</code>. Automatic mode makes its own estimated-cost comparison after initial custom executions. The experiment does not show that PostgreSQL would automatically choose the forced generic plan or that all prepared statements should be forced custom.</p>
 <p>Read <code>EXPLAIN EXECUTE</code> for the session’s actual prepared statement. Generic plans retain symbols such as <code>$1</code>; custom plans show supplied constants. <code>pg_prepared_statements</code> can report the session’s prepared objects and plan-use counts. An unnamed protocol statement or a connection pool can make session state differ from a separate SQL console, so reproduce the driver’s behaviour as well as the text.</p>
 <p>For each repair, compare common, rare and empty values, as well as small and large tenants. Verify stable identities and ordering, then compare the work predicted to disappear. A warm run after building an index can benefit from cached data the baseline did not have. Keep page-access evidence and latency evidence distinct; repeat latency tests under the concurrency and cache conditions that matter.</p>
 
-<h2 id="when-the-counts-are-right">When the counts are right</h2>
+<h2 id="when-the-counts-are-right">Repeated work and memory</h2>
 <p>Accurate estimates do not guarantee that the requested work is cheap. A nested-loop inner lookup can be individually efficient and still run hundreds of thousands of times. Check the outer cardinality, whether the full join key narrows the inner search and whether repeated keys allow Memoize reuse. A hash or merge comparison can test a hypothesis, but disabling nested loops globally does not explain the original decision.</p>
 <p>For a sort, inspect method, memory, disk use and temporary I/O. For a hash operation, inspect batches and build width. Removing an unused large payload before either operation can reduce memory demand without changing the result. An ordered access path can sometimes remove a sort entirely; increasing <code>work_mem</code> merely changes how a remaining operation is paid for.</p>
 <p>Test memory changes locally and account for concurrent nodes, sessions and parallel workers. Avoid tuning server-wide page costs to make one demonstration choose a preferred route. Cost settings describe the expected environment; they cannot fix a predicate asking for the wrong operation or a missing index.</p>

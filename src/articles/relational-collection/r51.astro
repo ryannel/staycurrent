@@ -6,7 +6,7 @@ import core from '../../lib/relational-collection/core.json';
 <p>A CockroachDB schema change can keep ordinary SQL available while it changes stored data in the background. That makes a large index or new stored column possible without one long table-wide outage. It also makes the change an operation to observe: the statement, its job, concurrent application work and final data can give different evidence about completion.</p>
 <p>The shop needs hundredths alongside each order line's decimal agreed price. In the collection's fixed-scale variant, 20.00 becomes 2000 and 4.50 becomes 450. We will choose a CockroachDB 25.4 computed-column design, follow its backfill under concurrent writes, then use a failed unique index to distinguish an accepted definition from a successfully enforced rule.</p>
 
-<h2 id="choose-the-compatible-change">Choose the compatible change first</h2>
+<h2 id="choose-the-compatible-change">Stored computed columns</h2>
 <p><a href="/learn/databases/relational/schema-changes/">Live schema changes and backfills</a> establishes the application protocol: expand compatibly, keep new writes correct, fill existing rows, accept the new representation, then retire old callers before removing their interface. Online schema machinery handles database transitions; it cannot retire a forgotten worker or make yesterday's application understand a new unit.</p>
 <p>Here the decimal remains the write authority. A stored computed column derives its hundredths in the database:</p>
 <Sql label="Add an exact derived representation" code={`ALTER TABLE order_items
@@ -18,7 +18,7 @@ AS ((unit_price * 100)::INT8) STORED;`} />
 <TwoClocks />
 <p>Explicit column lists matter even for an additive change. A positional insert may no longer match the table, and a prepared <code>SELECT *</code> can have a changed result shape. Exercise the deployed driver and prepared commands; successful DDL is not evidence about their result decoding.</p>
 
-<h2 id="follow-the-job">Follow the job that owns the work</h2>
+<h2 id="follow-the-job">Schema job status and progress</h2>
 <p>CockroachDB records schema changes as jobs. Capture the identity of the intended operation, then inspect its status, detailed running state, progress, error and timestamps. On a busy cluster, “the newest job” may belong to somebody else's deployment.</p>
 <Sql label="Find the operation, then inspect its exact job" code={`SELECT job_id, job_type, description, status,
        running_status, fraction_completed, error
@@ -32,14 +32,14 @@ SHOW JOB <job_id>;`} />
 <table><caption>Job observations and the question they leave open</caption><thead><tr><th scope="col">Observation</th><th scope="col">Meaning</th><th scope="col">Next check</th></tr></thead><tbody><tr><td>Pending or running</td><td>Work is admitted or in progress</td><td>Is progress changing, or is the job retrying the same failure?</td></tr><tr><td>Pause requested</td><td>A pause was requested</td><td>Has it reached paused?</td></tr><tr><td>Paused</td><td>Execution is paused</td><td>What schema/caller state remains supported, and what resources are retained?</td></tr><tr><td>Reverting</td><td>Failed or cancelled work is being undone</td><td>Has cleanup finished, and what is actually present?</td></tr><tr><td>Revert failed</td><td>Cleanup encountered a terminal error</td><td>Investigate the exact error and supported recovery; do not assume the old state returned</td></tr><tr><td>Succeeded</td><td>The job completed its operation</td><td>Do stored data and application behaviour satisfy the intended contract?</td></tr></tbody></table>
 <p>A progress fraction measures the job's reported work. It is not a percentage of the application's deployment, a reliable countdown, or proof that the next stage will need the same time. A job that remains running can be repeatedly retrying an allocation error. Compare successive state and error evidence with resource observations.</p>
 
-<h2 id="keep-room-for-the-backfill">Keep room for the backfill</h2>
+<h2 id="keep-room-for-the-backfill">Backfill resources and job controls</h2>
 <p>The schema job shares the cluster with ordinary requests. Reading existing rows, building new entries and writing replicated data consumes CPU, memory, storage bandwidth and capacity. An online operation can therefore preserve logical availability while making customer work too slow. Keep a budget for request latency and errors, resource pressure, contention and range health.</p>
 <p>The native rehearsal first used a deliberately small 64 MiB SQL memory allowance. Even the five-row computed backfill stayed running while its log repeatedly reported insufficient memory to create a BulkAdder. No useful completion followed merely from waiting. That observation concerns the test's process settings, not a minimum production sizing rule.</p>
 <p>The fixture was rerun with a 256 MiB process-local SQL allowance. A separate generated table of 50,000 anonymous line-shaped rows provided work for a computed-column backfill while another connection updated quantities. Its IDs and updates are synthetic; they do not add orders or change the collection's purchase history. The record captures committed updates during the DDL interval and checks every resulting price pair. It is a functional concurrency check, not a throughput or latency benchmark.</p>
 <p>For your deployment, establish a baseline and watch the workload during the operation. A growing resource problem is reason to investigate or use supported job controls, rather than to keep launching the same schema change. <code>PAUSE JOB</code> and <code>CANCEL JOB</code> are requests with observable state transitions. A cancellation can start cleanup; it is not an instantaneous return to the previous physical storage state.</p>
 <p>Keep the supported application population explicit while work pauses. Here old readers can continue using the decimal. New integer readers have not been enabled merely because the new column was requested. For a manually writable target column, the application bridge must keep every admitted new or edited row correct while the backfill drains old work; a paused cursor cannot supply that protection.</p>
 
-<h2 id="accept-the-values">Accept values, then accept their meaning</h2>
+<h2 id="accept-the-values">Checking the backfill</h2>
 <p>After the job succeeds, query the complete intended table for missing or unequal values:</p>
 <Sql label="Find any incomplete or inconsistent representation" code={`SELECT order_id, line_no, unit_price, unit_price_minor
 FROM order_items
@@ -49,7 +49,7 @@ WHERE unit_price_minor IS NULL
 <table><caption>The unchanged agreed prices in the native shop projection</caption><thead><tr><th scope="col">Order · line</th><th scope="col">Decimal</th><th scope="col">Hundredths</th></tr></thead><tbody>{core.order_items.map(r=><tr><td>{r.order_id} · {r.line_no}</td><td>{r.unit_price}</td><td>{Math.round(Number(r.unit_price)*100)}</td></tr>)}</tbody></table>
 <p>The native check finds no unequal pairs and calculates order 103 as 2900 hundredths: its mug and two teas still total 29.00. It also attempts an independent assignment to the computed column and requires refusal. Those observations establish the chosen derivation; they do not prove that a new receipt displays 29.00 rather than 2900.00. Compare the actual application results before enabling that reader.</p>
 
-<h2 id="a-unique-index-must-prove-uniqueness">A unique index must prove uniqueness</h2>
+<h2 id="a-unique-index-must-prove-uniqueness">Unique index builds</h2>
 <p>An index can finish its physical work only to discover that the intended rule is false. Consider a separate anonymous import fixture with two rows carrying the same required <code>source_id</code>. Creating a unique index on that column must reject the existing duplicate.</p>
 <Sql label="Create the intended source identity rule" code={`CREATE UNIQUE INDEX source_once
 ON import_keys (source_id);`} />
@@ -57,7 +57,7 @@ ON import_keys (source_id);`} />
 <p>In a real import, resolving duplicates is a business decision. Repeated identical input, conflicting payloads and old source versions can need different treatment. Deleting arbitrary production rows to make an index build pass can destroy valid history. Keep writes that would recreate duplicates controlled until the index is successfully enforcing the rule.</p>
 <p>CockroachDB creates indexes online; its accepted <code>CONCURRENTLY</code> keyword is compatibility syntax, not PostgreSQL's concurrent-index protocol. A PostgreSQL-specific repair recipe for an invalid concurrent index is therefore not evidence about this job. Inspect the CockroachDB job and current descriptor, then follow its supported cleanup path. Logical disappearance also does not prove that all old bytes have already been garbage-collected.</p>
 
-<h2 id="keep-ddl-boundaries-explicit">Keep DDL boundaries explicit</h2>
+<h2 id="keep-ddl-boundaries-explicit">DDL transactions and application compatibility</h2>
 <p>Run these changes as individual schema statements with explicit acceptance between them. CockroachDB documents limitations on general multi-statement transactions containing schema changes: some ordinary work may commit even when schema work fails. Do not wrap an entire deployment in <code>BEGIN</code> and assume every possible DDL failure restores every previous statement.</p>
 <p>Before contraction, account for old application processes, workers, imports and in-flight transactions. A completed job cannot prove that they have stopped using a column. Pause or fence obsolete writers, resolve their work, then apply the separately planned authority change or removal. The safe pause point is a compatible schema with known callers, not simply a green migration-runner status.</p>
 <p>The native fixture stops after accepting derived integer reads and enforcing the scratch unique key. It does not perform an integer-only writer handover, remove the decimal, measure production load or simulate independent machines. <a href="/learn/databases/relational/cockroachdb/upgrades/">Upgrading a CockroachDB cluster</a> owns the different compatibility boundary between binaries and cluster version.</p>

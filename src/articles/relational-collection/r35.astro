@@ -9,7 +9,7 @@ const mug=core.products.find(p=>p.product_id==='P7');
 <p>Those boundaries matter more than whether the application receives JSON over HTTP. A JSON response can be assembled from ordinary columns and related rows. Storing that response as one document is a separate decision about identities, constraints and which changes must contend with each other.</p>
 <p>We will use a declared optional catalogue-attributes variant: P7 and P9 have material {catalogueAttributes.P7.material}; P3 has a brewing temperature of {catalogueAttributes.P3.brewing_c} degrees Celsius. The original product identities, names, stock and prices stay in their columns. P7’s starting price is {mug.price}, and order 103’s agreed unit price remains 20.00. These illustrative attributes do not replace either fact.</p>
 
-<h2 id="choose-what-changes-together">Choose what changes together</h2>
+<h2 id="choose-what-changes-together">Choosing columns, rows or JSONB</h2>
 <p>A product’s optional brewing advice can belong to that product without needing a row identity of its own. An <code>attributes jsonb</code> column is a plausible home. Product ID, catalogue price and stock have stronger, stable roles in joins and rules; keeping them as typed columns makes those roles direct.</p>
 <p>Order lines have a different meaning. Each has its own identity, quantity, agreed price and reference to a product. Embedding all lines inside an order document would not automatically enforce that every product exists or that line numbers are unique within the order. Related rows give those relationships and independently addressed changes a suitable place.</p>
 <table><caption>Choose a representation from the fact’s job</caption><thead><tr><th scope="col">Need</th><th scope="col">A suitable starting point</th></tr></thead><tbody><tr><td>A stable scalar used in arithmetic, identity or a common filter</td><td>A typed column with its rules</td></tr><tr><td>Several independently identified items with references and updates</td><td>Related rows with keys and foreign keys</td></tr><tr><td>An optional structured value owned and usually changed with one record</td><td>JSONB with an explicit shape contract</td></tr><tr><td>A JSON API response assembled from those facts</td><td>Construct JSON at the query or application boundary</td></tr></tbody></table>
@@ -33,7 +33,7 @@ attributes jsonb NOT NULL DEFAULT '{}'::jsonb
 <p>Text extraction deliberately merges missing and JSON-null cases into SQL NULL. If presence matters, test it before relying on the extracted text. <code>jsonb_typeof</code> distinguishes a JSON null with the text <code>'null'</code>; when its SQL argument is NULL, its answer is SQL NULL.</p>
 <p>Containment preserves JSON types. <code>attributes @&gt; '&#123;"brewing_c":80&#125;'::jsonb</code> asks for a numeric value. It does not match <code>&#123;"brewing_c":"80"&#125;</code>, whose value is text. Casting text extraction afterwards can make those representations look the same while accepting a shape the schema never intended.</p>
 
-<h2 id="make-the-shape-a-rule">Make the shape a rule</h2>
+<h2 id="make-the-shape-a-rule">JSON shape constraints</h2>
 <p>For this variant, require an object. Material may be absent, but if supplied must be a JSON string. Brewing temperature may be absent, but if supplied must be a JSON number from 0 through 100. This permits the empty object and refuses JSON null for either optional value.</p>
 <Sql label="Validate optional keys without treating unknown as success" code={`CHECK (jsonb_typeof(attributes) = 'object'),
 CHECK (
@@ -53,7 +53,7 @@ CHECK (
 <p>This contract still allows unrecognised keys. If unknown keys are errors, explicitly restrict them too. If each product kind requires a different set of fields, the contract needs the kind and its rules. At some point a typed relation is easier to understand and evolve than a large conditional check. A JSONB column does not remove schema; it moves some of it into expressions and application agreements.</p>
 <p>Use foreign keys for facts that refer to other authoritative rows. A JSON string containing a product code does not become a foreign key merely because the code is well formed. <a href="/learn/databases/relational/constraints/">Constraints and tenant boundaries</a> develops that enforcement and why a cross-row lookup inside a check is insufficient.</p>
 
-<h2 id="index-the-operation">Index the operation</h2>
+<h2 id="index-the-operation">JSONB indexes</h2>
 <p>A broad GIN index can support containment and key-existence questions across a JSONB document. A narrower <code>jsonb_path_ops</code> class supports containment and selected path operators, but not <code>?</code>. An index on a text extraction is a third choice for a stable scalar equality or ordering question.</p>
 <Sql label="Three candidates for different questions" code={`-- General containment and top-level key existence:
 CREATE INDEX catalogue_attrs
@@ -71,7 +71,7 @@ ON catalogue ((attributes->>'material'));`} />
 <table><caption>Observed eligible routes · PostgreSQL 18.6 · 500 matches each</caption><thead><tr><th scope="col">Question</th><th scope="col">Available candidate</th><th scope="col">Observed route</th></tr></thead><tbody><tr><td>Contains material ceramic</td><td>GIN path ops</td><td>Bitmap index and heap scan</td></tr><tr><td>Has brewing key</td><td>GIN path ops only</td><td>Sequential scan</td></tr><tr><td>Has brewing key</td><td>Default GIN</td><td>Bitmap index and heap scan</td></tr><tr><td>Extracted material equals ceramic</td><td>B-tree on text expression</td><td>Bitmap index and heap scan</td></tr></tbody></table>
 <p>A JSON-path query can express more complex conditions. Index support depends on the clauses its class can extract; supported operator syntax is not a guarantee that every path predicate is a selective index search. Inspect <code>Index Cond</code>, rechecks and candidate heap work, as <a href="/learn/databases/relational/postgresql/indexes/">index methods and operators</a> explains.</p>
 
-<h2 id="one-document-one-row-boundary">One document, one row boundary</h2>
+<h2 id="one-document-one-row-boundary">Document updates and row locks</h2>
 <p><code>jsonb_set</code> can change a path without application code reconstructing the entire object. That is a useful expression-level operation. PostgreSQL still updates the row and creates a replacement row version. Two writers changing unrelated paths in one document contend at that row, rather than acquiring independent locks on each key.</p>
 <Boundary />
 <p>The first final document lost A’s left-field change because B sent a document based on its earlier read. The database correctly stored the replacement it was given. The second used the stored column as the input to each update, preserving the earlier independent path change in this sequential native check.</p>
@@ -81,7 +81,7 @@ WHERE id = 1;`} />
 <p>At Read Committed, a concurrent updater waits for the row and applies its update to the appropriate current version after the conflicting writer commits, with the documented condition recheck. At stronger isolation a complete retry may be needed. A decision calculated from an earlier read still needs a correct concurrency protocol; path syntax alone does not protect every business rule.</p>
 <p>A revision column can instead make a replacement conditional on the version the editor read. A zero-row update then reports that its basis has changed. Separate rows can give genuinely independent items separate lock boundaries. Choose from the application’s meaning and contention, rather than expecting JSON path operations to make one large document independently writable.</p>
 
-<h2 id="keep-flexibility-accountable">Keep flexibility accountable</h2>
+<h2 id="keep-flexibility-accountable">Document size and schema evolution</h2>
 <p>A small path change may still require processing and storing a substantial JSONB value, maintaining GIN entries and writing WAL. TOAST can move large values out of the main heap; it does not make a modified document or its indexes free. Keep document sizes bounded and measure updates as well as the attractive read plan.</p>
 <p>When an optional attribute becomes central to joins, constraints or frequent numeric filters, promote it deliberately. A typed column or generated projection can expose a stable value and make its rule direct, but a conversion can fail on old malformed documents. Audit and repair the existing shapes before making the new representation authoritative.</p>
 <p>During a live transition, decide which representation owns the value and how old and new writers agree. Two independently writable copies invite disagreement. <a href="/learn/databases/relational/schema-changes/">Live schema changes and backfills</a> handles the compatible write protocol and final equivalence check.</p>

@@ -9,7 +9,7 @@ import Lifecycle from '../../components/relational-collection/r12/Lifecycle.astr
 
 <p>We will add a separate relation of request events for the shops, with an event time, shop ID and endpoint. These events are a teaching fixture, not orders, payments or a retained audit of the purchase example. Three monthly UTC partitions let us inspect exact boundaries and a small retention drill on PostgreSQL 18.6.</p>
 
-<h2 id="one-name-several-tables">One name, several physical tables</h2>
+<h2 id="one-name-several-tables">Partition keys and ranges</h2>
 
 <p>A <em>partition key</em> determines which piece holds a row. Range partitioning uses non-overlapping intervals of that key. Here <code>occurred_at</code> is a required <code>timestamptz</code>: the instant the request event occurred.</p>
 
@@ -35,7 +35,7 @@ FOR VALUES FROM ('2026-10-01 00:00:00+00')
 
 <p>Other methods fit other boundaries. A list partition can hold named shop IDs; hash partitioning assigns key values to buckets. Hash buckets spread rows by a hash function, so removing one bucket does not naturally remove the oldest month. Conversely, time ranges put new writes into the current range, so they need not distribute a hot ingestion workload evenly.</p>
 
-<h2 id="prove-a-partition-cannot-match">Prove that a partition cannot match</h2>
+<h2 id="prove-a-partition-cannot-match">Partition pruning</h2>
 
 <p><em>Partition pruning</em> excludes a partition whose declared bounds cannot contain a qualifying row. It is a proof from the query’s condition and the partition map. It does not need to inspect every stored timestamp to establish that September cannot contain an October instant.</p>
 
@@ -55,7 +55,7 @@ ORDER BY occurred_at, event_id;`} />
 
 <p>The native experiment used <code>EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)</code>. The direct October query contained only a scan of <code>events_oct</code>. The endpoint query and the date-expression query contained an <code>Append</code> with scans of all three partitions. These four rows make pruning visible; they are not large enough to establish a performance advantage.</p>
 
-<h3 id="when-bounds-become-known">When the bounds become known</h3>
+<h3 id="when-bounds-become-known">Execution-time pruning</h3>
 
 <p>Some bounds are known while planning, such as the literals above. Others arrive as parameters or from another operation while a query executes. PostgreSQL can prune at execution time too. A generic prepared plan may show several possible child plans before the parameter values select the useful subset.</p>
 
@@ -63,7 +63,7 @@ ORDER BY occurred_at, event_id;`} />
 
 <p>Pruning does not require an index on the partition key. After excluding partitions, the planner can scan a surviving small piece or use one of its indexes. An endpoint lookup within October might benefit from an endpoint index even though the time bounds performed the pruning. An ID lookup without time bounds might need an index search in every partition. The earlier <a href="/learn/databases/relational/indexes/">index article</a> helps choose that route within each surviving piece.</p>
 
-<h2 id="keys-that-cross-the-boundary">Keys that cross the boundary</h2>
+<h2 id="keys-that-cross-the-boundary">Uniqueness across partitions</h2>
 
 <p>The example’s primary key is <code>(occurred_at, event_id)</code>. That choice is visible in every reference to an event. It is not a declaration that <code>event_id</code> alone is unique across the whole parent.</p>
 
@@ -75,7 +75,7 @@ ORDER BY occurred_at, event_id;`} />
 
 <p>If global identity is required, possible designs include keeping an unpartitioned identity relation with a global unique key and partitioning separate detail, or choosing a partition boundary compatible with the required uniqueness. A central identity relation still needs an atomic write and retention protocol; merely adding a registry table does not prove every detail row has exactly one correct identity. Sometimes retaining an ordinary indexed table is the better design.</p>
 
-<h2 id="references-have-a-lifecycle-too">References have a lifecycle too</h2>
+<h2 id="references-have-a-lifecycle-too">Foreign keys and retention</h2>
 
 <p>A child that refers to this example’s partitioned key carries both values:</p>
 
@@ -95,7 +95,7 @@ ORDER BY occurred_at, event_id;`} />
 
 <p>The worksheet explicitly expires the constrained note before detaching its event partition. This is a small chosen policy drill, rather than a recommendation to remove notes whenever a reference blocks maintenance. A database refusal is information about the promise the operation would break.</p>
 
-<h2 id="remove-a-month-as-a-unit">Remove a month as a unit</h2>
+<h2 id="remove-a-month-as-a-unit">Detaching an expired partition</h2>
 
 <p>Deleting old rows one by one creates row and index work and, in a versioned engine, later cleanup. Removing a whole expired partition can avoid that per-row operation. But the unit is the entire piece. If even one row must remain available there, the partition has not wholly expired under that policy.</p>
 
@@ -126,7 +126,7 @@ DETACH PARTITION events_sep;`} />
 
 <p>Attaching an existing table requires proving that its contents fit the new bound. PostgreSQL may scan it for validation; a suitable validated check can avoid that scan. A default partition may need its own check to prove that no row belongs in the newly attached range. These are real work and locking costs, even when the final map change is small.</p>
 
-<h2 id="choose-a-boundary-that-earns-its-cost">Choose a boundary that earns its cost</h2>
+<h2 id="choose-a-boundary-that-earns-its-cost">Choosing partition boundaries</h2>
 
 <p>More partitions mean more tables, indexes, statistics and maintenance objects. Queries that cannot prune may plan or execute work against many pieces. Very fine intervals make expiry precise but increase that overhead. Coarse intervals reduce the object count but retain more old rows until the whole piece becomes eligible. Choose the interval by the amount of data per piece, the query windows and the removal unit.</p>
 

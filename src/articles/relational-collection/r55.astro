@@ -9,7 +9,7 @@ const corpus=core.products.map(product=>({...product,description:examples.text_s
 <p>A shopper searches for “mug”. PostgreSQL finds Blue mug and a Teapot whose description says “A mug is not included.” After order 103, Blue mug has no stock. Filtering to available products leaves the Teapot.</p>
 <p>Nothing has malfunctioned in that result. Both documents contain the requested word, and the stock filter is correct. The gap is between the retrieval rule and the shopper’s intention. Building full-text search means making those rules explicit, then testing whether their results help the reader.</p>
 
-<h2 id="choose-the-document">Choose the document you will search</h2>
+<h2 id="choose-the-document">Search documents and tsvector</h2>
 <p>Full-text search compares a processed document, a <code>tsvector</code>, with a processed query, a <code>tsquery</code>. The match operator is <code>@@</code>. This is different from checking whether a field contains the exact input bytes. A text-search configuration determines which tokens become searchable lexemes and how they are normalised.</p>
 <p>Our small catalogue uses the existing titles and these illustrative descriptions. All three rows belong to shop 10. The stock is the agreed state after order 103.</p>
 <table>
@@ -30,7 +30,7 @@ ON products USING gin (document);`} />
 <p>This schema fragment uses <code>title</code> for the product name. The explicit English configuration keeps document processing independent of a session’s default. <code>coalesce</code> lets a missing description contribute an empty vector rather than making the whole expression null. A stored generated column keeps the representation attached to changes in the row’s source fields. The native drill verifies a description update changes the vector and that rolling back restores it.</p>
 <p>There is a storage and write cost: the row stores the processed vector and the GIN index stores an access path. An expression index can avoid the stored vector, but matching queries must use the corresponding expression and configuration, and ranking still needs a document representation. Choose from the read/write workload rather than storing both forms accidentally.</p>
 
-<h2 id="normalisation-and-position">Keep the configuration and the positions visible</h2>
+<h2 id="normalisation-and-position">Text-search configurations and positions</h2>
 <p>In PostgreSQL 18.6, English processing maps “brewing”, “brewed” and “brew” to the lexeme <code>brew</code>. The <code>simple</code> configuration retains three different lexemes for those words. Stemming broadens a match through normalisation; it does not establish that two sentences have the same meaning.</p>
 <Sql code={`SELECT to_tsvector('english', 'brewing brewed brew');
 -- 'brew':1,2,3
@@ -43,7 +43,7 @@ SELECT to_tsvector('simple', 'brewing brewed brew');
 <p>If phrases must stay inside a field, test each field’s vector separately and combine the match conditions. Keep a separate combined representation if it is useful for ranking. Do not assume that assigning A and D creates a sentence or field barrier.</p>
 <p>For an unexpected match, inspect the actual vector and query first. <code>ts_debug</code> can then show the parser’s token classes, dictionary choice and emitted lexemes. This distinguishes a stemming decision from a missing dictionary mapping, a discarded stop word or a query-construction error.</p>
 
-<h2 id="parse-the-input-language">Give the search box an input language</h2>
+<h2 id="parse-the-input-language">Parsing search input</h2>
 <p><code>websearch_to_tsquery</code> is a useful starting point for ordinary search text. It accepts quoted phrases, OR and a leading dash for exclusion, while treating much punctuation forgivingly. It avoids text-query syntax errors for malformed input. It does not remove the need to pass the input as a bound SQL parameter.</p>
 <Sql code={`SELECT websearch_to_tsquery('english', '"green tea"');
 -- 'green' <-> 'tea'
@@ -55,7 +55,7 @@ SELECT websearch_to_tsquery('english', 'mug -teapot');
 <p>An input containing only English stop words, such as “the and”, produces an empty query and no matches in the drill. Test <code>numnode(q)</code> and make that state visible to the caller. A query consisting only of exclusions is different: it may describe many rows without a useful positive index term. Decide which forms the interface supports, with limits appropriate to its workload, rather than treating every syntactically accepted query as equally cheap.</p>
 <SearchPipeline />
 
-<h2 id="filter-then-order-the-right-set">Rank the eligible result set</h2>
+<h2 id="filter-then-order-the-right-set">Filtering and ranking results</h2>
 <p>The query below makes the three conditions distinct: the shop boundary, stock eligibility and lexical matching. It orders the remaining rows by a chosen rank and a stable product identifier. The query and shop identifier are bound parameters.</p>
 <Sql code={`WITH query AS (
   SELECT websearch_to_tsquery('pg_catalog.english', $1) AS q
@@ -74,14 +74,14 @@ LIMIT 20;`} />
 <p>The stock condition removes P7 before the result is limited. Taking a global top 20 in an inner query and filtering for shop or stock outside it could return fewer rows while missing lower-ranked eligible matches. Put the intended eligibility conditions inside the retrieval query. The database can choose its physical evaluation order; the SQL must first describe the right set.</p>
 <p>The product identifier breaks ties within one query. It does not freeze a multi-page search while documents or stock change. If a long export requires stable membership and ordering, use the appropriate <a href="/learn/databases/relational/large-results/">snapshot and pagination boundary</a>.</p>
 
-<h2 id="what-the-index-provides">What the index provides</h2>
+<h2 id="what-the-index-provides">GIN matching and rechecks</h2>
 <p>GIN accelerates the lexeme-matching condition. It does not store the answer in <code>ts_rank_cd</code> order. The drill’s three-row catalogue is enough to check semantics, but too small to demonstrate a useful access-path choice. A separate anonymous fixture makes the retrieval work visible: 20,000 documents, 200 matching “mug”, half of those out of stock.</p>
 <RetrievalWork />
 <p>The unforced observed plan is a bitmap index scan, a bitmap heap scan with stock/shop filtering, a sort and a limit. Ranking supplies the sort key for 100 eligible matches even though only five rows are returned. The top-N sort saves sorting space; it does not let this GIN scan stop after finding the five highest ranks.</p>
 <p>For a common term, retrieving and ranking a large match set can therefore dominate. Inspect actual rows, heap work and filtering with <code>EXPLAIN (ANALYZE, BUFFERS)</code>. A selective tenant or other structured predicate may help through a separate access path or a combined bitmap plan, but the planner chooses from the available indexes and statistics. Do not infer a particular combination from the presence of two indexes.</p>
 <p>GIN stores lexemes rather than their weight labels, so weight-restricted matching requires a row recheck. Positional conditions can also require verification beyond a word-presence lookup. A plan’s recheck condition is part of correctness, not proof that the search is approximate in the sense of accepting a false final match. PostgreSQL checks the actual condition before returning the row.</p>
 
-<h2 id="measure-the-answer-as-well">Measure the answer as well as the plan</h2>
+<h2 id="measure-the-answer-as-well">Evaluating search results</h2>
 <p>The Teapot result is an excellent regression example because it separates three successful mechanisms from a poor product answer. Tokenisation found mug. The GIN access path can retrieve that document. The stock rule accepts it. None of those mechanisms understands the disclaimer’s implication for someone buying a mug.</p>
 <p>Keep a small, explicitly judged set of search tasks: expected products, unacceptable products and cases where an empty answer is preferable. Include title/body differences, phrases, negation, empty input, product codes, spelling variants and active availability filters. Evaluate top-result usefulness separately from latency, rows examined and index maintenance cost. Recall asks how much of the judged relevant set was found; precision asks how much of the returned set was relevant. A faster index cannot decide those judgements.</p>
 <p>Some intents belong in structured data. If an application needs a product-type filter, model and maintain that fact rather than inferring it from every sentence containing “mug”. Other intents may benefit from curated synonyms, spelling support or <a href="/learn/databases/relational/postgresql/vector-search/">vector retrieval</a>. Each changes the candidates or their ordering and needs its own evaluation; changing the representation is not evidence of improvement.</p>

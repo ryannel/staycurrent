@@ -1,0 +1,11 @@
+# Heading repair: r20–r38
+
+All 19 assigned articles were read and their actual headings compared with the fixed references. Completed 114 section-heading repairs across 149 checked h2/h3/h4 elements. All 19 article titles were retained. The four frozen receipts are `ready-1.json` (r20–r24), `ready-2.json` (r25–r29), `ready-3.json` (r30–r34) and `ready-4.json` (r35–r38).
+
+Calibration followed actual headings such as “Pages”, “Write-ahead log”, “What COMMIT waits for”, “B-tree”, “Write cost and upkeep”, “Choosing the primary key of a clustered table”, “Lifelines and messages” and “How much to draw”, with their nearby explanations. Repairs favour ordinary subject names and direct questions where those fit the developed section. They remove compressed instructions and metaphorical conclusions without requiring every heading to summarise its section independently. Plain existing headings including “What a synchronous commit waits for”, “A missing acknowledged purchase”, “Hashes, ranges and growing keys”, “Which version is visible?”, “Can maintenance keep up?” and “JSON or JSONB?” remain.
+
+The continuity pass checked the renamed sections against their complete explanations and later uses. The tenant, purchase, migration, timestamp and recovery variants remain the same; headings add no example facts or technical claims. No downstream dependency requires a change. All IDs remain unchanged, so existing anchors and links are preserved.
+
+The final byte-level audit confirms that every byte outside literal h2/h3/h4 inner text is identical to baseline commit `d8c4df13154941be6079ccf4cea9547c5383eabe`. Heading levels, tags and attributes, all IDs and every metadata byte are identical. Each receipt records source/result SHA-256 hashes and the hash after masking heading text; the final audit also confirmed that every frozen result still matches its receipt.
+
+This was a focused editorial naming repair. Body prose, examples, SQL, component controls, labels, captions, links, sources and metadata were untouched. No new technical review, native experiment, build, server, browser run or Git operation was undertaken. The coordinator owns integration, rendered confirmation, checks and publication.

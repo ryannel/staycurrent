@@ -8,7 +8,7 @@ const receiptTotal = core.report_totals.find(row => row.order_id === 103).total;
 <p>Shop 10’s receipt for order 103 needs two lines, their captured unit prices and the product names. If all those rows live on one PostgreSQL server, that server can join them and return a small result. If the lines and products live on different servers, someone must bring the matching rows together. The SQL can look almost identical while the work changes substantially.</p>
 <p>That difference is the starting point for distributing PostgreSQL. Decide which rows must meet, where their constraints can be enforced, and who is allowed to change them during a move. Then choose the machinery that implements those decisions.</p>
 
-<h2 id="four-arrangements">Four arrangements with different owners</h2>
+<h2 id="four-arrangements">Partitions, shards, Citus and foreign tables</h2>
 <p>A native PostgreSQL partition is a table belonging to a partitioned relation. Partition pruning can avoid irrelevant pieces, and old pieces can be detached as part of a retention policy. Ordinary local partitions still belong to the same database instance. Splitting a table into those pieces does not create independent PostgreSQL servers, a routing service or a failover protocol. The <a href="/learn/databases/relational/partitioning/">partitioning article</a> follows that lifecycle.</p>
 <p>An application shard is a separate database selected by application routing. The application might map shop 10 to database A and shop 20 to B. Each database executes ordinary PostgreSQL transactions over its own rows. The application owns the map and the procedures for changing it.</p>
 <p>Citus adds distributed-table metadata and execution to PostgreSQL. In the hash-distributed arrangement considered here, a distribution column places rows into shards, which are ordinary tables on workers. The extension uses that metadata to plan and route work. This is a particular distributed database implementation, with its own supported operations and movement procedures.</p>
@@ -25,7 +25,7 @@ const receiptTotal = core.report_totals.find(row => row.order_id === 103).total;
 </table>
 <p>These arrangements can be combined. A tenant shard can contain time partitions. A reporting database can query shards through foreign tables. The useful question is which layer owns each responsibility; combining names does not combine guarantees automatically.</p>
 
-<h2 id="keep-a-receipt-local">Keep a receipt’s work together</h2>
+<h2 id="keep-a-receipt-local">Co-location and constraints</h2>
 <p>Suppose each shop has its own catalogue. Product P7 is Blue mug at 20.00 in shop 10, but Copper mug at 18.00 in shop 20. Product identity therefore includes <code>shop_id</code>. Order lines need that same shop identifier, both to identify the correct catalogue row and to preserve a useful distribution boundary.</p>
 <Sql code={`SELECT i.product_id, p.name,
        i.quantity * i.unit_price AS line_total
@@ -45,7 +45,7 @@ SELECT create_distributed_table(
 <p>Constraint scope follows that grouping. Citus requires primary and unique keys on hash-distributed tables to include the distribution column. A key such as <code>(shop_id, product_id)</code> fits tenant-local uniqueness. It does not establish that <code>product_id</code> is globally unique across shops. Co-located foreign keys likewise need the distribution column in the relationship. A requirement for a single global identifier must be designed separately rather than inferred from local enforcement.</p>
 <p>A small table shared by every tenant can sometimes be a Citus reference table, replicated to workers so their joins have a local copy. That buys read locality by adding replicated data and coordinated updates. Replicating a frequently changing, large catalogue merely to avoid choosing a distribution boundary can make the write problem larger.</p>
 
-<h2 id="inspect-the-remote-work">Inspect the work that actually crossed the boundary</h2>
+<h2 id="inspect-the-remote-work">Query execution with postgres_fdw</h2>
 <p>The downloadable drill uses PostgreSQL 18.6 and <code>postgres_fdw</code> 1.2. Two disposable clusters run on one host. The coordinator also holds dataset A, reached through a separately verified loopback FDW connection; the other cluster holds B. There are two foreign-server definitions and two remote connections. This arrangement tests execution and snapshot behaviour, not network latency or independent machine survival.</p>
 <p>A holds shop 10’s products and order 103’s lines. B holds shop 20’s Copper mug. The coordinator declares <code>a_products</code>, <code>a_items</code> and <code>b_products</code>, with matching column types. A user mapping determines the remote identity; the private drill uses its own disposable owner, rather than suggesting a production privilege design.</p>
 <p>For the receipt query, <code>EXPLAIN (VERBOSE, COSTS OFF)</code> produced one foreign scan whose relation description contained the join:</p>
@@ -67,13 +67,13 @@ SELECT create_distributed_table(
 <p>For ordinary local isolation levels other than Serializable, <code>postgres_fdw</code> uses Repeatable Read remotely. The existing A connection therefore keeps its remote transaction snapshot. B establishes its own snapshot later. Each result is consistent with its server’s snapshot, but the returned pair never existed together: A had already changed before B reached 19.00. Ending the local transaction ends those remote transactions, and the drill restores both canonical prices.</p>
 <p>This is a read-boundary result. It is not an experiment in distributed commit. PostgreSQL 18’s <code>postgres_fdw</code> does not support preparing its remote transactions for two-phase commit. If a workflow must atomically change several databases and recover a decision after a participant failure, choose and verify a protocol that provides that property. A transaction-shaped interface is insufficient evidence; <a href="/learn/databases/relational/distributed-transactions/">transactions across partitions</a> develops the required decision and recovery state.</p>
 
-<h2 id="a-hot-shop-stays-together">A hot shop stays together</h2>
+<h2 id="a-hot-shop-stays-together">Tenant size and skew</h2>
 <p>Co-location deliberately makes a shop one unit of work. It also means that adding workers does not divide that shop’s writes among them. If shop 10 dominates traffic, moving its shard can remove competition from other tenants, but the shop’s own transaction stream still lands together. Extra shard ranges do not divide a single hash-key value.</p>
 <p>Measure load per placement and per tenant, including rows, bytes, request rate, contention and the work of joins. Equal shard counts need not mean equal work. A large tenant and many quiet tenants can produce an apparently balanced map with one saturated worker.</p>
 <p>Splitting the busy tenant by a smaller entity can spread work, but then a receipt, stock check or uniqueness rule may cross the new boundary. That is a change to the transaction design. Derive the new remote operations and failure cases before treating a finer key as a capacity fix.</p>
 <p>Cross-shop reporting has a different shape. It can send partial aggregates to several workers and combine them, provided the aggregate admits the appropriate decomposition. That creates coordinator work and fan-out even when tenant requests remain local. Evaluate both request families; a distribution key chosen solely from an evenly spread column can make the common joins expensive.</p>
 
-<h2 id="move-authority-with-the-data">Move authority with the data</h2>
+<h2 id="move-authority-with-the-data">Moving a shard</h2>
 <p>An application-owned route from shop 20 to B eventually needs to point to A. Copying the Copper mug row is the easy part. The dangerous interval starts when requests continue to write B after that copy, or reach both copies through different cached routes.</p>
 <p>The drill adds a scratch <code>revision</code> and operation journal. A restricted runtime role cannot update the tables directly. Its only write function locks the shop’s ownership row, checks an expected epoch and an active flag, then records the operation identifier and increments the revision in the same transaction. Administrative code is trusted to manage ownership. The fence is meaningful because every runtime mutation must pass through that locked guard.</p>
 <OwnershipMove />
