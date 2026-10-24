@@ -10,4 +10,4 @@ The [publication smoke check](publication-ui-check.json) covers the introduction
 
 All 267 reviewed article, metadata, figure and shared-data paths retain their recorded bytes, allowing only the confirmed local correction. Existing native execution evidence and its version, host, serial-operation and external-effect limits remain unchanged; no new native runs were needed.
 
-The existing GitHub Pages workflow deploys a push to `origin/main`. Local checks are complete; the deployment and live-serving receipt will be retained alongside this record after the push.
+The [publication workflow](https://github.com/ryannel/staycurrent/actions/runs/40112164621) completed successfully for `d50f76d1d009233d01514b5b078a8ec3058968ec`. The [live-serving receipt](publication-live-check.json) confirms all 58 public articles return 200 with their current titles and no draft or noindex markers; all 50 live downloads match their source bytes. The corrected recovery paragraph is present. [Read the collection](https://staycurrent.dev/learn/databases/relational/).

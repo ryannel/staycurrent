@@ -278,3 +278,7 @@ Previous local root-check download tally is2actualserving comparisons, not50; ot
 ## D089 · full publication authorised
 
 User explicitly requests all articles fully published, notdraft. Authorisation now includes the58currentarticle normalroutes, discoverability, navigation and exact download endpoints. Fresh publication implementer owns sharedrouting/layout/metadata only; articlebodies/nativefigures/dataprotected. Root owns normalbuild/currentrender/commit/push/deployment. No further collectionqualityreview.
+
+## D090 · collection published and verified live
+
+Publication source d50f76d1d009233d01514b5b078a8ec3058968ec pushed to origin/main. Publish40112164621completed/success. Actual live HTTP checks pass all58normalarticles with currenttitles/no draft/noindex; all50live downloads match source bytes. Currentr37correction present. Public browser shows58articlecollection, collapsed sources and nooverflow; live screenshot publication-live.png. User-facing live tab retained. All accepted substantive findings resolved and delivery complete under authorised simplified policy; no third fullcollectionreview. Publication changes preserve267reviewedarticle/component/data paths exceptalreadyconfirmed37; no native reruns.
