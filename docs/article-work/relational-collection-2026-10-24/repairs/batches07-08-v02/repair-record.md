@@ -1,0 +1,47 @@
+# Fresh coherent repair · batches07–08 · v02
+
+Status: author-complete source repair returned after the root-built immutable 4538 rendered pass. Source remains frozen for fresh independent confirmations. Only the clean assigned workspace and supplied owned context/evidence were used. No delegation, independent review, build, commit, push or publication performed.
+
+## Readiness and calibration
+
+Read current revise/write/figures/continuity skills and rendering/database guides. Read all four complete current articles, their complete figure labels/captions/controls/text alternatives/Sources, the commission, all four plans/briefs, authoritative example record and current author records before `input/accepted.md`. The revise skill was initially absent; root supplied it into this clean workspace before edits. No original repo, history or peer reports were read.
+
+Scoped reference calibration read complete relevant passages in Sequences (lifelines, activation/wait, order versus elapsed time), Indexes (covering/index-only scans and visibility), Storage (row versions/undo and reuse). At reference port 4350, followed the row-version drawing through report completion and read the covering/visibility drawing with its surrounding prose. Kept reference states/defaults and closed own temporary tab. This repair did not require reloading all 19 text parts/all 34 drawings.
+
+## Exact changes and accepted applicability
+
+- B07-P23 critical: rewrote the existing memory paragraph in **A pool is a budget**, identifying work_mem as the per-operation base and hash allowance as work_mem × hash_mem_multiplier, default 2.0 in PostgreSQL 18. Retained multiple operations, parallel workers/concurrent sessions and query/server budget distinctions. No sizing benchmark or new memory allocation guarantee. B07-E23 low folded finding: replaced internal18-case evidence receipt at Sources with reader-usable directions to compare figure limits. Other r23 prose and both figures unchanged.
+- B07-V24 medium: restructured **Figure 1 only**. Same three 1,500 ms timelines, same interval ordering/durations and proportional flex weights. Removed text from narrow bar segments; each row now has matching border/fill labels immediately below in interval order, with category and unbroken duration/unit. The scaled bars are aria-hidden and adjacent labels provide equivalent reading. Replaced narrow-screen category-hiding CSS. Caption scope, causal interpretation, SQL, native experiment and Figure 2 unchanged. No invented timing became an observation.
+- B07-V26 medium: replaced Figure 1’s tuple-string row list with semantic relation tables. Table captions explicitly supply shop_id and the order-lines’ common order_id; named column headings identify remaining fields. Added P3’s canonical product row and explicit same-shop order/product reference mapping and shop 20 exclusion. The orders table shows its stored customer_id 1; adjacent reference prose identifies that ID as Mina Shah in customers, keeping joined names out of the stored orders row. Core receipt/products/lines derive from existing protected core.json. Expanded the text alternative with the same reference path. Shard panels now stack at desktop and phone to give tables enough width. Existing controls, routing results, request values and three-case handler unchanged; static rows stay available in all choices. No new shared facts, ownership or placement mechanism. All r26 article prose/SQL/Figure 2 unchanged.
+- B08-E32 medium: focused Figure 1’s final panel on removal/reuse, using plain current-reader language. Removed the caption’s premature freezing distinction; renamed the native table’s second state without invoking freezing. Moved the existing final-vacuum freezing fact into **Why old transaction IDs matter**, after the freeze definition. The earlier visibility paragraph still establishes two bits and non-equivalence. Native counts, SQL, horizon protocol, maintenance/age diagnosis and other prose unchanged.
+
+No other passage was restructured. No shared file or metadata dependency was edited. Confirmation should cover all changed figure labels/layouts and r32’s later placement, plus the full articles for coherence. r23 relates to r11/r41 but needs no shared correction; r26’s handoff to r54 retains the same locality/placement contract and adds no native claim. Root owns any wider dependencies.
+
+## Primary checks
+
+Checked 24 October 2026:
+
+- https://www.postgresql.org/docs/18/runtime-config-resource.html#GUC-WORK-MEM — work_mem is the per-operation base; hash table limit multiplies it by hash_mem_multiplier, whose default is2.0; simultaneous operations/sessions and parallel work compound demand. Existing article Sources already link this manual.
+- https://www.postgresql.org/docs/18/storage-vm.html — all-visible and frozen-page bits are distinct; vacuum sets them; modifications clear them.
+- https://www.postgresql.org/docs/18/routine-vacuuming.html — versions remain while potentially visible, removal permits reuse, and freezing has a separate transaction-age purpose. Existing article Sources already link both manuals.
+
+## Technical/model/native applicability
+
+`evidence/source-hashes.json` records exact current source/data/verifier hashes. `evidence/applicability.json` compares unchanged r23 Admission/burst and r24 download hashes to supplied original receipts, and r32’s verifier to its original receipt. Evidence is linked in place under input/mechanical rather than copied as if newly executed.
+
+- r23: admission model and assertions/claims unchanged; reuse supplied 18-case finite schedule and browser evidence. Memory correction is a documented setting interpretation and needs no artificial benchmark.
+- r24: disposable incident.py is byte-identical to the supplied native-incident receipt. Same Python3.14.5/PostgreSQL 18.6/macOS, one P7 stock 1 row, private socket/TCP disabled, ownership checks, cancellation/rollback observations. Timeline-only change has no effect on SQL, download or native fixture. Fresh actual rendered 4538 HTTP bytes matched; browser saving unverified.
+- r26: no native execution is claimed or required for this conceptual placement. `evidence/r26-facts.json` records canonical order 103/Mina/pending, P7 × 1 at 20.00, P3 × 2 at 4.50 and both product descriptions/prices, owner A/shop 10; accepted E1 fixes shop 20/P7/Copper mug/18.00 at B. Shared IDs/prices/quantity/stock/history unchanged. Fresh 4538 all-state DOM/control checks passed.
+- r32: exact unchanged supplied verifier reproduces source/data/environment recorded in native.txt/environment.json. Retained report20.00; held tuples1 live / 1 dead, bits 0/0, heap fetches 2; released 1/0, bits 1/1, fetches 0. Moving the existing freezing fact changes no execution claim. Native source/data/settings/outcomes were not edited, so affected native mechanism does not require a rerun. No wraparound/performance claim added.
+
+## Complete author reread and continuity
+
+Reread all four complete revised articles, every figure/caption/control/alternative and Sources against scoped reference calibration. Recovered clipped Routing output separately. Checked explanation order, later uses and surrounding sections. r23’s same memory paragraph now supports both connection/per-operation budgets; unchanged illustrative model remains a model. r24 labels preserve cause branches and cancellation ownership. r26 tenant is still a shop, all relevant references carry same shop boundary, price and agreed unit_price remain distinct, no shop 20 rows are used to satisfy shop 10 lines. r32 first teaches retention/removal/reuse, then visibility, then freezing/age; observed counts and scratch 20→25 remain separate from canonical dated history/order 103 price. No shared extensions or unresolved content dependencies.
+
+## Rendered evidence
+
+Root supplied fresh immutable 4538 output with zero site-check issues and granted an exclusive author viewport/theme lease. Checked affected pages at actual 1280×720 and 375×812 in Light and Dark; r24 labels stayed visible/unbroken, r26 tables/references/three choices stayed correct with keyboard/pointer, r32 retention/reuse figure and later freeze text stayed coherent and readable, and r23 memory paragraph wrapped safely. No source change was needed after this build. Representative screenshots and exact routing state captures are in evidence/. `evidence/render-checks.json` records scope, contrast ratios, defaults and limits. Fresh actual rendered r24 download href returned HTTP 200 and exact 7,367 source bytes; browser saving remains unverified.
+
+Explicitly checked r32’s moved all-frozen observation against retained native.txt and exact unchanged verifier: pg_visibility_map_summary returned released-map|1|1. PostgreSQL 18 pgvisibility defines its output as all_visible then all_frozen; this is an observed one-page result, not inferred from a FREEZE request. `evidence/r32-freeze-observation.json` records hashes/query/output/columns.
+
+Restored System, reset viewport override and verified actual 1280×720, reset routing/default disclosure state, closed own tabs and released lease to root for the independent visual confirmer. No CUA work after release. Root’s pre-return author query identified the need to distinguish the orders row’s stored customer_id from its customer-name annotation; this was corrected within the same accepted reference-mapping repair, then the complete affected section/figure and downstream route cases were reread.
