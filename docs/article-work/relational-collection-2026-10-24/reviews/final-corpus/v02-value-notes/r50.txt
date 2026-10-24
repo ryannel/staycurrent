@@ -1,0 +1,134 @@
+Relational collection · Draft for review
+
+H1 CockroachDB backup and recovery
+
+Deep diveAbout 6 minutes AI-generated   
+
+A CockroachDB backup preserves a history from which a restore can select a state. The operational question is whether that history covers the state you need, whether you can restore its complete scope, and which valid work will then be missing. Replication cannot answer those questions after the cluster faithfully commits a mistake.
+
+Use the collection's separate class recovery drill. Session S503 starts with capacity 3, no bookings and remaining capacity 3. At the scenario's 11:00 UTC on 23 October an erroneous transaction changes capacity to 30. At 11:05, Edda's valid booking B203 consumes one place, leaving remaining 2. Restoring before the mistake must return capacity 3, but it also excludes B203 and its decrement. The scenario is an alternative history; it does not change S501's full-session race or any shop order.
+
+The native CockroachDB 25.4.17 drill records an actual database timestamp before its mistake. It does not pretend the scenario labels are captured commit times. We will use that target, then close the old write history and restore B203's complete effect once.
+
+H2 Save history you can reach
+
+A full backup establishes a starting copy. An incremental backup records changes after earlier backups in its chain. The increment does not replace that starting copy: retaining a recent increment while deleting its required base can leave no usable restore. A backup collection groups full backups and their increments so CockroachDB can locate the selected chain.
+
+Choose the scope deliberately. A database backup contains that database's objects and rows; a full-cluster backup also handles relevant cluster-level state. Restoring one table may require the objects it references. Do not drop foreign keys merely to make an incomplete restore succeed and then call the application recovered. Decide how users, ownership, grants, locality, external connections and service configuration will be re-established for the chosen scope.
+
+BACKUP DATABASE classes INTO 'external://class_backups'
+WITH revision_history;
+
+-- Later: append an increment to this collection's latest full backup.
+BACKUP DATABASE classes INTO LATEST IN 'external://class_backups'
+WITH revision_history;
+
+revision_history preserves revisions within the history the backup can capture. That allows a restore between backup endpoints when the required revisions are covered. It cannot recover versions already removed before they were captured. Without revision history, the available targets are the full and incremental backup times. Scheduling frequent jobs is therefore not the same as establishing a continuous usable target interval.
+
+The saved bytes also need to survive the failure you chose. A local directory on the database host is useful for a mechanism rehearsal, but disappears with that host's storage. Separate backup access from ordinary runtime and preserve usable encryption keys. Test retrieval under the missing account, machine or region your recovery plan assumes. The native drill below uses local files and makes no offsite-survival claim.
+
+H2 Inspect the chain before the restore
+
+A successful job gives evidence that a backup completed. It does not establish that all its dependencies remain available now. Inspect the selected collection, full backup, increments, object scope and time coverage:
+
+SHOW BACKUPS IN 'external://class_backups';
+SHOW BACKUP FROM LATEST IN 'external://class_backups'
+WITH check_files;
+
+The file check validates that expected backup objects can be found. It is useful evidence before spending time on restoration, but it does not run the application's acceptance queries. Keep a test restore in the procedure. If using asynchronous jobs, a returned job ID identifies work; follow that job to its terminal status and inspect any error rather than treating admission as completion.
+
+The local run takes one full backup and one increment with revision history. On a fresh candidate process, it deliberately hides one required data file. The file check must fail. It then restores that exact file and proceeds. This is a dependency counterexample on owned disposable storage, not a recommendation to modify a real backup collection.
+
+H2 Select a state before the mistake
+
+Record the wrong operation as well as its suspected time. Here the mistaken transaction raises S503's capacity and inserts the unique history marker mistake-r50. The target T is a database logical timestamp obtained after the full backup and before that transaction. The later increment extends past both the mistake and B203.
+
+RESTORE DATABASE classes
+FROM LATEST IN 'external://class_backups'
+AS OF SYSTEM TIME '<recorded pre-mistake database timestamp>';
+
+AS OF SYSTEM TIME selects the state at the requested timestamp from the supported backup history. Choosing a timestamp that already includes the wrong commit retains the mistake. The evidence must therefore include both the recorded ordering and acceptance queries: capacity is 3, remaining is 3, mistake-r50 is absent and B203 is absent. A restored clock label alone proves none of those effects.
+
+Restore into an isolated candidate. In this drill the source is stopped before a fresh, different cluster restores from the saved collection. It cannot supply missing data to the restore. The restored database contains the state selected at T; retaining revision history in the backup does not give the restored database all the old queryable versions.
+
+H2 Close the history before listing missing work
+
+The old source may have accepted valid work while the backup and restore were being prepared. Comparing against it while it keeps changing cannot give a final reconciliation list. A booking could commit after the comparison and receive a confirmation just before that source is discarded.
+
+Before the final enumeration, fence every old write path, resolve previously admitted transactions and look up uncertain request outcomes. Keep that history closed through reconciliation and acceptance. Backup, restore and reconciliation develops the general authority contract; CockroachDB's backup does not enforce it for the application.
+
+The fixture makes admission explicit. Every source booking first updates a shared gate row only while it is open, holding that transaction's conflict through the booking. Closing the same gate serialises with those admissions. The native test holds the close uncommitted, starts another admission, then commits the fence. The racing request is refused, including a complete transaction retry where required. Only then does the fixture enumerate accepted request identities.
+
+That enumeration contains B203's request, fingerprint and outcome. The source stays fenced and is stopped before restore. The isolated candidate's restored gate is closed before controlled reconciliation, and no application receives write access merely because the database started. A production service with importers, administrative writers or old credentials needs those paths fenced too; one cooperative application gate covers only its declared participants.
+
+Follow the saved history and the two write authorities. Watch the candidate's remaining capacity when B203 is applied a second time.
+
+Figure 1 · Restore the target, then account for B203
+
+Full backupTarget TMistakeB203IncrementFence
+
+Old source
+
+Candidate
+
+Play
+Back
+Next
+Reset
+
+Recovery as text
+
+The saved chain includes history on both sides of target T.
+
+The old source closes admission and resolves the request racing that fence.
+
+The restored candidate has capacity 3, remaining 3 and no B203.
+
+Reconcile B203 and one decrement atomically: remaining 2.
+
+Repeat the same request identity: existing outcome, remaining 2.
+
+Accept data and external effects before transferring write authority.
+
+Conceptual history. T is the actual pre-mistake database timestamp selected in the native drill; the scenario's 11:00 and 11:05 labels are not measured commit times. This illustration does not run CockroachDB.
+
+H2 Reconcile a booking and its capacity together
+
+Copying B203's row alone would produce a booking without consuming its place. Applying a decrement every time the recovery script is retried would consume the same place twice. The unit of reconciliation is the operation: stable request identity, matching payload, booking row and one capacity decrement.
+
+The candidate transaction first looks up the accepted request key. If it already stores the same fingerprint and B203 outcome, return that outcome. If its payload differs, stop with a conflict. If it is absent, conditionally decrement S503's remaining capacity, insert B203 for Edda, and store the request's outcome in the same transaction. Retry the complete transaction on a retryable failure, preserving the same request identity.
+
+Acceptance across the recovered boundary
+| Moment | B203 rows | Remaining | Capacity
+
+| Pre-mistake restore | 0 | 3 | 3
+
+| First reconciliation | 1 | 2 | 3
+
+| Repeated identical request | 1 | 2 | 3
+
+The native run verifies those states, the rejected conflicting fingerprint and the equation capacity - remaining = count(bookings) for this fixture's one-place bookings. B203's absence immediately after restore is the counterexample to accepting the restore alone. Its unchanged count and remaining 2 after repetition establish what the request ledger contributes.
+
+External effects need their own evidence. Restoring a missing outbox row does not prove that the old source never sent its message. Query the payment provider's effect identity or the consumer's deduplication record before sending again or compensating. This fixture calls no provider and sends no messages; its external acceptance is explicitly “no external effect was generated”. It does not simulate an authoritative provider check.
+
+H2 Accept the service before transferring writes
+
+Check the recovered rows and relationships, the excluded mistake, accepted later requests, capacity and external decisions while the old history remains closed. Then test the intended application identity and connection route on the candidate. A database-level restore does not prove that its runtime privileges, scheduled jobs or deployment configuration match the intended service.
+
+Time the whole path if recovery time is a requirement: retrieving keys and files, provisioning, restore, validation, reconciliation and authority transfer. The local run reports no RPO or RTO. Two processes and their saved files on one host establish this restore's mechanics, not recovery after losing that host, account or region.
+
+A return to the old source is a new authority transfer once the candidate accepts writes. Those newer operations must be reconciled too. Keep the old source fenced until such a procedure has closed and accounted for the new history; changing a connection address back is not a recovery plan. Moving a SQL application to CockroachDB applies that same boundary to an engine migration.
+
+H2 Sources and further reading
+
+Primary CockroachDB 25.4 documentation checked 24 October 2026. Native evidence pins 25.4.17 and psycopg 3.3.3, one full/incremental revision-history chain, a recorded HLC target and separate fresh source/candidate stores. Private loopback development processes use insecure transport; secure runtime deployment is covered in Operating and securing a cluster. No licence entitlement, external provider result, offsite recovery or production timing is inferred from local feature execution.
+
+BACKUP: scope, collections, increments and revision-history options.
+
+SHOW BACKUP: coverage metadata and expected-file validation.
+
+RESTORE: dependency scope, timestamp selection, jobs, users and restored historical-state limits.
+
+Licensing FAQs: development instances and deployment entitlement.
+
+END r50

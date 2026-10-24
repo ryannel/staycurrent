@@ -130,3 +130,7 @@
 - Current informed practitioner confirmation: reviews/repair-final-local/practitioner-confirmation-v02.md and practitioner-notes/v02-check-notes.md; root fully read, all F1–F5 pass;171input verification/current actual downloads/qualified exact hosted execution.
 - Full corpus second editorial/teaching reports: reviews/final-corpus/{editorial,teaching}-v02.md, root complete read. No substantive editorial finding; one accepted medium three-route native foundation gap; independent practitioner/value remain active.
 - primary-source-cache/v02/provenance.json: freshly retrieved official pinned source bytes only, supplied to practitioner as permitted primary evidence, no quality notes.
+
+- Full second practitioner report: reviews/final-corpus/practitioner-v02.md, all58x5/current primary/evidence/497source-reference audit/corpus ownership, root complete836line reading; no findings.
+- Full second value report: reviews/final-corpus/value-v02.md plus v02-value-notes/58-by-5.md, read-ledger.md, cross-article-ownership.md and task-routes.md; all58x5 and section-loss coverage, no page merges; three accepted medium section reductions. Root read report/matrix/owners/routes and compared complete affected article pairs.
+- Consolidated later author commission: repairs/route-local-v03/accepted.md; complete pre-findings preparation receipt and665protected inputs, eight targets, no edit until allfour reports consolidated. Current4560/manifest remains immutable.

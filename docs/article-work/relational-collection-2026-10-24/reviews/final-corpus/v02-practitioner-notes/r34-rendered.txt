@@ -1,0 +1,111 @@
+ 
+Relational collection · Draft for review
+Reading and repairing PostgreSQL plans
+ Deep diveAbout 7 minutes AI-generated 
+A useful PostgreSQL plan reading ends with a cause you can test. “There is a sequential scan” names an operation. “The query casts the indexed integer column to text, so the integer index cannot supply that comparison” explains why the scan remains. The second statement suggests a repair and predicts what the next plan should show.
+There are several distinct reasons for excessive work: wrong counts, an unsuitable access path, information lost through parameters, repeated inner work or an operation that spills. A single change rarely fixes them all. We will keep those causes separate while repairing one generated workload, checking the answer alongside the plan.
+The fixture uses the collection’s shop labels in a separate synthetic workload: shop 10 has 99,000 paid records; shop 20 has 1,000 pending records. It contains no purchase lines, payments or stock effects and is not a new history of the shop. Its deliberate skew lets a small test expose decisions that are hard to see with evenly distributed rows.
+Capture the query that runs
+Read counters at their scope
+Fix the first wrong estimate
+Knowledge is not an access path
+A partial index needs a proof
+Test both sides of the skew
+When the counts are right
+Capture the query that runs
+Keep the SQL text, parameter values and types, relation definitions, statistics state and relevant session settings with the plan. A console query with a literal is not necessarily the same planning problem as a prepared application query with unknown parameters. Roles, row policies and search paths can change which work is required too.
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SETTINGS)
+SELECT order_id
+FROM plan_orders
+WHERE shop_id = 20 AND status = 'pending';
+ANALYZE here executes the statement. It does not mean the standalone statistics command. Use a statement whose execution is acceptable, on a representative disposable copy when necessary. An analysed update really updates; rolling back row changes does not undo every possible external effect of arbitrary called code.
+TIMING OFF preserves counts and whole-query execution time while avoiding repeated node clock reads. SETTINGS exposes relevant non-default planning settings, but is not a complete environment manifest. JSON output is useful for tools that need the plan tree without parsing wrapped text.
+First establish whether execution work is actually the delay. A query can wait for a lock, sit behind a connection queue or deliver rows to a slow client. Operator improvements cannot remove an application queue. Operating and diagnosing PostgreSQL establishes that service boundary.
+Read counters at their scope
+Keep the general plan-reading rules in view: a parent can stop its child early, actual rows and times are per-loop averages, and buffer counts already accumulate repeated accesses and child work. They count accesses, not distinct pages. Read from the inputs towards the result, checking each counter’s scope before combining it with another.
+shared read counts blocks brought into shared buffers, including reads satisfied from the operating-system cache. local refers to session-local relations such as this fixture’s temporary tables. temp read and temp written describe temporary work files, such as a spilling sort. These categories answer different questions.
+Parallel plans add worker scopes: inspect worker detail, launched versus planned workers and imbalance before adding or multiplying counts. One slow worker can hold up a gather even when totals look reasonable.
+Fix the first wrong estimate
+For branches consumed to completion, compare expected and actual outputs from the leaves upward. A join’s error can have arrived from an earlier scan. Find the earliest material disagreement before changing the join method.
+Fresh single-column statistics in the fixture know that about one percent of records belong to shop 20, and about one percent are pending. They do not describe that these are the same records. Treating the conditions independently predicts roughly ten matches; execution returns 1,000.
+CREATE STATISTICS plan_joint (mcv)
+ON shop_id, status FROM plan_orders;
+ANALYZE plan_orders;
+The joint most-common-value summary changed the observed scan estimate from 10 to 977 rows for 1,000 actual rows. Sampling explains why the new estimate was close rather than exact. The route remained a sequential scan over the same table: improved knowledge had not yet created a cheaper access path.
+Choose statistics from the error. Stale counts after a bulk load suggest analyze. A rare but important skewed value may need a larger target. Correlated conditions can need joint common values or dependency statistics; grouping estimates can need distinct-count statistics. PostgreSQL 18 does not use extended statistics to estimate cross-table joins, so do not expect a within-table object to repair every join estimate.
+Knowledge is not an access path
+Now put a B-tree on integer shop_id, but ask for shop_id::text = '20'. The planner has an index for integer comparison, while the query compares text produced by an expression. In the experiment this remained a scan.
+CREATE STATISTICS plan_shop_text
+ON (shop_id::text) FROM plan_orders;
+ANALYZE plan_orders;
+The estimated output improved from 500 to 960 for the same 1,000 records. All 100,000 rows still needed the expression check. An expression statistic is not a stored search structure.
+If the application’s intended operation is integer equality, keep the column as an integer and type the parameter accordingly. The fixture’s corrected condition, shop_id = '20'::integer, became an index scan with 25 local buffer accesses, compared with 2,048 for the cast-column scan. For a real parameterised query, bind an integer rather than accepting arbitrary text as an identity.
+If text conversion really is the application’s required operation, an expression index is a different candidate. Choose it for that meaning and verify matching expressions and operators. Rewriting arbitrary comparisons just to make an index appear can change collation, missing-value or conversion-error behaviour.
+A partial index needs a proof
+The pending list now gets a specialised index:
+CREATE INDEX pending_history
+ON plan_orders (shop_id, order_id)
+WHERE status = 'pending';
+PREPARE order_list(integer, text) AS
+SELECT order_id FROM plan_orders
+WHERE shop_id = $1 AND status = $2
+ORDER BY order_id
+LIMIT 10;
+With the supplied values 20, 'pending', a custom plan can prove that every requested row belongs in the index. It scans that shop’s entries in order and stops at ten. A generic plan must work for any permitted second parameter. If it were paid, the pending-only index would omit the required rows.
+Figure 1 compares the two planning contexts, then fixes pending in the SQL itself. This is appropriate only when the application is asking for a pending list, rather than a general list whose status may vary.
+Figure 1 What does the planner know about status?
+ Query and plan [CONTROL {}]
+Custom · status supplied as pending
+Generic · status remains $2
+Generic · pending is fixed in SQL
+Query condition
+shop_id = 20 AND status = 'pending'
+Partial-index proof
+The answer lies within status = 'pending'.
+Observed route
+Ordered index-only scan → Limit 10
+3 local buffer accesses at Limit; 10 rows returned.
+Read all three observed routes
+Custom with pending uses the partial index and three local buffer accesses. Generic with an unknown status scans 2,048 heap pages and sorts. Generic with pending fixed in SQL uses the partial index and three local accesses. Each returns the same first ten pending order IDs for shop 20. These counts come from the native fixture; the boxes explain the proof, rather than simulating PostgreSQL.
+One PostgreSQL 18.6 run with a deliberately sparse index: (shop_id, order_id) WHERE status = 'pending'. Plan modes were forced to expose the distinction. No automatic switch to a generic plan or general speed ratio is claimed.
+The generic two-parameter plan scanned 2,048 heap pages and used a top-N sort. Top-N kept only ten rows in sort memory, but still consumed the 1,000 candidates to identify the first ten. The custom pending plan touched three local buffers at Limit and stopped after ten index outputs. Its label was Index Only Scan, yet it reported ten heap fetches: covering columns did not eliminate visibility checks on this unvacuumed fixture.
+A generic plan for the revised pending-only statement could also use the partial index. The status predicate was now known before binding the shop parameter. Its scan estimate described the possible complete run, while Limit still consumed only ten rows. The returned IDs were 99001 through 99010, the same pending result as before.
+Test both sides of the skew
+The pending-only query is not a replacement for a paid-order query. In the general statement’s custom paid case, shop 10 returned 99,000 candidates before Limit’s final ten; the pending index could not help. An additional full ordered index might remove that scan too, but would maintain entries for every record. The workload must earn it.
+To expose plan contexts, the worksheet uses plan_cache_mode = force_custom_plan and force_generic_plan. Automatic mode makes its own estimated-cost comparison after initial custom executions. The experiment does not show that PostgreSQL would automatically choose the forced generic plan or that all prepared statements should be forced custom.
+Read EXPLAIN EXECUTE for the session’s actual prepared statement. Generic plans retain symbols such as $1; custom plans show supplied constants. pg_prepared_statements can report the session’s prepared objects and plan-use counts. An unnamed protocol statement or a connection pool can make session state differ from a separate SQL console, so reproduce the driver’s behaviour as well as the text.
+For each repair, compare common, rare and empty values, as well as small and large tenants. Verify stable identities and ordering, then compare the work predicted to disappear. A warm run after building an index can benefit from cached data the baseline did not have. Keep page-access evidence and latency evidence distinct; repeat latency tests under the concurrency and cache conditions that matter.
+When the counts are right
+Accurate estimates do not guarantee that the requested work is cheap. A nested-loop inner lookup can be individually efficient and still run hundreds of thousands of times. Check the outer cardinality, whether the full join key narrows the inner search and whether repeated keys allow Memoize reuse. A hash or merge comparison can test a hypothesis, but disabling nested loops globally does not explain the original decision.
+For a sort, inspect method, memory, disk use and temporary I/O. For a hash operation, inspect batches and build width. Removing an unused large payload before either operation can reduce memory demand without changing the result. An ordered access path can sometimes remove a sort entirely; increasing work_mem merely changes how a remaining operation is paid for.
+Test memory changes locally and account for concurrent nodes, sessions and parallel workers. Avoid tuning server-wide page costs to make one demonstration choose a preferred route. Cost settings describe the expected environment; they cannot fix a predicate asking for the wrong operation or a missing index.
+A good repair record keeps the result contract, original plan, hypothesis, one relevant change and the new plan together. State what changed: an estimate became credible, a scan became bounded, repeated work fell, or a spill disappeared. Then state the limit: which values, data shape and execution context were actually checked. That makes the next regression diagnosable instead of merely surprising.
+Sources and further reading
+Checked on 24 October 2026. Download the plan-repair worksheet and run psql -X -v ON_ERROR_STOP=1 -f plan-repairs.sql in a disposable database. The complete file ran on a private PostgreSQL 18.6 instance. It uses temporary synthetic relations, disables parallel gathering for legible comparisons, forces the two stated plan modes and resets both changes. Counts and estimates in the article are observed; the proof diagram is explanatory. No automatic-plan-switch or production-latency claim is made.
+Using EXPLAIN and EXPLAIN: node scopes, partial consumption, loops, buffers, rechecks and execution caveats.
+Planner statistics and CREATE STATISTICS: joint and expression summaries and the join-estimation limitation.
+PREPARE, pg_prepared_statements and Partial indexes: plan contexts and predicate implication.
+Resource consumption, Query planning settings and Parallel plans: operation memory, diagnostic settings and worker scopes.
+ 
+LINKS
+/how-this-is-made/
+#capture-the-query-that-runs
+#read-the-counters-at-their-scope
+#fix-the-first-wrong-estimate
+#knowledge-is-not-an-access-path
+#a-partial-index-needs-a-proof
+#test-both-sides-of-the-skew
+#when-the-counts-are-right
+/review/relational-collection/postgresql/operations/
+/review/relational-collection/query-execution/
+/review/relational-collection/evidence/r34/plan-repairs.sql
+https://www.postgresql.org/docs/18/using-explain.html
+https://www.postgresql.org/docs/18/sql-explain.html
+https://www.postgresql.org/docs/18/planner-stats.html
+https://www.postgresql.org/docs/18/sql-createstatistics.html
+https://www.postgresql.org/docs/18/sql-prepare.html
+https://www.postgresql.org/docs/18/view-pg-prepared-statements.html
+https://www.postgresql.org/docs/18/indexes-partial.html
+https://www.postgresql.org/docs/18/runtime-config-resource.html
+https://www.postgresql.org/docs/18/runtime-config-query.html
+https://www.postgresql.org/docs/18/parallel-plans.html

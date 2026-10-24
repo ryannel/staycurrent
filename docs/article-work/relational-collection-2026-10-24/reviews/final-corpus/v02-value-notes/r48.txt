@@ -1,0 +1,168 @@
+Relational collection · Draft for review
+
+H1 CockroachDB table locality and region survival
+
+Deep diveAbout 8 minutes AI-generated   
+
+Shop 10 normally accesses its data from eu-north; Harbour Tea, shop 20, normally accesses its own from eu-west. Putting both shops in one regional table gives that entire table one home. Giving rows individual homes can bring each shop’s ordinary work nearer its application. Neither choice says which failures the database must survive.
+
+CockroachDB expresses these as separate policies: table locality describes the access pattern to optimise, while the database’s survival goal describes the failure its replication should tolerate. Choose both from an operation’s requirements, then inspect the replicas and execution that result.
+
+We use the tenant-scoped variant, with shop IDs in related keys and references. The three region names eu-north, eu-west and us-east are logical teaching labels. The native worksheet checks CockroachDB 25.4.17 on six local processes with those labels; it does not simulate independent geographical regions.
+
+H2 Give the database region information
+
+A business column named home_region is ordinary data until a placement policy uses it. Cluster regions begin with node startup localities, such as --locality=region=eu-north,zone=z1. Those labels must describe the actual deployment. Renaming three processes on one machine does not remove their shared power, disk or network fate.
+
+A database then chooses its regions from those advertised by the cluster. One is primary. This supplies defaults; it is not a declaration that every row has only one copy or that the primary region is the only SQL entry point.
+
+SHOW REGIONS FROM CLUSTER;
+CREATE DATABASE locality_lab PRIMARY REGION "eu-north"
+REGIONS "eu-west", "us-east";
+SHOW REGIONS FROM DATABASE locality_lab;
+
+Check the running version, deployment product and entitlement as well as syntax. The recorded self-hosted drill had no installed licence key and ran within the documented fresh-cluster grace period. That records this ephemeral test’s conditions, not an entitlement for a long-lived service.
+
+H2 One table home, or one home per row?
+
+REGIONAL BY TABLE gives a table one home region. It suits a table whose latency-sensitive reads and writes mostly originate there. It is the default locality in a multi-region database, normally using the primary region. An explicit home can be a different database region.
+
+CREATE TABLE shop_directory (
+shop_id INT PRIMARY KEY,
+name STRING NOT NULL,
+home_region STRING NOT NULL
+) LOCALITY REGIONAL BY TABLE IN "eu-north";
+
+The directory’s Harbour Tea row can say home_region = 'eu-west' while the table remains homed in eu-north. That string does not relocate the row. If the directory is small and seldom read remotely, this can be acceptable; if remote current reads dominate, choose a locality that matches that requirement.
+
+REGIONAL BY ROW gives individual rows homes. CockroachDB adds a region column, normally the hidden crdb_region, and partitions the table’s indexes by region. Shop 10’s orders can use eu-north while shop 20’s future orders use eu-west within the same table.
+
+CREATE TABLE locality_orders (
+shop_id INT NOT NULL,
+order_id INT NOT NULL,
+customer_id INT NOT NULL,
+status STRING NOT NULL,
+PRIMARY KEY (shop_id, order_id),
+INDEX locality_orders_customer (shop_id, customer_id)
+) LOCALITY REGIONAL BY ROW;
+
+INSERT INTO locality_orders
+(crdb_region, shop_id, order_id, customer_id, status)
+VALUES ('eu-north', 10, 103, 1, 'pending');
+
+This is an order projection for placement inspection, not the complete purchase transaction. The worksheet includes the agreed three shop 10 orders. It adds no shop 20 purchases, stock movements or payments.
+
+Without an explicit region, the normal default uses the inserting gateway’s region when it belongs to the database, falling back to the primary region otherwise. A failover that sends shop 10’s inserts through eu-west can therefore change the selected default. Derive the home from the application’s shop policy and set it deliberately, or use a carefully verified schema mechanism that does so.
+
+Existing row homes do not ordinarily change just because a request uses another gateway. Changing crdb_region moves the row’s regional placement and associated index entries; it is more than updating an informational label. Optional auto-rehoming and region-inference features need an explicit version-specific design, rather than an assumption behind the default shown here.
+
+H2 The indexes and rules travel too
+
+The customer index on the regional-by-row table is partitioned automatically too. A lookup with a known row region can target that partition. A query without a regional restriction may search more widely, although locality-optimised search can avoid remote work in suitable cases. Inspect the actual plan; a hidden region column does not make every query local.
+
+Region-aware access also does not replace tenant access control. Requesting shop 10’s rows from the correct region still requires the correct shop predicate and authorisation. Every child reference in the tenant-scoped purchase carries the same shop ID.
+
+Uniqueness needs equal care. Leaving crdb_region out of a declared unique key asks CockroachDB to enforce that key across regions, which can require additional checks. Including it changes the rule to uniqueness within each region. Adding the region merely to remove remote checks can silently permit duplicate business identities.
+
+Here the declared primary key remains (shop_id, order_id). Order (10, 103) must not be independently created in another region. For products, orders and lines intended to work together, align homes and their reference design. A transaction still crosses regions when one of its required rows or constraints lives elsewhere.
+
+H2 Current reference reads in every region
+
+GLOBAL serves another pattern: reference data read frequently across regions and changed infrequently. It supports low-latency current reads in each database region, using a write protocol with additional coordination and timestamp-related cost.
+
+CREATE TABLE policy_reference (
+policy_id INT PRIMARY KEY,
+description STRING
+) LOCALITY GLOBAL;
+
+The worksheet creates an empty reference table to inspect its policy. A real candidate might contain agreed reference descriptions that many regional operations need; measure its updates and freshness requirements before adopting the setting.
+
+These current reads differ from deliberately choosing an old snapshot with AS OF SYSTEM TIME. GLOBAL pays on writes to support its current-read contract. It does not create an independent writable authority in every region, and is a poor default for a stock row changed on every purchase.
+
+Figure 1 compares the access choices. Start with a current read, then switch to an update. The database uses the same region-survival goal in every case.
+
+Figure 1 Choose where access should be efficient
+
+Table policy  [CONTROL {}] REGIONAL BY TABLE · eu-northREGIONAL BY ROW · each shop’s homeGLOBAL · reference reads everywhereOperation  [CONTROL {}] Current point readUpdate
+
+eu-north
+
+Home for both shops’ rows
+
+eu-west
+
+Requests reach eu-north
+
+us-east
+
+Requests reach eu-north
+
+The whole table has one home. A request from another region still reaches that home for an ordinary current read.
+
+A comparison of access contracts, not a replica map or measured route. Shop 10’s home is eu-north; shop 20’s is eu-west. Regional-by-table deliberately gives this entire example table one home. GLOBAL describes suitable reference data, not a recommendation for frequently updated stock. Other replicas exist; the database survival goal separately governs voting placement. Eligible historical reads are outside this comparison.
+
+A global promotion limit of 100 remains one protected entitlement. Replicating its value near every shop does not grant every region its own allowance of 100. A local read of a description can be cheap; taking the last voucher still needs a correct coordinated decision. The table’s name or locality does not supply that protocol.
+
+H2 Choose the failure separately
+
+The default database survival goal is zone failure. To require continued reads and writes after an entire region becomes unavailable, configure region failure and supply at least three database regions.
+
+ALTER DATABASE locality_lab SURVIVE REGION FAILURE;
+SHOW CREATE DATABASE locality_lab;
+
+For the ordinary three-region configuration, this produces five voting replicas per range, spread 2–2–1. Three votes form a majority. Losing either two-vote region leaves three; losing the one-vote region leaves four, provided the survivors can communicate. A zone-surviving configuration does not imply that same regional guarantee.
+
+Only two votes can be in the home region in this arrangement. Even a request entering beside its home leaseholder needs agreement from outside the region to complete the range’s replicated write. That dependency buys survival of the home region’s loss. Moving the SQL gateway cannot remove it.
+
+Locality still determines which accesses should be efficient; survival still determines the required failure tolerance. The word “regional” does not mean all replicas remain inside the home. The word “global” does not itself select a region-survival goal. All tables in this database share the chosen survival goal.
+
+A complete purchase can touch several groups, constraints and its transaction record. Its availability depends on that entire path, reachable gateways and sufficient surviving capacity, rather than one stock range’s arithmetic. Regional placement also does not replace backup, restore or a complete data-residency assessment.
+
+H2 Compare the policy with the replicas
+
+Accepted SQL records a desired policy. It does not show that data has finished moving. Inspect the schema, regional partitions, generated zone settings and current ranges separately.
+
+SHOW TABLES;
+SHOW CREATE TABLE locality_orders;
+SELECT crdb_region, shop_id, order_id FROM locality_orders;
+SHOW PARTITIONS FROM TABLE locality_orders;
+SHOW ZONE CONFIGURATIONS;
+SHOW RANGES FROM TABLE locality_orders WITH DETAILS;
+
+SHOW TABLES exposes locality; SHOW CREATE exposes the region column and keys. SHOW PARTITIONS shows regional index partitions, while zone configurations describe generated placement constraints and lease preferences. Prefer the high-level multi-region settings over casual manual edits to their generated configuration.
+
+Range details identify voting and non-voting copies, replica localities and the leaseholder. Match those actual node IDs to startup localities. Check the relevant primary and secondary spans, not just one convenient row, and inspect again after convergence. Detailed range inspection is administrative work with a cost; scope it to the object under investigation.
+
+The final local run accepted all three table policies, exposed the region-default expression and produced six regional index partitions: three for the primary index and three for the customer index. Their generated settings requested five voters with regional constraints and home-region lease preferences. An attempted duplicate (10, 103) in eu-west failed with 23505, leaving the three original rows unchanged.
+
+Physical inspection was narrower. The objects still shared one range; a later snapshot showed five voters, distributed two in eu-north, one in eu-west and two in us-east, with its leaseholder in eu-north. That verifies a five-voter placement at that instant. It does not verify distinct regional partition ranges, every home preference or completed convergence of every generated constraint. Accepted policy and that shared snapshot cannot establish the complete intended placement.
+
+The distinction matters during repair and topology change. A database can have the right desired constraints and temporarily lack enough replicas in the required places. A plan can also reveal an unexpected remote lookup despite suitable table homes. Query work and hot ranges develops that execution check.
+
+H2 Prove the promise at the right boundary
+
+Download the locality inspection worksheet. It requires a new disposable cluster advertising these three regions and sufficient nodes for the policy. It creates its own database, projections and index; run it with appropriate administrative privileges. The recorded harness verified every listener’s owned process and each client’s cluster identity before mutation, then removed all six processes and their temporary resources.
+
+The final inspection used in-memory stores, and those processes share one host. The drill can verify accepted SQL, hidden columns, partitions, generated configuration and observed replica placement. It cannot establish inter-region latency, independent zone or regional failures, application failover or service capacity after such a failure. A port responding after another process stops would not prove those promises either.
+
+In a deployment with the real failure domains, start from inspected healthy placement. Exercise labelled complete purchases through each intended gateway, remove the promised domain and check acknowledged and uncertain outcomes through recovery. A surviving application must reach every dependency; an ambiguous response still needs the request-reconciliation protocol.
+
+Record the actual versions, topology, operation and load with the results. Verify restored redundancy and headroom as well as the first successful request. Operating a CockroachDB cluster develops the operational response; transactions and retries supplies the purchase outcome contract.
+
+H2 Sources and further reading
+
+Checked on 24 October 2026. Access diagrams are policy models. Native observations use CockroachDB 25.4.17 on one host, with explicit limits on what that proves.
+
+CockroachDB 25.4, Multi-region capabilities: cluster/database regions and policy layers.
+
+Table localities and ALTER TABLE: localities: home defaults, partitioning, unique-key semantics and explicit row homes.
+
+Global tables: current reads and the write trade-off.
+
+Survival goals: database scope, required regions and replication cost.
+
+SHOW PARTITIONS, SHOW ZONE CONFIGURATIONS and SHOW RANGES: inspect desired and actual placement.
+
+Licensing FAQs: recorded ephemeral no-key grace conditions, not a production entitlement.
+
+END r48

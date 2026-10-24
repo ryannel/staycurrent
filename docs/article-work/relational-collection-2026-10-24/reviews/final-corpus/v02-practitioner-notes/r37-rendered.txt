@@ -1,0 +1,126 @@
+ 
+Relational collection · Draft for review
+Restoring PostgreSQL to a recovery target
+ Deep diveAbout 9 minutes AI-generated 
+A PostgreSQL base backup supplies the files from which recovery can begin. Archived WAL supplies the changes needed to make those files consistent and continue to a chosen target. Point-in-time recovery depends on both: the right base and an unbroken path through the right log history.
+A usable recovered database is still only a candidate for service. Stopping before a mistaken transaction also stops before later valid work. That work needs an identity, a final source history and a complete reconciliation of its effects before the candidate becomes the writer.
+Consider a separate tea-class recovery drill. Session S503 starts with capacity 3, no bookings and remaining capacity 3. At the scenario’s 11:00 UTC on 23 October, a mistake changes capacity to 30 while leaving remaining capacity at 3. At 11:05 Edda validly books B203, taking remaining capacity to 2. Restoring before the mistake recovers capacity 3 and remaining capacity 3, but excludes B203. Reconciliation must bring back that booking and its single decrement, ending at 2. These are alternative drill histories, separate from the core shop and other class races.
+A base and a continuation
+When the archive command can report success
+Identify the transaction to exclude
+Restore without the live source
+Close the source history
+Bring back the complete effect
+Retain the whole route to service
+A base and a continuation
+pg_basebackup coordinates a physical copy of a running PostgreSQL cluster. “Cluster” here means the databases managed by one server’s data directory, including shared catalogues. It does not mean a distributed group of independent servers. A base backup is a whole-cluster recovery starting point, rather than a way to roll back one selected table in place.
+The copy is made while pages can change. WAL allows PostgreSQL to reconcile those page versions into a usable state. Recovery needs the WAL covering the backup itself before it can replay onward. A target during the taking of that base is too early; select an older base whose recovery can reach a consistent state before the intended target.
+pg_basebackup -h /owned/private/socket -p 55437 -U backup_role -D /owned/empty/base -X stream -c fast
+pg_verifybackup /owned/empty/base
+This is the shape of the commands, with deliberately named private paths. -X stream streams the WAL required during the backup; it needs another WAL-sender connection as well as the backup connection. It does not automatically archive every later segment forever. The backup role needs replication permission, a matching connection rule and access to the chosen source; it need not be the application role.
+pg_verifybackup compares files with the manifest and checks the WAL needed to make the base usable. It does not prove that next Tuesday’s target is reachable or that the recovered bookings make sense. Later archived WAL is outside that base’s initial manifest coverage. In the native drill the manifest check passed, then a real restore tested the later chain.
+A logical dump answers another need. pg_dump can recreate selected database objects and rows, and is useful for portability and selective recovery. It cannot serve as the physical starting files for WAL replay. For a single damaged table, one practical approach is to restore an isolated whole-cluster candidate to the desired history, then extract and reconcile the required objects carefully.
+PostgreSQL also supports incremental physical backups. An increment depends on an earlier backup’s manifest and the required server-side WAL summaries; it is not a standalone data directory. pg_combinebackup combines the full base and dependent increments in order into a synthetic full backup. Keep the dependencies, manifests and required WAL together in retention. This article’s executed drill uses one full base, so it claims no incremental-chain success.
+When the archive command can report success
+WAL archiving saves completed segment files before PostgreSQL recycles them. Enable an appropriate wal_level, normally replica or higher, and archive_mode, then configure an archive command or library. Establish and test this path before relying on a base backup’s later continuation.
+The command’s exit status carries a consequential promise. A zero result tells PostgreSQL that this segment was safely archived and may eventually be recycled locally. A non-zero result causes retry. Returning success after queuing a copy that can still disappear leaves a hole in the recovery chain.
+Repeated delivery is possible. If the destination already contains the same named file with identical persisted bytes, the archive operation can report success. If the bytes differ, it must fail instead of overwriting the older history. Keep archives for unrelated clusters separate: their names alone do not supply a globally unique database identity.
+The local drill’s archiver created files exclusively, compared repeated files, flushed the saved file and its directory, and refused different contents. All copies still occupied one host. That exercised the command contract; it did not demonstrate protection against losing the host or its storage. A production design needs a destination and credentials that survive the particular failure being planned for, including access to encryption keys.
+A quiet server may take a long time to fill a segment. archive_timeout can force periodic switches; pg_switch_wal() can force one for a controlled test. A switched segment is not yet a confirmed archive copy. Wait for the archive operation’s success and test retrieval. pg_stat_archiver helps follow successes and ordinary failures, but counters alone do not prove every required file remains available.
+Watch both recoverability and local storage. A failing archive keeps needed segments in pg_wal and can eventually fill the volume. Deleting them by hand may free space while destroying the very chain the backup requires. Fix the destination, permissions or retention fault, and verify which recovery points remain usable.
+Identify the transaction to exclude
+When a mistake is discovered, preserve the original history before changing it. Record the affected rows, the transaction identity if available and enough surrounding accepted work to test both sides of the target. An application’s placed_at value is not necessarily its database commit time.
+The native drill recorded the bad transaction as XID 753 in its own short-lived cluster. That number identifies this run, not a permanent business operation or a globally unique incident. Recovery targeted that transaction with recovery_target_inclusive = off, stopping before its commit. The scenario’s 11:00 and 11:05 labels were not passed off as observed commit timestamps.
+restore_command = 'cp /owned/archive/%f %p'
+recovery_target_xid = '753'
+recovery_target_inclusive = off
+recovery_target_action = 'pause'
+recovery_target_timeline = '1'
+Create recovery.signal in the candidate’s restored data directory to request archive recovery. The settings above are the recorded drill’s target, not values to paste into another cluster. %f names the requested archive file; %p is the destination path PostgreSQL asks the restore command to fill. Missing files must return failure. Some history-file requests can legitimately be absent, so read the recovery outcome rather than treating every failed file lookup as the same incident.
+A time target needs an explicit time zone and the same attention to inclusivity. A named restore point can identify a deliberately marked position. An LSN target names log progress. Configure one intended target kind, establish what its boundary means, and verify actual rows after recovery. Guessing a target XID from nearby numbers is especially unsafe: transaction ID allocation is not commit order.
+The timeline setting identifies the continuation to follow. Completing archive recovery starts a new timeline, so future WAL does not overwrite the abandoned continuation. Keep the timeline history files. Choosing the latest reachable timeline is useful in some designs, but it is not a substitute for deciding which branch contains the history you intend to recover.
+Restore without the live source
+Restore into an isolated destination with compatible server binaries and all required tablespaces. Check ownership, permissions and restored links before startup. Review copied configuration, archive commands, connection rules and extension requirements. A copied setting that points back to the original service can defeat the purpose of an isolated drill.
+The native controller used a new candidate directory and private socket, with no TCP listener. It stopped the original source before restoring. The candidate could obtain WAL only from the saved archive; copying extra files opportunistically from a live source was not part of its success path.
+With target action pause, PostgreSQL reached the target and remained in recovery so the controller could inspect it before ending recovery. pg_is_in_recovery() returned true and replay was paused. The session row was S503, 3, 3; bookings and accepted request records were both empty. Those queries proved the mistake was excluded and the later valid booking was outside the recovered history too.
+starting point-in-time recovery to XID 753
+recovery stopping before commit of transaction 753
+pausing at the end of recovery
+The second candidate used the same saved base but an archive copy missing segment 000000010000000000000003, the segment needed to reach the target in this run. Startup failed because recovery ended before the configured target was reached. A valid base alone was insufficient. The complete-archive candidate then reached the intended boundary successfully.
+Testing a missing required segment is more informative than seeing a backup file in a directory. It shows whether the procedure depends on retained WAL and whether failure is surfaced before the candidate is accepted. Preserve evidence and restore again from untouched copies when the chosen target is wrong; do not casually advance an inspected candidate past a mistake you still need to exclude.
+Close the source history
+The final list of excluded valid work must come from a history that can no longer grow. Otherwise a booking can commit on the source after enumeration but before routing changes, leaving its confirmation on the discarded side.
+The drill gave every admitted booking the same gate protocol. Under Read Committed, the booking takes a shared lock on a single gate row, reads whether it is closed and retains that lock until its transaction ends. Closing the gate updates the same row. That update waits for previously admitted transactions; later admissions wait behind it and then observe the closed value.
+The controller held the closing transaction open while a separate request for the existing B203 identity arrived. It observed that request waiting for a lock, committed the fence and obtained the error source fenced. The accepted source ledger then contained only booking-edda-B203 for B203, Edda and S503. The old server was stopped after this closed-history enumeration.
+This protects only the declared fixture, where every booking path uses the gate. Administrators, importers and other live-service writers need an enforced boundary too. A routing update alone does not revoke old connections or stop an isolated former writer returning later. Resolve already-admitted and uncertain requests before taking the final enumeration, and keep that history closed through acceptance.
+Figure 1 follows the recovered state and the later booking. Step through the replay of the same identity and watch remaining capacity.
+Figure 1 · Keep the booking, remove the mistake
+Conceptual alternative class history. 11:00 and 11:05 are scenario labels, not captured commit times.
+Saved baseS503 · 3 places
+11:00 · mistakeCapacity becomes 30
+11:05 · EddaB203 accepted
+Close old writerNo new admissions 
+Candidate: not yet restored 
+Capacity—
+Remaining—
+B203 copies— 
+The source contains a bad capacity change and a later valid booking. Preserve both histories while preparing an isolated candidate.
+Play
+Back
+Next
+Reset
+Recovery goes back before the mistake, so it also removes B203. Reconciliation brings back the booking and its decrement of remaining capacity together. The old writer stays fenced throughout acceptance. The illustrated second attempt reuses the same request identity.
+Read the history as text
+The saved base has capacity and remaining capacity 3.
+The mistake changes capacity to 30, leaving remaining capacity 3; B203 then consumes one place, leaving 2.
+Fence all old writers, settle in-flight requests and enumerate the closed history.
+Restore before the mistake: capacity 3, remaining 3, no B203.
+Reconcile B203 and its decrement in one transaction: remaining 2.
+Repeat the same identity and payload: one booking, remaining 2.
+Only after data and external-effect acceptance may the candidate receive write authority.
+Bring back the complete effect
+The restored candidate has three available places. Copying B203’s row without reducing remaining capacity would overstate what remains. Decrementing again on every retry would consume places without new bookings. Reconciliation needs one transaction covering the booking, its decrement of remaining capacity and the stable request outcome.
+In the native fixture, the first application returned created. Repeating the same key and payload returned existing; reusing the key for a different customer raised request payload conflict. The administrator performed this reconciliation serially in the isolated candidate. Its small helper is not offered as a concurrent general-purpose idempotency protocol.
+ The executed recovery and reconciliation
+HistoryCapacityRemainingB203
+Original source after mistake and booking302One
+Candidate paused before mistake33Absent
+First reconciliation32One
+Same request repeated32One 
+External effects require separate evidence. A class confirmation email delivered before recovery is not undone by removing its outbox row. A provider charge is not refunded by rewinding a database. Reconcile effect identities against their own authorities before resending, suppressing or compensating. This fixture generated no external effects, so its recorded external acceptance is limited to that fact.
+After inspection, the controller resumed replay, allowing targeted recovery to finish, then closed the candidate’s booking gate while reconciliation ran. The old source remained stopped and fenced. The final acceptance found one B203 for Edda, one accepted request identity, capacity 3 and remaining capacity 2. It deliberately left the candidate closed to new admissions; authority transfer in a real service follows acceptance of all those boundaries.
+The complete restore drill creates its own source, base, local archive and candidates, verifies endpoint ownership, exercises the missing-WAL and fence-race counterexamples, and removes its disposable instances. Run it from an empty directory with Python 3 and the stated PostgreSQL 18.6 binary directory available. It uses local trust authentication only inside the private socket directory and is an instructional mechanism test, rather than a deployment backup service.
+Retain the whole route to service
+Backup retention is a graph of dependencies. An increment needs its ancestors; a target needs the required contiguous WAL and timeline history. Configuration, extension libraries, keys and the authority to retrieve the copies can be dependencies too. Removing an old base because a newer increment exists may remove every usable route through that increment.
+A recovery objective needs a test starting from the copies and access you would actually possess after the failure. Include retrieval, provisioning, combination if needed, replay, application checks, reconciliation and authority transfer in the time to acceptable service. This local drill reports neither an RPO nor an RTO. Its several directories prove no independence from host or storage failure.
+A physical standby can shorten the route to another running copy, but it also replays mistakes. Physical replicas and promotion follows which copy may take authority. Moving the history into a new major version introduces different compatibility and cutover questions, developed in Upgrading and migrating PostgreSQL.
+Sources and further reading
+Primary PostgreSQL 18 documentation checked on 24 October 2026. The native experiment uses PostgreSQL 18.6, one full base backup, one saved local archive, an exclusive XID target and isolated candidates on one host. The figure is a conceptual history; the scenario’s times are not observed commit times. No incremental backup run, offsite durability, provider effect or service recovery-time result is claimed.
+Continuous archiving and PITR: base/WAL dependencies, archive success, restoration, timeline histories and target limits.
+pg_basebackup and pg_verifybackup: coordinated copies, streaming WAL, manifest verification and its limits.
+Recovery targets and Recovery control functions: inclusivity, target actions, pause and resume.
+pg_combinebackup: incremental dependencies and synthetic full backups.
+SQL dump: logical snapshots, selective restoration and compatibility.
+Explicit locking and Transaction isolation: the local gate’s lock and Read Committed protocol.
+ 
+LINKS
+/how-this-is-made/
+#a-base-and-a-continuation
+#make-the-archive-earn-its-success
+#identify-the-transaction-to-exclude
+#restore-without-the-live-source
+#close-the-source-history
+#bring-back-the-complete-effect
+#retain-the-whole-route-to-service
+/review/relational-collection/evidence/r37/restore-drill.py
+/review/relational-collection/postgresql/replication/
+/review/relational-collection/postgresql/upgrades/
+https://www.postgresql.org/docs/18/continuous-archiving.html
+https://www.postgresql.org/docs/18/app-pgbasebackup.html
+https://www.postgresql.org/docs/18/app-pgverifybackup.html
+https://www.postgresql.org/docs/18/runtime-config-wal.html#RUNTIME-CONFIG-WAL-RECOVERY-TARGET
+https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-RECOVERY-CONTROL
+https://www.postgresql.org/docs/18/app-pgcombinebackup.html
+https://www.postgresql.org/docs/18/backup-dump.html
+https://www.postgresql.org/docs/18/explicit-locking.html
+https://www.postgresql.org/docs/18/transaction-iso.html

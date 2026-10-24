@@ -1,0 +1,148 @@
+Relational collection · Draft for review
+
+H1 CockroachDB schema jobs under load
+
+Deep diveAbout 6 minutes AI-generated   
+
+A CockroachDB schema change can keep ordinary SQL available while it changes stored data in the background. That makes a large index or new stored column possible without one long table-wide outage. It also makes the change an operation to observe: the statement, its job, concurrent application work and final data can give different evidence about completion.
+
+The shop needs hundredths alongside each order line's decimal agreed price. In the collection's fixed-scale variant, 20.00 becomes 2000 and 4.50 becomes 450. We will choose a CockroachDB 25.4 computed-column design, follow its backfill under concurrent writes, then use a failed unique index to distinguish an accepted definition from a successfully enforced rule.
+
+H2 Choose the compatible change first
+
+Live schema changes and backfills establishes the application protocol: expand compatibly, keep new writes correct, fill existing rows, accept the new representation, then retire old callers before removing their interface. Online schema machinery handles database transitions; it cannot retire a forgotten worker or make yesterday's application understand a new unit.
+
+Here the decimal remains the write authority. A stored computed column derives its hundredths in the database:
+
+ALTER TABLE order_items
+ADD COLUMN unit_price_minor INT8
+AS ((unit_price * 100)::INT8) STORED;
+
+The source column is finite DECIMAL(8,2) NOT NULL. Multiplying by 100 is exact for this declared domain, and the result fits INT8. Check exceptional numeric values, bounds and scale if your source domain differs. This article does not turn an arbitrary currency model into integers merely by naming a column “minor”.
+
+STORED means that the derived value is kept with the row, so existing data needs to be filled. Later decimal changes derive the corresponding integer. An old caller using explicit column lists can continue writing the decimal; a new reader can use the integer after acceptance. A caller cannot independently assign 7 to the computed column and make the two disagree.
+
+This choice has a deliberate limit: it does not make the integer the writable authority. An integer-only writer or a later removal of the decimal needs another compatible handover. Do not drop the column on which the generated value depends and assume the application migration is complete.
+
+Figure 1 · The schema job and the application have separate completion points
+
+Database work
+Publish compatible definitions→Fill and validate stored data→Job succeeded
+
+Application contract
+Old explicit-column callers continue→Check equivalent prices and receipts→Enable new readers
+
+The upper lane cannot prove the lower lane's acceptance. Neither lane proves that old writers have retired.
+
+Decimal price
+Writable authority→↓ ×100 →↓Stored hundredths
+Derived; cannot be assigned independently
+
+Conceptual dependencies, not a trace of CockroachDB's internal schema states. In this chosen computed-column design the decimal remains authoritative throughout; the drawing does not promise a writable integer-only interface.
+
+Explicit column lists matter even for an additive change. A positional insert may no longer match the table, and a prepared SELECT * can have a changed result shape. Exercise the deployed driver and prepared commands; successful DDL is not evidence about their result decoding.
+
+H2 Follow the job that owns the work
+
+CockroachDB records schema changes as jobs. Capture the identity of the intended operation, then inspect its status, detailed running state, progress, error and timestamps. On a busy cluster, “the newest job” may belong to somebody else's deployment.
+
+SELECT job_id, job_type, description, status,
+running_status, fraction_completed, error
+FROM [SHOW JOBS]
+WHERE description LIKE '%order_items%'
+ORDER BY created DESC;
+
+-- After identifying the intended operation:
+SHOW JOB <job_id>;
+
+The description in a list may be abbreviated; the exact job view provides more context. Keep the original statement, user, table and job ID in the deployment record so an operator can distinguish the failed attempt from a later retry with the same index name.
+
+Job observations and the question they leave open
+| Observation | Meaning | Next check
+
+| Pending or running | Work is admitted or in progress | Is progress changing, or is the job retrying the same failure?
+
+| Pause requested | A pause was requested | Has it reached paused?
+
+| Paused | Execution is paused | What schema/caller state remains supported, and what resources are retained?
+
+| Reverting | Failed or cancelled work is being undone | Has cleanup finished, and what is actually present?
+
+| Revert failed | Cleanup encountered a terminal error | Investigate the exact error and supported recovery; do not assume the old state returned
+
+| Succeeded | The job completed its operation | Do stored data and application behaviour satisfy the intended contract?
+
+A progress fraction measures the job's reported work. It is not a percentage of the application's deployment, a reliable countdown, or proof that the next stage will need the same time. A job that remains running can be repeatedly retrying an allocation error. Compare successive state and error evidence with resource observations.
+
+H2 Keep room for the backfill
+
+The schema job shares the cluster with ordinary requests. Reading existing rows, building new entries and writing replicated data consumes CPU, memory, storage bandwidth and capacity. An online operation can therefore preserve logical availability while making customer work too slow. Keep a budget for request latency and errors, resource pressure, contention and range health.
+
+The native rehearsal first used a deliberately small 64 MiB SQL memory allowance. Even the five-row computed backfill stayed running while its log repeatedly reported insufficient memory to create a BulkAdder. No useful completion followed merely from waiting. That observation concerns the test's process settings, not a minimum production sizing rule.
+
+The fixture was rerun with a 256 MiB process-local SQL allowance. A separate generated table of 50,000 anonymous line-shaped rows provided work for a computed-column backfill while another connection updated quantities. Its IDs and updates are synthetic; they do not add orders or change the collection's purchase history. The record captures committed updates during the DDL interval and checks every resulting price pair. It is a functional concurrency check, not a throughput or latency benchmark.
+
+For your deployment, establish a baseline and watch the workload during the operation. A growing resource problem is reason to investigate or use supported job controls, rather than to keep launching the same schema change. PAUSE JOB and CANCEL JOB are requests with observable state transitions. A cancellation can start cleanup; it is not an instantaneous return to the previous physical storage state.
+
+Keep the supported application population explicit while work pauses. Here old readers can continue using the decimal. New integer readers have not been enabled merely because the new column was requested. For a manually writable target column, the application bridge must keep every admitted new or edited row correct while the backfill drains old work; a paused cursor cannot supply that protection.
+
+H2 Accept values, then accept their meaning
+
+After the job succeeds, query the complete intended table for missing or unequal values:
+
+SELECT order_id, line_no, unit_price, unit_price_minor
+FROM order_items
+WHERE unit_price_minor IS NULL
+OR unit_price_minor IS DISTINCT FROM unit_price * 100;
+
+Use an acceptance identity and read path that cover the whole scope. A tenant-filtered result, a partial key range or a stale observation can hide the rows that matter. Keep the write rule active during and after the check so a concurrent writer cannot recreate the inconsistency.
+
+The unchanged agreed prices in the native shop projection
+| Order · line | Decimal | Hundredths
+
+| 101 · 1 | 4.50 | 450
+
+| 101 · 2 | 35.00 | 3500
+
+| 102 · 1 | 20.00 | 2000
+
+| 103 · 1 | 20.00 | 2000
+
+| 103 · 2 | 4.50 | 450
+
+The native check finds no unequal pairs and calculates order 103 as 2900 hundredths: its mug and two teas still total 29.00. It also attempts an independent assignment to the computed column and requires refusal. Those observations establish the chosen derivation; they do not prove that a new receipt displays 29.00 rather than 2900.00. Compare the actual application results before enabling that reader.
+
+H2 A unique index must prove uniqueness
+
+An index can finish its physical work only to discover that the intended rule is false. Consider a separate anonymous import fixture with two rows carrying the same required source_id. Creating a unique index on that column must reject the existing duplicate.
+
+CREATE UNIQUE INDEX source_once
+ON import_keys (source_id);
+
+The native test requires that first build to fail, records its job and error, and waits until the failed index is absent from SHOW INDEXES. It then resolves the declared duplicate in this scratch fixture, repeats the build, and requires success. Finally it tries another duplicate insert and a distinct insert. The former must fail; the latter must work. A successful build without those semantic checks would leave the meaning of the key untested.
+
+In a real import, resolving duplicates is a business decision. Repeated identical input, conflicting payloads and old source versions can need different treatment. Deleting arbitrary production rows to make an index build pass can destroy valid history. Keep writes that would recreate duplicates controlled until the index is successfully enforcing the rule.
+
+CockroachDB creates indexes online; its accepted CONCURRENTLY keyword is compatibility syntax, not PostgreSQL's concurrent-index protocol. A PostgreSQL-specific repair recipe for an invalid concurrent index is therefore not evidence about this job. Inspect the CockroachDB job and current descriptor, then follow its supported cleanup path. Logical disappearance also does not prove that all old bytes have already been garbage-collected.
+
+H2 Keep DDL boundaries explicit
+
+Run these changes as individual schema statements with explicit acceptance between them. CockroachDB documents limitations on general multi-statement transactions containing schema changes: some ordinary work may commit even when schema work fails. Do not wrap an entire deployment in BEGIN and assume every possible DDL failure restores every previous statement.
+
+Before contraction, account for old application processes, workers, imports and in-flight transactions. A completed job cannot prove that they have stopped using a column. Pause or fence obsolete writers, resolve their work, then apply the separately planned authority change or removal. The safe pause point is a compatible schema with known callers, not simply a green migration-runner status.
+
+The native fixture stops after accepting derived integer reads and enforcing the scratch unique key. It does not perform an integer-only writer handover, remove the decimal, measure production load or simulate independent machines. Upgrading a CockroachDB cluster owns the different compatibility boundary between binaries and cluster version.
+
+H2 Sources and further reading
+
+Checked against CockroachDB 25.4 primary documentation on 24 October 2026; native execution pins 25.4.17 with psycopg 3.3.3. One private loopback development process and bounded generated data establish the stated mechanisms. The figure is conceptual, and all owned test processes/stores are cleaned afterwards.
+
+Online schema changes: jobs, transaction limitations, prepared statements and cleanup.
+
+Computed columns: stored derivation and write restrictions.
+
+SHOW JOBS, PAUSE JOB and CANCEL JOB: progress, errors and control states.
+
+CREATE INDEX: unique enforcement and the meaning of CONCURRENTLY.
+
+END r51

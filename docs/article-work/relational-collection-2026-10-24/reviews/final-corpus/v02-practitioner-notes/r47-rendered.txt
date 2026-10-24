@@ -1,0 +1,105 @@
+ 
+Relational collection · Draft for review
+CockroachDB query work and hot ranges
+ Deep diveAbout 6 minutes AI-generated 
+A query returning ten orders can read ten entries, fetch thousands of primary rows or exchange partial results across many machines. The result size does not describe the work required to find it. CockroachDB adds a useful distinction: SQL operators process rows, while their access paths ask the distributed key-value layer for data.
+Start by following one query through both layers. Then distinguish an expensive read from a busy range and from a contested row. These problems can produce similar waiting at the application, but improving one may leave another untouched.
+Follow the ten orders
+Read the KV work below the operators
+Pay for the index on the write path
+A hot end is different from a hot row
+Locate the wait before changing the shape
+Follow the ten orders
+Suppose an order-history page asks for one customer’s ten most recent orders since a date. This experiment uses a separate generated table, perf_orders, with 60,000 rows. It is a performance fixture, not additional history for Mina, Tariq or orders 101–103. Every thousandth row belongs to the same customer; customer 42 has 60 rows, of which 15 pass the date condition.
+SELECT order_id, placed_at, status
+FROM perf_orders
+WHERE customer_id = 42
+ AND placed_at >= timestamptz '2026-02-01 00:00:00+00'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;
+The final order_id breaks ties in the date, making the requested order complete. The fixture compares three indexes, keeping the query and data unchanged.
+CREATE INDEX perf_customer ON perf_orders (customer_id);
+CREATE INDEX perf_history ON perf_orders
+ (customer_id, placed_at DESC, order_id DESC);
+CREATE INDEX perf_cover ON perf_orders
+ (customer_id, placed_at DESC, order_id DESC)
+ STORING (status);
+The customer-only index finds all 60 matching entries. It does not contain placed_at or status, so the plan fetches 60 primary rows. A filter keeps the 15 sufficiently recent rows and a top-k operator selects the first ten. Finding the customer cheaply has not made the rest of the question cheap.
+The ordered index puts the date after the equality prefix. Its scan can use the date boundary and produce the required order, stopping after ten entries. It still fetches ten primary rows for status. Finally, storing status in the secondary index supplies the remaining value directly. This is a covering access path for this query.
+Figure 1 compares the recorded plans. Change the path once to remove unnecessary candidates, then again to remove the remaining primary lookup.
+Figure 1 The same ten rows, with less work before them
+ Access path [CONTROL {}]
+Customer only
+Customer and ordered date
+Ordered date, with stored status
+Secondary scan
+60 entries for customer 42
+→
+Primary fetch
+60 rows to obtain date and status
+→
+Finish
+Filter to 15; top-k returns 10
+120 decoded KV rows · 2 KV calls
+The date is unavailable in this secondary index, so all 60 primary rows are fetched before filtering and ordering.
+Redrawn from the recorded CockroachDB 25.4.17 plans, not a live query. One generated table, one local node, identical ten-row answers. Counts describe this run; arrows show data flow, not packet counts or elapsed time. “Primary fetch” is the plan’s index join.
+All three returned the same ten rows, with order IDs 59041 down to 50041 in steps of 1000. The native unhinted query chose the covering index too. Forced index names isolated the comparison; they are not a recommendation to override the optimiser in the application.
+Read the KV work below the operators
+EXPLAIN ANALYZE executes the statement and annotates its plan. In this run, the broad path decoded 120 KV rows: 60 secondary entries plus 60 primary rows. The ordered path decoded 20; the covering path decoded ten. These are storage-layer rows decoded, not the number of SQL rows returned and not necessarily distinct business records.
+ Observed work on CockroachDB 25.4.17, one local node
+PathDecoded KV rowsKV bytes readKV calls
+Customer only12015 KiB2
+Ordered history202.6 KiB2
+Covering history10440 B1 
+A CockroachDB index join fetches primary-index columns for rows found through a secondary index. It is not a SQL join between the customer and orders tables. In a distributed cluster those primary keys may lead to other ranges and nodes. Removing this lookup can remove work and a network dependency even when it does not change the answer.
+The plan’s SQL-node and KV-node annotations distinguish where operators run from where storage work is served. Distribution describes SQL execution placement. A “local” plan does not generally prove that every KV request stays on its gateway: a local SQL operator can ask remote ranges for data.
+This fixture had one node, so it cannot demonstrate a remote lookup. Its reported DistSQL network usage was zero. That counter concerns exchange between distributed SQL processors; it does not make KV RPC work disappear. Similarly, a KV gRPC-call count is not a count of physical wide-area round trips. Batching, retries and placement affect the relationship.
+Read estimates beside actual counts. An unexpectedly large scan may come from a predicate the access path cannot constrain, or from estimates that misrepresent the values being queried. Collect representative statistics, check skew and try the actual parameter values before treating a different plan as a cure. The fixture explicitly collects statistics after loading its deterministic data.
+Pay for the index on the write path
+STORING places a value in the index without making it part of that index’s sorting key. It can satisfy a selected column, but does not turn a predicate on that column into an ordered seek. The primary-key columns needed to locate a row are already carried by secondary indexes; adding them again as stored columns is unnecessary.
+A status change must maintain an index that stores status. More indexes also mean more encoded data, replication, storage and maintenance during writes. A large stored payload can save a lookup while substantially enlarging the index. Cover the values an important query needs, then measure the write and storage cost under the real workload.
+Our fixture includes a 200-character payload in the primary row and does not select it. That choice helps explain why avoiding primary reads saves bytes here. A narrower real row, different column families or different selected values changes the saving. The exact byte totals are observations of this schema and version.
+The run also recorded execution times, but one pass through a tiny local fixture cannot establish a speed ratio. Cache state, preparation and contention differ between runs. Use the removed work to explain the proposed change; use repeated representative measurements to decide whether its service-level benefit pays for its cost.
+A hot end is different from a hot row
+Now suppose inserts use an increasing timestamp as an index’s leading key. New entries collect at its current end. Splitting older entries into more ranges does not spread the next insert: it still goes to the newest interval. Random primary keys do not repair a separate timestamp index with this shape.
+A hash-sharded index adds a hash bucket before the ordered values. Different timestamp values can then reach different bucket prefixes, giving the cluster more opportunities to distribute writes. CockroachDB manages a hidden computed shard column for the index.
+CREATE INDEX perf_time_hash ON perf_orders (placed_at)
+USING HASH WITH (bucket_count = 4);
+SHOW CREATE TABLE perf_orders;
+EXPLAIN SELECT order_id, placed_at
+FROM perf_orders@perf_time_hash
+WHERE placed_at >= timestamptz '2026-02-01 00:00:00+00'
+ORDER BY placed_at DESC, order_id DESC LIMIT 10;
+The native SHOW CREATE TABLE exposed the hidden computed shard column. The plan for this time-range query scanned four bucket spans, with prefixes 0–3. The ordered interval has become several intervals whose results must be combined. That is the read-side price of distributing the write keys; four buckets do not promise four equally busy nodes.
+Bucket count is a schema and workload choice. More prefixes can offer more distribution while increasing scan fan-out and coordination. Inspect the resulting ranges and their leaseholders rather than assuming a bucket means a machine. This native run verifies the index and four-span plan on one node; it measures no balancing or concurrent-insert throughput.
+Hashing also cannot divide one logical value. Every purchase competing for the last blue mug still has to decide the same P7 stock row. Moving its range or adding an index does not create more mug stock or independent reservations. A transaction may spend most of its time waiting for that row even with an efficient lookup.
+Locate the wait before changing the shape
+Use the actual plan to separate candidates examined, primary fetches, operators and node locations. Compare KV rows, bytes and calls with the SQL result. Then inspect contention information: the plan can report time spent waiting on conflicting transactions. Large KV time alone includes more than contention and should not be assigned entirely to the network.
+A hot range can contain many independent keys whose work could be separated. A contested row concentrates a shared decision. An unselective scan visits too much data. A distributed join can move too much intermediate data. These diagnoses can coexist, so check which accounts for the observed wait before changing keys or adding capacity.
+If a global quota of 100 is the contested value, splitting it into regional rows is an application protocol change. Three independent allowances of 100 would permit 300. An allocation scheme must preserve the total and define transfers and unavailable-region behaviour. A schema trick cannot remove that correctness requirement.
+For a proposed improvement, hold the required result and concurrency contract fixed. First verify identical rows and ordering. Then compare representative latency distributions, throughput, KV work, retries and write cost at the intended load. Inspect actual placement when testing across nodes or regions; several processes on one laptop are not independent failure domains.
+Download the deterministic plan worksheet. Run it only in a new disposable CockroachDB database: it creates 60,000 synthetic rows and four indexes, and its EXPLAIN ANALYZE statements execute their queries. The recorded harness used an owned loopback instance of 25.4.17, verified the answers and removed its processes and store afterwards.
+Transactions and retries owns the purchase protocol under contention. Table locality and region survival adds placement and regional communication costs. Keep those contracts while reducing the work each operation needs.
+Sources and further reading
+Checked on 24 October 2026. Plan counts and bucket spans come from the supplied deterministic worksheet on CockroachDB 25.4.17. They are observations of one local run.
+CockroachDB 25.4, EXPLAIN ANALYZE: SQL/KV locations, decoded rows, RPCs, network and contention metrics.
+CREATE INDEX: ordered keys, stored columns, implicit primary-key columns and index hints.
+Hash-sharded indexes: bucket prefixes and write-distribution/read-fan-out trade-offs.
+Performance best practices: access paths, statistics, contention and workload diagnosis.
+Keys, ranges and replication: range ownership and the hotspot a split cannot remove.
+ 
+LINKS
+/how-this-is-made/
+#follow-the-ten-orders
+#read-the-kv-work-below-the-operators
+#pay-for-the-index-on-the-write-path
+#a-hot-end-is-different-from-a-hot-row
+#locate-the-wait-before-changing-the-shape
+/review/relational-collection/evidence/r47/plans.sql
+/review/relational-collection/cockroachdb/transactions/
+/review/relational-collection/cockroachdb/locality/
+https://docs.cockroachlabs.com/docs/v25.4/explain-analyze
+https://docs.cockroachlabs.com/docs/v25.4/create-index
+https://docs.cockroachlabs.com/docs/v25.4/hash-sharded-indexes
+https://docs.cockroachlabs.com/docs/v25.4/performance-best-practices-overview
+/review/relational-collection/cockroachdb/keys-and-ranges/

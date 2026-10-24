@@ -1,0 +1,157 @@
+ 
+Relational collection · Draft for review
+Query execution and bad plans
+ Deep diveAbout 11 minutes AI-generated 
+A query plan describes how the database will produce a result: which rows it reads, how it finds matches, where it sorts and how it combines groups. SQL describes the answer; the plan chooses the route. Two routes can return exactly the same orders while one reads a hundred rows and another reads a million.
+The planner has to make that choice before it knows the actual answer. It estimates how many rows each operation will produce, then compares the estimated work of alternative routes. A bad estimate early in the plan can make later decisions look cheap: repeating a lookup ten times is different from repeating it a hundred thousand times.
+Reading a plan therefore has two jobs. Follow what work each operation does, then compare what the planner expected with what execution actually did. We will use the shop’s receipt to understand rows flowing through operations, and a separate generated workload to expose estimates, skew and temporary-file work on PostgreSQL 18.6.
+A plan is a tree of operations
+Estimated work and measured work
+What a join repeats
+Find the first wrong count
+One query can contain many workloads
+When an operation outgrows memory
+Parallel and distributed work
+Make one explanation testable
+A plan is a tree of operations
+Start with the receipt for order 103. It needs two order lines and their product names. Its result has one row per order line, regardless of how the database finds the matches.
+SELECT i.line_no, p.name, i.quantity, i.unit_price
+FROM order_items AS i
+JOIN products AS p ON p.product_id = i.product_id
+WHERE i.order_id = 103
+ORDER BY i.line_no;
+Figure 1 draws one possible route. A scan supplies lines, a filter retains order 103’s two, a join attaches product names, and a sort puts the two matches in line-number order. Follow rows upwards from the inputs. At each operation, ask what one row means and how many rows leave it.
+Figure 1 Two lines travel towards a receipt
+Receipt result · 2 rowsone row per line of order 103
+↑ 
+Sort by line_no2 rows in → 2 rows out
+↑ 
+Join on product_id2 line rows meet 3 product rows → 2 matches 
+↑
+Filter order_id = 1035 lines tested → 2 retained
+↑
+Scan order_items5 order-line rows
+↑
+Scan products3 product rows 
+A conceptual physical plan over the fixed shop rows. Read input from the bottom towards the result. The join algorithm is left open here; Figure 2 changes how the matching is done. A native optimiser can choose indexes, another join order or another shape.
+Each box is an operator, or plan node. A scan produces rows from a stored relation; a filter rejects some; a join produces matching combinations. A sort rearranges rows without changing their meaning. An aggregate can change their grain: five lines become three order totals. Correctness still comes from the query. Making a multiplied join run faster would not repair the wrong sums it produces.
+SQL’s written order is not an execution schedule. The optimiser may move a restriction towards a scan, change the order of inner joins or use an index to supply an order the query would otherwise sort. Transformations must preserve the query’s semantics, including outer joins and missing values. A CTE that names an intermediate result also need not become a separately stored temporary table.
+Many row-oriented plans can be understood as a parent asking its child for another row. A Limit stops asking once it has enough. Some operators must do substantial preparation before answering: a sort over unordered input must inspect the candidates, and a hash join must build its hash table. The first row can therefore arrive late even when the result is small. Real engines can process batches, run branches in parallel or exchange rows across machines; the tree still identifies who consumes whose output.
+Estimated work and measured work
+EXPLAIN shows the chosen route and its estimates without executing the query. EXPLAIN ANALYZE executes it and adds measurements. PostgreSQL accepts:
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)
+SELECT i.line_no, p.name, i.quantity, i.unit_price
+FROM order_items AS i
+JOIN products AS p ON p.product_id = i.product_id
+WHERE i.order_id = 103
+ORDER BY i.line_no;
+Use the measured form only when running the statement is acceptable. It executes writes too. A rollback can undo transactional row changes, but it does not turn arbitrary functions or outside effects into a harmless preview. For an expensive read, choose a representative disposable copy or a controlled opportunity to measure it.
+A PostgreSQL node has an estimated cost=start..total, estimated output rows and average row width. Cost is a model in relative units, not milliseconds. Start-up cost is work before the first row; total cost estimates completing the node. A LIMIT may use only part of the child’s possible work, so an index with a low start-up cost can win even when completing its entire scan would be costly.
+Actual output adds rows and loops. Read the children before their parent: the child’s output is the parent’s input. Then compare estimates and actual counts at the same node. A node estimating one row and returning one row may still sit above a huge scan: an aggregate such as COUNT(*) always emits one answer while consuming many inputs.
+With timing enabled, a parent’s measured time includes time in its children. Buffer counts also include children, while repeated accesses can be counted repeatedly. Adding every time or buffer line down a branch double-counts work. Use a parent to locate the expensive branch, then descend to explain it. TIMING OFF avoids repeated per-node clock reads but retains the whole-query execution time and row counts.
+What a join repeats
+A nested-loop join takes one row from its outer input and runs an inner operation to find matches. Then it repeats for the next outer row. The inner operation might scan an entire table or look up a key through an index. Those are radically different amounts of work hidden under the same join name.
+Figure 2 matches the two lines of order 103 to products. Start with scanning products each time, then change to indexed lookup and hash join. The answer remains two lines. Watch what is repeated.
+Figure 2 The same matches, different repeated work
+ Match the two lines with products [CONTROL {}]
+Nested loop · table scan
+Nested loop · indexed lookup
+Hash join
+Order 103’s lines
+Line 1P7 × 1
+Line 2P3 × 2
+Products
+P3Green tea, 50 g
+P7Blue mug
+P9Teapot 
+Matched receipt lines
+None yet.
+Play
+Back
+Next
+Reset
+Read the three routes as text
+Scanning nested loop: line 1 checks P3, P7 and P9; line 2 checks P3, P7 and P9 again. Six product-row comparisons find two matches. Indexed nested loop: each line looks up its product ID, making two index searches, whose internal page work is omitted. Hash join: read all three products into a hash table, then probe it once for P7 and once for P3. All routes return line 1 with Blue mug and line 2 with Green tea, 50 g.
+Conceptual algorithms over the fixed core rows. The scan deliberately checks all products per line. The counters count different operations: row comparisons, index searches, or build rows and probes. They are not comparable elapsed times, captured native plans or hash-collision measurements.
+The scanning loop compares each of two lines with all three products: six comparisons. The indexed loop makes two searches for particular product IDs. Each search has its own tree and row-fetch work, omitted from this small drawing. An indexed loop is often a useful route when a selective outer input causes only a few precise lookups.
+In PostgreSQL’s measured plan, an inner node might say actual rows=3 loops=1000. The row count is the average per execution, so about 3,000 rows were returned across those executions. Times on a node executed repeatedly are also averages per loop. Its buffer totals are already totals; do not multiply them by loops again. A cheap inner operation repeated far more often than expected can dominate the query.
+A hash join reads a build input and stores its rows in a hash table keyed by the join value. It then probes that table for each row of the other input. It avoids restarting a full build-side scan for every probe, but needs memory and preparation. In Figure 2, building three product rows precedes two probes. A hash join is not automatically better: building a large table to answer one indexed lookup can waste work.
+A merge join takes inputs ordered by the join keys and advances through them together. That can suit large inputs already in the right order. Sorting them first adds a cost; duplicate keys still have to produce all their matching combinations. None of these algorithms removes the semantic multiplication of two many-sided collections. An optimiser chooses how to form the pairs the query requests.
+Look at the actual inputs before blaming an algorithm. How many outer rows arrived? Did the inner lookup use the full intended key? Was an intermediate result repeatedly scanned or materialised? Did repeated key values permit a cache such as PostgreSQL’s Memoize to reuse answers? A join label by itself does not answer those questions.
+Find the first wrong count
+Planners collect statistics about stored values: approximate table sizes, common values, distributions and numbers of distinct values. The standalone ANALYZE command refreshes PostgreSQL’s statistics. These summaries are smaller than the data and may be sampled. They estimate a result rather than establishing it.
+Before treating a count difference as a bad estimate, check whether the parent asked for the whole result. A scan estimated to return 100,000 rows can report one actual row beneath LIMIT 1: the consumer stopped asking. The estimate describes the completed scan; the measured count describes the work it was allowed to do. That difference alone gives no reason to change statistics.
+For a node consumed to completion, walk from the leaves towards the result and find the first material disagreement between estimate and actual count. A large error at a join can originate in a scan below it. Fixing only the final join choice leaves the cause intact. Compare ratios and absolute work: estimating one row instead of two is a large ratio but may be harmless; estimating a thousand instead of a million can change the whole route.
+Our generated tenant fixture makes a correlation visible. It uses the shop-scoped schema variant, with shop_id carried in order identities and matching references. These are independent test rows: shop 10 has 99,000 generated paid orders; shop 20 has 1,000 generated pending orders. The fixture is intentionally extreme and makes no claim about either shop’s actual workload.
+One percent of rows belong to shop 20 and one percent are pending. Treating those conditions as independent predicts 100,000 × 0.01 × 0.01 = 10 rows for their conjunction. In this fixture they describe the same 1,000 rows. Fresh single-column statistics cannot express that relationship just by being fresh.
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)
+SELECT SUM(length(payload))
+FROM plan_orders
+WHERE shop_id = 20 AND status = 'pending';
+CREATE STATISTICS plan_shop_status (mcv)
+ON shop_id, status FROM plan_orders;
+ANALYZE plan_orders;
+The first measured plan contains these lines, with timings, buffers and the aggregate’s estimated cost omitted:
+Aggregate (actual rows=1.00 loops=1)
+ -> Index Scan using plan_state on plan_orders
+ (cost=0.29..22.47 rows=9 width=81)
+ (actual rows=1000.00 loops=1)
+ Index Cond: ((shop_id = 20) AND (status = 'pending'))
+The index scan expected nine rows and returned 1,000. The aggregate consumed them and emitted one sum. Its single output row does not make the input small. Compare that scan’s estimate after collecting the joint summary:
+ Observed scan estimate in the generated fixture · PostgreSQL 18.6
+StatisticsEstimated scan rowsActual scan rows
+Separate column summaries91,000
+Joint common-value summary9801,000 
+The estimate improved without changing the query’s answer or the chosen index-scan algorithm. The counts differ slightly from the simple calculation because the collected statistics are sampled. This is evidence of a mechanism, rather than proof that adding statistics always makes a query faster.
+Other causes need other repairs. A bulk load can leave row counts stale; a skewed value may be missing from a small common-value list; an expression can hide the distribution of its input. Join estimates must also account for distinct keys and their matching frequency. PostgreSQL’s extended statistics have limits, including where they can be applied across joins. Inspect the relevant summary and operator before choosing between refresh, a larger statistics target, joint statistics or a different query shape.
+One query can contain many workloads
+Now omit status and parameterise the shop ID. The same SQL template asks for either 1,000 or 99,000 rows. A route suitable for the small shop need not suit the large one.
+PostgreSQL can prepare a custom plan using the supplied parameter value, or reuse a generic plan that must work without knowing that value. Reuse saves planning work, but gives up some information about skew. In automatic mode PostgreSQL compares estimated costs after initial custom executions; it does not necessarily switch to a generic plan.
+The experiment forces each kind to expose the distinction. Its custom small-shop plan used an index scan and estimated 980 rows; its custom large-shop plan used a sequential scan and estimated 99,020. The forced generic plan estimated 50,000 rows for either parameter, choosing a bitmap route. It returned the right 1,000 rows for shop 20. This run does not establish that the generic route was slow or that PostgreSQL would have selected it automatically.
+When an application is slow for one value but a literal query in a console looks fine, compare the actual statement, parameter types and plan mode as well as its text. A representative test includes common values, rare values and large tenants. Changing every prepared statement to custom planning has a cost too. Reading and repairing PostgreSQL plans takes these native diagnostics further.
+When an operation outgrows memory
+A sort or hash operation needs working memory. If its input is larger than its allowance, the engine can spill work to temporary files. This keeps the query running but adds writes and reads. A result of ten rows can still cause a large sort if millions of candidates must be examined before the ten are known.
+The experiment sorts 100,000 generated rows with an 80-character payload. At work_mem = '64kB', PostgreSQL reported Sort Method: external merge and 9,344 kB of disk space. At 32MB, the same sort reported quicksort using 13,229 kB of memory. Both returned 100,000 rows in the same requested order. These are observations for this fixture, not a suggested server setting.
+For a hash node, inspect batches and temporary I/O as well as memory use. A badly underestimated build input can turn a supposedly small in-memory table into multiple batches. Wider rows make the problem worse: carrying an unused description through a sort spends memory on every candidate. Filter earlier where semantics allow, return fewer columns through expensive operations, or use an access path that already supplies the needed order before increasing allowances.
+PostgreSQL’s work_mem is an operation allowance, not a cap for the entire server or even a whole query. Several operations, sessions and parallel workers can use memory concurrently; hash operations also have a multiplier. A change that removes a spill for one report can exhaust memory under load. Test the local saving against concurrent demand and bound any diagnostic change to the intended session or transaction.
+Parallel and distributed work
+Parallel execution divides work among workers. A scan may let several workers inspect different pages, then gather their rows. Elapsed time can fall while total CPU work or memory use rises. A gather can also become the point where one worker or the client has to consume everyone’s output. Count the work across workers and inspect imbalance; do not multiply already aggregated totals blindly.
+Distributed execution adds machine boundaries. Rows needed for a join or grouping may have to cross the network. A hash join can require rows to be repartitioned by key, so matching values arrive at the same place. A final sort or aggregate can collect data towards fewer workers. Large intermediate rows can therefore be costly even when every local scan is efficient.
+Filter and project before those exchanges where the query permits it. A partial aggregation can combine local contributions before sending them, reducing traffic, while the final combination still has to preserve the aggregate’s meaning. A distinct count or an ordered calculation may require a different treatment. A plan that processes batches of rows efficiently on one machine does not by itself show how much data crossed between machines.
+A distributed measured plan should connect SQL operators to rows and bytes transferred, remote requests, placement and the slowest branch. One hot key or one oversized tenant can give one worker most of the work even when the overall row count is well estimated. CockroachDB query work and hot ranges follows its concrete SQL and storage-layer evidence. No multi-machine latency or distributed execution is measured by this article’s local PostgreSQL fixture.
+Make one explanation testable
+Keep the original result contract beside the plan: row identities, multiplicity, missing values and order. Check which branches were consumed to completion, then state a specific explanation for the excessive work. “The inner lookup ran 100,000 times because the outer scan was underestimated” suggests a different test from “the estimate was right, but every lookup fetched a wide row that was discarded”.
+Change one relevant cause in a controlled comparison. Refresh the suspect statistics, add the index that removes the measured scan, correct the predicate’s type, or reduce the columns entering a spilling sort. Capture the new plan and verify both the answer and the predicted reduction in work. Compare representative parameter values and cache conditions; a single warm run is weak evidence of general latency.
+Disabling an algorithm can be useful as a temporary experiment to learn what another route would do. It is not an explanation of why the planner chose the first route, and forcing the winner from one fixture into production may fail for another value. Keep diagnostic settings local, record them and restore them.
+Finally, distinguish slow execution from time spent waiting before or around it. Locks, connection queues and a client consuming rows slowly can dominate a request whose operators are efficient. Diagnosing a database incident establishes that boundary. Once execution work is the cause, a useful plan reading should end with a causal statement you can check, rather than a collection of alarming node names.
+Sources and further reading
+Checked on 24 October 2026. Download the query-work experiment and run psql -X -v ON_ERROR_STOP=1 -f query-work.sql in a disposable database. It creates temporary test tables, forces plan modes only for the stated comparison and resets the plan-mode and sort-memory changes. The complete file was run on an owned PostgreSQL 18.6 instance with parallel gathering disabled to keep the observations legible. The diagrams illustrate algorithms over the core rows; they are not its captured native plans.
+PostgreSQL 18, Using EXPLAIN and The Planner/Optimizer: plan trees, costs, loops, measured execution and join choices.
+PostgreSQL 18, Statistics Used by the Planner and CREATE STATISTICS: sampled summaries, correlations, joint statistics and their limits.
+PostgreSQL 18, PREPARE: custom and generic plans, their automatic comparison and diagnostic overrides.
+PostgreSQL 18, Resource Consumption and Parallel Query: operation memory, spills, concurrent allowances and parallel execution.
+CockroachDB, Vectorized Execution and EXPLAIN ANALYZE: batched operators, distribution and measured network and execution work. Product-specific details belong to the CockroachDB articles.
+ 
+LINKS
+/how-this-is-made/
+#a-plan-is-a-tree
+#the-two-plans-to-read
+#what-a-join-repeats
+#the-first-wrong-count
+#one-query-many-values
+#when-work-spills
+#parallel-and-distributed-work
+#make-one-explanation-testable
+/review/relational-collection/postgresql/query-execution/
+/review/relational-collection/cockroachdb/query-performance/
+/review/relational-collection/slow-queries/
+/review/relational-collection/evidence/r11/query-work.sql
+https://www.postgresql.org/docs/18/using-explain.html
+https://www.postgresql.org/docs/18/planner-optimizer.html
+https://www.postgresql.org/docs/18/planner-stats.html
+https://www.postgresql.org/docs/18/sql-createstatistics.html
+https://www.postgresql.org/docs/18/sql-prepare.html
+https://www.postgresql.org/docs/18/runtime-config-resource.html#GUC-WORK-MEM
+https://www.postgresql.org/docs/18/parallel-query.html
+https://www.cockroachlabs.com/docs/stable/vectorized-execution
+https://www.cockroachlabs.com/docs/stable/explain-analyze

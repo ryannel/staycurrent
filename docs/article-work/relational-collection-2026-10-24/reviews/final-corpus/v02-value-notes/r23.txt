@@ -1,0 +1,160 @@
+Relational collection · Draft for review
+
+H1 Connections, overload and capacity
+
+Deep diveAbout 8 minutes AI-generated   
+
+A connection gives an application a session in which to send SQL. It does not give the database another processor, a faster disk or a second copy of a locked row. When requests arrive faster than the database can finish them, allowing more connections can move the queue into the database without increasing the amount of useful work it completes.
+
+Capacity planning starts by separating those things: how much work arrives, how much is admitted at once, where the rest waits, and which resource limits progress. A connection pool controls admission. A bounded queue decides how much waiting the service will tolerate. Capacity evidence tells you where to set those bounds and what must remain available during a failure.
+
+We follow the shop’s application, whose requests borrow connections as described in SQL at the application boundary. The drawings below are deliberately small schedules. Their rounds and limits are invented to make waiting visible; they are not measurements of PostgreSQL or a sizing recommendation.
+
+H2 Count three different things
+
+A pool can hold 20 open connections while only three are borrowed. Of those three, one might be running a query, one waiting for a row lock and one idle between statements inside a transaction. Meanwhile another ten application requests might be waiting to borrow a connection. All these counts describe the same service, but they answer different questions.
+
+Open connections count established database sessions. Borrowed connections count sessions currently owned by application operations. Running work counts operations making progress on the resource you are investigating. A PostgreSQL session reported as active can still be waiting for a lock or I/O; “active” is not a synonym for using a CPU.
+
+Measure the application queue separately. Its requests may not yet exist in the database’s activity view, even though their callers are already waiting. A database showing short query times can sit behind a saturated pool whose acquisition wait dominates every request.
+
+Figure 1 admits a burst of eight requests. Start with two connections and step to the end. Then choose eight connections, reset and follow the same burst. Watch where R3–R8 wait.
+
+Figure 1 Eight requests, three places to wait
+
+Illustrative rounds · eight requests arrive together · one round completes each working request
+
+Before a connection
+
+Application queue
+
+Holding a connection
+
+Doing work
+
+Waiting for a work slot
+
+Finished
+
+Completed
+
+Refused immediately
+
+Connections lent  [CONTROL {}] 248 Application queue limit  [CONTROL {}] 048 Work  [CONTROL {}] Two independent workersOne shared row 
+
+Play
+Back
+Next
+Reset
+
+R1–R8 are requests, not orders. The two-worker case assumes two equal units of useful work can run at once. The shared-row case assumes one can progress at once. Connections have no setup cost here, idle pool connections are omitted, and real CPU, I/O and lock scheduling are not simulated.
+
+Read the schedule as text
+With two connections and queue limit eight, R1 and R2 work while R3–R8 wait outside the database. After each round two finish and the next two borrow connections: all eight finish after four rounds. With eight connections, all eight enter immediately; only two work and six wait inside. Completion still takes four rounds. With one shared row, only one progresses per round. With two connections and queue limit zero, six are refused at once and two finish.
+
+With two connections, six requests initially waited in the application. With eight, six initially waited inside the database. Both schedules completed the same eight requests in four rounds because only two could do useful work at once. The larger pool changed the queue’s location.
+
+Now choose One shared row. Only one request can change that row at a time, and the burst needs eight rounds however many connections are lent. This is the shape of a hot stock or quota row: more sessions create more contenders for the same protected fact. In a real system a larger queue can also add scheduling, memory and retry costs, which this model leaves out.
+
+Finally choose two connections and application queue limit zero. Six requests are refused immediately; the admitted two complete. Refusal is a product outcome you must design, but it makes the bound explicit. An unlimited queue merely postpones the decision until callers time out or resources run out.
+
+H2 A pool is a budget
+
+The maximum pool size limits how many operations that pool can lend a connection to at once. It is a local limit. Six application processes with a maximum of 10 each can open 60 connections, and temporarily running old and new application versions together can double that. Background workers, reports, migrations, administrators and other services consume connections too.
+
+Write the budget for the largest deployment you actually permit, including rollout overlap. Suppose a disposable design exercise gives the application 60 connections and permits at most six processes, including overlap. A maximum of 10 per process fits that allocation. If autoscaling later permits twelve processes, that same setting no longer fits. The arithmetic is a configuration check, not evidence that 60 simultaneous queries are useful.
+
+PostgreSQL’s max_connections is the server’s connection ceiling. Raising it allocates more server resources; it does not establish a safe operating point. Preserve an administrative way in when ordinary slots are full, using the server’s reserved-connection facilities and appropriately restricted roles. An application that exhausts every usable slot can also obstruct the people trying to diagnose it.
+
+Leave capacity for the work connections can initiate. PostgreSQL’s work_mem, for example, is a base memory allowance for an operation such as a sort or hash table. A hash table’s limit is work_mem × hash_mem_multiplier; PostgreSQL 18’s default multiplier is 2.0. Neither setting is one fixed allocation for a whole query or the server. One query can contain several such operations, and parallel execution and simultaneous queries multiply their possible memory demand. Increasing a pool while increasing per-operation memory changes two budgets at once.
+
+A connection proxy can collect many client connections onto fewer server connections. In PgBouncer’s transaction pooling mode, a server connection is assigned for a transaction and can then serve another client. That is useful when clients spend much of their time idle. It does not make two simultaneously executing transactions fit into one server session.
+
+It also changes what the application may assume between transactions. A later transaction can reach a different server session. Review session settings, temporary tables, advisory locks and prepared statements against the proxy’s actual feature support. Reusing a connection and preserving a session are distinct promises.
+
+H2 Decide where waiting ends
+
+A queue absorbs a short burst when spare capacity will soon become available. It cannot absorb a sustained excess. If 120 requests arrive each second and only 100 finish, the queue grows by 20 each second until something else stops it. Larger queues buy time while increasing the age of the requests finally served.
+
+Bound both the number waiting and how long each may wait. The count protects memory and limits outstanding demand. The acquisition deadline prevents a request using its entire useful lifetime before reaching SQL. A connection timeout, a pool acquisition timeout, a statement timeout and an end-to-end request deadline cover different intervals.
+
+Figure 2 Spend the request deadline once
+
+Wait for admissionUp to 200 ms
+
+Database workUp to 600 ms in total
+
+Finish and clean upReserve 200 ms
+
+An invented 1-second request budget. These are allowances, not measured durations. The database allowance includes all statements, waits and commit; it must shrink when earlier phases consume time.
+
+The picture does not mean setting statement_timeout = '600ms' on each of ten statements gives a 600 ms transaction. That limit applies per statement. Carry the request’s remaining budget into the database operation, account for the complete transaction, and leave time to cancel and end it before returning or discarding its connection.
+
+When the caller gives up, stop work that is no longer useful. Returning an HTTP error while the SQL continues leaves load in the database and can let a retry overlap the original attempt. Cancellation itself has a race with completion. Wait for the driver’s outcome and transaction cleanup; do not return a connection that another task still uses. A missing commit reply also leaves an outcome to resolve, as Retries when a commit reply is missing explains.
+
+Choose what to refuse before the queue is full. An export can wait or run later; a checkout has a shorter useful deadline. Separate limits can keep optional reports from occupying every checkout slot, while one overall budget prevents the separate pools adding up to more load than the database can support. Priority cannot create capacity, but it can decide which work spends it.
+
+Retries are new demand. Give them a shared bound, delayed attempts with variation, and a deadline inherited from the logical operation. Ten callers each allowed five attempts can send fifty attempts during the very period when the database has least spare capacity. A fast overload response without a client retry policy can make that feedback worse.
+
+H2 Find the resource that stops progress
+
+A full pool is a symptom: every connection is still owned. Find why operations hold them. Queries may need more CPU, storage may be slow, a transaction may hold a hot lock, or application code may hold a connection while waiting for another service. Each calls for a different change.
+
+Follow the wait to the resource 
+| What the evidence shows | What to investigate | Why a larger pool may fail
+
+| CPU remains busy; query work per request increased | Plans, rows processed and repeated queries | More runnable work competes for the same CPU
+
+| Many sessions wait behind one transaction | The blocker, transaction age and the shared rule | Extra connections join the same lock queue
+
+| Reads or log flushes dominate the wait | Working set, I/O latency and commit pattern | More outstanding I/O can lengthen existing waits
+
+| Borrowed sessions are idle while the application waits | Connection scope and external calls | It hides a resource leak or an unnecessarily long borrow
+
+| Memory pressure or temporary spills grow with concurrency | Simultaneous operations and their memory limits | More admitted operations multiply memory demand
+
+Use observations from the same interval. A CPU chart from the morning and a query plan from after the incident do not establish the bottleneck at its peak. Diagnosing a database incident develops that investigation; Operating and diagnosing PostgreSQL follows the engine’s views.
+
+A simple relationship helps check the counts. In a stable system, average operations in progress equal arrival rate multiplied by average time in that boundary. At 100 completed requests a second and 40 ms average connection ownership, about four connections are borrowed on average: 100 × 0.040 = 4. This is Little’s law applied to the borrow interval, with invented numbers.
+
+Four is not a recommended pool maximum. Averages omit bursts and the slow tail; the relationship also changes if the boundary includes acquisition waiting or if the queue is growing. It is useful for finding a mismatch. If a stable service reports those values but claims 50 connections are borrowed on average, check whether the rate, duration and population describe the same operations.
+
+H2 Measure a capacity envelope
+
+A useful capacity result says which workload, data and failure state meet a stated service goal. “The database handled 5,000 queries a second” omits almost everything needed to reuse it. A key lookup and a full report are both queries. A warm cache and a restart are different workloads on the same hardware.
+
+Choose representative operation mixes, tenant skew, transaction sizes and data volumes. Keep the generated data and random seed. Drive offered traffic independently enough to see waiting build: a test that sends its next request only after the last finishes can quietly reduce its arrival rate as the service slows. Record offered operations, admitted operations, completed useful operations, refusals and retries separately.
+
+Increase offered load in steps, holding each long enough to see queues and background work settle. At each step record end-to-end latency percentiles, acquisition waiting, active and idle ownership, errors, resource use and backlog growth. The useful limit is where the service still meets its latency and correctness goals without an ever-growing backlog, not the largest transient completion rate.
+
+Repeat near that boundary with realistic disturbances: a cold working set, a slow query mixed into ordinary traffic, a backfill, a connection surge and the failover state you promise to survive. Check that overload is bounded and the service recovers when offered load falls. An overload test that ends by restarting the service has not demonstrated recovery under its own controls.
+
+Retain the engine and driver versions, settings, hardware, dataset, load generator and actual commands with the observations. A local laptop can show a mechanism and compare two changes on that laptop. It cannot establish production storage latency, an independent failure domain or capacity in a remote region.
+
+H2 Leave room to recover
+
+Normal traffic is only part of the demand. Replicas need to catch up, backups read data, cleanup reclaims versions, and a replacement node copies state while serving traffic. Running the limiting resource at its measured steady-state edge leaves none of that work anywhere to go.
+
+For an arithmetic example, suppose three interchangeable serving units each sustain 100 units of this workload within the target. Normal capacity is 300; losing one leaves 200. Admitting 270 in normal operation requires shedding or moving at least 70 after that loss, even before accounting for recovery work. This calculation assumes the traffic really is interchangeable. Losing a primary or a shard owner need not redistribute capacity evenly.
+
+Express headroom in the limiting resources and in the failure states that matter. Disk free space must cover log retention and copying as well as new rows. CPU and I/O need room for catch-up. Connection allocation must cover reconnecting clients without a stampede. A percentage chosen without those demands is only a placeholder for the test.
+
+When the evidence points to one hot row, adding servers leaves that rule serial. When it points to independent tenants exceeding one server’s useful capacity, distribution may help, with new coordination and operational costs. Sharding and distributed SQL develops that choice. First reduce avoidable work, bound what remains and check the recovery state. Those changes give the next capacity decision a stable workload to reason about.
+
+H2 Sources and further reading
+
+Checked on 24 October 2026. The burst, deadline and headroom examples are illustrative arithmetic; no throughput or latency benchmark is reported here. Change the figure’s connection, queue and work limits to compare where the same burst waits and how many requests finish.
+
+PostgreSQL 18, Connections and Authentication: connection ceilings and reserved slots; Resource Consumption: memory per operation and parallel work.
+
+PostgreSQL 18, pg_stat_activity and Client Connection Defaults: activity, waits and timeout boundaries.
+
+Psycopg, Connection pools and Pool API: connection limits, acquisition queues, max_waiting, timeouts and statistics. Check the installed pool version’s API.
+
+PgBouncer, Features and pooling modes: transaction pooling and session-feature compatibility.
+
+Google SRE, Handling Overload: request cost, admission and graceful overload; Little’s law: stable averages and the scope of a queue.
+
+Amazon Builders’ Library, Timeouts, retries, and backoff with jitter: retry amplification and deadline choices.
+
+END r23

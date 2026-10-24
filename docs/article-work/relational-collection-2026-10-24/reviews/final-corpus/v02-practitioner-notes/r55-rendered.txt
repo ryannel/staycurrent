@@ -1,0 +1,123 @@
+ 
+Relational collection · Draft for review
+Full-text search in PostgreSQL
+ Deep diveAbout 8 minutes AI-generated 
+A shopper searches for “mug”. PostgreSQL finds Blue mug and a Teapot whose description says “A mug is not included.” After order 103, Blue mug has no stock. Filtering to available products leaves the Teapot.
+Nothing has malfunctioned in that result. Both documents contain the requested word, and the stock filter is correct. The gap is between the retrieval rule and the shopper’s intention. Building full-text search means making those rules explicit, then testing whether their results help the reader.
+Choose the document you will search
+Keep the configuration and the positions visible
+Give the search box an input language
+Rank the eligible result set
+What the index provides
+Measure the answer as well as the plan
+Choose the document you will search
+Full-text search compares a processed document, a tsvector, with a processed query, a tsquery. The match operator is @@. This is different from checking whether a field contains the exact input bytes. A text-search configuration determines which tokens become searchable lexemes and how they are normalised.
+Our small catalogue uses the existing titles and these illustrative descriptions. All three rows belong to shop 10. The stock is the agreed state after order 103.
+ The exact illustrative search corpus 
+ProductDescriptionStock 
+P3 · Green tea, 50 gLoose green tea for a quiet afternoon. Brew the leaves gently.10
+P7 · Blue mugA ceramic mug for green tea. The blue glaze is dishwasher safe.0
+P9 · TeapotA ceramic teapot for brewing tea. A mug is not included.4 
+The title and description are different evidence. A term in “Blue mug” is likely more useful for identifying the product than the same term in a packaging disclaimer. We label title positions A and description positions D, then combine the vectors. Labels do not change ordinary lexical presence matching; they let ranking or an explicitly weight-restricted query distinguish those positions.
+ALTER TABLE products
+ADD COLUMN document tsvector GENERATED ALWAYS AS (
+ setweight(to_tsvector('pg_catalog.english', coalesce(title, '')), 'A')
+ ||
+ setweight(to_tsvector('pg_catalog.english', coalesce(description, '')), 'D')
+) STORED;
+CREATE INDEX products_document_gin
+ON products USING gin (document);
+This schema fragment uses title for the product name. The explicit English configuration keeps document processing independent of a session’s default. coalesce lets a missing description contribute an empty vector rather than making the whole expression null. A stored generated column keeps the representation attached to changes in the row’s source fields. The native drill verifies a description update changes the vector and that rolling back restores it.
+There is a storage and write cost: the row stores the processed vector and the GIN index stores an access path. An expression index can avoid the stored vector, but matching queries must use the corresponding expression and configuration, and ranking still needs a document representation. Choose from the read/write workload rather than storing both forms accidentally.
+Keep the configuration and the positions visible
+In PostgreSQL 18.6, English processing maps “brewing”, “brewed” and “brew” to the lexeme brew. The simple configuration retains three different lexemes for those words. Stemming broadens a match through normalisation; it does not establish that two sentences have the same meaning.
+SELECT to_tsvector('english', 'brewing brewed brew');
+-- 'brew':1,2,3
+SELECT to_tsvector('simple', 'brewing brewed brew');
+-- 'brew':3 'brewed':2 'brewing':1
+Stop words can disappear from the lexeme list while still leaving positional gaps. In the Blue mug description, “mug for green” has a word between mug and green. phraseto_tsquery('english', 'mug for green') becomes 'mug' <2> 'green' and matches that description. Removing “for” does not turn the requested sequence into adjacent lexemes.
+The stored Blue mug vector has mug at title position 2 with weight A and description position 5 with weight D. Green and tea appear at positions 7 and 8. These positions explain why a phrase matches; a list of distinct words alone cannot.
+Combining fields also combines their positions. It does not preserve a hard boundary between them. In this corpus, phraseto_tsquery('english', 'teapot a ceramic') matches the merged P9 vector across the title/description boundary. It matches neither field independently. That is an observed consequence of the chosen document construction, not a phrase someone wrote in one field.
+If phrases must stay inside a field, test each field’s vector separately and combine the match conditions. Keep a separate combined representation if it is useful for ranking. Do not assume that assigning A and D creates a sentence or field barrier.
+For an unexpected match, inspect the actual vector and query first. ts_debug can then show the parser’s token classes, dictionary choice and emitted lexemes. This distinguishes a stemming decision from a missing dictionary mapping, a discarded stop word or a query-construction error.
+Give the search box an input language
+websearch_to_tsquery is a useful starting point for ordinary search text. It accepts quoted phrases, OR and a leading dash for exclusion, while treating much punctuation forgivingly. It avoids text-query syntax errors for malformed input. It does not remove the need to pass the input as a bound SQL parameter.
+SELECT websearch_to_tsquery('english', '"green tea"');
+-- 'green' <-> 'tea'
+SELECT websearch_to_tsquery('english', 'mug -teapot');
+-- 'mug' & !'teapot'
+Use plainto_tsquery when the intended interface simply ANDs the surviving words. Use phraseto_tsquery for an ordered phrase with stop-word distances. Reserve to_tsquery for a deliberately supported query grammar: it expects operators between terms and can express weight restrictions and lexeme prefixes. Passing arbitrary search-box text to that stricter grammar creates a different interface.
+These choices affect meaning. The dash in mug -teapot excludes documents containing the lexeme teapot. It does not ask whether a mug is included with a teapot. Likewise, prefix matching expands normalised lexeme prefixes; it is not arbitrary substring matching or spelling correction.
+An input containing only English stop words, such as “the and”, produces an empty query and no matches in the drill. Test numnode(q) and make that state visible to the caller. A query consisting only of exclusions is different: it may describe many rows without a useful positive index term. Decide which forms the interface supports, with limits appropriate to its workload, rather than treating every syntactically accepted query as equally cheap.
+Figure 1 A match, an eligible row and a useful answer are different tests
+Teaching sequence from PostgreSQL 18.6 results · English · title A, description D · stock after order 103
+Parsed query
+Lexical matches
+Eligible matches
+Search text[CONTROL {'type': 'radio', 'name': 'r55-query', 'value': 'mug'}] mug[CONTROL {'type': 'radio', 'name': 'r55-query', 'value': 'green_phrase'}] “green tea”[CONTROL {'type': 'radio', 'name': 'r55-query', 'value': 'minus_teapot'}] mug -teapot
+Play
+Back
+Next
+Reset
+All three searches, as text
+mug matches P7 (rank 1.1) and P9 (rank 0.1). P7 has no stock, so only P9 remains; its description says a mug is not included. The quoted phrase green tea matches P3 (rank 1.1) and P7 (rank 0.1); only P3 remains in stock. mug -teapot excludes P9 lexically and leaves P7, which stock eligibility removes. It therefore returns no rows. Scores use ts_rank_cd with default weights and no length normalisation. The teaching stages distinguish decisions; they are not a trace of executor evaluation order.
+Rank the eligible result set
+The query below makes the three conditions distinct: the shop boundary, stock eligibility and lexical matching. It orders the remaining rows by a chosen rank and a stable product identifier. The query and shop identifier are bound parameters.
+WITH query AS (
+ SELECT websearch_to_tsquery('pg_catalog.english', $1) AS q
+)
+SELECT p.product_id, p.title,
+ ts_rank_cd(p.document, query.q) AS rank
+FROM products AS p CROSS JOIN query
+WHERE p.shop_id = $2
+ AND p.stock > 0
+ AND numnode(query.q) > 0
+ AND p.document @@ query.q
+ORDER BY rank DESC, p.product_id
+LIMIT 20;
+ts_rank_cd uses cover density, including the proximity of matching positions. Its default weight array is D 0.1, C 0.2, B 0.4 and A 1.0. With no length normalisation, the drill returns rank 1.1 for P7 on mug: the word occurs in both its A-weighted title and D-weighted description. P9 scores 0.1 for its description-only occurrence. The quoted green-tea query similarly gives P3 1.1 and P7 0.1.
+Those are scores under this representation and function, not probabilities of satisfaction. A score of 1.1 does not mean 110% relevance. A normalisation option can rescale or adjust ranks, but that does not turn them into calibrated probabilities. Judge changes against results people would actually want.
+The stock condition removes P7 before the result is limited. Taking a global top 20 in an inner query and filtering for shop or stock outside it could return fewer rows while missing lower-ranked eligible matches. Put the intended eligibility conditions inside the retrieval query. The database can choose its physical evaluation order; the SQL must first describe the right set.
+The product identifier breaks ties within one query. It does not freeze a multi-page search while documents or stock change. If a long export requires stable membership and ordering, use the appropriate snapshot and pagination boundary.
+What the index provides
+GIN accelerates the lexeme-matching condition. It does not store the answer in ts_rank_cd order. The drill’s three-row catalogue is enough to check semantics, but too small to demonstrate a useful access-path choice. A separate anonymous fixture makes the retrieval work visible: 20,000 documents, 200 matching “mug”, half of those out of stock.
+Figure 2 LIMIT 5 follows work over many more rows
+Observed PostgreSQL 18.6 plan · separate anonymous 20,000-row fixture · no forced index setting
+GIN finds 200 lexical matches.Bitmap Index Scan on the document index.
+The heap scan keeps 100 eligible rows.Stock/shop filtering removes 100; the bitmap contains no lossy heap blocks in this run.
+Ranking supplies a sort key for those 100 rows.A top-N heapsort keeps the best 5 by rank descending, then identifier.
+The limit returns 5 rows.The index did not return an already ranked top 5.
+The unforced observed plan is a bitmap index scan, a bitmap heap scan with stock/shop filtering, a sort and a limit. Ranking supplies the sort key for 100 eligible matches even though only five rows are returned. The top-N sort saves sorting space; it does not let this GIN scan stop after finding the five highest ranks.
+For a common term, retrieving and ranking a large match set can therefore dominate. Inspect actual rows, heap work and filtering with EXPLAIN (ANALYZE, BUFFERS). A selective tenant or other structured predicate may help through a separate access path or a combined bitmap plan, but the planner chooses from the available indexes and statistics. Do not infer a particular combination from the presence of two indexes.
+GIN stores lexemes rather than their weight labels, so weight-restricted matching requires a row recheck. Positional conditions can also require verification beyond a word-presence lookup. A plan’s recheck condition is part of correctness, not proof that the search is approximate in the sense of accepting a false final match. PostgreSQL checks the actual condition before returning the row.
+Measure the answer as well as the plan
+The Teapot result is an excellent regression example because it separates three successful mechanisms from a poor product answer. Tokenisation found mug. The GIN access path can retrieve that document. The stock rule accepts it. None of those mechanisms understands the disclaimer’s implication for someone buying a mug.
+Keep a small, explicitly judged set of search tasks: expected products, unacceptable products and cases where an empty answer is preferable. Include title/body differences, phrases, negation, empty input, product codes, spelling variants and active availability filters. Evaluate top-result usefulness separately from latency, rows examined and index maintenance cost. Recall asks how much of the judged relevant set was found; precision asks how much of the returned set was relevant. A faster index cannot decide those judgements.
+Some intents belong in structured data. If an application needs a product-type filter, model and maintain that fact rather than inferring it from every sentence containing “mug”. Other intents may benefit from curated synonyms, spelling support or vector retrieval. Each changes the candidates or their ordering and needs its own evaluation; changing the representation is not evidence of improvement.
+Changing a dictionary, configuration or document recipe also changes the search contract. Plan how stored vectors and their indexes will be regenerated, how new queries will be tested against the new representation, and how the transition avoids mixing incompatible processing. Rebuilding an index over stale stored vectors does not reprocess the source text.
+Download the disposable text-search drill. Run with Python 3 and --bindir pointing to PostgreSQL 18 binaries. It records the exact corpus, vectors, queries, ranks and larger-fixture plan in a private owned instance, then removes it. The fixture is evidence of retrieval behaviour, not a customer-relevance or production-performance study.
+Sources and further reading
+PostgreSQL 18: full-text search introduction — documents, lexemes and configurations.
+Controlling text search — input grammars, weights and ranking functions.
+Tables and indexes — stored vectors and configuration-dependent expressions.
+Text-search index types — GIN contents and rechecks.
+Additional text-search features — concatenation, query inspection and regeneration implications.
+Testing and debugging text search — inspect the processing that produced a match.
+ 
+LINKS
+/how-this-is-made/
+#choose-the-document
+#normalisation-and-position
+#parse-the-input-language
+#filter-then-order-the-right-set
+#what-the-index-provides
+#measure-the-answer-as-well
+/review/relational-collection/large-results/
+/review/relational-collection/postgresql/vector-search/
+/review/relational-collection/evidence/r55/text-search-drill.py
+https://www.postgresql.org/docs/18/textsearch-intro.html
+https://www.postgresql.org/docs/18/textsearch-controls.html
+https://www.postgresql.org/docs/18/textsearch-tables.html
+https://www.postgresql.org/docs/18/textsearch-indexes.html
+https://www.postgresql.org/docs/18/textsearch-features.html
+https://www.postgresql.org/docs/18/textsearch-debugging.html
