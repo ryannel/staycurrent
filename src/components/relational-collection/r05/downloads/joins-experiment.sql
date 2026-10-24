@@ -108,7 +108,7 @@ SELECT customer_id FROM orders WHERE status = 'paid'
 UNION
 SELECT customer_id FROM orders WHERE status = 'pending'
 ORDER BY customer_id;
-\echo Including order identity keeps Mina's two distinct rows
+\echo Including order identity keeps all three distinct rows
 SELECT customer_id, order_id FROM orders WHERE status = 'paid'
 UNION
 SELECT customer_id, order_id FROM orders WHERE status = 'pending'
