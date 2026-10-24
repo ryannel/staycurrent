@@ -124,3 +124,9 @@
 - Final local first4 author checkpoint: `normal-build-final-local-first4-v02.json`, `repairs/final-local-v02/root-rendered/observations.json`; current08/20/34/42 desktop/phone light/dark, no page overflow,42condition/alternative inspected. Unchanged controls/native qualified, no new execution claimed. Current05newSQL native blocked by host IPC limit; no unrelated IPC removed.
 
 - Currentall6exactversion: normal-build-final-local-all6-v02-clean.json; final-download-byte-equality.json(50); preservation-current.json(131); all58writersstructure0. CleanSQL evidence repairs/final-local-v02/evidence/r05-hosted-clean-result.json +rawlog, root-rendered-05-54/observations.json. Frozenmanifestsfinal-corpus/v02(656)/repair-final-local/v02(171); nofeedback/qualitynotesincluded.
+
+- Current informed visual confirmation: reviews/repair-final-local/visual-confirmation-v02.md and visual-notes/v02-observations.md. Root read both fully; all applicable checks pass, one optional low list-spacing observation. New r05 exact href/body check: repairs/final-local-v02/evidence/r05-current-actual-href.json.
+
+- Current informed practitioner confirmation: reviews/repair-final-local/practitioner-confirmation-v02.md and practitioner-notes/v02-check-notes.md; root fully read, all F1–F5 pass;171input verification/current actual downloads/qualified exact hosted execution.
+- Full corpus second editorial/teaching reports: reviews/final-corpus/{editorial,teaching}-v02.md, root complete read. No substantive editorial finding; one accepted medium three-route native foundation gap; independent practitioner/value remain active.
+- primary-source-cache/v02/provenance.json: freshly retrieved official pinned source bytes only, supplied to practitioner as permitted primary evidence, no quality notes.
