@@ -30,3 +30,47 @@ All seven teaching checks applied;1–6 pass,7 N/A. Complete prose, code/tables,
 
 ## r54 reading in progress
 Complete15865character prose, all code/table and Sources read. Strong progression receipt29.00→four placement owners→co-location/constraint scope→actual remote SQL→fractured remote snapshots→hotshop→fenced authoritymove. Scratch price variants explicit20→21 and18→19, returned20/19 nevercoexisted; two-server snapshot mechanism explained aftervisualtrace. Six-state move and rendered drawings pending: own tab reported0×0 and Next locator failed despite visible enabled node. Root notified; serial UI recovery needed. No substantive prose teaching finding at this point.
+
+## Complete HTTP prose coverage
+Root authorised bounded HTTP reads of exact frozen rendered HTML while editorial holds the UI. Read-only helper in /private/tmp extracts complete article text and Sources, excluding repeated draft-map navigation; no author source/mechanical records. Every remaining article was delivered in <=10000character chunks with explicit end markers, recovering its tail separately. Current text/captions/tables/code/disclosures/Sources complete for all16. Current media views remain queued for exclusive CUA. Root clarified that full built-page textual alternatives suffice for state explanations without Cartesian playback certification; will use controls only to expose missing teaching.
+
+## r55 provisional complete-prose judgement
+Checks1–6 pass;7N/A. Concrete mug query demonstrates lexical, eligibility and relevance as three different tests. Exact corpus shown, lexemes/configuration/positions→phrases including cross-field surprise→input grammar→ranked filtered set→GIN work→evaluation. Full alternatives give all3search outcomes with scores and empty result. Static work figure specifies200→100→5. No substantive teaching finding;2figureviews queued.
+
+## r56 provisional complete-prose judgement
+Checks1–6 pass;7N/A. Toy geometry honestly labelled, exact eligible order and wrong outer-filter case carry the start. Fixed definition of baseline precedes approximate recall, HNSW/IVFFlat and filtered candidate loss. Observed counts distinguish fullpage from missing neighbours; lifecycle/model meaning kept separate. Full geometry/bothqueries text and observed recall rows complete. No substantive teaching finding;2views queued.
+
+## r44 provisional complete-prose judgement
+Checks1–6 pass;7N/A. Keys→index orders→half-open range→gateway/leaseholder→Raft voting→native boundary→hotrow/hotend. Figure1 symbolic spans explicitly omit families/versions, figure2 separates range agreement from transaction outcome, native split limits clear. Tenant variant introduced; boundary examples retain same rows. No substantive teaching finding;2views queued (inspect alternative split/customerread if needed).
+
+## r45 provisional complete-prose judgement
+Checks1–6 pass;7N/A. Purchase invariants stated before intent/state/ParallelCommits. STAGING plus proof vs acknowledgement absence is clear. Native suffix retry counterexample showsP3still12 despite completeorder; full retry usesstableclaim and completebody. Knownretry vs ambiguous/pending and externaloutbox boundaries developed before librarysavepoint note. No substantive teaching finding;commitfigureview queued.
+
+## r46 provisional complete-prose judgement
+Checks1–6 pass;7N/A. Currentisolation/instructors first, sameawkwardschedule atRCvsSerializable; historicalpurchase views thenclosed+applied+retained model, exact/boundedreads andretention/routing. Full startingexample and outcome shown. State alternatives could add teaching detail;view/controlonlyasnecessary queued. No substantive prose finding.
+
+## r47 provisional complete-prose judgement
+Checks1–6 pass;7N/A. Same10orders andfixed60kfixture progression120→20→10KVdecodedrows before read/write tradeoffs; hotend/hashbuckets versus hotrow andglobalquota distinct. Plan terminology indexjoin vs SQLjoin andDistSQLvsKVRPC clarified. No substantive teaching finding;3-pathfigureviewqueued.
+
+## r48 provisional complete-prose judgement
+Checks1–6 pass;7N/A. Logicalregionlabels and onehostlimits explicit. Cluster/database region→table/rowhomes→index and uniquenesscost→GLOBAL→survivalvotes→desiredvsobservedplacement→properacceptance. Same2shopsaccesscomparison and5voters2–2–1clarifywhenchoicechanges. Allstaticprose/captionsread;policy-viewqueued. No substantive teaching finding.
+
+## r49 provisional judgement / concern
+Strongsecuritystory, effectiveidentity/policydenials and bothP7rows demonstrated. Rangehealthbranch locallydefinesrange/majority/underreplication but then asksreader toinspectleases, placementeligibility, allocator movement anddecommissionpreflight. EntrypreparesonlyRL104security; ownplan saysRL123/RL109preparationbeforehealth/removal. Candidate mediumstartingpoint findingmust beconcrete: reader cannot interprettheleasestatus/relocationbudget or tellwhichstateissafeafterdraining fromsuppliedsecurityentry. Considerwhether localdefinitions+handoverfigure fullyremedythis; don'treportmereplanomission. Figureviewqueued.
+
+## r50 provisional complete-prose judgement
+Checks1–6 pass;7N/A. CompleteS503recoveryvariant and actualtargetvs scenariotimes explicit. Chain→scope/revisions→targetacceptance→fencebeforeenumeration→atomicidentity/booking/decrement→externalandruntimeacceptance. Table0/3→1/2→1/2showswhyrestorealone/idempotencyaloneinsufficient. Fullfigurealternative exposesstates. No substantive teaching finding;historyviewqueued.
+
+## r51 provisional complete-prose judgement
+Checks1–6 pass;7N/A. Generalcompatiblemigrationrecappedthenchosendecimal-authoritativecomputedvariant, explicitscope/limit. Two-clockfigurebearsimportantdistinctionbeforejobstates/progress, resourcefailure/cleanup, valueequivalence andapplicationunitacceptance, thenuniqueindexfailure/enforcement. Wholewriteauthoritycontractiondeferredexplicitly. No substantive teaching finding;staticfigureviewqueued.
+
+## r52 provisional complete-prose judgement
+Checks1–6 pass;7N/A. Twoversions/returnintervaldefinedfirst, supportedpredecessors/licence/backup, pre-rolloutpolicy, mixedbinaryreturnrehearsal, per-nodehealthandapplicationchecks, finalisationstart asreturnlimit, currenthistoryrestorecost. Sixstatealternativecomplete. No substantive teaching finding;versionplayerviewqueued.
+
+## r53 provisional complete-prose judgement
+Checks1–6 pass;7N/A. Twojobscontract+authority, explicitrewindbefore103. ConcreteintegerdivisionanddeferredFKdifferences→chosennullable-claimbridgeandweakenedenforcementboundary→closedconsistentcopy→same-countwrongvaluecounterexample→fencedhandover→target-onlypurchase→wholeoperationreturn. Allmeaningfulrows/effectfactsfixed; failedcopy/replayconflict/unknownresponseawkwardcasesincluded. Fullsixstatealternativecomplete. No substantive teaching finding;transferfigureviewqueued.
+
+Common navigation completed: full top collection disclosure2715chars and full draft-map10075chars, including every destinationdescription. All16exactURLs fetched solelyasrenderedHTMLtoinspectrepeateddifferencesandpagerboundaries. Batch10Cockroachcount3drafts/7planned; batch11count6/4; batch12count10drafts. Changed descriptions/availability read once perversion; withinversion onlycurrent marker/pager differed. r54batch10previousr46consistentwithitsfrozenavailable-readingmap, notlaterbuild. These templates do not add a health-branch prerequisite instruction inr49.
+
+## r49 teaching-1 draft
+Proposedmedium · Starting point/gradual exposure · “Read health at the range”, at “Compare intended replication and constraints with available voters, replica localities, leases and destination capacity.” The declared securityentry isRL104, which preparesidentity/object/tenantauthority, notrangeleasesormembership/headroom. Localparagraphsdefinequorum/unavailable/underreplicated, butleasesappearwithoutmeaning andthearticleproceedsstraighttorelocation/decommissionpreflight. No preparationhand-off to Keys,rangesandreplication or Rebalancingandclusterchange beforethisbranch. Readerlosesabilitytointerpret thehealthobservations beingrequested andmustdiscoverwhichphysical-distributionreadingisneeded. Thisisnotafindingbecauseplanitemmissing: itisconcreteunexplainedterm+unpreparedbranchfromtheactualsuppliedentry. Figurefocusesvoterreplacement andcannotbyitselfdefineleaseauthority/movementpreparation. Suggestedrepair: introduceoptionaloperationalbranchanddirectmissingpreparationtoexistingownersbeforehealth/removal; keepsecurityrouteusable. Finalisemediaaftercurrentfigureview.

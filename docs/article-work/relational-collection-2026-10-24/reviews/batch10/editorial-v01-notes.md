@@ -15,3 +15,13 @@ r55: Complete13,897characters and Sources/full3search disclosure read. Interacti
 r56: Complete15,413characters and Sources/geometry disclosure read. Interactive states/actual figures remain outstanding during same environment interruption. Text checks1–5,7 provisionally pass. Toygeometry separated from30kvector experiment; fullpage/recall counterexample makes candidate-budget distinction useful. Metric/filter/snapshot baseline precedes approximation and final human usefulness. Check6 awaits media.
 
 Not final reports or completed per-piece coverage until outstanding rendered media recovered. Browser controls failing with “No node found” and0width screenshots are environment limits, not article findings. Root investigating; no viewport/theme changed.
+
+Completion update: r55 all three search choices and all five states read successfully; r56 both four-state filter branches and recall display read successfully after root-authorised viewport recovery. Their complete media checks pass. Reports saved for all 16 pieces; automated report-structure count confirms 16 whole judgements and all seven ordered checks per piece. Four optional low findings only across batches10–12.
+
+Final audit found a narrow scripted-text exposure gap to recover: r40 keep-waiting alternative step4 (its final step5 was read), and r42 corrected-branch initial state after reset. Root informed; awaiting a short safe browser window to emit those exact states before finalising coverage. Reports are substantively drafted but this exposure audit must close.
+
+Cleanup: explicit viewport override reset, actual1280×720/System and screenshot verified; successful study tab2 closed. Original failed reference tab1 is trapped on the browser’s connection-refused dataURL. Both supported close and a safe reference navigation are rejected by the URL-policy check. No bypass attempted.
+
+Final exposure recovery completed under a short exclusive window: all five r40 Keep-waiting branch states emitted, including step4 “With no timeout or cancellation, both requests remain dependent on the report. No amount of waiting makes this a fast metadata operation.” r42 corrected initial state emitted: runtime_10 is the authenticated session identity and cannot become owner/catalogue_code. Both agree with the article argument; judgements/findings unchanged. Complete initial editorial coverage now applies.
+
+Viewport override reset again; actual1280×720, System checked and native screenshot verified; final audit tab3 closed. Only original failed reference tab1 remains trapped behind the CUA current-dataURL policy; all study/audit tabs are closed.

@@ -124,3 +124,15 @@ Root read full completed initialvisual09/10/11 reports. All4initial perspectives
 ## D059 · freeze current four-article repair confirmation
 
 Repair23/24/26/32authorcomplete onimmutable4538; no sourcechanges afterbuild. Integrated finalrecords, froze124curatedinputs as reviews/repair-batches07-08/v02/manifest.json, served4540asaliasofsameoutput. Staleoriginalscreenshotsremoved; unchangednative/model source-data-environment-verifier reusequalified, new26canonicalfields and relocated32actualallfrozenobservation explicit. Required freshpractitioner/teaching/editorial/visual confirmations prepared. The3pending olderrepair-set-v03 informedperspectives maycombine withmatchingnew4perspective usingboth exactversions/per-piecechecks/separatereports. This is coordinationonly, neverblindinitial/final/corpuscredit.
+
+## D060 · four-article technical confirmation passes
+
+Freshinformedpractitioner23/24/26/32passes all5checksperpiece on124frozeninputs/4540, new26semanticfields/routingcallbacks and32actualallfrozenoutput independentlychallenged; no newfinding. Rootreadfullreport. Technicalcausesclosedinscope; teaching/editorial/visualconfirmationstillrequired, neverblindfinal/corpuscredit.
+
+## D061 · start batch09 coherent repair
+
+Fresh collection_repair_batch09_v02 assignedonly36/37/39/43currentcompletepieces. Scopedreferencecalibration andowned37PG18.6nativewindow coordinatedcentrally. Approve local erroneousS503capacity3→30 while remaining3unchanged; laterB203leaves2, target3/3 and reconciled3/2. This matchesfixedE6withoutchangingcanonicalrecords and preserves consequentialexcludedtransaction. Existing50usescompatiblelocalmistake. Old09firsts/evidencepreserved; affectedactualrunrequired.
+
+## D062 · user authorises incremental pushes
+
+User explicitly requests committing/pushingaseacharticlecompletes. Pushorigin/maincheckpointsincrementallyfromnow; earlier no-pushrestriction superseded. Currentnormalbuildpasses173built/150checked/all13rules; draftcollectionandreferencesexcluded. Draft/publicationstatusandrequiredreviewsremainhonest; thisinstructiondoesnotrequiremarkingunfinishedarticlesavailable. No globalpublicationregistryreplacement ispartofthischeckpoint.
