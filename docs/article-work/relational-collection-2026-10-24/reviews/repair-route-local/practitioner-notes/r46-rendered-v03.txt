@@ -1,0 +1,81 @@
+  
+Relational collection · Draft for review 
+CockroachDB isolation and follower reads  Deep diveAbout 7 minutes AI-generated       
+A read can be consistent and still too old for its job. A snapshot from before Mina’s purchase correctly shows one blue mug and no order 103. It is a poor response to Mina opening her just-confirmed order, and no authority for another buyer to take the mug. 
+CockroachDB exposes different contracts for concurrent decisions and historical observation. Serializable governs the complete transaction’s decisions. Read Committed gives statements fresh views with weaker protection between them. Historical reads deliberately choose an older view, which suitable replicas may serve nearby. Choose from what the operation must establish before choosing where it runs. 
+We use the shop’s purchase for snapshots and the separate S502 instructor rule for isolation: Ada Lind and Tomas Ek start on duty, and at least one must remain. The native drill checks these contracts on CockroachDB 25.4.17; the replica drawing is a labelled model. 
+What the next statement can change
+Serializable protects the decision
+Choose an earlier view on purpose
+Why a follower can know the answer
+Exact time, or a freshness bound?
+History is a resource
+Verify the route as well as the answer
+What the next statement can change 
+At Read Committed, each statement reads a committed snapshot. Another transaction can commit between two statements, so the second may see different facts. Earlier writes by the reading transaction are visible to its later statements too. 
+This is useful for a sequence of operations that may legitimately observe progress between statements. It does not make an earlier count a reservation. A transaction that counts available instructors, then changes a different row, can use a decision that another writer has invalidated. 
+Consider S502. Ada’s transaction reads two on-duty instructors. Tomas’s also reads two. Ada marks I1 off duty and commits; Tomas marks I2 off duty and commits. Each changed a different row, and both made their decisions before seeing the other’s change. No instructor remains. One chosen schedule, checked with two native connections
+Step | Ada’s transaction | Tomas’s transaction | 
+1 | Read count 2 |  | 
+2 |  | Read count 2 | 
+3 | Set I1 off; commit |  | 
+4 |  | Set I2 off; attempt commit |  
+The native Read Committed run accepted both changes and left count 0. This is write skew: decisions based on overlapping reads write different rows, jointly breaking a rule. Repeatedly checking the isolation level’s name does not protect a rule the chosen protocol permits. 
+Serializable protects the decision 
+CockroachDB defaults to Serializable. Successful transactions must fit a serial execution. If Ada goes first, Tomas must see only himself on duty and refuse to leave. If Tomas goes first, Ada must refuse. Both leaving based on count 2 cannot fit either order. 
+The native drill repeats the same schedule at Serializable. Ada commits first. Tomas receives 40001 and rolls back; a fresh whole-transaction retry sees count 1 and keeps him on duty. The protection includes that application refusal on retry. Retrying only “set I2 off” would discard the decision the isolation level was preserving. 
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+SHOW transaction_isolation;
+SELECT count(*) FROM duty
+WHERE session_id = 'S502' AND on_duty;
+-- Leave only when the complete protocol permits it.
+-- A 40001 repeats the transaction and its count.
+COMMIT; 
+Read Committed can reduce serialization-driven transaction restarts by retrying statements internally. It still has ordinary errors, ambiguous completion and exceptional cluster failure paths. Changing the level does not make every retry problem disappear, and it changes which decisions are protected. Check the actual reported level on the running version and configuration. 
+For a rule reducible to one guarded update, put the condition in that update. The shop’s conditional stock decrement tests and changes the same row. More complex rules need a complete locking or serializable protocol. Locking currently matching rows alone does not protect an empty set, and a lock cannot turn a historical read into permission to write. 
+Choose an earlier view on purpose 
+AS OF SYSTEM TIME selects historical contents. It is read-only: it can inspect the mug before purchase, but cannot reserve it in that old history. For related statements, choose one timestamp for the transaction rather than independently choosing “a few seconds ago” on every statement. 
+BEGIN;
+SET TRANSACTION AS OF SYSTEM TIME follower_read_timestamp();
+SELECT product_id, stock FROM products
+WHERE product_id IN ('P3', 'P7');
+SELECT order_id, status FROM orders WHERE order_id = 103;
+COMMIT; 
+The convenience function chooses a timestamp sufficiently in the past to make a follower-served answer likely under ordinary conditions. It is not a promise that this particular replica has every required version, that no unresolved intent can delay the read or that the answer includes a recent purchase. 
+In the native drill, a server-generated timestamp is captured before the complete purchase. Current queries afterwards find P3 10, P7 0, order 103 and two lines. Reusing the earlier timestamp gives P3 12, P7 1, no 103 and no lines. Neither read combines old stock with the new order. A write inside the historical transaction is rejected with 25006. 
+These are two coherent views of one explicit alternative history. The old result does not say the purchase failed. The current result does not modify the saved snapshot. Choosing history is part of the question, rather than an accidental consequence of which server happened to answer. 
+Why a follower can know the answer 
+CockroachDB divides its ordered keys into contiguous intervals called ranges, each replicated across nodes. The SQL node accepting a connection is the gateway; it can route data access to another node. Each range has a leaseholder that coordinates ordinary current reads and writes. Writes still need agreement from voting replicas. Keys, ranges and replication follows that arrangement from a SQL row to its copies. Here we ask when another copy can answer an older view. 
+A follower needs more than its latest local value. If a write belonging before the requested timestamp could still arrive, returning an older value might be wrong for that timestamp. 
+A range’s closed timestamp promises that new writes cannot be introduced at or below that boundary. The follower must also have applied the corresponding replicated state. Together they can make a historical answer safe without consulting the current leaseholder on every read. Required old versions must still exist. 
+Figure 1 separates those conditions. The purchase commits at illustrative timestamp 110. Read at 100, then 115 while B remains behind. Finally advance B and change the retention boundary.  
+Figure 1 A timestamp needs both a promise and its data Read at 100 · before purchase115 · after purchaseB has applied through 105 · behind purchase120 · past purchaseRetained history starts at 90110 
+100: before purchase → 110: purchase commits → 115: after purchase 
+A · stock range
+Closed through 120Applied through 120
+At 100: P7 stock 1
+B · order range
+Closed through 120Applied through 105
+At 100: order 103 absent 
+Whole snapshot at 100: stock 1 and no 103
+Both replicas have the required state and retained versions. The coherent older answer excludes the entire purchase. 
+An illustrative frontier model with ordered numbers, not wall-clock seconds or measured replica positions. Only P7 and order 103 are drawn; the real purchase also changes P3 and its two lines. A closed promise cannot substitute for unapplied data or discarded versions. Change one input at a time.    
+A could answer its portion at 115 while B could not. Returning B’s latest old state would manufacture a mixed view. The complete operation needs a suitable replica for every participating range at the chosen timestamp. An older timestamp can be easier to serve, but substituting it requires the operation’s permission. 
+This figure simplifies the internals into one applied frontier per range. Actual routing and transaction resolution do more work. Its numbers are ordered teaching labels, not seconds, clock-offset measurements or live replication positions. 
+Exact time, or a freshness bound? 
+An exact timestamp names a particular view. A bounded-staleness request instead gives the database freedom to select a sufficiently recent view. with_max_staleness('10s') permits an answer at most that old; it does not insist that every request read exactly ten seconds ago. 
+SELECT stock
+FROM products AS OF SYSTEM TIME with_max_staleness('10s')
+WHERE product_id = 'P7'; 
+CockroachDB 25.4 restricts bounded-staleness reads to eligible single-statement, single-row queries without an index join. It is not a replacement clause for an arbitrary reporting join. The native point lookup succeeded; the unconstrained multi-row form was rejected with 0A000. An exact historical transaction is the route when several related queries must share a fixed view. 
+with_min_timestamp() expresses a lower timestamp bound, while the optional nearest_only argument can demand a nearby answer and fail if unavailable. Use a database-supported dependency timestamp when causality is required. A browser clock reading is not evidence that its timestamp follows a server’s commit. 
+Mina’s confirmation is simplest as a fresh current transaction after successful commit. An old still-open transaction or an explicitly historical read can omit 103 even on a healthy node. Catalogue browsing may accept older stock as display information; checkout still has to run its protected current write decision. 
+History is a resource 
+Historical versions are eventually garbage-collected according to retention settings and relevant protections. A timestamp older than retained history cannot be answered merely by waiting for a follower to catch up. Catch-up and retention solve different missing-data problems. 
+Plan the maximum lifetime of a report, its restart behaviour and the versions that must remain available. Choosing a relative timestamp independently for each page creates a moving view; retaining one exact timestamp creates a lifetime requirement. Pagination and consistent exports develops that continuation contract. 
+A historical query is also no substitute for a backup. Garbage collection limits what can be read, and a lost cluster or an unauthorised change needs a recovery plan beyond a convenient past query. Increasing retention consumes storage; it does not create independent recoverable copies. 
+Verify the route as well as the answer 
+A successful historical query does not prove that a follower served it. A nearby replica may be the leaseholder, or the operation may route elsewhere. On a representative cluster, identify the range’s leaseholder, connect through the intended gateway and inspect the actual query’s execution evidence. CockroachDB’s follower-read documentation uses EXPLAIN ANALYZE and its “used follower read” indication, together with SQL/KV node locations. It runs the query, so choose an observation you are prepared to execute. 
+Download the isolation and history drill. With Python 3 and psycopg[binary]==3.3.6, run python read-contracts.py --cockroach /absolute/path/to/cockroach. It creates its own loopback instance, checks process and cluster ownership, verifies the two instructor histories and historical SQL contracts, then removes all its resources. 
+The recorded 25.4.17 run is single-node. It verifies returned values, actual isolation, read-only rejection and bounded-query eligibility, including a successful follower_read_timestamp() transaction. It does not establish follower routing, GC expiry, regional latency or partition availability. Test those separately with inspected replica placement and the real failure domains the service promises. 
+Strong follower reads for GLOBAL tables are another placement contract. They should not be confused with deliberately stale reads. Table locality and region survival develops that choice and its write cost.   
