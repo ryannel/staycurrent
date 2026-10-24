@@ -23,10 +23,10 @@ try:
  for u in ['root','runtime_10','runtime_20']:
   run(['cert','create-client',u,'--certs-dir='+str(cert),'--ca-key='+str(ca)])
  for i,p in enumerate(ports):
-  args=[B,'start','--listen-addr=127.0.0.1:'+str(p),'--http-addr=127.0.0.1:'+str(http[i]),'--join=127.0.0.1:'+str(ports[0]),'--certs-dir='+str(cert),'--store='+str(root/('node'+str(i))),'--cache=64MiB','--max-sql-memory=64MiB','--cluster-name='+token]
+  args=[B,'start','--listen-addr=127.0.0.1:'+str(p),'--http-addr=127.0.0.1:'+str(http[i]),'--join=127.0.0.1:'+str(ports[0]),'--certs-dir='+str(cert),'--store='+str(root/('node'+str(i))),'--cache=64MiB','--max-sql-memory=64MiB','--cluster-name=r49-'+token]
   f=open(root/('process'+str(i)+'.log'),'w'); procs.append(subprocess.Popen(args,env=ENV,stdout=f,stderr=f))
  time.sleep(2)
- run(['init','--host=127.0.0.1:'+str(ports[0]),'--certs-dir='+str(cert),'--cluster-name='+token])
+ run(['init','--host=127.0.0.1:'+str(ports[0]),'--certs-dir='+str(cert),'--cluster-name=r49-'+token])
  run(['sql','--host=127.0.0.1:'+str(ports[0]),'--certs-dir='+str(cert),'-e','CREATE DATABASE ops'])
  sql('CREATE TABLE owner_marker (token STRING PRIMARY KEY); INSERT INTO owner_marker VALUES (\''+token+'\');')
  assert token in sql('SELECT token FROM owner_marker').stdout
@@ -55,7 +55,7 @@ try:
  status=['node','status','--all','--format=csv','--timeout=10s','--host=127.0.0.1:'+str(ports[0]),'--certs-dir='+str(cert)]
  s=run(status).stdout; nodes=list(csv.DictReader(io.StringIO(s))); assert len(nodes)==4
  victim=next(r['id'] for r in nodes if r['address'].endswith(':'+str(ports[3])))
- nodebase=['--host=127.0.0.1:'+str(ports[0]),'--certs-dir='+str(cert),'--cluster-name='+token]
+ nodebase=['--host=127.0.0.1:'+str(ports[0]),'--certs-dir='+str(cert),'--cluster-name=r49-'+token]
  run(['node','decommission',victim,'--dry-run']+nodebase,timeout=90)
  run(['node','decommission',victim,'--wait=all']+nodebase,timeout=150)
  assert token in sql('SELECT token FROM owner_marker').stdout

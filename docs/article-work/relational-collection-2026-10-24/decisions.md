@@ -104,3 +104,15 @@ The undispatched same-perspective initial teaching/editorial assignments now inc
 ## D054 · complete PostgreSQL first returns
 
 Root completed the remaining ordinary r56 preview-owner author display checks while the fresh CockroachDB operations writer calibrated. All32 manual query-form/step/width/theme states, static native comparison, phone code scrolling, playback/pause/reset/keyboard, final disclosures and served-byte equality were checked against unchanged4512 source. This is author verification only, not independent review. All six r40/r41/r42/r54/r55/r56 first returns are frozen for batch10. Final download-save behaviour was not claimed. CockroachDB operations public text audit verified19/19 complete reference chunks and34rendered study was separately reported; design acknowledgement sent before source writing.
+
+## D055 · extend the undispatched technical first-coverage batch
+
+All6 PostgreSQL operations/specialist first returns are frozen as batch10 at4516. Extend the not-yet-dispatched same-perspective initial practitioner assignment from23 pieces06–09 to29 pieces06–10. Exact inputs and all5checks remain required separately for every piece; native evidence reuse remains qualified. This removes repeated coordination, not coverage. The newly prepared initial visual assignment will cover complete09–11 once11 is frozen. Teaching05–09 is complete with no findings; editorial05–09 is finishing, independently.
+
+## D056 · consolidate four ready article repairs
+
+All4initial perspectives are complete for23/24/26/32. Accept B07-P23critical false hash-memory allowance, B07-V24medium timeline label decoding, B07-V26medium unheaded packed relational data/missingreferencedP3, B08-E32medium premature visibility/freezing qualification. Fold optional B07-E23internalQAwording into its already-required23repair. Severity follows concrete reader consequence, not a preferred figure form. One fresh4piece repair workspace is prepared; accepted problems/passconditions and source context retained. See reviews/batches07-08-accepted-v01.json and repairs/batches07-08-v02/accepted.md. No repair dispatched until a slot frees.
+
+## D057 · preserve narrow visual first-reading coverage
+
+Initialvisual09–11reader discovered its44Layout/Read loop had returned nooptions before prose. Default figure and all12quorumstates had isolated first readings;3nondefaultkey-space states were genuinely exercised onlyaftercontext. Record that narrow gap without claiming a pass. A forthcoming fresh initialbatch12visual reader can also supply the44pre-prose supplement on exact4522, before44articlecontext, with no reports/findings/authornotes. Other44checks remain applicable; no blanket repeat. Hidden-playback timing was separately resolved by freshscreenshots+AX+hosttimestamps pumpingIABrendering, with actualrailfill andadvancement; no false productbug/foregroundtimingclaim.

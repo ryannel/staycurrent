@@ -81,3 +81,11 @@
 - search-examples.json and D051 fix shared text descriptions/English weights and two-dimensional illustrative vectors before r55/r56 use. Existing protected inputs and core snapshot unchanged.
 - reviews/batch07/visual-v01.md: full initial seven-piece visual coverage; two medium reader-effort problems await other initial perspectives before consolidated repair. batch08 current visual work completed, final report pending.
 - writers/cockroach-foundations/reference-delivery.json: public exact19text audit and reported34rendered study, root acknowledgement before design; r44/r45 native sources now in author finishing.
+
+## PostgreSQL specialists and CockroachDB first versions
+
+- Local checkpoint5793359 preserves54 integrated draft sources and the complete PostgreSQL first-return sources; no push. normal-build-delivery7.json covers52sources before r49/r48, all13rules and publication exclusion. Current new gated builds independently passed existing structure checks.
+- reviews/batch10/v01/manifest.json:6 frozen first returns40/41/42/54/55/56 on4516; native18.6, FDW, English text and pgvector0.8.7 evidence remain fixture/version-qualified. r56 preview-owner observations provide32states, actualcontrast, theme/phone/controls/servedbyte checks without independent-review credit.
+- reviews/batch05–09/teaching-v01.md: fresh full initial25piece teaching checks, all7 each; no findings. Root read all5reports fully. Other required perspectives remain distinct.
+- reviews/batch08/visual-v01.md: full initial6piece visual checks, no findings.
+- writers/cockroach-operations/reference-delivery.json: all19 complete public reference chunks verified; separately reported34drawings and acknowledgement precede design. r49 firstreturn native secure client identities/RLS/decommission verified; empty licence key is an observation, not entitlement.
