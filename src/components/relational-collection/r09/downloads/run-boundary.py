@@ -12,10 +12,11 @@ import psycopg_pool
 
 parser=argparse.ArgumentParser()
 parser.add_argument('--bindir', required=True)
+parser.add_argument('--tmpdir', default='/tmp', help='writable short temporary parent (default: /tmp; macOS/Linux)')
 args=parser.parse_args()
 binpath=pathlib.Path(args.bindir).resolve()
 env={k:v for k,v in os.environ.items() if not k.startswith('PG')}
-base=pathlib.Path(tempfile.mkdtemp(prefix='sc-r09-owned-', dir='/private/tmp'))
+base=pathlib.Path(tempfile.mkdtemp(prefix='sc-r09-owned-', dir=args.tmpdir))
 data=base/'data'; sock=base/'sock'; sock.mkdir()
 started=False
 

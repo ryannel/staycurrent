@@ -41,3 +41,16 @@
 - reviews/batch02/dependency-observations.json: coordinator tracks wider same-runner portability exposure and prepared-but-undispatched snapshot prerequisites, without contaminating blind review inputs.
 - writers/r10,r11,r12/: one fresh calibrated performance-writing assignment; final consolidated author build at4394, zero structural issues. Author finishing is in progress; not independent review.
 - writers/change-and-access-assignment.txt: prepared two-article fresh assignment for r22/r25, not yet dispatched.
+
+- Checkpoint2131a66 is local only: reviewed plan and17 frozen firstreturns, no publication. Current source19 complete drafts with r22/r25 author finishing.
+- normal-build-delivery2.json:17-source checkpoint passes normal build/all13 rules; gated draft/reference routes absent.
+- reviews/batch02/{initial-coverage.json,accepted-v01.md}: all4 first perspectives complete, scoped fresh hidden-SQL firstreading gap closed; four consolidated substantive problems accepted.
+- repairs/batch02-v02/: fresh coherent four-piece repair/native rerun/currentphone/theme mechanics and authorcontinuity; not independent confirmation.
+- reviews/batch02/v02/manifest.json: immutable4414 confirmation version,123 files with current repair observations and qualified unchangedSQL/data/native reuse; stale affectedgeometry removed. v02-native-supplement/ supplies raw independent querysnapshot probe only to practitioner.
+- reviews/batch02/browser-download-stall.json,coordination-exposure.json,visual-evidence/coordinator-visual/: exact hungbrowsertool duration, narrow administrative exposure and explicitlyoperated fallback mechanical records; no private reasoning access or fabricated visual certification.
+- reviews/batch03/v01/manifest.json and batch04/v01/manifest.json: complete firstversions at4398/4408; each perspective's permitted inputs remain separate.
+- reviews/batch03/{visual-v01.md,practitioner-v01.md,teaching-v01.md}: complete initial5-piece coverage for these perspectives; findings awaiting initialeditorial consolidation. batch04/teaching-v01.md: complete initial3-piece teaching, nofindings.
+- writers/batches03-04-teaching-v01/reference-delivery.json: exact19/19 publicreference delivery; earlier false2/19 audit corrected public Promise.allSettled value traversal. Clipped giantplan context recovered through bounded relevantnodes before report.
+- writers/r14,r16,r17/: three frozenauthor firstreturns with ownedPG18.6 concurrency/unknownoutcome/outbox evidence. Late agentinventory exposure occurred aftersourcesclosed; timestamp/hashprovenance preserved, no postexposure edits.
+- writers/r22,r25/: complete sources/nativePG18.6 actualexperiment/login evidence; current authorfinishing4412 then refreshed4416; firstreturns not yet frozen.
+- writers/storage-recovery-replicas-assignment.txt: next prepared fresh writing assignment r15/r18/r20 with concise outcomelevel context and no known disputed prerequisite drafts.

@@ -1,0 +1,187 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import ConnectionLife from '../../components/relational-collection/r09/ConnectionLife.astro';
+import core from '../../lib/relational-collection/core.json';
+const mug=core.products.find(p=>p.product_id==='P7');
+---
+
+<p>A query has a meaning in SQL and a life in the application that sends it. The application supplies values, borrows a connection, reads the answer and decides what to tell its caller. A purchase can use sound SQL and still go wrong if a helper writes on another connection, an empty result is mistaken for success or a timeout leaves work running after the request has gone.</p>
+
+<p>The boundary is a database <em>driver</em>, a library that carries commands and results between application code and a database session. Here the application uses Python with Psycopg 3 and PostgreSQL 18. The syntax belongs to that driver; the questions recur in others. Which parts of the command are values? Who owns the transaction? When has the connection finished its work?</p>
+
+<p>We follow the shop’s orders and products. P7 is the {mug.name.toLowerCase()} at {mug.price}. The examples begin with order 103 already recorded; a later purchase fragment explicitly rewinds to before it. The downloadable experiment checks the driver behaviour on a disposable server. The drawing illustrates the application’s ownership, rather than running a database in the browser.</p>
+
+<h2 id="send-values-as-values">Send values as values</h2>
+
+<p>Suppose a product page receives the product ID <code>P7</code>. SQL needs a condition comparing the product’s key with that value. Building the command by joining strings gives incoming text the same power as SQL you wrote yourself:</p>
+
+<Sql label="An unsafe command built from incoming text" code={`# Do not build queries this way.
+query = "SELECT name, price FROM products WHERE product_id = '" + product_id + "'"
+row = conn.execute(query).fetchone()`} />
+
+<p>For P7, the resulting text happens to be a valid lookup. For <code>P7' OR true --</code>, the inserted quote ends the string value, <code>OR true</code> makes the condition true for every row and <code>--</code> comments out the closing quote. The caller has changed the question. This is <em>SQL injection</em>.</p>
+
+<p>Give the driver the SQL and its values separately instead:</p>
+
+<Sql label="Bind the product ID through Psycopg" code={`row = conn.execute(
+    "SELECT name, price FROM products WHERE product_id = %s",
+    (product_id,),
+).fetchone()`} />
+
+<p><code>%s</code> is Psycopg’s value placeholder. The tuple in the second argument supplies one value; its trailing comma makes it a one-element tuple. Do not put quotes around the placeholder or replace it with Python string formatting. The driver sends a parameter whose value is the supplied text, including any quote marks.</p>
+
+<figure class="binding" aria-labelledby="r09-binding-title">
+  <figcaption id="r09-binding-title"><span>Figure 1</span> The same command, two different values</figcaption>
+  <div class="command"><strong>SQL structure</strong><code>WHERE product_id = <b>parameter 1</b></code></div>
+  <div class="values"><div><strong>Parameter 1</strong><code>P7</code><span>Matches the Blue mug</span></div><div><strong>Parameter 1</strong><code>P7' OR true --</code><span>Matches no product</span></div></div>
+  <p>The bound text occupies one value position in both cases. Its quote and comment marks do not become SQL operators.</p>
+</figure>
+
+<p>In the native experiment, the concatenated command returned all three products for that incoming text; the parameterised command returned none. It asked for a product with that entire ID, which the shop does not have. A string that merely breaks the unsafe command is also a failure, but this example makes the changed meaning visible without changing any stored data.</p>
+
+<p>Binding preserves the command’s structure. It does not prove that an ID belongs to the caller, that a quantity is sensible or that the query is cheap. Establish the caller’s authority and validate the business input too. In a tenant variant, a safely bound but unauthorised shop ID is still the wrong shop.</p>
+
+<h3 id="choosing-sql-structure">Choosing SQL structure</h3>
+
+<p>A value placeholder cannot stand for a column name or the keyword <code>DESC</code>. <code>ORDER BY %s</code> with the value <code>price</code> supplies a text value, not a request to sort by the price column. When a screen lets the caller choose a sort, first map the screen’s options to the few structures the application supports.</p>
+
+<Sql label="Choose an allowed column, then quote it as an identifier" code={`from psycopg import sql
+
+sort_columns = {"name": "name", "price": "price"}
+column = sort_columns[requested_sort]  # reject an unknown option
+query = sql.SQL(
+    "SELECT product_id, name, price FROM products "
+    "ORDER BY {}, product_id LIMIT %s"
+).format(sql.Identifier(column))
+rows = conn.execute(query, (20,)).fetchall()`} />
+
+<p><code>Identifier</code> quotes a SQL name correctly. The mapping makes the product decision: these are the two sorts the screen permits. The limit remains a value. If direction is selectable too, choose between fixed <code>ASC</code> and <code>DESC</code> fragments through another mapping. Putting unchecked incoming text into <code>sql.SQL(...)</code> would reopen the original problem.</p>
+
+<h2 id="a-result-is-a-contract">A result is a contract</h2>
+
+<p>The driver converts database values to application values. In this Psycopg configuration, PostgreSQL <code>numeric</code> becomes Python <code>Decimal</code>, an integer becomes <code>int</code>, and SQL <code>NULL</code> becomes <code>None</code>. A returned row is a tuple by default. <code>fetchone()</code> returning <code>None</code> means there is no next row; a row containing a missing column is a tuple containing <code>None</code>. Those are different results.</p>
+
+<p>Decide what the query promises before unpacking it. A lookup by a primary key can return zero or one row. An order-line query can return several. A count returns one row even when the count is zero. Give a missing order, an empty list of orders and a database error distinct meanings in the application.</p>
+
+<Sql label="Find an order only for the authorised customer" code={`row = conn.execute(
+    "SELECT order_id, status FROM orders "
+    "WHERE order_id = %s AND customer_id = %s",
+    (order_id, authorised_customer_id),
+).fetchone()
+if row is None:
+    return None  # the caller has no visible matching order
+order_id, status = row`} />
+
+<p>The customer ID comes from the application’s established authority, rather than trusting a customer ID beside the order ID in incoming data. Whether an API reveals the difference between an absent order and one the caller may not see is a separate interface choice.</p>
+
+<p>Choose returned columns deliberately. <code>SELECT *</code> lets a schema addition silently change the result’s shape and may fetch large fields the screen never uses. Preserve exact amounts when serialising them to JSON: turning <code>Decimal('20.00')</code> into a binary floating-point number discards the representation chosen for money. A documented decimal string or an explicit fixed-scale representation makes that boundary visible. Timestamp values need an equally deliberate timezone and output format.</p>
+
+<p><code>fetchall()</code> is convenient for the small lists here. It is also a promise to bring the whole remaining result into application memory. Exports need bounded reading and a defined view of changing data; <a href="/learn/databases/relational/large-results/">Pagination and consistent exports</a> develops that contract.</p>
+
+<h2 id="one-connection-owns-the-transaction">One connection owns the transaction</h2>
+
+<p>A connection represents a database session. A transaction belongs to that session, not to the application’s call stack. Two cursors on the same connection share its transaction; two connections do not. A helper that borrows a fresh connection is outside its caller’s transaction even if the helper is called between the caller’s begin and commit.</p>
+
+<p>A <em>pool</em> keeps connections ready to lend to requests. Treat a borrowed connection as a resource owned by one operation until that operation finishes. Pass it into the helpers that participate in the transaction. Do not have those helpers borrow their own connections, commit independently or keep using the borrowed connection after it has been returned.</p>
+
+<p>Psycopg normally starts a transaction even for a plain <code>SELECT</code>. An application that reads, then waits for the next HTTP request can therefore sit idle inside a transaction. This example makes the choice explicit: the pool creates autocommit connections, and each multi-statement operation uses a transaction context.</p>
+
+<Sql label="The two scopes: borrow a connection, then open its transaction" code={`from psycopg_pool import ConnectionPool
+
+# Create once at application startup; conninfo is deployment configuration.
+pool = ConnectionPool(conninfo, kwargs={"autocommit": True}, open=False)
+pool.open()
+pool.wait(timeout=5)
+
+# During one request:
+with pool.connection(timeout=2) as conn:
+    with conn.transaction():
+        reserve_and_record(conn, purchase)
+# Report success only after the transaction context has exited.
+
+# At application shutdown, after requests have finished:
+# pool.close()`} />
+
+<p>The outer context borrows and returns the connection. The inner context begins a transaction, commits on a normal exit and rolls back when an exception leaves it. <code>reserve_and_record</code> stands for the complete purchase operation: every reservation, the order and its lines. It receives <code>conn</code>. The pool’s waiting limit bounds acquisition; it is not a limit on the SQL once a connection has been obtained.</p>
+
+<p>Autocommit outside the inner block does not split the statements inside it. Conversely, omitting that block would let each successful write commit separately. Drivers and transaction frameworks have different defaults, so read the actual context-manager contract. In Psycopg, opening <code>conn.transaction()</code> after an implicit transaction has already begun can create a savepoint inside that transaction, rather than owning the outer commit.</p>
+
+<p>Figure 2 keeps the ownership visible. Step through Success, then choose No stock or Statement cancelled. Watch when C can return to the pool.</p>
+
+<ConnectionLife />
+
+<p>There is one borrower throughout the active transaction. In the experiment, a helper writing through a second autocommit connection changed the teapot’s price to 36.00 even though the first connection’s stock change rolled back. This separate counterexample changes disposable scratch state; it is not a later event in the shop’s shared history. A rollback can discard only the work in its own transaction.</p>
+
+<h2 id="a-refused-purchase-is-not-a-sql-error">A refused purchase is not a SQL error</h2>
+
+<p>Rewind to before order 103 for the purchase fragment. The mug has stock 1. The conditional update from <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> can return one row, or none. Both are successful SQL execution. Only the first means that this attempt reserved stock.</p>
+
+<Sql label="A reservation helper that makes the failed precondition leave the transaction" code={`class OutOfStock(Exception):
+    pass
+
+def reserve(conn, product_id, quantity):
+    if quantity <= 0:
+        raise ValueError("quantity must be positive")
+    row = conn.execute(
+        "UPDATE products SET stock = stock - %s "
+        "WHERE product_id = %s AND stock >= %s RETURNING stock",
+        (quantity, product_id, quantity),
+    ).fetchone()
+    if row is None:
+        raise OutOfStock(product_id)
+    return row[0]`} />
+
+<p>The caller invokes it inside the transaction context for each product, then writes the order and its lines. Catch <code>OutOfStock</code> outside that context so it has already rolled back. Catching it inside and continuing normally would tell the context to commit any earlier successful work. In the experiment, raising an application refusal after reducing P3 restored stock 10 before the same pooled session was borrowed again.</p>
+
+<p>A database error is another path. PostgreSQL reports a stable five-character <em>SQLSTATE</em>; Psycopg exposes it as <code>error.sqlstate</code>, with fields such as <code>error.diag.constraint_name</code>. Use the code and named constraint to recognise an expected refusal. Parsing the English error message depends on wording that may change or be translated.</p>
+
+<p>A check violation such as <code>23514</code> usually requires fixing the input or the operation. A serialization failure, <code>40001</code>, requires rerunning the complete transaction and its decisions. A transport failure during commit can leave the outcome uncertain. These are different instructions, not one generic “retry database error” branch. <a href="/learn/databases/relational/conflicts-and-retries/">Retries when a commit reply is missing</a> handles that last distinction.</p>
+
+<h2 id="a-timeout-must-end-the-work">A timeout must end the work</h2>
+
+<p>There are several waits in one request: for a pooled connection, for a lock, for a query result and for commit. An HTTP deadline expiring only says the caller stopped waiting. It does not, by itself, cancel the database command or roll back its transaction.</p>
+
+<p>PostgreSQL’s <code>statement_timeout</code> stops a statement that exceeds its allowed server time, including time spent waiting for a lock. Set it locally inside the transaction when the limit belongs to this operation:</p>
+
+<Sql label="A transaction-local statement limit" code={`with pool.connection(timeout=2) as conn:
+    with conn.transaction():
+        conn.execute(
+            "SELECT set_config('statement_timeout', %s, true)",
+            ("2s",),
+        )
+        reserve_and_record(conn, purchase)`} />
+
+<p>The third argument to <code>set_config</code> makes the setting local to the transaction, so it expires at its end. Two seconds applies per statement, not to the whole purchase. Choose it within a request budget that also allows acquisition, other statements and cleanup.</p>
+
+<p>In the experiment, a 30 ms statement limit cancelled a deliberate <code>pg_sleep</code> with <code>57014</code>. Trying an ordinary query before rollback then failed with <code>25P02</code>, “failed transaction”. Handling the cancellation exception was not enough; the transaction still needed to end. Letting it leave the transaction context performed that rollback.</p>
+
+<p>A caller’s explicit cancellation needs the same ownership discipline. Psycopg’s <code>cancel_safe()</code> requests cancellation through the driver. The experiment waited until its own session was sleeping, cancelled it from another thread, then waited for the query thread and transaction cleanup to finish. Only then did the same connection successfully answer <code>SELECT 1</code>. A cancel request can race with a command finishing, so the command’s eventual result still matters.</p>
+
+<p>Do not return a connection while another task is still using it, or issue a late cancellation against a connection already lent to the next request. If the connection is broken, discard it; the pool can establish a replacement. Replacement restores capacity, not knowledge of an uncertain commit. That purchase still needs resolution before a blind replay.</p>
+
+<h2 id="repeated">The work behind a convenient method</h2>
+
+<p>An object-relational mapper, or ORM, turns database rows into application objects and generates SQL for operations on them. It can handle parameter binding and connection scopes well. It can also hide the number of commands and the moment a transaction begins.</p>
+
+<p>Consider a page listing 20 orders. A first query gets the orders; accessing each order’s lazily loaded lines then sends one query per order. That is 21 queries for one page, commonly called <em>N+1</em>. It is visible as a repeated remote call even when the application code is a short loop. A batched query for all the selected order IDs can return the lines together.</p>
+
+<p>Fetching everything in one join changes a different thing: the result has one row per line, so order columns repeat. Preserve the row meaning when reconstructing objects and paginating the orders. A query count alone does not establish that the new result is correct. Inspect the generated SQL, its parameters and its transaction boundary, then measure the work for a representative request. <a href="/learn/databases/relational/query-results/">Joins and the meaning of a result row</a> supplies the needed result reasoning.</p>
+
+<h2 id="repeat-the-driver-checks">Repeat the driver checks</h2>
+
+<p>Download <a href="/review/relational-collection/evidence/r09/run-boundary.py/" download="run-boundary.py">the driver experiment</a> and <a href="/review/relational-collection/evidence/r09/shop.json/" download="shop.json">its shop data</a> into one directory. This procedure targets macOS or Linux with PostgreSQL’s <code>initdb</code>, <code>pg_ctl</code> and <code>postgres</code> tools and Unix-domain sockets. In a disposable Python environment install <code>psycopg[binary]==3.2.12</code> and <code>psycopg_pool==3.3.3</code>, then run <code>python run-boundary.py --bindir /path/to/postgresql/bin --tmpdir /tmp</code>. The temporary parent must exist and be writable; choose a short absolute path without spaces so the private socket path fits the operating system’s limit. The script creates and checks its own temporary cluster there and removes it afterwards.</p>
+
+<p>Checked on macOS with PostgreSQL 18.6, Python 3.14.5, Psycopg 3.2.12 and psycopg_pool 3.3.3; Linux execution has not been checked. The checks cover bound text, identifier composition, decimal conversion, zero returned rows, implicit transactions, rollback on an application refusal and a constraint error, statement timeout, explicit cancellation and replacement of a closed pooled connection. They are local functional checks, not measurements of production latency, pool sizing or behaviour through a connection proxy.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+
+<ul>
+<li>Psycopg 3, <a href="https://www.psycopg.org/psycopg3/docs/basic/params.html">Passing parameters</a> and <a href="https://www.psycopg.org/psycopg3/docs/api/sql.html">SQL composition</a>: value binding and identifiers.</li>
+<li>Psycopg 3, <a href="https://www.psycopg.org/psycopg3/docs/basic/adapt.html">Adapting Python types</a> and <a href="https://www.psycopg.org/psycopg3/docs/api/errors.html">Errors</a>: returned values and structured error fields.</li>
+<li>Psycopg 3, <a href="https://www.psycopg.org/psycopg3/docs/basic/transactions.html">Transaction management</a>, <a href="https://www.psycopg.org/psycopg3/docs/advanced/pool.html">Connection pools</a> and <a href="https://www.psycopg.org/psycopg3/docs/api/connections.html#psycopg.Connection.cancel_safe">cancel_safe</a>: the scopes and cancellation used here.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-STATEMENT-TIMEOUT">statement_timeout</a>: what the server limit includes; <a href="https://www.postgresql.org/docs/18/errcodes-appendix.html">Error Codes</a>: stable error identities.</li>
+<li>On this site, <a href="/learn/databases/relational/connections-and-capacity/">Connections, overload and capacity</a> develops pool limits and waiting; <a href="/learn/databases/relational/access-control/">Database access and least privilege</a> develops the connection’s authority.</li>
+</ul>
+<style>
+.binding{font:.95rem/1.5 var(--font-sans);margin:2rem 0}.binding figcaption{font:1.2rem/1.4 var(--font-serif);margin-bottom:.8rem}.binding figcaption>span{font:.75rem var(--font-sans);text-transform:uppercase;color:var(--color-text-secondary);margin-right:.7rem}.command{border:1px solid var(--color-text-secondary);padding:1rem;display:grid;gap:.5rem}.values{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem}.values>div{border-left:3px solid var(--color-accent);padding:.5rem .8rem;display:grid;gap:.5rem}.binding code{white-space:normal;overflow-wrap:anywhere}.binding p{font-size:.85rem;color:var(--color-text-secondary)}@media(max-width:500px){.values{grid-template-columns:1fr}}
+</style>

@@ -1,0 +1,238 @@
+RELATIONAL COLLECTION · DRAFT FOR REVIEW
+
+SQL at the application boundary
+Deep dive
+About 10 minutes
+AI-generated
+
+A query has a meaning in SQL and a life in the application that sends it. The application supplies values, borrows a connection, reads the answer and decides what to tell its caller. A purchase can use sound SQL and still go wrong if a helper writes on another connection, an empty result is mistaken for success or a timeout leaves work running after the request has gone.
+
+The boundary is a database driver, a library that carries commands and results between application code and a database session. Here the application uses Python with Psycopg 3 and PostgreSQL 18. The syntax belongs to that driver; the questions recur in others. Which parts of the command are values? Who owns the transaction? When has the connection finished its work?
+
+We follow the shop’s orders and products. P7 is the blue mug at 20.00. The examples begin with order 103 already recorded; a later purchase fragment explicitly rewinds to before it. The downloadable experiment checks the driver behaviour on a disposable server. The drawing illustrates the application’s ownership, rather than running a database in the browser.
+
+Send values as values
+A result is a contract
+One connection owns the transaction
+A refused purchase is not a SQL error
+A timeout must end the work
+The work behind a convenient method
+Repeat the driver checks
+Send values as values
+
+Suppose a product page receives the product ID P7. SQL needs a condition comparing the product’s key with that value. Building the command by joining strings gives incoming text the same power as SQL you wrote yourself:
+
+# Do not build queries this way.
+query = "SELECT name, price FROM products WHERE product_id = '" + product_id + "'"
+row = conn.execute(query).fetchone()
+
+For P7, the resulting text happens to be a valid lookup. For P7' OR true --, the inserted quote ends the string value, OR true makes the condition true for every row and -- comments out the closing quote. The caller has changed the question. This is SQL injection.
+
+Give the driver the SQL and its values separately instead:
+
+row = conn.execute(
+    "SELECT name, price FROM products WHERE product_id = %s",
+    (product_id,),
+).fetchone()
+
+%s is Psycopg’s value placeholder. The tuple in the second argument supplies one value; its trailing comma makes it a one-element tuple. Do not put quotes around the placeholder or replace it with Python string formatting. The driver sends a parameter whose value is the supplied text, including any quote marks.
+
+FIGURE 1 The same command, two different values
+SQL structure
+WHERE product_id = parameter 1
+Parameter 1
+P7
+Matches the Blue mug
+Parameter 1
+P7' OR true --
+Matches no product
+
+The bound text occupies one value position in both cases. Its quote and comment marks do not become SQL operators.
+
+In the native experiment, the concatenated command returned all three products for that incoming text; the parameterised command returned none. It asked for a product with that entire ID, which the shop does not have. A string that merely breaks the unsafe command is also a failure, but this example makes the changed meaning visible without changing any stored data.
+
+Binding preserves the command’s structure. It does not prove that an ID belongs to the caller, that a quantity is sensible or that the query is cheap. Establish the caller’s authority and validate the business input too. In a tenant variant, a safely bound but unauthorised shop ID is still the wrong shop.
+
+Choosing SQL structure
+
+A value placeholder cannot stand for a column name or the keyword DESC. ORDER BY %s with the value price supplies a text value, not a request to sort by the price column. When a screen lets the caller choose a sort, first map the screen’s options to the few structures the application supports.
+
+from psycopg import sql
+
+sort_columns = {"name": "name", "price": "price"}
+column = sort_columns[requested_sort]  # reject an unknown option
+query = sql.SQL(
+    "SELECT product_id, name, price FROM products "
+    "ORDER BY {}, product_id LIMIT %s"
+).format(sql.Identifier(column))
+rows = conn.execute(query, (20,)).fetchall()
+
+Identifier quotes a SQL name correctly. The mapping makes the product decision: these are the two sorts the screen permits. The limit remains a value. If direction is selectable too, choose between fixed ASC and DESC fragments through another mapping. Putting unchecked incoming text into sql.SQL(...) would reopen the original problem.
+
+A result is a contract
+
+The driver converts database values to application values. In this Psycopg configuration, PostgreSQL numeric becomes Python Decimal, an integer becomes int, and SQL NULL becomes None. A returned row is a tuple by default. fetchone() returning None means there is no next row; a row containing a missing column is a tuple containing None. Those are different results.
+
+Decide what the query promises before unpacking it. A lookup by a primary key can return zero or one row. An order-line query can return several. A count returns one row even when the count is zero. Give a missing order, an empty list of orders and a database error distinct meanings in the application.
+
+row = conn.execute(
+    "SELECT order_id, status FROM orders "
+    "WHERE order_id = %s AND customer_id = %s",
+    (order_id, authorised_customer_id),
+).fetchone()
+if row is None:
+    return None  # the caller has no visible matching order
+order_id, status = row
+
+The customer ID comes from the application’s established authority, rather than trusting a customer ID beside the order ID in incoming data. Whether an API reveals the difference between an absent order and one the caller may not see is a separate interface choice.
+
+Choose returned columns deliberately. SELECT * lets a schema addition silently change the result’s shape and may fetch large fields the screen never uses. Preserve exact amounts when serialising them to JSON: turning Decimal('20.00') into a binary floating-point number discards the representation chosen for money. A documented decimal string or an explicit fixed-scale representation makes that boundary visible. Timestamp values need an equally deliberate timezone and output format.
+
+fetchall() is convenient for the small lists here. It is also a promise to bring the whole remaining result into application memory. Exports need bounded reading and a defined view of changing data; Pagination and consistent exports develops that contract.
+
+One connection owns the transaction
+
+A connection represents a database session. A transaction belongs to that session, not to the application’s call stack. Two cursors on the same connection share its transaction; two connections do not. A helper that borrows a fresh connection is outside its caller’s transaction even if the helper is called between the caller’s begin and commit.
+
+A pool keeps connections ready to lend to requests. Treat a borrowed connection as a resource owned by one operation until that operation finishes. Pass it into the helpers that participate in the transaction. Do not have those helpers borrow their own connections, commit independently or keep using the borrowed connection after it has been returned.
+
+Psycopg normally starts a transaction even for a plain SELECT. An application that reads, then waits for the next HTTP request can therefore sit idle inside a transaction. This example makes the choice explicit: the pool creates autocommit connections, and each multi-statement operation uses a transaction context.
+
+from psycopg_pool import ConnectionPool
+
+# Create once at application startup; conninfo is deployment configuration.
+pool = ConnectionPool(conninfo, kwargs={"autocommit": True}, open=False)
+pool.open()
+pool.wait(timeout=5)
+
+# During one request:
+with pool.connection(timeout=2) as conn:
+    with conn.transaction():
+        reserve_and_record(conn, purchase)
+# Report success only after the transaction context has exited.
+
+# At application shutdown, after requests have finished:
+# pool.close()
+
+The outer context borrows and returns the connection. The inner context begins a transaction, commits on a normal exit and rolls back when an exception leaves it. reserve_and_record stands for the complete purchase operation: every reservation, the order and its lines. It receives conn. The pool’s waiting limit bounds acquisition; it is not a limit on the SQL once a connection has been obtained.
+
+Autocommit outside the inner block does not split the statements inside it. Conversely, omitting that block would let each successful write commit separately. Drivers and transaction frameworks have different defaults, so read the actual context-manager contract. In Psycopg, opening conn.transaction() after an implicit transaction has already begun can create a savepoint inside that transaction, rather than owning the outer commit.
+
+Figure 2 keeps the ownership visible. Step through Success, then choose No stock or Statement cancelled. Watch when C can return to the pool.
+
+FIGURE 2 One borrower until the transaction ends
+Request outcome
+Success
+No stock
+Statement cancelled
+Connection lost
+Pool
+Connection C ready
+↓ borrow C
+Purchase request
+Not started
+Connection C
+Idle
+Return waits for the outcome
+
+The pool has an idle connection. The request has not borrowed it yet.
+
+Play
+Back
+Next
+Reset
+1 / 6
+
+A model of ownership, not a capture of protocol messages. C denotes one database session. A broken session leaves the pool; a replacement is a different session.
+
+Read the paths as text
+
+There is one borrower throughout the active transaction. In the experiment, a helper writing through a second autocommit connection changed the teapot’s price to 36.00 even though the first connection’s stock change rolled back. This separate counterexample changes disposable scratch state; it is not a later event in the shop’s shared history. A rollback can discard only the work in its own transaction.
+
+A refused purchase is not a SQL error
+
+Rewind to before order 103 for the purchase fragment. The mug has stock 1. The conditional update from Transactions and isolation can return one row, or none. Both are successful SQL execution. Only the first means that this attempt reserved stock.
+
+class OutOfStock(Exception):
+    pass
+
+def reserve(conn, product_id, quantity):
+    if quantity <= 0:
+        raise ValueError("quantity must be positive")
+    row = conn.execute(
+        "UPDATE products SET stock = stock - %s "
+        "WHERE product_id = %s AND stock >= %s RETURNING stock",
+        (quantity, product_id, quantity),
+    ).fetchone()
+    if row is None:
+        raise OutOfStock(product_id)
+    return row[0]
+
+The caller invokes it inside the transaction context for each product, then writes the order and its lines. Catch OutOfStock outside that context so it has already rolled back. Catching it inside and continuing normally would tell the context to commit any earlier successful work. In the experiment, raising an application refusal after reducing P3 restored stock 10 before the same pooled session was borrowed again.
+
+A database error is another path. PostgreSQL reports a stable five-character SQLSTATE; Psycopg exposes it as error.sqlstate, with fields such as error.diag.constraint_name. Use the code and named constraint to recognise an expected refusal. Parsing the English error message depends on wording that may change or be translated.
+
+A check violation such as 23514 usually requires fixing the input or the operation. A serialization failure, 40001, requires rerunning the complete transaction and its decisions. A transport failure during commit can leave the outcome uncertain. These are different instructions, not one generic “retry database error” branch. Retries when a commit reply is missing handles that last distinction.
+
+A timeout must end the work
+
+There are several waits in one request: for a pooled connection, for a lock, for a query result and for commit. An HTTP deadline expiring only says the caller stopped waiting. It does not, by itself, cancel the database command or roll back its transaction.
+
+PostgreSQL’s statement_timeout stops a statement that exceeds its allowed server time, including time spent waiting for a lock. Set it locally inside the transaction when the limit belongs to this operation:
+
+with pool.connection(timeout=2) as conn:
+    with conn.transaction():
+        conn.execute(
+            "SELECT set_config('statement_timeout', %s, true)",
+            ("2s",),
+        )
+        reserve_and_record(conn, purchase)
+
+The third argument to set_config makes the setting local to the transaction, so it expires at its end. Two seconds applies per statement, not to the whole purchase. Choose it within a request budget that also allows acquisition, other statements and cleanup.
+
+In the experiment, a 30 ms statement limit cancelled a deliberate pg_sleep with 57014. Trying an ordinary query before rollback then failed with 25P02, “failed transaction”. Handling the cancellation exception was not enough; the transaction still needed to end. Letting it leave the transaction context performed that rollback.
+
+A caller’s explicit cancellation needs the same ownership discipline. Psycopg’s cancel_safe() requests cancellation through the driver. The experiment waited until its own session was sleeping, cancelled it from another thread, then waited for the query thread and transaction cleanup to finish. Only then did the same connection successfully answer SELECT 1. A cancel request can race with a command finishing, so the command’s eventual result still matters.
+
+Do not return a connection while another task is still using it, or issue a late cancellation against a connection already lent to the next request. If the connection is broken, discard it; the pool can establish a replacement. Replacement restores capacity, not knowledge of an uncertain commit. That purchase still needs resolution before a blind replay.
+
+The work behind a convenient method
+
+An object-relational mapper, or ORM, turns database rows into application objects and generates SQL for operations on them. It can handle parameter binding and connection scopes well. It can also hide the number of commands and the moment a transaction begins.
+
+Consider a page listing 20 orders. A first query gets the orders; accessing each order’s lazily loaded lines then sends one query per order. That is 21 queries for one page, commonly called N+1. It is visible as a repeated remote call even when the application code is a short loop. A batched query for all the selected order IDs can return the lines together.
+
+Fetching everything in one join changes a different thing: the result has one row per line, so order columns repeat. Preserve the row meaning when reconstructing objects and paginating the orders. A query count alone does not establish that the new result is correct. Inspect the generated SQL, its parameters and its transaction boundary, then measure the work for a representative request. Joins and the meaning of a result row supplies the needed result reasoning.
+
+Repeat the driver checks
+
+Download the driver experiment and its shop data into one directory. This procedure targets macOS or Linux with PostgreSQL’s initdb, pg_ctl and postgres tools and Unix-domain sockets. In a disposable Python environment install psycopg[binary]==3.2.12 and psycopg_pool==3.3.3, then run python run-boundary.py --bindir /path/to/postgresql/bin --tmpdir /tmp. The temporary parent must exist and be writable; choose a short absolute path without spaces so the private socket path fits the operating system’s limit. The script creates and checks its own temporary cluster there and removes it afterwards.
+
+Checked on macOS with PostgreSQL 18.6, Python 3.14.5, Psycopg 3.2.12 and psycopg_pool 3.3.3; Linux execution has not been checked. The checks cover bound text, identifier composition, decimal conversion, zero returned rows, implicit transactions, rollback on an application refusal and a constraint error, statement timeout, explicit cancellation and replacement of a closed pooled connection. They are local functional checks, not measurements of production latency, pool sizing or behaviour through a connection proxy.
+
+The relational database collection
+
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+
+Relational databases
+
+Design facts and guarantees
+4 drafts
+Query and change the right rows
+5 drafts
+Make query work affordable
+3 drafts
+Concurrency and durable application work
+4 drafts · 1 planned
+Durability, copies and recovery
+0 drafts · 4 planned
+Change and operate the service
+0 drafts · 4 planned
+Distribute relational work
+0 drafts · 5 planned
+PostgreSQL implementation
+0 drafts · 13 planned
+CockroachDB implementation
+0 drafts · 10 planned
+Further PostgreSQL reading
+0 drafts · 4 planned

@@ -1,0 +1,15 @@
+# Ordinary author finishing · immutable4410
+
+Root built the exact repaired namespaces with zero site-check issues; root's structural receipt is `repairs/batch02-v02/structure-check.json`. This writer did not build or run a preview server. All final checks below used the dedicated immutable4410 origin.
+
+Reread all four complete final rendered article bodies, all headings/contents, captions and controls, plus each final Sources disclosure outside the article DOM. Opened/read the changed and relevant unchanged text alternatives, including both r13 schedule alternatives. Full per-piece continuity decisions are in continuity.md. No further source repair was needed.
+
+Actual tab measurements were1280×720 and375×812 after selecting the target tab. The two changed figures were inspected in desktop/phone and light/dark. r05 aligns all four pair identities and both amount fields together; the one-row total result stays readable. r06 shows per-order customer membership in input and retained result, and group membership remains visible when switching modes. Both modes of each changed figure were activated with Space and mouse; selected/aria-pressed state and visible explanation agreed. Expanded text alternatives match the rows. No horizontal document/figure table overflow occurred. Headings wrap coherently at phone width. Saved phone screenshots are alongside this record; additional desktop/screenshots are in the tool receipt.
+
+The r09 changed repeat procedure and r13 acquisition paragraph were visually inspected at both actual sizes and themes. Inline commands wrap within the article. The r13 retained snapshot drawing was stepped to the final RC view (Read1→1/Read2→0), switched at that same step to RR (both reads→1), and reset to RC/start afterwards. This checks the repaired paragraph's existing displayed story. Its other unchanged states and the unchanged r09/r05/r06 figures retain prior applicable mechanical verification; no new claim that all unchanged playback was rerun.
+
+Changed figure table/caption/button text contrast was measured from actual computed foreground/background colours in both modes and themes (contrast-v02.json): minima6.03:1 light and6.15:1 dark. New membership and pair identity meaning is textual; it does not depend on colour or rules. Existing focus indicators remain visible under keyboard activation. This is ordinary DOM/pixel-layout author QA, not a screen-reader certification.
+
+Bounded actual-rendered-href HTTP reads returned all five exact source downloads (download-http-v02.json). The changed r09 file's returned bytes match its native executed source. No browser download event/path/save wait was used. Native final save location remains unverified.
+
+Browser warning/error log check returned empty. Only this writer's single tab was used and closed. Changed figure controls returned to initial states; opened alternatives closed. System theme restored (resolved dark), viewport explicitly restored1280×720 then override reset, actual1280×720 remeasured before tab close. No final source changes after root4410 integration; no resync required.

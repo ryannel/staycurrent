@@ -1,6 +1,6 @@
 # Accepted problems · batch02-v01 → v02
 
-All four initial perspectives cover each repair piece (r05,r06,r09,r13) on the same frozen version. Practitioner and visual reports supply the four substantive problems below; complete teaching/editorial report no findings. The unrelated r03 optional hidden-code first-reading facet remains separately open, and r03 is outside this repair.
+All four initial perspectives cover each repair piece (r05,r06,r09,r13) on the same frozen version. Practitioner and visual reports supply the four substantive problems below; complete teaching/editorial report no findings. The unrelated r03 hidden-code first-reading facet was subsequently closed by fresh narrow coverage with no new finding; r03 is outside this repair.
 
 ## B02-P13 · critical · r13 snapshot acquisition
 

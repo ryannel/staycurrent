@@ -25,7 +25,8 @@ def texts(value):
         for item in value:
             yield from texts(item)
     elif isinstance(value, dict):
-        for name in ('output', 'text', 'content'):
+        # Promise.allSettled wraps each public tool result in `value`.
+        for name in ('output', 'text', 'content', 'value'):
             if name in value:
                 yield from texts(value[name])
     elif isinstance(value, str):

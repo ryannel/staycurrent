@@ -1,0 +1,118 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import BackfillRace from '../../components/relational-collection/r22/BackfillRace.astro';
+import core from '../../lib/relational-collection/core.json';
+---
+<p>A live schema change has to work for the callers that exist while it is happening. An application release does not replace every process at once. A worker may still run yesterday’s code, an import may arrive late, and a transaction may have begun before the deployment. Meanwhile, the table contains rows written under the old definition.</p>
+<p>The safe route is a sequence of compatible states. First add what the new callers need without removing what the old callers use. Then move existing data while keeping new writes correct. Switch readers and writers when their preconditions hold. Finally remove the old representation after its last caller has gone. These stages are often called <em>expand, migrate and contract</em>.</p>
+<p>We will change the shop’s order lines from a decimal <code>unit_price</code> to an integer <code>unit_price_minor</code>. In this explicitly fixed-scale variant, the integer counts hundredths of one unit: 20.00 becomes 2000. It is the same agreed purchase price, not a recalculation from today’s catalogue. The examples use PostgreSQL 18. The deployment reasoning applies more widely; each engine’s schema commands have their own operational constraints.</p>
+
+<h2 id="one-fact-two-representations">One fact, two representations</h2>
+<p>The core line column is <code>numeric(8,2) NOT NULL</code>. Its finite values have exactly the scale this conversion needs. We require the stored prices to be finite; a system that has admitted special numeric values needs to deal with those before this migration. Multiplying by 100 gives an exact integer in this domain. A <code>bigint</code> comfortably holds its range.</p>
+<table><caption>The five existing order lines, with their intended new representation</caption><thead><tr><th scope="col">Order · line</th><th scope="col">Agreed unit price</th><th scope="col">Hundredths</th></tr></thead><tbody>{core.order_items.map(r=><tr><td>{r.order_id} · {r.line_no}</td><td>{r.unit_price}</td><td>{Math.round(Number(r.unit_price)*100)}</td></tr>)}</tbody></table>
+<p>Order 103 still totals 29.00: one mug at 2000 hundredths and two packs of tea at 450 each give 2900. This example has no assigned currency and one fixed scale. A real money model must also settle currency, scale, rounding and range; naming a column “minor” does not settle those choices.</p>
+<p>Renaming the existing column and changing its type in one deployment would make old SQL fail immediately, or make an old caller interpret 2000 as 2000.00. Even a fast schema command cannot make those callers understand a different meaning. Keep both columns during the transition:</p>
+<Sql label="Expand without removing the decimal column" code={`ALTER TABLE order_items
+ADD COLUMN unit_price_minor bigint;`} />
+<p>Existing rows initially have <code>NULL</code> in the new column. Old callers continue naming <code>unit_price</code>. This relies on explicit insert and select column lists. A positional <code>INSERT INTO order_items VALUES (...)</code> or a result unpacked from <code>SELECT *</code> can break on an apparently additive change, as <a href="/learn/databases/relational/application-sql/">SQL at the application boundary</a> explains.</p>
+
+<h2 id="choose-the-write-authority">Choose the write authority</h2>
+<p>Two representations of one fact need a rule for disagreement. During the first stage, the decimal remains authoritative. Every insert or update derives the integer from the decimal in the same row write. A new caller may calculate with hundredths, but until the authority switch it must supply the corresponding decimal too.</p>
+<p>This is more precise than “dual write”. Two separate commands, one updating each column, can leave half a change if one fails. Even two assignments in one transaction are insufficient if an old worker still changes only the decimal. The rule must cover every writer allowed to touch the row.</p>
+<p>For the PostgreSQL experiment, a temporary database trigger provides that bridge. A <code>BEFORE</code> row trigger can alter the row before it is stored:</p>
+<Sql label="Keep the decimal authoritative while old callers coexist" code={`CREATE FUNCTION fill_minor()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.unit_price_minor :=
+    (NEW.unit_price * 100)::bigint;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER fill_minor
+BEFORE INSERT OR UPDATE ON order_items
+FOR EACH ROW EXECUTE FUNCTION fill_minor();`} />
+<p><code>NEW</code> is the row being written. The trigger changes that row and returns it. It runs on every update here, including one that only changes quantity, so touching an old unfilled line also fills its integer. The bridge does not issue a second independent update and cannot commit without the row change that caused it.</p>
+<p>A caller that sends 20.00 and 7 gets 2000 stored, because the decimal wins. A caller that sends only 2100 while leaving the decimal at 20.00 gets 2000 too. That is deliberate: the new integer is not yet a writable authority. Document this contract before deploying a caller that expects otherwise.</p>
+<p>An application bridge is another possible design, provided all writers have adopted it before it becomes a prerequisite. A database trigger also needs ownership: who can disable it, whether imports bypass it, and which other triggers interact with it. The experiment uses ordinary inserts and updates with the trigger enabled. Replication tools, privileged maintenance and alternate write paths need an explicit decision.</p>
+<h3 id="make-new-errors-impossible">Make new errors impossible</h3>
+<p>Once the bridge is installed, add a constraint that captures the transition’s promise:</p>
+<Sql label="Require a complete, equivalent pair on new writes" code={`ALTER TABLE order_items
+ADD CONSTRAINT price_pair
+CHECK (
+  unit_price_minor IS NOT NULL
+  AND unit_price_minor::numeric = unit_price * 100
+) NOT VALID;`} />
+<p>For this PostgreSQL check, <code>NOT VALID</code> postpones the scan of existing rows. It does not turn off enforcement for rows subsequently inserted or updated. Old rows may still be missing the new value, but ordinary new writes must now leave a complete equivalent pair. The trigger fills the pair before the check tests it.</p>
+<p>The explicit <code>IS NOT NULL</code> matters. Equality against a missing value is unknown, and a PostgreSQL check accepts unknown. An equality check by itself would leave precisely the hole this migration is meant to close.</p>
+<p>Installing the bridge and its guard is a schema operation with locks. Arrange that expansion before starting the backfill, and treat a failed installation as “bridge unavailable”, not as a stage completed. The run below installs it on a disposable table; it does not establish a safe lock budget for your live table.</p>
+
+<h2 id="backfill-from-the-row-being-written">Backfill from the row being written</h2>
+<p>A <em>backfill</em> gives the new representation to rows that predate it. The tempting implementation reads a page of prices into application memory, calculates integers and writes those saved results later. Between the read and write, a price can change. The backfill must not restore an obsolete representation.</p>
+<p>Figure 1 uses a separate scratch edit of line <code>(103, 1)</code> from 20.00 to 21.00. It is not a change to the collection’s fixed purchase history. Run Saved copy, then Decimal bridge, and compare the final pair.</p>
+<BackfillRace />
+<p>Saved copy ends with two present values that disagree. Counting missing values would call that row complete. Under the bridge, the competing decimal update stores 2100 atomically, and a missing-only backfill has no work left on that row.</p>
+<p>The backfill itself should calculate from the target row in its update. This batch selects at most two missing lines, locks them and fills them:</p>
+<Sql label="One small, replayable PostgreSQL batch" code={`WITH batch AS (
+  SELECT order_id, line_no
+  FROM order_items
+  WHERE unit_price_minor IS NULL
+  ORDER BY order_id, line_no
+  LIMIT 2
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE order_items AS i
+SET unit_price_minor = (i.unit_price * 100)::bigint
+FROM batch AS b
+WHERE i.order_id = b.order_id
+  AND i.line_no = b.line_no
+  AND i.unit_price_minor IS NULL
+RETURNING i.order_id, i.line_no, i.unit_price_minor;`} />
+<p>Both parts of the line’s key participate in the match. The update derives the integer from <code>i.unit_price</code>, rather than from an old application copy. The repeated missing-value condition states the operation’s precondition at the write. Repeating the batch leaves completed pairs alone.</p>
+<p>Each batch commits separately. A process stopped before commit leaves that batch’s rows eligible; one stopped after commit can safely repeat the search. A lost commit reply still needs the usual connection recovery, but this assignment is safe to repeat because it fills a deterministic representation rather than adding another amount. Retry the whole batch after a retryable transaction failure.</p>
+<p><code>SKIP LOCKED</code> lets one batch pass a row another transaction holds. It is useful for several backfill workers sharing a queue of missing rows, but it deliberately returns an incomplete view. An empty batch therefore means “nothing eligible was available to this batch”, not “the migration is complete”. Keep looking and finish with a separate acceptance check.</p>
+<p>In the PostgreSQL 18.6 run, an editor held the mug line while two batches filled the other four. One missing row remained visible to an ordinary count. A separate backfill waiting on that row resumed after the editor committed; its missing-value condition no longer matched because the bridge had already stored 2100. It changed no row. That observation uses Read Committed, the trigger and this particular condition; waiting alone is not a general backfill protocol.</p>
+
+<h2 id="a-cursor-is-progress-not-proof">A cursor is progress, not proof</h2>
+<p>A large table needs more care than repeatedly searching five rows. An indexed work predicate, bounded key ranges or a durable cursor can reduce repeated scanning. A cursor records how far a worker got. It cannot establish that no work later appeared behind it.</p>
+<figure class="late-row" aria-labelledby="r22-late-title"><figcaption id="r22-late-title"><span>Figure 2</span> A late row behind the worker</figcaption><div class="keyline"><div><strong>101 · 1</strong><span>Absent during scan</span></div><div><strong>101 · 2 → 103 · 2</strong><span>Visited and filled</span></div><div><strong>Cursor</strong><span>Past 103 · 2</span></div></div><p>After the scan, an old caller inserts <code>(101, 1)</code> at 4.50. Without the bridge it has NULL hundredths; the cursor will never revisit it. With the bridge it arrives as <code>4.50 / 450</code>, already complete.</p></figure>
+<p>The experiment temporarily removes the existing tea line <code>(101, 1)</code> in a separate scratch fixture, fills the remaining rows and observes zero missing values. Reinserting that core line in the old format then creates one missing value when no bridge is present. The same operation with the bridge fills 450 immediately. A single zero count before the late write was true and still insufficient.</p>
+<p>This is the convergence argument: all pre-existing missing rows are eventually visited, and every admitted new or changing row preserves the target property. The backfill drains old debt; the write protocol prevents new debt. A final complete check can then establish the property for the stored table.</p>
+<p>If a transformation cannot share one authoritative row value, the protocol must change. Copying to a new table may need a captured change stream and a position proving every earlier change was applied. A calculation using other changing rows may need revision checks or coordination. The missing-only loop above is justified by this exact row-local conversion, not by the word “backfill”.</p>
+
+<h2 id="prove-the-switch-is-ready">Prove the switch is ready</h2>
+<p>Before readers rely on the integer, check both completeness and meaning across the whole intended scope:</p>
+<Sql label="Find every incomplete or inconsistent pair" code={`SELECT order_id, line_no, unit_price, unit_price_minor
+FROM order_items
+WHERE unit_price_minor IS NULL
+   OR unit_price_minor::numeric
+      IS DISTINCT FROM unit_price * 100;`} />
+<p>No returned rows is the desired result. The guard must remain active while this runs and afterwards; otherwise a writer can invalidate the result immediately. Check every partition or tenant in scope, not just the last batch. Do not run acceptance through a lagging replica or an access identity that hides rows.</p>
+<p>Then validate the existing-row constraint:</p>
+<Sql label="Turn the transitional guard into a checked table property" code={`ALTER TABLE order_items
+VALIDATE CONSTRAINT price_pair;`} />
+<p>In the verified fixture, validation succeeded and PostgreSQL recorded the constraint as validated. With the bridge disabled for a separate test, a write of 7 hundredths against the mug price was refused by <code>price_pair</code>. The backfill is not the ongoing protection; the enforced write rule is.</p>
+<p>A row check does not prove that the new application reads the unit correctly. Compare actual old and new receipts, reports and serialised values before switching traffic. Here order 103’s new total must be 2900 hundredths, displayed as 29.00. A reader that displays 2900.00 has passed every database equivalence check and still broken the receipt.</p>
+
+<h2 id="retire-callers-before-columns">Retire callers before columns</h2>
+<p>After acceptance, new readers can use <code>unit_price_minor</code> while writes still preserve both representations. This gives a useful rollback interval: an old reader still finds current decimal values. Observe the new path, including reports and exports, before making the old one impossible.</p>
+<table><caption>Compatibility depends on the deployed caller, not just the schema version</caption><thead><tr><th scope="col">State</th><th scope="col">Reads</th><th scope="col">Writes</th><th scope="col">Safe next step</th></tr></thead><tbody><tr><td>Expanded, not filled</td><td>Decimal</td><td>Decimal; bridge derives integer</td><td>Backfill and validate</td></tr><tr><td>Filled and accepted</td><td>Either representation</td><td>Still decimal authority</td><td>Deploy integer readers</td></tr><tr><td>Old callers drained</td><td>Integer</td><td>Transition deliberately to integer authority</td><td>Retire bridge and old column</td></tr><tr><td>Contracted</td><td>Integer only</td><td>Integer only, required</td><td>Rollback needs compatible code or reverse migration</td></tr></tbody></table>
+<p>“Old callers drained” includes workers, scheduled imports, support scripts, prepared commands in long-lived sessions and transactions already in flight. Stop their admission, let owned work finish or cancel it, and prevent obsolete processes from reconnecting with write authority. A deployment dashboard saying “all web instances updated” does not establish that boundary.</p>
+<p>The authority handover itself needs a compatible protocol. For this small experiment we pause line writes, drain their transactions, deploy integer-only writers and remove the decimal bridge and column within that controlled handover. The integer becomes <code>NOT NULL</code>. Readers can continue on the accepted integer path subject to the schema command’s locks. A larger service may need another compatibility release that maintains the decimal from the integer during the handover; it must define which side wins and prevent old decimal-only writers before reversing the bridge.</p>
+<p>Do not leave both directions independently authoritative. An old caller changing the decimal and a new caller changing the integer cannot each win unconditionally. Choose the authority for each stage, test the mixed population that actually exists, and only then remove the previous stage’s protection.</p>
+<p>Contracting discards the old interface and eventually its data representation. An old binary is no longer a rollback plan. Keep an explicit release boundary at which rollback changes from redeploying code to a tested reverse migration or forward repair. Retaining a backup does not make an incompatible caller work against today’s schema.</p>
+
+<h2 id="control-the-work-under-load">Control the work under load</h2>
+<p>Logical compatibility and operational safety are separate requirements. A compatible add can still wait behind a long transaction. A correct backfill can consume the storage, log bandwidth, replica capacity or row locks needed by ordinary traffic.</p>
+<p>Choose batch limits from observations of the real workload. Keep transactions bounded, record committed progress, and pause when request latency, lock waits, log growth or replica lag exceed the migration’s budget. A pause should leave a supported schema and caller population. “Half filled” is a legitimate temporary state while readers still use the decimal; it is not a legitimate state for integer-only readers.</p>
+<p>Throttle the loop instead of assuming a small row count means cheap work. An update can create row versions, maintain indexes and generate log. A new index for finding remaining work has its own build cost. The two-row batch here is chosen so the example is visible, not as a production recommendation.</p>
+<p><a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a> develops locks, validation scans and index builds. <a href="/learn/databases/relational/cockroachdb/schema-changes/">CockroachDB schema jobs under load</a> follows that engine’s asynchronous jobs. Neither engine can infer whether an old application still depends on a column it is asked to remove.</p>
+
+<h2 id="repeat-the-migration">Repeat the migration</h2>
+<p>Download <a href="/review/relational-collection/evidence/r22/run-migration.py/" download="run-migration.py">the migration experiment</a> and <a href="/review/relational-collection/evidence/r22/shop.json/" download="shop.json">its shop data</a> into one directory. Run <code>python3 run-migration.py --bindir /path/to/postgresql/bin</code>. It uses Python’s standard library, creates a private temporary PostgreSQL cluster, checks that it owns the data directory and socket, and removes the cluster afterwards.</p>
+<p>The native run used PostgreSQL 18.6 and Python 3.14.5. It covers stale saved values, a late row below a cursor, an interrupted batch, a concurrent editor and waiting backfill, a skipped locked row, constraint validation and refusal, and a controlled final schema handover. Scratch branches reset the fixture; the canonical five lines finish at their original prices. These local functional checks establish neither live deployment completeness nor production throughput.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+<ul><li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-alter.html">Modifying Tables</a>: adding a nullable column and the effects of removing one.</li><li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-createtrigger.html">CREATE TRIGGER</a> and <a href="https://www.postgresql.org/docs/18/plpgsql-trigger.html">Trigger Functions</a>: the bridge’s row timing and <code>NEW</code> value.</li><li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-altertable.html">ALTER TABLE</a>: enforcement with <code>NOT VALID</code>, validation and schema locks.</li><li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction Isolation</a> and <a href="https://www.postgresql.org/docs/18/sql-select.html">SELECT</a>: Read Committed rechecks and the incomplete view returned by <code>SKIP LOCKED</code>.</li><li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/datatype-numeric.html">Numeric Types</a> and <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>: the conversion’s numeric domain and unknown-valued checks.</li><li>On this site, <a href="/learn/databases/relational/updates-and-imports/">Updates, upserts and bulk imports</a>: replayable writes and publication boundaries; <a href="/learn/databases/relational/storage/">Row versions, storage and cleanup</a>: what backfill updates leave behind.</li></ul>
+<style>
+.late-row{margin:2rem 0;font:.95rem/1.5 var(--font-sans)}.late-row figcaption{font:1.2rem/1.4 var(--font-serif);margin-bottom:.8rem}.late-row figcaption span{font:.75rem var(--font-sans);text-transform:uppercase;color:var(--color-text-secondary);margin-right:.6rem}.keyline{display:grid;grid-template-columns:1fr 1.5fr 1fr;border-top:2px solid var(--color-text-secondary);gap:1rem}.keyline>div{padding:.8rem .4rem;display:grid;gap:.5rem}.keyline>div:first-child{border-left:3px solid var(--color-accent)}.keyline span,.late-row p{font-size:.85rem;color:var(--color-text-secondary)}@media(max-width:500px){.keyline{grid-template-columns:1fr;gap:0}.keyline>div{border-bottom:1px solid var(--color-text-secondary)}}
+</style>
