@@ -4,7 +4,7 @@
 
 ## Checks
 
-1. **Titles and headings.** Give the reader clear, economical names for the subject or question, judged against the references.
+1. **Titles and headings.** Follow the references in how they name articles and sections. Compare the actual title and heading wording with the reference headings.
 2. **Plain sentences.** Plain, precise, connected prose; no compressed, decorative or writerly wording needing decoding.
 3. **Terms.** Explain at first use and use consistently.
 4. **Openings.** Give enough context to understand the question or claim and why it matters.
