@@ -1,0 +1,3 @@
+# Collection heading pass · 24 October 2026
+
+The user requests a focused pass over headings in all 58 published relational articles. Follow the fixed references in naming articles and sections, and judge actual wording. Keep good headings. Only heading labels and, where justified, article-title metadata may change; preserve descriptions, body prose, code, captions, figures, heading levels, IDs and links. No full collection quality-review round or native reruns. Root integrates, builds, checks current rendering and publishes completed batches. Modelling is already corrected and pushed at d8c4df13.
