@@ -71,4 +71,7 @@ if mode == 'return':
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / rel, target)
     (packet / 'first-return.json').write_text(json.dumps(receipt, indent=2) + '\n')
-print(json.dumps({'key': key, 'mode': mode, 'files': len(files)}, indent=2))
+plan = json.loads((packet / 'plan-node.json').read_text())
+preview_path = '/review/relational-collection/' + (plan['slug'] + '/' if plan['slug'] else '')
+print(json.dumps({'key': key, 'mode': mode, 'files': len(files),
+                  'preview_path': preview_path}, indent=2))

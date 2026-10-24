@@ -72,3 +72,12 @@
 - reviews/repair-set/v03/manifest.json: exact current4484 confirmation source/context/mechanics, obsolete affected evidence excluded. Qualified unchanged mechanics may be reused only after applicability checks. Fresh practitioner confirmation active; other invalidated confirmations remain pending.
 - reviews/batch06/visual-v01.md: all5visualchecks per storage/recovery article,39manualstates at1280/375 in both themes; low r20 alternative-text spacing only. Initial remaining perspectives pending.
 - D046 and catalogue-attributes.json centralise the exact optional product JSON example; core rows/history are unchanged. D047 and sources-wrapper-check.json validate the dedicated Sources-section relocation without changing article wording.
+
+## PostgreSQL recovery first versions and next writing
+
+- Local checkpoint28aebfe preserves42firstreturns and fresh current technical repair confirmation. normal-build-delivery6.json records44sources at its actual04:37UTC build, all13rules and publication exclusion. Later source changes remain separately checked; all131protected files are unchanged.
+- writers/r43/owner-qa/: preview-owner ordinary finishing found collapsed command lines and missing keyboard focus before first-return freeze. Final4500rendering has six shell-continuation lines, internal phone keyboard scrolling, all2×4comparison states, phone tables/disclosures and current download bytes. This is author mechanics, not independent review coverage.
+- reviews/batch09/v01/manifest.json: five PostgreSQL recovery/upgrade firstreturns frozen on4502,185permitted files; current rendering and exact native provenance qualified. r36 native-applicability.json preserves the preceding executed verifier and exact one-line output-directory difference from the final download; no false final-script rerun claim.
+- search-examples.json and D051 fix shared text descriptions/English weights and two-dimensional illustrative vectors before r55/r56 use. Existing protected inputs and core snapshot unchanged.
+- reviews/batch07/visual-v01.md: full initial seven-piece visual coverage; two medium reader-effort problems await other initial perspectives before consolidated repair. batch08 current visual work completed, final report pending.
+- writers/cockroach-foundations/reference-delivery.json: public exact19text audit and reported34rendered study, root acknowledgement before design; r44/r45 native sources now in author finishing.

@@ -88,3 +88,15 @@ Accepted the fresh repair-set-v03 practitioner report as confirmation of B023-EN
 ## D050 · complete private PostgreSQL17 upgrade tools
 
 The earlier temporary17.6 binary inventory was version-only and its share directory lacked postgres.bki. It was not a usable initdb installation. Downloaded the official17.6 source archive and its published SHA256, verified equality, compiled and installed into a new owned temporary prefix. No existing installation or global service/configuration changed. native-pg17-complete-install.json records commands, source and tool hashes. The upgrade author must establish their own actual native result using this complete prefix; compilation is not upgrade acceptance.
+
+## D051 · exact specialist search examples
+
+Accepted the writer-proposed E7 text descriptions and explicitly two-dimensional toy vectors before use in r55/r56. search-examples.json is authoritative; canonical example record names the descriptions, English A/D weighting and filtered Euclidean order. These are additional teaching data, not changed core rows, model embeddings, semantic-quality claims or benchmark observations. Larger approximate fixtures stay anonymous and separately evidenced. Added the new fixture and a short addendum to only r55/r56 protected inputs before design/use; pre-existing protected bytes unchanged.
+
+## D052 · preview-owner author checks for r43
+
+All five recovery-writer sources, native experiments and complete author continuity rereads are done. Root takes the remaining ordinary r43 rendered/control/phone/theme/download checks as preview owner while the fresh writer slot begins CockroachDB reference calibration. r43 is not frozen or review-complete until those author checks pass. No independent perspective or required first reading is replaced.
+
+## D053 · ready initial review scope
+
+The undispatched same-perspective initial teaching/editorial assignments now include complete batch09 alongside05–08:25exact firstversions, every per-piece check/input preserved and one common full reference calibration for the coherent assignment. The undispatched practitioner assignment similarly includes06–09:23exact firstversions. Existing active07/08visual scope remains unchanged. This follows D034 and waives no initial, repair, complete or corpus role. Informed confirmations remain separate.

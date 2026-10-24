@@ -4,7 +4,7 @@ Fresh assignment, first return in development. No earlier versions or feedback r
 
 ## Evidence
 
-`evidence/crash-drill.py`, `results.json` and `server.log` record an owned PostgreSQL 18.6 process-crash drill. Inherited PG settings cleared; no TCP listener; role, port and data directory asserted before mutation/stop; temporary data and socket directory removed. fsync_writethrough selected on macOS. Complete logged purchase recovered, unfinished scratch absent, committed unlogged scratch truncated. No power-loss, storage-loss, torn-page or asynchronous-loss execution claimed. Reported local startup-command time remains in evidence, not offered as an RTO or article benchmark. Download is byte-identical to executed script.
+`evidence/crash-drill.py`, `results.json` and `server.log` record an owned PostgreSQL 18.6 process-crash drill. Inherited PG settings cleared; no TCP listener; role, port and data directory asserted before mutation/stop; temporary data and socket directory removed. fsync_writethrough selected on macOS. Complete logged purchase recovered, unfinished scratch absent, committed unlogged scratch truncated. No power-loss, storage-loss, torn-page or asynchronous-loss execution claimed. Reported local startup-command time remains in evidence, not offered as an RTO or article benchmark. The final download differs from the executed script only by creating its output directory before opening output files; see the applicability clarification below.
 
 ## Author reread and continuity
 
@@ -17,3 +17,7 @@ Root integration/build diagnostics and immutable rendered desktop/phone/theme/co
 ## Completed immutable author QA
 
 Checked exact-source immutable preview4488 at actual1280×720 and375×720, Light and Dark. Screenshots and rendered-qa.json saved. All meaningful steps/options, keyboard, disclosures and playback checked; no page overflow or cropped controls. Rendered download URL returned bounded HTTP200 and byte-identical source. Browser saving not tested. Root reported build/structure0issues. Restored1280×720 and System, reset controls, closed temporary tabs and released lease. Source unchanged during QA.
+
+## Native execution applicability clarification
+
+The final exact script was **not rerun** after the output-directory-only change. The native results and server log came from the preceding script, run with an existing evidence directory. The final script added `pathlib.Path('evidence').mkdir(exist_ok=True)` before output creation so an empty working directory works. PostgreSQL setup, fixture SQL, crash/restart actions, acceptance assertions and cleanup logic were unchanged. Therefore the native results apply to that unchanged execution logic; they are not represented as a native execution of the final exact download. The immutable preview download check establishes final source/download byte identity only.

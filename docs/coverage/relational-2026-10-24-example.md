@@ -1,6 +1,6 @@
 # Relational collection example · 24 October 2026
 
-Status: authoritative clean core, followed by **extensions E1–E7 accepted by the coordinator for this commission** ([coordinator decision](../article-work/relational-collection-2026-10-24/planning/accepted-v01.md)). These extensions settle only the shared facts and explicit variants needed by the plan. They do not prescribe SQL, physical layouts, schedules or artwork. Each article uses a small relevant subset and states its starting state.
+Status: authoritative clean core, followed by **extensions E1–E8 accepted by the coordinator for this commission** ([coordinator decision](../article-work/relational-collection-2026-10-24/planning/accepted-v01.md)). These extensions settle only the shared facts and explicit variants needed by the plan. They do not prescribe SQL, physical layouts, schedules or artwork. Each article uses a small relevant subset and states its starting state.
 
 The core is reproduced without changing its rows or claims. The three core views are distinct: the report view includes order 103; the race rewinds to before 103; the final protected state includes 103 and excludes 104. Existing orders 101 and 102 are historical examples, not additional deductions from the stated starting stock. Monetary amounts have no assigned currency in the core.
 
@@ -139,6 +139,8 @@ Vector search may add labelled low-dimensional **toy** product vectors for geome
 JSON examples may add optional product attributes such as material or brewing temperature. These do not replace products’ identities, prices or stock. Spatial examples may add collection points for shops; coordinate system, units and points must be declared with the native experiment. No geographic distance is inferred from the region labels.
 
 The optional catalogue-attributes variant uses P7 `{"material":"ceramic"}`, P3 `{"brewing_c":80}` and P9 `{"material":"ceramic"}`. These are illustrative attributes, not additional purchase history or evidence of a complete product specification. Anonymous documents may supply missing, null and wrong-type counterexamples; generated index-plan rows remain a separate native fixture. The variant is stored in `src/lib/relational-collection/catalogue-attributes.json`.
+
+The exact illustrative text-search corpus and toy vectors are fixed in `src/lib/relational-collection/search-examples.json`. P3 describes loose green tea; P7 a blue ceramic mug used for green tea; P9 a ceramic teapot whose description explicitly says a mug is not included. English text-search examples weight the title A and description D. Query matches and numeric ranks still require native evidence. The separate toy geometry uses P3 `[1,0]`, P7 `[0,1]`, P9 `[0.6,0.8]` and query `[0,1]` under Euclidean distance. After order103, stock eligibility excludes P7, so the exact eligible order is P9 then P3. These additions change no core title, price, stock or agreed order fact.
 
 ## Accepted extension E8: optional delivery notes
 
