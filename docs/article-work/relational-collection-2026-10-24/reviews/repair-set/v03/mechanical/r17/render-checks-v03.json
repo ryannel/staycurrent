@@ -1,0 +1,486 @@
+[
+  {
+    "label": "default-1280-system",
+    "code": [
+      {
+        "scrollWidth": 640,
+        "text": "-- Inside the purchase transaction, after creating order 103:\nINSERT INTO outbox (event_id, order_id, payload)\nVALUES (\n  'order-103-created', 103,\n  '{\"order_id\":103}'::jsonb\n);\n-- Commit this with stock, order, lines and request outcome.",
+        "width": 640
+      },
+      {
+        "scrollWidth": 640,
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nWITH candidate AS (\n  SELECT event_id FROM outbox\n  WHERE completed_at IS NULL\n    AND available_at <= clock_timestamp()\n    AND (lease_until IS NULL\n         OR lease_until <= clock_timestamp())\n  ORDER BY available_at, event_id\n  FOR UPDATE SKIP LOCKED\n  LIMIT 1\n)\nUPDATE outbox AS o\nSET lease_until = clock_timestamp() + interval '5 minutes',\n    claim_token = o.claim_token + 1,\n    attempts = o.attempts + 1\nFROM candidate AS c\nWHERE o.event_id = c.event_id\nRETURNING o.event_id, o.payload, o.claim_token;\nCOMMIT;",
+        "width": 640
+      },
+      {
+        "scrollWidth": 640,
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nSELECT event_id FROM outbox\nWHERE event_id = $1\nFOR UPDATE;\n-- A separate statement, after acquiring the row lock:\nUPDATE outbox\nSET completed_at = clock_timestamp(),\n    lease_until = NULL\nWHERE event_id = $1\n  AND claim_token = $2\n  AND lease_until > clock_timestamp()\n  AND completed_at IS NULL\nRETURNING event_id;\nCOMMIT;",
+        "width": 640
+      },
+      {
+        "scrollWidth": 640,
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nINSERT INTO inbox (consumer, event_id, payload)\nVALUES ('confirmation-projection', 'order-103-created', $1)\nON CONFLICT DO NOTHING\nRETURNING event_id;\n-- Only if the receipt was newly inserted:\n-- apply this consumer's local database change here.\n-- Otherwise: read the stored payload in a new statement,\n-- compare it and reject a conflicting replay.\nCOMMIT;",
+        "width": 640
+      }
+    ],
+    "download": "http://localhost:4472/review/relational-collection/evidence/r17/run-outbox.py",
+    "height": 720,
+    "overflow": 0,
+    "paragraphs": [
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The deadlines and completion time use timestamptz. Claim token and attempts are required integers; the download uses bigint for the token. A lease gives a claim a deadline, after which unfinished work becomes eligible for recovery. It survives the short transaction which acquired it, allowing the row lock to be released while the worker calls the receiver. Expiry makes recovery possible; it cannot stop a paused process from resuming.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The candidate query locks the row it selects; the update gives that claim a deadline and a generation. The returned token is provisional until the worker receives a successful commit reply. If that reply is missing, this protocol abandons the claim: discard its token and never use it to call the receiver, renew the lease or record completion. Dispose of the broken connection and finish its cleanup. Resume polling through the normal claim query, accepting a claim only when its commit succeeds. If the uncertain claim did commit, its lease keeps the event unavailable until expiry; this deliberately trades some recovery time for a simpler ownership contract.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "If a job needs more time, renew only a claim whose commit was acknowledged. For renewal, completion and release, first lock the event row in a short Read Committed transaction, then test the token and deadline in a separate update. An ordinary update can test its time condition before waiting for a row lock; a lock holder that changes no data need not make it test again. Taking the lock first puts that wait before the expiry check.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "A row returned by the update and a successful commit reply confirm completion. No updated row means the claim was expired at the post-lock check, was replaced or was already completed. Do not turn it into an unconditional update. The token prevents an old worker from marking a later worker’s claim complete. If completion’s reply is missing, retire the claim as well: do no further work under it. A committed completion removes the event from polling; otherwise the unfinished event becomes claimable after expiry and release of any transaction lock.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The native experiment held an uncommitted claim while another worker polled: the second skipped the locked row. After the claim committed, its active lease excluded the event. The test then explicitly moved the deadline into the past to model expiry. B obtained token 2; A’s completion with token 1 changed zero rows, while B’s completion changed one. For renewal, completion and release, a further test held an unchanged row lock across a short deadline. A direct guarded update began before expiry, waited and still changed the row afterwards. With the separate locking statement, the later update changed zero rows. When a competing worker instead committed a newer generation, the old token also changed zero rows. These are controlled schedules, not measurements of the five-minute lease.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "Retry temporary failures with bounded backoff and jitter, carrying the same event and effect identities. To set available_at for a later attempt and release the lease, use the same lock-first transaction as completion: lock the event, then update only if the acknowledged token still matches and the lease is unexpired at that post-lock check. Commit before discarding the claim. If no row changes or the outcome becomes uncertain, abandon it; normal polling follows the state that actually committed. Retain the attempt count and useful error information. Stop retrying a permanently invalid payload as though elapsed time will repair it.",
+        "width": 640
+      }
+    ],
+    "theme": [
+      "system"
+    ],
+    "url": "http://localhost:4472/review/relational-collection/outboxes-and-jobs/#finish-only-your-claim",
+    "width": 1280,
+    "viewLabel": "default-1280-system"
+  },
+  {
+    "label": [
+      "Lock first, then check the generation and deadline"
+    ],
+    "height": 720,
+    "overflow": 0,
+    "paragraphs": [
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The deadlines and completion time use timestamptz. Claim token and attempts are required integers; the download uses bigint for the token. A lease gives a claim a deadline, after which unfinished work becomes eligible for recovery. It survives the short transaction which acquired it, allowing the row lock to be released while the worker calls the receiver. Expiry makes recovery possible; it cannot stop a paused process from resuming.",
+        "width": 640
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The candidate query locks the row it selects; the update gives that claim a deadline and a generation. The returned token is provisional until the worker receives a successful commit reply. If that reply is missing, this protocol abandons the claim: discard its token and never use it to call the receiver, renew the lease or record completion. Dispose of the broken connection and finish its cleanup. Resume polling through the normal claim query, accepting a claim only when its commit succeeds. If the uncertain claim did commit, its lease keeps the event unavailable until expiry; this deliberately trades some recovery time for a simpler ownership contract.",
+        "width": 640
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "If a job needs more time, renew only a claim whose commit was acknowledged. For renewal, completion and release, first lock the event row in a short Read Committed transaction, then test the token and deadline in a separate update. An ordinary update can test its time condition before waiting for a row lock; a lock holder that changes no data need not make it test again. Taking the lock first puts that wait before the expiry check.",
+        "width": 640
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The subsequent update authorises the change when its condition finds the current generation unexpired. Keep the lock until commit so another worker cannot replace that generation between the test and the change. Commit and its reply may arrive after the deadline: this is a check under a lock, not a promise to finish before a wall-clock instant. Wait for renewal’s successful commit reply before continuing; if it changes no row or its outcome becomes uncertain, abandon the claim and stop starting work under it. Neither a renewal reply nor local abandonment can recall a network request already sent.",
+        "width": 640
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "A row returned by the update and a successful commit reply confirm completion. No updated row means the claim was expired at the post-lock check, was replaced or was already completed. Do not turn it into an unconditional update. The token prevents an old worker from marking a later worker’s claim complete. If completion’s reply is missing, retire the claim as well: do no further work under it. A committed completion removes the event from polling; otherwise the unfinished event becomes claimable after expiry and release of any transaction lock.",
+        "width": 640
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The native experiment held an uncommitted claim while another worker polled: the second skipped the locked row. After the claim committed, its active lease excluded the event. The test then explicitly moved the deadline into the past to model expiry. B obtained token 2; A’s completion with token 1 changed zero rows, while B’s completion changed one. For renewal, completion and release, a further test held an unchanged row lock across a short deadline. A direct guarded update began before expiry, waited and still changed the row afterwards. With the separate locking statement, the later update changed zero rows. When a competing worker instead committed a newer generation, the old token also changed zero rows. These are controlled schedules, not measurements of the five-minute lease.",
+        "width": 640
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "Retry temporary failures with bounded backoff and jitter, carrying the same event and effect identities. To set available_at for a later attempt and release the lease, use the same lock-first transaction as completion: lock the event, then update only if the acknowledged token still matches and the lease is unexpired at that post-lock check. Commit before discarding the claim. If no row changes or the outcome becomes uncertain, abandon it; normal polling follows the state that actually committed. Retain the attempt count and useful error information. Stop retrying a permanently invalid payload as though elapsed time will repair it.",
+        "width": 640
+      }
+    ],
+    "pre": [
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 640,
+        "tabindex": "0",
+        "text": "-- Inside the purchase transaction, after creating order 103:\nINSERT INTO outbox (event_id, order_id, payload)\nVALUES (\n  'order-103-created', 103,\n  '{\"order_id\":103}'::jsonb\n);\n-- Commit this with stock, order, lines and request outcome.",
+        "width": 640
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 640,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nWITH candidate AS (\n  SELECT event_id FROM outbox\n  WHERE completed_at IS NULL\n    AND available_at <= clock_timestamp()\n    AND (lease_until IS NULL\n         OR lease_until <= clock_timestamp())\n  ORDER BY available_at, event_id\n  FOR UPDATE SKIP LOCKED\n  LIMIT 1\n)\nUPDATE outbox AS o\nSET lease_until = clock_timestamp() + interval '5 minutes',\n    claim_token = o.claim_token + 1,\n    attempts = o.attempts + 1\nFROM candidate AS c\nWHERE o.event_id = c.event_id\nRETURNING o.event_id, o.payload, o.claim_token;\nCOMMIT;",
+        "width": 640
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 640,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nSELECT event_id FROM outbox\nWHERE event_id = $1\nFOR UPDATE;\n-- A separate statement, after acquiring the row lock:\nUPDATE outbox\nSET completed_at = clock_timestamp(),\n    lease_until = NULL\nWHERE event_id = $1\n  AND claim_token = $2\n  AND lease_until > clock_timestamp()\n  AND completed_at IS NULL\nRETURNING event_id;\nCOMMIT;",
+        "width": 640
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 640,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nINSERT INTO inbox (consumer, event_id, payload)\nVALUES ('confirmation-projection', 'order-103-created', $1)\nON CONFLICT DO NOTHING\nRETURNING event_id;\n-- Only if the receipt was newly inserted:\n-- apply this consumer's local database change here.\n-- Otherwise: read the stored payload in a new statement,\n-- compare it and reject a conflicting replay.\nCOMMIT;",
+        "width": 640
+      }
+    ],
+    "rootBackground": "rgb(249, 247, 242)",
+    "theme": "light",
+    "url": "http://localhost:4472/review/relational-collection/outboxes-and-jobs/#finish-only-your-claim",
+    "width": 1280,
+    "viewLabel": "desktop-light"
+  },
+  {
+    "label": [
+      "Lock first, then check the generation and deadline"
+    ],
+    "height": 720,
+    "overflow": 0,
+    "paragraphs": [
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The deadlines and completion time use timestamptz. Claim token and attempts are required integers; the download uses bigint for the token. A lease gives a claim a deadline, after which unfinished work becomes eligible for recovery. It survives the short transaction which acquired it, allowing the row lock to be released while the worker calls the receiver. Expiry makes recovery possible; it cannot stop a paused process from resuming.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The candidate query locks the row it selects; the update gives that claim a deadline and a generation. The returned token is provisional until the worker receives a successful commit reply. If that reply is missing, this protocol abandons the claim: discard its token and never use it to call the receiver, renew the lease or record completion. Dispose of the broken connection and finish its cleanup. Resume polling through the normal claim query, accepting a claim only when its commit succeeds. If the uncertain claim did commit, its lease keeps the event unavailable until expiry; this deliberately trades some recovery time for a simpler ownership contract.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "If a job needs more time, renew only a claim whose commit was acknowledged. For renewal, completion and release, first lock the event row in a short Read Committed transaction, then test the token and deadline in a separate update. An ordinary update can test its time condition before waiting for a row lock; a lock holder that changes no data need not make it test again. Taking the lock first puts that wait before the expiry check.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The subsequent update authorises the change when its condition finds the current generation unexpired. Keep the lock until commit so another worker cannot replace that generation between the test and the change. Commit and its reply may arrive after the deadline: this is a check under a lock, not a promise to finish before a wall-clock instant. Wait for renewal’s successful commit reply before continuing; if it changes no row or its outcome becomes uncertain, abandon the claim and stop starting work under it. Neither a renewal reply nor local abandonment can recall a network request already sent.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "A row returned by the update and a successful commit reply confirm completion. No updated row means the claim was expired at the post-lock check, was replaced or was already completed. Do not turn it into an unconditional update. The token prevents an old worker from marking a later worker’s claim complete. If completion’s reply is missing, retire the claim as well: do no further work under it. A committed completion removes the event from polling; otherwise the unfinished event becomes claimable after expiry and release of any transaction lock.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "The native experiment held an uncommitted claim while another worker polled: the second skipped the locked row. After the claim committed, its active lease excluded the event. The test then explicitly moved the deadline into the past to model expiry. B obtained token 2; A’s completion with token 1 changed zero rows, while B’s completion changed one. For renewal, completion and release, a further test held an unchanged row lock across a short deadline. A direct guarded update began before expiry, waited and still changed the row afterwards. With the separate locking statement, the later update changed zero rows. When a competing worker instead committed a newer generation, the old token also changed zero rows. These are controlled schedules, not measurements of the five-minute lease.",
+        "width": 640
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 320,
+        "right": 960,
+        "text": "Retry temporary failures with bounded backoff and jitter, carrying the same event and effect identities. To set available_at for a later attempt and release the lease, use the same lock-first transaction as completion: lock the event, then update only if the acknowledged token still matches and the lease is unexpired at that post-lock check. Commit before discarding the claim. If no row changes or the outcome becomes uncertain, abandon it; normal polling follows the state that actually committed. Retain the attempt count and useful error information. Stop retrying a permanently invalid payload as though elapsed time will repair it.",
+        "width": 640
+      }
+    ],
+    "pre": [
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 640,
+        "tabindex": "0",
+        "text": "-- Inside the purchase transaction, after creating order 103:\nINSERT INTO outbox (event_id, order_id, payload)\nVALUES (\n  'order-103-created', 103,\n  '{\"order_id\":103}'::jsonb\n);\n-- Commit this with stock, order, lines and request outcome.",
+        "width": 640
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 640,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nWITH candidate AS (\n  SELECT event_id FROM outbox\n  WHERE completed_at IS NULL\n    AND available_at <= clock_timestamp()\n    AND (lease_until IS NULL\n         OR lease_until <= clock_timestamp())\n  ORDER BY available_at, event_id\n  FOR UPDATE SKIP LOCKED\n  LIMIT 1\n)\nUPDATE outbox AS o\nSET lease_until = clock_timestamp() + interval '5 minutes',\n    claim_token = o.claim_token + 1,\n    attempts = o.attempts + 1\nFROM candidate AS c\nWHERE o.event_id = c.event_id\nRETURNING o.event_id, o.payload, o.claim_token;\nCOMMIT;",
+        "width": 640
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 640,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nSELECT event_id FROM outbox\nWHERE event_id = $1\nFOR UPDATE;\n-- A separate statement, after acquiring the row lock:\nUPDATE outbox\nSET completed_at = clock_timestamp(),\n    lease_until = NULL\nWHERE event_id = $1\n  AND claim_token = $2\n  AND lease_until > clock_timestamp()\n  AND completed_at IS NULL\nRETURNING event_id;\nCOMMIT;",
+        "width": 640
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 640,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nINSERT INTO inbox (consumer, event_id, payload)\nVALUES ('confirmation-projection', 'order-103-created', $1)\nON CONFLICT DO NOTHING\nRETURNING event_id;\n-- Only if the receipt was newly inserted:\n-- apply this consumer's local database change here.\n-- Otherwise: read the stored payload in a new statement,\n-- compare it and reject a conflicting replay.\nCOMMIT;",
+        "width": 640
+      }
+    ],
+    "rootBackground": "rgb(28, 26, 23)",
+    "theme": "dark",
+    "url": "http://localhost:4472/review/relational-collection/outboxes-and-jobs/#keep-the-work-recoverable",
+    "width": 1280,
+    "viewLabel": "desktop-dark"
+  },
+  {
+    "label": [
+      "Lock first, then check the generation and deadline"
+    ],
+    "height": 812,
+    "overflow": 0,
+    "paragraphs": [
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "The deadlines and completion time use timestamptz. Claim token and attempts are required integers; the download uses bigint for the token. A lease gives a claim a deadline, after which unfinished work becomes eligible for recovery. It survives the short transaction which acquired it, allowing the row lock to be released while the worker calls the receiver. Expiry makes recovery possible; it cannot stop a paused process from resuming.",
+        "width": 343
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "The candidate query locks the row it selects; the update gives that claim a deadline and a generation. The returned token is provisional until the worker receives a successful commit reply. If that reply is missing, this protocol abandons the claim: discard its token and never use it to call the receiver, renew the lease or record completion. Dispose of the broken connection and finish its cleanup. Resume polling through the normal claim query, accepting a claim only when its commit succeeds. If the uncertain claim did commit, its lease keeps the event unavailable until expiry; this deliberately trades some recovery time for a simpler ownership contract.",
+        "width": 343
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "If a job needs more time, renew only a claim whose commit was acknowledged. For renewal, completion and release, first lock the event row in a short Read Committed transaction, then test the token and deadline in a separate update. An ordinary update can test its time condition before waiting for a row lock; a lock holder that changes no data need not make it test again. Taking the lock first puts that wait before the expiry check.",
+        "width": 343
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "The subsequent update authorises the change when its condition finds the current generation unexpired. Keep the lock until commit so another worker cannot replace that generation between the test and the change. Commit and its reply may arrive after the deadline: this is a check under a lock, not a promise to finish before a wall-clock instant. Wait for renewal’s successful commit reply before continuing; if it changes no row or its outcome becomes uncertain, abandon the claim and stop starting work under it. Neither a renewal reply nor local abandonment can recall a network request already sent.",
+        "width": 343
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "A row returned by the update and a successful commit reply confirm completion. No updated row means the claim was expired at the post-lock check, was replaced or was already completed. Do not turn it into an unconditional update. The token prevents an old worker from marking a later worker’s claim complete. If completion’s reply is missing, retire the claim as well: do no further work under it. A committed completion removes the event from polling; otherwise the unfinished event becomes claimable after expiry and release of any transaction lock.",
+        "width": 343
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "The native experiment held an uncommitted claim while another worker polled: the second skipped the locked row. After the claim committed, its active lease excluded the event. The test then explicitly moved the deadline into the past to model expiry. B obtained token 2; A’s completion with token 1 changed zero rows, while B’s completion changed one. For renewal, completion and release, a further test held an unchanged row lock across a short deadline. A direct guarded update began before expiry, waited and still changed the row afterwards. With the separate locking statement, the later update changed zero rows. When a competing worker instead committed a newer generation, the old token also changed zero rows. These are controlled schedules, not measurements of the five-minute lease.",
+        "width": 343
+      },
+      {
+        "color": "rgb(220, 215, 204)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "Retry temporary failures with bounded backoff and jitter, carrying the same event and effect identities. To set available_at for a later attempt and release the lease, use the same lock-first transaction as completion: lock the event, then update only if the acknowledged token still matches and the lease is unexpired at that post-lock check. Commit before discarding the claim. If no row changes or the outcome becomes uncertain, abandon it; normal polling follows the state that actually committed. Retain the attempt count and useful error information. Stop retrying a permanently invalid payload as though elapsed time will repair it.",
+        "width": 343
+      }
+    ],
+    "pre": [
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 514,
+        "tabindex": "0",
+        "text": "-- Inside the purchase transaction, after creating order 103:\nINSERT INTO outbox (event_id, order_id, payload)\nVALUES (\n  'order-103-created', 103,\n  '{\"order_id\":103}'::jsonb\n);\n-- Commit this with stock, order, lines and request outcome.",
+        "width": 343
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 498,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nWITH candidate AS (\n  SELECT event_id FROM outbox\n  WHERE completed_at IS NULL\n    AND available_at <= clock_timestamp()\n    AND (lease_until IS NULL\n         OR lease_until <= clock_timestamp())\n  ORDER BY available_at, event_id\n  FOR UPDATE SKIP LOCKED\n  LIMIT 1\n)\nUPDATE outbox AS o\nSET lease_until = clock_timestamp() + interval '5 minutes',\n    claim_token = o.claim_token + 1,\n    attempts = o.attempts + 1\nFROM candidate AS c\nWHERE o.event_id = c.event_id\nRETURNING o.event_id, o.payload, o.claim_token;\nCOMMIT;",
+        "width": 343
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 459,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nSELECT event_id FROM outbox\nWHERE event_id = $1\nFOR UPDATE;\n-- A separate statement, after acquiring the row lock:\nUPDATE outbox\nSET completed_at = clock_timestamp(),\n    lease_until = NULL\nWHERE event_id = $1\n  AND claim_token = $2\n  AND lease_until > clock_timestamp()\n  AND completed_at IS NULL\nRETURNING event_id;\nCOMMIT;",
+        "width": 343
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 498,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nINSERT INTO inbox (consumer, event_id, payload)\nVALUES ('confirmation-projection', 'order-103-created', $1)\nON CONFLICT DO NOTHING\nRETURNING event_id;\n-- Only if the receipt was newly inserted:\n-- apply this consumer's local database change here.\n-- Otherwise: read the stored payload in a new statement,\n-- compare it and reject a conflicting replay.\nCOMMIT;",
+        "width": 343
+      }
+    ],
+    "rootBackground": "rgb(28, 26, 23)",
+    "theme": "dark",
+    "url": "http://localhost:4472/review/relational-collection/outboxes-and-jobs/#finish-only-your-claim",
+    "width": 375,
+    "viewLabel": "phone-dark"
+  },
+  {
+    "label": [
+      "Lock first, then check the generation and deadline"
+    ],
+    "height": 812,
+    "overflow": 0,
+    "paragraphs": [
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "The deadlines and completion time use timestamptz. Claim token and attempts are required integers; the download uses bigint for the token. A lease gives a claim a deadline, after which unfinished work becomes eligible for recovery. It survives the short transaction which acquired it, allowing the row lock to be released while the worker calls the receiver. Expiry makes recovery possible; it cannot stop a paused process from resuming.",
+        "width": 343
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "The candidate query locks the row it selects; the update gives that claim a deadline and a generation. The returned token is provisional until the worker receives a successful commit reply. If that reply is missing, this protocol abandons the claim: discard its token and never use it to call the receiver, renew the lease or record completion. Dispose of the broken connection and finish its cleanup. Resume polling through the normal claim query, accepting a claim only when its commit succeeds. If the uncertain claim did commit, its lease keeps the event unavailable until expiry; this deliberately trades some recovery time for a simpler ownership contract.",
+        "width": 343
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "If a job needs more time, renew only a claim whose commit was acknowledged. For renewal, completion and release, first lock the event row in a short Read Committed transaction, then test the token and deadline in a separate update. An ordinary update can test its time condition before waiting for a row lock; a lock holder that changes no data need not make it test again. Taking the lock first puts that wait before the expiry check.",
+        "width": 343
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "The subsequent update authorises the change when its condition finds the current generation unexpired. Keep the lock until commit so another worker cannot replace that generation between the test and the change. Commit and its reply may arrive after the deadline: this is a check under a lock, not a promise to finish before a wall-clock instant. Wait for renewal’s successful commit reply before continuing; if it changes no row or its outcome becomes uncertain, abandon the claim and stop starting work under it. Neither a renewal reply nor local abandonment can recall a network request already sent.",
+        "width": 343
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "A row returned by the update and a successful commit reply confirm completion. No updated row means the claim was expired at the post-lock check, was replaced or was already completed. Do not turn it into an unconditional update. The token prevents an old worker from marking a later worker’s claim complete. If completion’s reply is missing, retire the claim as well: do no further work under it. A committed completion removes the event from polling; otherwise the unfinished event becomes claimable after expiry and release of any transaction lock.",
+        "width": 343
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "The native experiment held an uncommitted claim while another worker polled: the second skipped the locked row. After the claim committed, its active lease excluded the event. The test then explicitly moved the deadline into the past to model expiry. B obtained token 2; A’s completion with token 1 changed zero rows, while B’s completion changed one. For renewal, completion and release, a further test held an unchanged row lock across a short deadline. A direct guarded update began before expiry, waited and still changed the row afterwards. With the separate locking statement, the later update changed zero rows. When a competing worker instead committed a newer generation, the old token also changed zero rows. These are controlled schedules, not measurements of the five-minute lease.",
+        "width": 343
+      },
+      {
+        "color": "rgb(36, 33, 26)",
+        "font": "18px",
+        "left": 16,
+        "right": 359,
+        "text": "Retry temporary failures with bounded backoff and jitter, carrying the same event and effect identities. To set available_at for a later attempt and release the lease, use the same lock-first transaction as completion: lock the event, then update only if the acknowledged token still matches and the lease is unexpired at that post-lock check. Commit before discarding the claim. If no row changes or the outcome becomes uncertain, abandon it; normal polling follows the state that actually committed. Retain the attempt count and useful error information. Stop retrying a permanently invalid payload as though elapsed time will repair it.",
+        "width": 343
+      }
+    ],
+    "pre": [
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 514,
+        "tabindex": "0",
+        "text": "-- Inside the purchase transaction, after creating order 103:\nINSERT INTO outbox (event_id, order_id, payload)\nVALUES (\n  'order-103-created', 103,\n  '{\"order_id\":103}'::jsonb\n);\n-- Commit this with stock, order, lines and request outcome.",
+        "width": 343
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 498,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nWITH candidate AS (\n  SELECT event_id FROM outbox\n  WHERE completed_at IS NULL\n    AND available_at <= clock_timestamp()\n    AND (lease_until IS NULL\n         OR lease_until <= clock_timestamp())\n  ORDER BY available_at, event_id\n  FOR UPDATE SKIP LOCKED\n  LIMIT 1\n)\nUPDATE outbox AS o\nSET lease_until = clock_timestamp() + interval '5 minutes',\n    claim_token = o.claim_token + 1,\n    attempts = o.attempts + 1\nFROM candidate AS c\nWHERE o.event_id = c.event_id\nRETURNING o.event_id, o.payload, o.claim_token;\nCOMMIT;",
+        "width": 343
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 459,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nSELECT event_id FROM outbox\nWHERE event_id = $1\nFOR UPDATE;\n-- A separate statement, after acquiring the row lock:\nUPDATE outbox\nSET completed_at = clock_timestamp(),\n    lease_until = NULL\nWHERE event_id = $1\n  AND claim_token = $2\n  AND lease_until > clock_timestamp()\n  AND completed_at IS NULL\nRETURNING event_id;\nCOMMIT;",
+        "width": 343
+      },
+      {
+        "scrollLeft": 0,
+        "scrollWidth": 498,
+        "tabindex": "0",
+        "text": "BEGIN ISOLATION LEVEL READ COMMITTED;\nINSERT INTO inbox (consumer, event_id, payload)\nVALUES ('confirmation-projection', 'order-103-created', $1)\nON CONFLICT DO NOTHING\nRETURNING event_id;\n-- Only if the receipt was newly inserted:\n-- apply this consumer's local database change here.\n-- Otherwise: read the stored payload in a new statement,\n-- compare it and reject a conflicting replay.\nCOMMIT;",
+        "width": 343
+      }
+    ],
+    "rootBackground": "rgb(249, 247, 242)",
+    "theme": "light",
+    "url": "http://localhost:4472/review/relational-collection/outboxes-and-jobs/#keep-the-work-recoverable",
+    "width": 375,
+    "viewLabel": "phone-light"
+  }
+]

@@ -61,3 +61,14 @@
 - Batch03 consolidated author repair: batch03/v02/manifest.json at4430. Fresh visual confirmation passes; other affected confirmations remain pending.
 - Batch04 practitioner reproduced a critical claim-number reuse after rollback: reviews/batch04/practitioner-v01-r17-claim-aba.{py,json}. Fresh repair retires uncertain returned claims rather than inferring authority from token equality. Native author proof and source integrated; fresh confirmation pending.
 - New review packets include bounded per-node plan JSON alongside the canonical tree. This prevents recursive plan duplication from clipping a reviewer's context; it adds no writing rule.
+
+## Current PostgreSQL and distribution delivery
+
+- Local checkpoint3830e49 preserves37complete source drafts; normal-build-delivery5.json passes normal delivery/exclusion checks and preservation-current.json confirms all131protected files unchanged. No push.
+- reviews/batch07/v01/manifest.json: seven complete firstreturns on4476; current native/model provenance and current rendered mechanics, all4initial perspectives pending.
+- reviews/batch08/v01/manifest.json: six PostgreSQL foundation firstreturns on4482; native18.6 and exact extensions/served-download provenance, all4initial perspectives pending.
+- reviews/accepted-confirmation-v02.md: three accepted causes from fresh technical challenge (actual Python process environment, customer-only index figure contents, lease guard evaluated before row-lock wait). Prior valid repaired areas remain separately identified.
+- repairs/batches02-03-v03/ and repairs/batch04-v03/: two fresh coherent repairs; six exact clean/read-only runner executions, post-lock lease authorisation counterexamples/corrected paths, current hashes/download/render records. Author observations are not independent confirmations.
+- reviews/repair-set/v03/manifest.json: exact current4484 confirmation source/context/mechanics, obsolete affected evidence excluded. Qualified unchanged mechanics may be reused only after applicability checks. Fresh practitioner confirmation active; other invalidated confirmations remain pending.
+- reviews/batch06/visual-v01.md: all5visualchecks per storage/recovery article,39manualstates at1280/375 in both themes; low r20 alternative-text spacing only. Initial remaining perspectives pending.
+- D046 and catalogue-attributes.json centralise the exact optional product JSON example; core rows/history are unchanged. D047 and sources-wrapper-check.json validate the dedicated Sources-section relocation without changing article wording.

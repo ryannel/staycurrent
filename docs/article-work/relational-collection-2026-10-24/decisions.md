@@ -80,3 +80,11 @@ The shared draft shell cut immediately before a Sources heading. r29 validly wra
 ### D048 · accept three causes from fresh informed practitioner challenges
 
 Accept reviews/accepted-confirmation-v02.md: medium shared process-environment defect in exact r04/r08/r09 downloads, critical inconsistent customer-index entry contents in r10 Figure1, and critical strict-expiry assertion disproved by unchanged-row lock waits in r17 follow-up mutations. Preserve the original r17 token-alias repair's separate pass, and r11/r12/current r10Figure2 technical passes. New fresh repairs are split by coherent implementation/contract scope, with current final confirmations still required. Do not count these as cosmetic review preferences or restart unrelated whole perspectives.
+
+## D049 · current technical repair confirmation
+
+Accepted the fresh repair-set-v03 practitioner report as confirmation of B023-ENV, B03-P10F1 and B04-P17-EXP, plus the surrounding prior uncertain-token repair. All5technical checks applied to each changed piece; exact current runner challenges and ten served-byte checks pass, no new concrete defect. This closes the accepted technical causes within its declared scope. It is informed confirmation, not independent final/corpus coverage; outstanding teaching/editorial/changed-visual confirmations remain required. Earlier confirmed unchanged r11/r12 mechanics remain separately applicable.
+
+## D050 · complete private PostgreSQL17 upgrade tools
+
+The earlier temporary17.6 binary inventory was version-only and its share directory lacked postgres.bki. It was not a usable initdb installation. Downloaded the official17.6 source archive and its published SHA256, verified equality, compiled and installed into a new owned temporary prefix. No existing installation or global service/configuration changed. native-pg17-complete-install.json records commands, source and tool hashes. The upgrade author must establish their own actual native result using this complete prefix; compilation is not upgrade acceptance.

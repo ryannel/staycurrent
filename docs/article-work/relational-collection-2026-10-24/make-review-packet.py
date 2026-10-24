@@ -111,6 +111,8 @@ audience += '\n' + '\n'.join(f"- {a['key']} — {a['title']}: {a['entry']}" for 
 (target / 'audience.md').write_text(audience)
 manifest = {'version': f'{batch}-{version}', 'frozen_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'source_root': str(source), 'keys': keys, 'preview': None,
+            'article_paths': {a['key']: a['slug'] + '/' if a['slug'] else ''
+                              for a in articles if a['key'] in keys},
             'files': {str(p.relative_to(target)): hashlib.sha256(p.read_bytes()).hexdigest()
                       for p in target.rglob('*') if p.is_file()},
             'permitted_inputs': {'practitioner': ['source/', 'context/', 'mechanical/', 'rendered pieces'],
