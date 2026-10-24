@@ -1,0 +1,334 @@
+Home
+Relational draft
+Transactions and isolation
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation You’re here
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Transactions and isolation
+Deep diveAbout 11 minutes AI-generated
+A transaction makes a group of changes all or nothing. Isolation governs how that group interacts with other transactions. The distinction matters whenever a decision depends on a value that another writer can change. Two purchases can each be complete and still sell the same last mug.
+The introduction fixed that race with a conditional stock update. Here we use it to separate three promises: keeping the purchase together, deciding which committed data a query sees, and making concurrent decisions agree with some order of taking turns. A stable view of the data supplies the second promise. It does not, by itself, supply the third.
+The examples use PostgreSQL 18. They begin with the shop’s purchase, then add two instructors covering a tea class. The drawings follow chosen schedules rather than elapsed time or physical storage. A downloadable experiment repeats the relevant schedules on an owned, disposable PostgreSQL instance.
+What must stay true
+One purchase, one commit
+Take stock from the row
+What a snapshot keeps
+A rule spread over two rows
+Serializable keeps the decision
+Choosing the protection
+Repeat the schedules
+What must stay true
+Before choosing an isolation level, state the rule the transactions must preserve. Such a rule is an invariant: a condition that must hold after every successful change. “Stock must never be negative” and “sell no more units than are available” sound similar, but the introductory race showed that they are different.
+With one mug left, Mina and Tariq both read stock 1. Each calculates 0. Mina writes 0 and records order 103; Tariq later writes his saved 0 and records order 104. Stock is non-negative throughout, so CHECK (stock >= 0) has no reason to reject either write. Yet two mug lines have been sold from one remaining mug. The rule concerns the relationship between the stock change and the admitted purchases.
+Rewind to before order 103. Mina wants one P7 and two P3s. For this purchase to succeed, each product must have enough stock, both reductions must take effect, and the order and both lines must be recorded together.
+The stock effects that belong to order 103
+ProductBefore purchaseTakenAfter purchase
+P7 · Blue mug110
+P3 · Green tea, 50 g12210
+Order 103 remains pending, with a mug line at 20.00 and two packs of tea at 4.50 each. Taking stock does not mean receiving a payment. The transaction boundary follows the business action being accepted: reserving this purchase, rather than completing every later part of its life.
+A row constraint is still valuable. It catches negative stock however a writer arrived there. Primary and foreign keys catch duplicate identities and missing parents. Use those constraints alongside the transaction protocol; each closes a different way to reach an invalid state. Constraints and tenant boundaries develops the rules the schema can enforce directly.
+One purchase, one commit
+BEGIN starts the transaction. The application then takes stock, inserts the order and inserts its lines. COMMIT accepts the group; ROLLBACK discards it. This is atomicity. A failure after taking the mug must not leave the mug gone while its order is missing.
+In PostgreSQL, other connections cannot read those uncommitted row changes. The purchasing connection can read its own work, which lets it continue building the order. When it commits, the changes become available together. A reader’s snapshot may still be older than that commit; atomic visibility does not mean every already-running reader immediately switches to the new state.
+Without an explicit transaction, PostgreSQL normally commits each successful statement separately. A successful stock update followed by a failed order insert would then be two separate outcomes. Some drivers manage transactions for you, so check the driver’s behaviour and keep the entire operation on its transaction connection. SQL at the application boundary follows that boundary into application code.
+An application can also decide to stop a purchase without a SQL error: perhaps the mug update returned no row. It must roll back explicitly in that case. A database statement error normally leaves a PostgreSQL transaction unable to continue until rollback; a savepoint can provide a smaller rollback boundary when the operation deliberately permits partial recovery. Neither a savepoint nor a caught exception makes a missing stock reservation acceptable.
+Keep human input and calls to other services outside this short database transaction. A card provider cannot roll its charge back because PostgreSQL rolled back. A transaction can instead record work to be done later, alongside the order, as Outboxes and database-backed jobs explains. The separate question of a commit whose reply disappears belongs to Retries when a commit reply is missing.
+Take stock from the row
+The mug’s rule fits in one row. Combine the test and the change in the same UPDATE, deriving the new stock from that row rather than from an application’s earlier copy.
+BEGIN ISOLATION LEVEL READ COMMITTED;
+UPDATE products
+SET stock = stock - 1
+WHERE product_id = 'P7' AND stock >= 1
+RETURNING stock;
+A returned row means that this transaction took the mug. No returned row means it did not. The application must test that result before it does any more purchase work. For Mina, it next reserves two packs of P3 with stock = stock - 2 and stock >= 2, again requiring one returned row. If either reservation fails, roll back the whole purchase, including any reservation that succeeded earlier.
+Only after both succeed does it insert order 103 and its two lines, then commit. A later insert error also rolls the stock changes back. These statements describe the transaction recipe; the application’s checks and branches are part of its correctness. Pasting the statements into a straight-line script and committing regardless of their results would omit that protection.
+At PostgreSQL’s default level, Read Committed, a competing updater of P7 waits while Mina holds its row lock. If Mina commits stock 0, the waiting update tests stock >= 1 against that updated row and changes nothing. If Mina rolls back, the waiting transaction can take the still-available mug. The lock prevents the two row changes from passing each other, and the condition decides whether the second sale is allowed.
+A saved-value write such as SET stock = 0 would still write 0 after waiting. Waiting alone cannot repair its stale calculation. Nor does a stock condition protect an unrelated count across several rows. PostgreSQL’s recheck applies to the target row; it does not refresh every other fact a transaction has read.
+With Repeatable Read or Serializable, an update of a row changed since the transaction’s snapshot can fail with a serialization error instead of taking the Read Committed path. The application must handle that outcome too. The isolation level and the update protocol form one design; choosing a stronger level changes the failures the application must expect.
+What a snapshot keeps
+A snapshot determines which committed row versions a read may see. PostgreSQL keeps older versions so an ordinary query can read a consistent view while another transaction changes the rows. It does not have to wait for the writer’s new values. The physical versions and their eventual cleanup are followed in Row versions, storage and cleanup.
+Read Committed gives each ordinary SELECT a snapshot taken when that statement starts. A query that began before Mina committed does not see half of her purchase. But a second query in the same transaction, starting after her commit, can see the whole new purchase. The two statements can legitimately return different stock values.
+Repeatable Read keeps one snapshot for the transaction, fixed when it first needs a query snapshot. In the report below, that is the first SELECT. Neither BEGIN nor a setting such as SET LOCAL application_name = 'report' fixes the view: a commit between that setting and the first read can still enter it. Later reads keep the established view, plus the transaction’s own changes. A report can calculate several related results without another writer’s commit entering halfway between its queries.
+The next drawing rewinds again to P7 stock 1. A report reads it, checkout commits stock 0, and the report reads it once more. Play Read Committed, then switch to Repeatable Read at the last step. Watch which view carries Read 2.
+Figure 1
+Which snapshot answers the second query?
+Read CommittedRepeatable Read
+PlayBackNextReset
+Steps as text
+Read Committed
+Before the purchase, P7 has stock 1. The report opens a transaction. Neither report query has run.
+The report’s first SELECT reads stock 1 from the committed state before checkout. Read 1 marks that view.
+Checkout commits its purchase. The current stock is now 0. The report remains open; its first result does not change.
+Read Committed takes a new snapshot for the second SELECT. It returns 0, including checkout’s commit.
+Repeatable Read
+Before the purchase, P7 has stock 1. The report opens a transaction. Neither report query has run.
+The report’s first SELECT reads stock 1 from the committed state before checkout. Read 1 marks that view.
+Checkout commits its purchase. The current stock is now 0. The report remains open; its first result does not change.
+Repeatable Read uses the snapshot established by the first query. The second SELECT also returns 1, although checkout has committed stock 0.
+Two logical views of the same product, retained here for comparison. The read labels show which committed state answered each query. They are not copies of a physical page, and the columns do not measure time.
+Read Committed returned 1, then 0. Repeatable Read returned 1 twice. In both cases, the first result was correct for its snapshot. Repeatable Read did not stop checkout committing, reserve the mug for the report or make stock 1 available again. It kept the report’s view stable.
+This distinction also matters for a result split across queries. An order total read before a payment commits and a payment total read afterwards can describe different moments at Read Committed. One statement combining those reads uses one statement snapshot; a multi-query report can use Repeatable Read when it needs a shared view. Choosing that view is separate from deciding whether to allow a purchase.
+Isolation names are not a portable list of identical implementations. PostgreSQL’s Repeatable Read uses snapshot isolation and also prevents a repeated query from acquiring new matching rows, often called phantoms. The SQL standard permits weaker Repeatable Read implementations. PostgreSQL also treats Read Uncommitted as Read Committed. Check the engine’s actual promises when moving a protocol.
+A rule spread over two rows
+A stable snapshot becomes less reassuring when the transaction writes a decision based on it. The shop also runs tea classes. In this separate example, session S502 has two instructors: Ada Lind, I1, and Tomas Ek, I2. Both start on duty. The rule is that at least one must remain.
+Use a small duty table with one row per session and instructor. Its primary key is (session_id, instructor_id); on_duty is a non-null Boolean. The two starting rows are (S502, I1, true) and (S502, I2, true). These staff rows are separate from customers and shop orders.
+Each instructor’s transaction counts the on-duty instructors. While both are on duty, a count of 2 lets either one leave. Here is Ada’s decision; Tomas’s version names I2 in the update.
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT count(*)
+FROM duty
+WHERE session_id = 'S502' AND on_duty;
+-- Only if the count is greater than 1:
+UPDATE duty
+SET on_duty = false
+WHERE session_id = 'S502' AND instructor_id = 'I1';
+COMMIT;
+If Ada runs first and finishes before Tomas starts reading, Ada sees 2 and leaves. Tomas then sees 1 and stays. If Tomas runs first, the reverse happens. Either serial order preserves one instructor.
+Now let both read 2 before either writes. Ada changes I1 and commits. Tomas changes I2 and commits. Their writes affect different rows, so there is no competing update of the same row to reject. At PostgreSQL Repeatable Read, both can succeed, leaving nobody on duty. This is write skew: transactions read overlapping facts, then make different writes whose combined result breaks their rule.
+Step through Repeatable Read in the drawing. Each transaction’s top box is the fact it read about the other instructor; the bottom shared rows show what has actually committed. Then switch to Serializable and follow the rejected attempt and its fresh decision.
+Figure 2
+Two decisions from the same starting state
+Repeatable ReadSerializable
+PlayBackNextReset
+Steps as text
+Repeatable Read
+Session S502 starts with Ada and Tomas both on duty. At least one instructor must remain.
+Both transactions read the two on-duty rows before either changes one. Ada sees Tomas on; Tomas sees Ada on. Each decides that leaving would keep one instructor.
+Ada sets her own row off duty and commits. The committed state now has only Tomas on duty. Tomas’s earlier read still says Ada was on.
+Tomas changes a different row. Repeatable Read permits his update and commit in this schedule. No instructor remains on duty.
+Ada relied on Tomas not having left; Tomas relied on Ada not having left. Both decisions cannot belong to any serial order. The rule is broken.
+Two complete transactions and two stable snapshots have produced zero cover. A snapshot is not the same promise as a serial outcome.
+Serializable
+Session S502 starts with Ada and Tomas both on duty. At least one instructor must remain.
+Both transactions read the two on-duty rows before either changes one. Ada sees Tomas on; Tomas sees Ada on. Each decides that leaving would keep one instructor.
+Ada sets her own row off duty and commits. The committed state now has only Tomas on duty. Tomas’s earlier read still says Ada was on.
+With both transactions Serializable, PostgreSQL rejects Tomas’s transaction in this schedule with SQLSTATE 40001. His change does not commit. Tomas remains on duty.
+Tomas retries the whole transaction with a fresh snapshot and reruns the decision. Only Tomas is on duty now, so he must stay.
+The fresh attempt commits without turning Tomas off. Ada is off, Tomas is on: the same result as Ada leaving first, followed by Tomas deciding to stay.
+Chosen two-transaction schedules for S502. At Repeatable Read, each instructor relies on the other’s old on-duty state. The Serializable schedule keeps Ada’s commit and rejects Tomas’s attempt; a real execution need not choose that same victim or reject at that same statement.
+There is no serial order that explains both leaving under this decision rule. For Ada to leave, she must read Tomas before he leaves: Ada must come first. For Tomas to leave, he must read Ada before she leaves: Tomas must come first. Those requirements form a cycle. A transaction can keep every read repeatable and still participate in that cycle.
+A row-level CHECK cannot express this minimum across the other duty rows. Reading a count does not lock the answer against change, and locking only the row being turned off leaves these two writers on separate rows. A multi-row rule needs protection that covers the facts on which the decision depends.
+Serializable keeps the decision
+Serializable promises that the successful transactions have an effect consistent with running them one at a time in some order. It need not execute them one at a time. PostgreSQL runs them with snapshots and tracks read/write dependencies, rejecting transactions when necessary to prevent a result that cannot have a serial explanation.
+For S502, change both transactions’ opening statement to BEGIN ISOLATION LEVEL SERIALIZABLE. Keep the read, decision and update in that transaction. In the experiment’s schedule Ada commits first, and Tomas receives SQLSTATE 40001, serialization_failure. His change does not commit. Detection may happen during a statement or at commit, so a successful UPDATE alone is not success for the transaction.
+Tomas must start a new transaction and rerun the count and the decision, not merely resend the failed update. The fresh count is 1. The correct outcome is to stay on duty, so this new attempt can commit without changing his row. Reusing the earlier count of 2 would throw away the information the retry exists to obtain.
+The application still owns the rule. Serializable would happily run an unconditional “turn myself off” transaction after Ada’s transaction; that is a valid serial order of incorrectly designed actions. Every writer capable of reducing cover must participate in the chosen protocol, including administrative and background jobs. If a rule assumes all its competing transactions are Serializable, a bypass at another level needs separate protection.
+Serializable has a cost. Tracking dependencies takes work, and rejected attempts repeat work; a busy rule can cause many retries. The application needs a bounded retry policy and a way to report that it could not complete. It must also keep irreversible external effects out of attempts that may be discarded. Retries when a commit reply is missing develops retry control and distinguishes a known serialization failure from an uncertain commit reply.
+Explicit locking offers another design: make every decision for the same rule coordinate through a common protected row or set of rows. The lock, the time the snapshot is taken and every participating writer must agree. In particular, waiting for a lock does not refresh an existing Repeatable Read snapshot. Locks, contention and deadlocks works through complete protocols, empty matching sets, waits and lock ordering.
+Choosing the protection
+The choice starts with the smallest complete rule, then the reads and writes that can invalidate it. A single-row limit often admits a conditional update. A report may need a stable snapshot. A decision across several rows needs a protocol that protects the whole decision.
+Promises used by the worked examples
+NeedDesignApplication must handle
+Keep order and stock changes togetherOne explicit transactionRollback on any failed reservation or write
+Take at most the remaining mugConditional stock update in that transaction; Read Committed rechecks the row after a competing commitZero changed rows; transaction errors
+Read several report results from one viewRead-only Repeatable Read transactionAn older view; resources retained by a long snapshot
+Keep at least one instructor on dutyRead, decision and write at Serializable for all participating transactions; or a complete locking protocolWhole-transaction retry, or waits and deadlocks under locking
+Check the choice by constructing a failing overlap. Have both buyers read before either writes; have both instructors count before either leaves. Then run the protected version with the same starting data. A test that only runs one transaction at a time cannot distinguish the broken protocol from the sound one.
+Also check the transaction boundary in the application. A count before BEGIN, a write on a different connection or a branch that commits after a failed reservation can defeat the design even though each SQL statement is valid. Keep transactions short enough that they do not wait on a person or a remote service, and keep the rule visible enough that a later writer can follow it.
+Repeat the schedules
+Download the isolation experiment. It uses Python 3’s standard library and PostgreSQL’s installed command-line tools. Run it with python3 run-isolation.py --bindir /path/to/postgresql/bin. It creates its own temporary database cluster, connects through a private local socket, checks its ownership, then removes the cluster after the checks. It does not connect to an existing database. The binary directory must contain initdb, pg_ctl, postgres and psql.
+The experiment starts with the displayed products and customers, empty order tables, and the two duty rows. Orders 101 and 102 are historical context and are not replayed as fresh stock deductions. Each purchase race resets to the state before order 103; the snapshot and instructor tests are separate histories.
+Checked on PostgreSQL 18.6: rollback left no order or stock effect; the unsafe saved-value writes committed orders 103 and 104 with P7 stock 0; the conditional update waited, then admitted only 103, leaving P3 stock 10 and P7 stock 0. The repeated reads returned 1, 0 at Read Committed and 1, 1 at Repeatable Read. Both instructor changes committed at Repeatable Read; at Serializable the second attempt failed with 40001, and its fresh decision preserved Tomas’s cover. These are outcomes of the recorded schedules on one local engine, not latency measurements or a guarantee about which concurrent attempt always loses.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation You’re here
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousTable partitioning and data lifecycle NextLocks, contention and deadlocks
+Sources and further reading
+Checked on 24 October 2026 against the PostgreSQL 18 documentation and the disposable PostgreSQL 18.6 experiment. The article uses the collection’s fixed shop facts and its separate S502 instructor example. The interactive figures illustrate those decisions; they do not execute SQL in the browser.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/tutorial-transactions.html] Transactions and  [href=https://www.postgresql.org/docs/18/sql-begin.html] BEGIN: transaction blocks, atomic visibility, autocommit, rollback and savepoints.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/transaction-iso.html] Transaction Isolation: statement and transaction snapshots, Read Committed’s row recheck, Repeatable Read’s limits and Serializable’s read/write dependency checks.
+PostgreSQL 18 source,  [href=https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/tcop/pquery.c] PlannedStmtRequiresSnapshot: why settings such as SET LOCAL do not establish the transaction’s query snapshot.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/mvcc-intro.html] Concurrency Control introduction and  [href=https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-ROWS] Row-Level Locks: row versions, ordinary readers and competing writers.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/mvcc-serialization-failure-handling.html] Serialization Failure Handling: 40001 and why a retry must rerun all of the transaction’s decision logic.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/ddl-constraints.html#DDL-CONSTRAINTS-CHECK-CONSTRAINTS] Check Constraints: the boundary between a row check and conditions involving other rows.

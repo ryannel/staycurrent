@@ -1,0 +1,128 @@
+---
+import Routing from '../../components/relational-collection/r26/Routing.astro';
+import Sql from '../../components/explainers/querying/Sql.astro';
+---
+
+<p>Sharding divides ownership of data across database servers. One server owns some rows, another owns others, and a request must find the right owner or combine work from several. The point is to distribute storage or useful work that one server can no longer carry within the service’s goals.</p>
+
+<p>The division has a cost. A join that used to read two local tables may now exchange rows over the network. A purchase may need several owners to agree before it can commit. A failed or slow owner can hold up a result assembled from all of them. Choosing the boundary determines how often those costs enter ordinary requests.</p>
+
+<p>We extend the shop to serve two tenants: shop 10, the original shop, and shop 20, Harbour Tea. A tenant here is a shop, not one of its customers. This tenant-scoped variant makes a useful candidate boundary because many requests concern one shop’s orders, lines and stock. The placement drawings are explanatory designs, not observations of a running distributed database.</p>
+
+<h2 id="three-ways-to-divide-the-problem">Three ways to divide the problem</h2>
+
+<p><em>Table partitioning</em> divides one logical table into pieces, often by date or another key. PostgreSQL’s native partitions remain tables managed by the same database service. Pruning old partitions from a query or dropping an old month can reduce work and simplify lifecycle management. Creating those partitions does not by itself spread ownership across independent servers.</p>
+
+<p><em>Replication</em> keeps copies of the same data. A replica can provide another place to read or a copy to promote after a failure, subject to its replication and routing guarantees. Replicating every write to another server does not divide those writes between independent owners. It adds copies and work, even when reads can be spread.</p>
+
+<p><em>Sharding</em> gives different subsets different owners. Those subsets can each have replicas. “Three shards, each with three replicas” describes nine copies of shard data, not nine independent copies of the complete database. Every shard still needs a write protocol and enough surviving copies.</p>
+
+<table>
+ <caption>Which change addresses which pressure?</caption>
+ <thead><tr><th scope="col">Pressure</th><th scope="col">A useful candidate</th><th scope="col">What remains</th></tr></thead>
+ <tbody>
+  <tr><td>Old rows dominate deletion and maintenance</td><td>Table partitions aligned with retention</td><td>The service’s compute and failure boundary</td></tr>
+  <tr><td>Independent reads dominate a healthy writer</td><td>Read replicas and an explicit freshness contract</td><td>Write work, replication lag and read routing</td></tr>
+  <tr><td>Independent shops exceed one server’s useful capacity</td><td>Shards grouped by shop</td><td>Skew, global operations and moving ownership</td></tr>
+  <tr><td>One row serialises every purchase</td><td>Change the rule or its contention pattern if the business permits</td><td>Adding shards cannot make one protected row independent</td></tr>
+ </tbody>
+</table>
+
+<p>First establish which pressure you have. Query work, leaked connections or one long transaction can exhaust a server without requiring distribution. <a href="/learn/databases/relational/connections-and-capacity/">Connections, overload and capacity</a> supplies the evidence and headroom; <a href="/learn/databases/relational/partitioning/">Table partitioning and data lifecycle</a> and <a href="/learn/databases/relational/replicas-and-read-routing/">Replicas, lag and read routing</a> develop the other two mechanisms.</p>
+
+<h2 id="carry-the-boundary-in-the-data">Carry the boundary in the data</h2>
+
+<p>Shop 10’s P7 is the Blue mug at 20.00. Shop 20 can have its own P7, the Copper mug at 18.00. In this variant a product’s identity is <code>(shop_id, product_id)</code>. An order’s is <code>(shop_id, order_id)</code>, and each child reference carries that same shop ID.</p>
+
+<Sql label="The tenant boundary in a reference" code={`-- Tenant-scoped variant, abbreviated to the relevant keys:
+products:    PRIMARY KEY (shop_id, product_id)
+orders:      PRIMARY KEY (shop_id, order_id)
+order_items: PRIMARY KEY (shop_id, order_id, line_no)
+
+-- On order_items:
+FOREIGN KEY (shop_id, order_id)
+  REFERENCES orders (shop_id, order_id)
+FOREIGN KEY (shop_id, product_id)
+  REFERENCES products (shop_id, product_id)`} />
+
+<p>A line for shop 10 must refer to shop 10’s order and product. Carrying the boundary into the reference preserves meaning even when the same short ID appears elsewhere. It also supplies a value a router and query planner can use. It does not authorise a caller to read a shop: access control remains a separate check.</p>
+
+<p>For the next drawing we choose a placement policy: put each shop’s related rows together and record which shard owns that shop. Read order 103’s receipt, then ask for P7 without naming a shop.</p>
+
+<Routing />
+
+<p>The receipt is local because its order, lines and products share the chosen boundary. The P7 lookup lacks that boundary and must inspect both owners in this scheme. It also returns two legitimate products: the missing shop is a question about identity as well as routing.</p>
+
+<p>A complete tenant key does not automatically co-locate tables. An application that maintains separate shard databases must route every related table consistently. Citus has distribution-column and co-location configuration. CockroachDB distributes its ordered key space into ranges and replicates those ranges; a table or tenant can occupy many ranges. Treat the drawing as a candidate locality design, then inspect how the selected system actually implements it.</p>
+
+<h2 id="choose-the-key-from-the-work">Choose the key from the work</h2>
+
+<p>A <em>shard key</em> supplies the information used to assign a row to an owner. It is useful when ordinary requests know it and related work shares it. Shop ID is strong for per-shop order history, stock changes and reports. It is weak for a global search that knows only product text or an order lookup whose public ID does not reveal its shop.</p>
+
+<p>List the important operations and the facts each must read or change. For the shop’s purchase, those are product stock, the order, its lines and any atomic request-outcome record. Under tenant placement they can be local to one shop. A promotion voucher limit shared across all shops is outside that boundary. Calling it a tenant operation would not make the rule local.</p>
+
+<p>Then ask how load follows the key. Ten thousand similarly busy shops can spread well. Ten thousand shops with one responsible for most writes may leave one owner saturated. Hashing shop ID distributes different shops; it does not divide the hot shop’s single hash value.</p>
+
+<p>A finer boundary, such as order ID, can spread one shop’s order history. It can also separate an order from the stock it changes, and make a per-shop list contact several owners. A product boundary keeps one product’s stock together but separates an order containing P7 and P3. The gain and the new cross-boundary operations come from the same choice.</p>
+
+<p>Count bytes and work as well as rows. Equal row counts do not imply equal storage if one tenant stores large values. Equal storage does not imply equal request load. A successful design accounts for the largest tenant, hottest key, write pattern, expensive query and failure-state demand, rather than only the average tenant.</p>
+
+<h2 id="hashes-ranges-and-growing-keys">Hashes, ranges and growing keys</h2>
+
+<p>Two common mappings make different requests cheap. A hash mapping turns a key into a bucket, tending to spread many distinct values. A range mapping puts neighbouring ordered values together. The first helps distribute independent keys; the second lets a bounded range query visit neighbouring pieces.</p>
+
+<figure class="key-map" aria-labelledby="r26-key-title">
+ <figcaption id="r26-key-title"><span>Figure 2</span> Local order and spread are different aims</figcaption>
+ <div><section><p class="panel-title">Ordered ranges</p><p class="blocks"><span>Older keys</span><span>Middle keys</span><span>Newest keys →</span></p><p>New increasing keys reach the current end range. A query over neighbouring values has a contiguous interval to read.</p></section><section><p class="panel-title">Hash prefix, then order</p><p class="blocks"><span>Bucket 0</span><span>Bucket 1</span><span>Bucket 2</span></p><p>New keys can spread across buckets. A query over the original order may need a range from every bucket, then a merge.</p></section></div>
+ <p>Two abstract layouts, not measured balance. Bucket count, hash function, actual range boundaries and placement are system choices. Several hash buckets can still reside on one server.</p>
+</figure>
+
+<p>In an ordered distributed index, a monotonically increasing leading key can send new inserts to the current end range. Splitting old data does not spread writes that all move to the new end. A hash prefix can change that pattern, but a time-range query then has several ordered runs to read. CockroachDB’s hash-sharded indexes make this trade explicitly.</p>
+
+<p>Do not copy that advice unaltered into a single-server B-tree. Sequential keys can give dense pages and cheap inserts there. The new concern is ownership of the changing end across servers, rather than merely how full one page becomes.</p>
+
+<p>A hot single key is different again. Hashing that same key always sends it to the same bucket. Splitting a range can separate different hot keys, but cannot divide one row’s decision among independent owners while preserving its original semantics. <a href="/learn/databases/relational/rebalancing/">Rebalancing and cluster change</a> follows the distinction between moving load and removing its source.</p>
+
+<h2 id="what-a-global-query-must-do">What a global query must do</h2>
+
+<p>A query without a useful routing condition may <em>fan out</em>: ask several shards, then combine their replies. Some work can stay local. To count all qualifying orders, each shard can count its own and send one number. To join two tables distributed on unrelated keys, the system may need to move many rows until matching values meet.</p>
+
+<p>Global ordering also needs a global answer. Asking each of three shards for its ten newest orders gives up to thirty candidates; returning all thirty as the “newest ten” is wrong. A coordinator must compare candidates under one total order and choose ten. Distributed execution can make this efficient, but it does not remove the semantic step.</p>
+
+<p>Fan-out latency depends on the participating work and exchanges. A slow shard can delay the whole result, and the coordinator needs memory and processing capacity to combine it. Adding shards can reduce work per shard while increasing messages and the number of places that can be slow. Keep per-shard work, rows exchanged and coordinator work in the plan and measurement.</p>
+
+<p>Secondary indexes deserve the same map. An index ordered by product name may place entries differently from the primary rows. A lookup can first find an index entry, then contact the primary row’s owner. An update may write both owners. A covering index can save that lookup at the cost of more stored and written data. “The row is local” does not yet account for all its index work.</p>
+
+<h2 id="who-coordinates-the-change">Who coordinates the change?</h2>
+
+<p>With application-managed shards, the application or its routing service knows the map and owns operations that cross databases. A local foreign key cannot enforce a reference to a separate ordinary database. A local commit cannot atomically commit another shard. You must either keep the invariant local, add a suitable cross-shard protocol or choose a business process with explicit intermediate states.</p>
+
+<p><em>Distributed SQL</em> moves much of that routing, execution and transaction coordination into one database system with a SQL interface. The system can present tables and transactions across storage owners. This is an architectural category, not one identical promise: SQL coverage, isolation, constraints, failure behaviour and operational limits differ.</p>
+
+<p>The abstraction is valuable because an application can express one transaction without implementing each message. The messages still exist. Replicas must agree about their portion; participants must agree about the transaction; readers need a coherent view. <a href="/learn/databases/relational/distributed-transactions/">Transactions across partitions</a> follows the commit boundary, while <a href="/learn/databases/relational/distributed-reads/">Time, snapshots and distributed reads</a> follows the read boundary.</p>
+
+<p>A successful connection to a nearby SQL node does not prove the rows or their write authority are nearby. A local transaction can still replicate to distant voters. Keep three maps distinct: where a request enters, where the operation is coordinated and where durable copies live.</p>
+
+<h2 id="make-the-distribution-decision-testable">Make the distribution decision testable</h2>
+
+<p>Start with a statement of the limiting resource and service goal on one server. Map representative operations to proposed owners, including their indexes and invariants. Estimate how much stays local, what fans out, what coordinates, and which single tenant or key can defeat balance.</p>
+
+<p>Build a production-shaped sample and inspect actual placement and plans. Test local requests, global queries, a hot tenant and concurrent writes to a shared rule. Record engine version, distribution configuration, data generation, row sizes, network topology, offered load and useful completions. A design diagram cannot establish measured latency or automatic rebalancing behaviour.</p>
+
+<p>Include movement and failure in the trial. How does a router learn a new owner? Can an old owner still accept a write? What happens to retries while a shard moves? How long do backups, restores and schema changes take across the layout? The steady-state speedup must leave enough resource to repair and change the cluster.</p>
+
+<p>Distribution is justified when the independent work it creates pays for the coordination and operation it introduces. Sometimes the correct next step is a larger server, fewer repeated queries or replicas for suitable reads. Sometimes a tenant boundary gives many independent units with little cross-shard work. Deriving the boundary from the workload makes that judgement reviewable.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+
+<p>Checked on 24 October 2026. The tenant diagram and key layouts are conceptual; no distributed engine, placement command or benchmark is claimed executed here.</p>
+<ul>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-partitioning.html">Table Partitioning</a>: native partition ownership, routing and pruning.</li>
+ <li>Citus 13, <a href="https://docs.citusdata.com/en/stable/sharding/data_modeling.html">Choosing Distribution Column</a>: tenant boundaries, co-location, skew and cross-shard work.</li>
+ <li>CockroachDB 25.4, <a href="https://www.cockroachlabs.com/docs/v25.4/architecture/overview">Architecture Overview</a> and <a href="https://www.cockroachlabs.com/docs/v25.4/architecture/distribution-layer">Distribution Layer</a>: SQL over replicated ranges in an ordered key space.</li>
+ <li>CockroachDB 25.4, <a href="https://www.cockroachlabs.com/docs/v25.4/hash-sharded-indexes">Hash-sharded Indexes</a>: sequential-key hotspots and the range-read trade.</li>
+ <li><a href="/learn/databases/relational/postgresql/sharding/">Where distributed PostgreSQL work runs</a> and <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">CockroachDB keys, ranges and replication</a>: implementation-specific placement and execution.</li>
+</ul>
+<style>
+.key-map{margin:2.5rem 0}.key-map figcaption{font:1.25rem/1.4 var(--font-serif);margin-bottom:.8rem}.key-map figcaption>span{font:.75rem var(--font-sans);color:var(--color-text-secondary);text-transform:uppercase;margin-right:.6rem}.key-map>div{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.key-map section{margin:0;border:1px solid var(--color-text-secondary);padding:1rem}.key-map .panel-title{font:600 .95rem/1.4 var(--font-sans);margin:0}.key-map p{font:.85rem/1.5 var(--font-sans)}.blocks{display:flex;gap:.3rem}.blocks span{border:1px solid var(--color-accent);padding:.5rem;flex:1;min-width:0}.key-map>p{color:var(--color-text-secondary)}@media(max-width:550px){.key-map>div{grid-template-columns:1fr}}
+</style>

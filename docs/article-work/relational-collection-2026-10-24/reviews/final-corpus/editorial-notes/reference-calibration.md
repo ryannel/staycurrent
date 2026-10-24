@@ -12,7 +12,21 @@ All nineteen complete fixed-reference helper outputs were delivered separately, 
 - Indexes: parts 1–7, 59,821 characters; complete-text SHA256 `d60bf12b37f922f0ced9ec54a51b1ef6b94841a40da5f20be6dafdbf75bec8c1`.
 - Storage and durability: parts 1–6, 52,355 characters; complete-text SHA256 `2bebcdf28bacf1f5ecc2220e8d20a7c34682e052fff3ecde56ca1a56aba08c07`.
 
-Awaiting root's audit and acknowledgement of the delivered text outputs. Actual styled drawing reading remains pending: thirteen Sequence diagrams, eleven Indexes and ten Storage drawings, including meaningful changing states. No CUA tab has been selected, created or navigated; the other reviewer's exclusive lease remains respected.
+Root audited and acknowledged all nineteen delivered text outputs (19/19). After an explicit exclusive reference-browser grant, all thirty-four actual styled drawings and their explanations were studied: thirteen Sequence diagrams, eleven Indexes and ten Storage drawings, including meaningful changing states. This was reference calibration, with no current article or corpus judgement.
+
+Actual browser surface was Chrome extension browser 1, owned tab `315244704`, 1488 × 973, System resolving dark. Root explicitly approved that existing stable size after the stated IAB surface proved unavailable. The viewport and theme were never changed. Full-page screenshots clipped to DOM-observed figure rectangles showed complete styled drawings at the native article width, including drawings taller than the viewport. No page source or implementation inspection was used. Existing user tabs were neither claimed nor changed.
+
+Controls were returned to their defaults while reading Sequence diagrams; navigation discarded that page, and Indexes and Storage were reloaded after their study to discard the changed controls. The owned reference tab was closed. No override was set, and System was retained. Reference browser lease released; exact current58 readiness/manifest remains pending.
+
+## Styled drawing study
+
+| Reference | Complete drawings studied | Meaningful states read |
+| --- | --- | --- |
+| Sequence diagrams | Figures 1–13 | Booking messages; default and 3-second waiting with nested activation bars; synchronous and ignored email reply; outbox job; crowded, booking-only and email-only drawings; both worker-poll orders; valid returning/new and invalid details; scheduled and endless polling; parallel reply choices and missing status; TLS 1.2/1.3; fork/stair; individual/batched customer calls; sign-in trust boundaries. |
+| Indexes | Figures 1–11 | Full scan and sorted TID entries; B-tree descents for 42 and 5; linked-leaf range and changed bound; clustered secondary lookup; scattered/customer layouts with the same narrow range; all three composite orders; missing/included total before vacuum, after vacuum and after another row's update; insert with four indexes and update with four/one; ordered/random fills; scattered and oldest-block deletion after vacuum and rebuild. |
+| Storage and durability | Figures 1–10 | 100-byte and 2,000-byte page filling; buffer replacement; PostgreSQL old/new row and InnoDB undo pointer with report/new-query readings; hypothetical lost memory-only commit; WAL flushed before reply and page written later; background writer behind/ahead; shared/unshared flushes plus single-client shorter flush; all three crash moments; honest/false drive acknowledgement; asynchronous commit before/after WAL writer. |
+
+Some first screenshot captures caught a transition or intersection-triggered autoplay. Relevant states were reread with playback paused and the chosen step selected, followed by a settled complete drawing capture. Screenshots and step explanations together were used to follow the comparison; this was not a controls-mechanics or responsive/theme certification.
 
 ## Bounded editorial calibration
 

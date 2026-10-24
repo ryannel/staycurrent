@@ -1,0 +1,309 @@
+Home
+Relational draft
+Sharding and distributed SQL
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL You’re here
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Sharding and distributed SQL
+Deep diveAbout 8 minutes AI-generated
+Sharding divides ownership of data across database servers. One server owns some rows, another owns others, and a request must find the right owner or combine work from several. The point is to distribute storage or useful work that one server can no longer carry within the service’s goals.
+The division has a cost. A join that used to read two local tables may now exchange rows over the network. A purchase may need several owners to agree before it can commit. A failed or slow owner can hold up a result assembled from all of them. Choosing the boundary determines how often those costs enter ordinary requests.
+We extend the shop to serve two tenants: shop 10, the original shop, and shop 20, Harbour Tea. A tenant here is a shop, not one of its customers. This tenant-scoped variant makes a useful candidate boundary because many requests concern one shop’s orders, lines and stock. The placement drawings are explanatory designs, not observations of a running distributed database.
+Three ways to divide the problem
+Carry the boundary in the data
+Choose the key from the work
+Hashes, ranges and growing keys
+What a global query must do
+Who coordinates the change?
+Make the distribution decision testable
+Three ways to divide the problem
+Table partitioning divides one logical table into pieces, often by date or another key. PostgreSQL’s native partitions remain tables managed by the same database service. Pruning old partitions from a query or dropping an old month can reduce work and simplify lifecycle management. Creating those partitions does not by itself spread ownership across independent servers.
+Replication keeps copies of the same data. A replica can provide another place to read or a copy to promote after a failure, subject to its replication and routing guarantees. Replicating every write to another server does not divide those writes between independent owners. It adds copies and work, even when reads can be spread.
+Sharding gives different subsets different owners. Those subsets can each have replicas. “Three shards, each with three replicas” describes nine copies of shard data, not nine independent copies of the complete database. Every shard still needs a write protocol and enough surviving copies.
+Which change addresses which pressure?
+PressureA useful candidateWhat remains
+Old rows dominate deletion and maintenanceTable partitions aligned with retentionThe service’s compute and failure boundary
+Independent reads dominate a healthy writerRead replicas and an explicit freshness contractWrite work, replication lag and read routing
+Independent shops exceed one server’s useful capacityShards grouped by shopSkew, global operations and moving ownership
+One row serialises every purchaseChange the rule or its contention pattern if the business permitsAdding shards cannot make one protected row independent
+First establish which pressure you have. Query work, leaked connections or one long transaction can exhaust a server without requiring distribution. Connections, overload and capacity supplies the evidence and headroom; Table partitioning and data lifecycle and Replicas, lag and read routing develop the other two mechanisms.
+Carry the boundary in the data
+Shop 10’s P7 is the Blue mug at 20.00. Shop 20 can have its own P7, the Copper mug at 18.00. In this variant a product’s identity is (shop_id, product_id). An order’s is (shop_id, order_id), and each child reference carries that same shop ID.
+-- Tenant-scoped variant, abbreviated to the relevant keys:
+products:    PRIMARY KEY (shop_id, product_id)
+orders:      PRIMARY KEY (shop_id, order_id)
+order_items: PRIMARY KEY (shop_id, order_id, line_no)
+-- On order_items:
+FOREIGN KEY (shop_id, order_id)
+REFERENCES orders (shop_id, order_id)
+FOREIGN KEY (shop_id, product_id)
+REFERENCES products (shop_id, product_id)
+A line for shop 10 must refer to shop 10’s order and product. Carrying the boundary into the reference preserves meaning even when the same short ID appears elsewhere. It also supplies a value a router and query planner can use. It does not authorise a caller to read a shop: access control remains a separate check.
+For the next drawing we choose a placement policy: put each shop’s related rows together and record which shard owns that shop. Read order 103’s receipt, then ask for P7 without naming a shop.
+Figure 1 The shop key decides where the request goes
+Shop 10’s order 103P7 without a shopBoth shops’ products
+Request carries shop_id = 10 → shard A
+Shard A · shop 10
+↓ read here
+products · every row has shop_id 10
+product_idNamePrice
+P7Blue mug20.00
+P3Green tea, 50 g4.50
+orders · shop_id 10
+order_idcustomer_idStatus
+1031pending
+order_items · both lines have shop_id 10 and order_id 103
+line_noproduct_idQuantityunit_price
+1P7120.00
+2P324.50
+The order’s customer_id 1 identifies Mina Shah in customers. Both lines refer to the order above through shop_id 10 and order_id 103. Their product references use that same shop_id: P7 reaches Blue mug; P3 reaches Green tea, 50 g.
+Shard B · shop 20
+Not contacted
+products · shop_id 20
+product_idNamePrice
+P7Copper mug18.00
+This P7 has shop_id 20. It cannot satisfy a line’s product reference carrying shop_id 10.
+Other shop 20 rows are outside this drawing.
+The receipt’s order, lines and products are all on shard A. Shop 20’s P7 cannot join to shop 10’s line.
+A chosen tenant-placement model, with selected rows from the tenant-scoped schema. Every related table is deliberately placed by shop_id, and a router knows each shop’s owner. Real engines need corresponding distribution and co-location configuration; primary-key syntax alone does not produce these boxes. Replicas and individual storage ranges are omitted.
+Routing in words
+A request scoped to shop 10 reaches A. P7 without a shop could mean either mug, so this scheme must ask A and B. A list across both shops also asks both and combines their results. On A, both order lines refer to order 103 in shop 10. Their product references reach shop 10’s P7 and P3. Shop 20’s P7 has a different shop_id, so it cannot match those references.
+The receipt is local because its order, lines and products share the chosen boundary. The P7 lookup lacks that boundary and must inspect both owners in this scheme. It also returns two legitimate products: the missing shop is a question about identity as well as routing.
+A complete tenant key does not automatically co-locate tables. An application that maintains separate shard databases must route every related table consistently. Citus has distribution-column and co-location configuration. CockroachDB distributes its ordered key space into ranges and replicates those ranges; a table or tenant can occupy many ranges. Treat the drawing as a candidate locality design, then inspect how the selected system actually implements it.
+Choose the key from the work
+A shard key supplies the information used to assign a row to an owner. It is useful when ordinary requests know it and related work shares it. Shop ID is strong for per-shop order history, stock changes and reports. It is weak for a global search that knows only product text or an order lookup whose public ID does not reveal its shop.
+List the important operations and the facts each must read or change. For the shop’s purchase, those are product stock, the order, its lines and any atomic request-outcome record. Under tenant placement they can be local to one shop. A promotion voucher limit shared across all shops is outside that boundary. Calling it a tenant operation would not make the rule local.
+Then ask how load follows the key. Ten thousand similarly busy shops can spread well. Ten thousand shops with one responsible for most writes may leave one owner saturated. Hashing shop ID distributes different shops; it does not divide the hot shop’s single hash value.
+A finer boundary, such as order ID, can spread one shop’s order history. It can also separate an order from the stock it changes, and make a per-shop list contact several owners. A product boundary keeps one product’s stock together but separates an order containing P7 and P3. The gain and the new cross-boundary operations come from the same choice.
+Count bytes and work as well as rows. Equal row counts do not imply equal storage if one tenant stores large values. Equal storage does not imply equal request load. A successful design accounts for the largest tenant, hottest key, write pattern, expensive query and failure-state demand, rather than only the average tenant.
+Hashes, ranges and growing keys
+Two common mappings make different requests cheap. A hash mapping turns a key into a bucket, tending to spread many distinct values. A range mapping puts neighbouring ordered values together. The first helps distribute independent keys; the second lets a bounded range query visit neighbouring pieces.
+Figure 2 Local order and spread are different aims
+Ordered ranges
+Older keysMiddle keysNewest keys →
+New increasing keys reach the current end range. A query over neighbouring values has a contiguous interval to read.
+Hash prefix, then order
+Bucket 0Bucket 1Bucket 2
+New keys can spread across buckets. A query over the original order may need a range from every bucket, then a merge.
+Two abstract layouts, not measured balance. Bucket count, hash function, actual range boundaries and placement are system choices. Several hash buckets can still reside on one server.
+In an ordered distributed index, a monotonically increasing leading key can send new inserts to the current end range. Splitting old data does not spread writes that all move to the new end. A hash prefix can change that pattern, but a time-range query then has several ordered runs to read. CockroachDB’s hash-sharded indexes make this trade explicitly.
+Do not copy that advice unaltered into a single-server B-tree. Sequential keys can give dense pages and cheap inserts there. The new concern is ownership of the changing end across servers, rather than merely how full one page becomes.
+A hot single key is different again. Hashing that same key always sends it to the same bucket. Splitting a range can separate different hot keys, but cannot divide one row’s decision among independent owners while preserving its original semantics. Rebalancing and cluster change follows the distinction between moving load and removing its source.
+What a global query must do
+A query without a useful routing condition may fan out: ask several shards, then combine their replies. Some work can stay local. To count all qualifying orders, each shard can count its own and send one number. To join two tables distributed on unrelated keys, the system may need to move many rows until matching values meet.
+Global ordering also needs a global answer. Asking each of three shards for its ten newest orders gives up to thirty candidates; returning all thirty as the “newest ten” is wrong. A coordinator must compare candidates under one total order and choose ten. Distributed execution can make this efficient, but it does not remove the semantic step.
+Fan-out latency depends on the participating work and exchanges. A slow shard can delay the whole result, and the coordinator needs memory and processing capacity to combine it. Adding shards can reduce work per shard while increasing messages and the number of places that can be slow. Keep per-shard work, rows exchanged and coordinator work in the plan and measurement.
+Secondary indexes deserve the same map. An index ordered by product name may place entries differently from the primary rows. A lookup can first find an index entry, then contact the primary row’s owner. An update may write both owners. A covering index can save that lookup at the cost of more stored and written data. “The row is local” does not yet account for all its index work.
+Who coordinates the change?
+With application-managed shards, the application or its routing service knows the map and owns operations that cross databases. A local foreign key cannot enforce a reference to a separate ordinary database. A local commit cannot atomically commit another shard. You must either keep the invariant local, add a suitable cross-shard protocol or choose a business process with explicit intermediate states.
+Distributed SQL moves much of that routing, execution and transaction coordination into one database system with a SQL interface. The system can present tables and transactions across storage owners. This is an architectural category, not one identical promise: SQL coverage, isolation, constraints, failure behaviour and operational limits differ.
+The abstraction is valuable because an application can express one transaction without implementing each message. The messages still exist. Replicas must agree about their portion; participants must agree about the transaction; readers need a coherent view. Transactions across partitions follows the commit boundary, while Time, snapshots and distributed reads follows the read boundary.
+A successful connection to a nearby SQL node does not prove the rows or their write authority are nearby. A local transaction can still replicate to distant voters. Keep three maps distinct: where a request enters, where the operation is coordinated and where durable copies live.
+Make the distribution decision testable
+Start with a statement of the limiting resource and service goal on one server. Map representative operations to proposed owners, including their indexes and invariants. Estimate how much stays local, what fans out, what coordinates, and which single tenant or key can defeat balance.
+Build a production-shaped sample and inspect actual placement and plans. Test local requests, global queries, a hot tenant and concurrent writes to a shared rule. Record engine version, distribution configuration, data generation, row sizes, network topology, offered load and useful completions. A design diagram cannot establish measured latency or automatic rebalancing behaviour.
+Include movement and failure in the trial. How does a router learn a new owner? Can an old owner still accept a write? What happens to retries while a shard moves? How long do backups, restores and schema changes take across the layout? The steady-state speedup must leave enough resource to repair and change the cluster.
+Distribution is justified when the independent work it creates pays for the coordination and operation it introduces. Sometimes the correct next step is a larger server, fewer repeated queries or replicas for suitable reads. Sometimes a tenant boundary gives many independent units with little cross-shard work. Deriving the boundary from the workload makes that judgement reviewable.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL You’re here
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousDatabase access and least privilege NextTransactions across partitions
+Sources and further reading
+Checked on 24 October 2026. The tenant diagram and key layouts are conceptual; no distributed engine, placement command or benchmark is claimed executed here.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/ddl-partitioning.html] Table Partitioning: native partition ownership, routing and pruning.
+Citus 13,  [href=https://docs.citusdata.com/en/stable/sharding/data_modeling.html] Choosing Distribution Column: tenant boundaries, co-location, skew and cross-shard work.
+CockroachDB 25.4,  [href=https://www.cockroachlabs.com/docs/v25.4/architecture/overview] Architecture Overview and  [href=https://www.cockroachlabs.com/docs/v25.4/architecture/distribution-layer] Distribution Layer: SQL over replicated ranges in an ordered key space.
+CockroachDB 25.4,  [href=https://www.cockroachlabs.com/docs/v25.4/hash-sharded-indexes] Hash-sharded Indexes: sequential-key hotspots and the range-read trade.
+Where distributed PostgreSQL work runs and CockroachDB keys, ranges and replication: implementation-specific placement and execution.

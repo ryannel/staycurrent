@@ -1,0 +1,325 @@
+Home
+Relational draft
+Table partitioning and data lifecycle
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle You’re here
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Table partitioning and data lifecycle
+Deep diveAbout 10 minutes AI-generated
+Table partitioning divides one logical table into physical pieces under declared rules. An application can still query the parent table, while the database stores September’s rows in one piece and October’s in another. The useful boundary might let a query skip old data, or let an expired month leave the table without deleting its rows one by one.
+Neither benefit follows from making more pieces alone. A query needs a condition that lets the database exclude partitions. A retention operation needs a whole partition whose contents may all leave together. The partition key also affects what uniqueness and references can enforce. Choose the boundary from the work or lifecycle it serves.
+We will add a separate relation of request events for the shops, with an event time, shop ID and endpoint. These events are a teaching fixture, not orders, payments or a retained audit of the purchase example. Three monthly UTC partitions let us inspect exact boundaries and a small retention drill on PostgreSQL 18.6.
+One name, several physical tables
+Prove that a partition cannot match
+Keys that cross the boundary
+References have a lifecycle too
+Remove a month as a unit
+Late data and the next month
+Choose a boundary that earns its cost
+One name, several physical tables
+A partition key determines which piece holds a row. Range partitioning uses non-overlapping intervals of that key. Here occurred_at is a required timestamptz: the instant the request event occurred.
+CREATE TABLE request_events (
+event_id text NOT NULL,
+occurred_at timestamptz NOT NULL,
+shop_id integer NOT NULL,
+endpoint text NOT NULL,
+PRIMARY KEY (occurred_at, event_id)
+) PARTITION BY RANGE (occurred_at);
+CREATE TABLE events_oct PARTITION OF request_events
+FOR VALUES FROM ('2026-10-01 00:00:00+00')
+TO ('2026-11-01 00:00:00+00');
+In PostgreSQL’s declarative design, the parent has no row storage of its own. Its partitions are tables holding the rows and their indexes. An insert addressed to request_events is routed according to its timestamp. A query addressed to it sees the rows of its attached partitions. The composite primary key in this declaration will need a closer look below.
+The lower range bound is included and the upper bound excluded. An event at exactly 1 October 00:00 UTC belongs to October, and one at exactly 1 November 00:00 UTC belongs to November. The boundary belongs to only one partition. An insert with no suitable partition fails unless a default partition accepts it.
+Four independent request-event rows · all instants in UTC, 2026
+Event labelOccurred atPartition
+E130 Sep 23:59:59September
+E21 Oct 00:00:00October
+E331 Oct 23:59:59October
+E41 Nov 00:00:00November
+The partition month has a declared time basis. A UTC month and a shop’s local calendar month have different endpoints. As Values, missing data and equality explains, a named zone’s calendar boundaries must first be interpreted as instants. Writing explicit offsets here keeps connection settings from silently moving the storage boundary.
+Other methods fit other boundaries. A list partition can hold named shop IDs; hash partitioning assigns key values to buckets. Hash buckets spread rows by a hash function, so removing one bucket does not naturally remove the oldest month. Conversely, time ranges put new writes into the current range, so they need not distribute a hot ingestion workload evenly.
+Prove that a partition cannot match
+Partition pruning excludes a partition whose declared bounds cannot contain a qualifying row. It is a proof from the query’s condition and the partition map. It does not need to inspect every stored timestamp to establish that September cannot contain an October instant.
+SELECT event_id, occurred_at, endpoint
+FROM request_events
+WHERE occurred_at >= timestamptz '2026-10-01 00:00:00+00'
+AND occurred_at <  timestamptz '2026-11-01 00:00:00+00'
+ORDER BY occurred_at, event_id;
+The range overlaps October only, so September and November can be excluded. That says which tables need attention; rows inside October still have to be read and tested. Switch the query in Figure 1 and follow the same reasoning for each partition.
+Figure 1 Which ranges can contain an answer?
+Query October · direct time bounds31 Oct to 2 Nov · direct boundsEndpoint /catalogue · no time boundOctober · UTC date expression
+September · comparing now
+[1 Sep, 1 Oct) · UTC
+E130 Sept23:59:59Z/catalogue
+Not checked yet
+October · comparing now
+[1 Oct, 1 Nov) · UTC
+E21 Oct00:00:00Z/catalogue
+E331 Oct23:59:59Z/classes
+Not checked yet
+November · comparing now
+[1 Nov, 1 Dec) · UTC
+E41 Nov00:00:00Z/catalogue
+Not checked yet
+PlayBackNextReset
+Read the pruning comparisons as text
+The direct October range can exclude September and November, returning E2 and E3 from October. The range from 31 October to 2 November must visit October and November, returning E3 and E4. Endpoint /catalogue supplies no time boundary, so all three partitions remain candidates; E1, E2 and E4 qualify. Applying a UTC date conversion to the key still returns E2 and E3, but the demonstrated PostgreSQL plan cannot use it to prune these time partitions.
+A conceptual pass over the four request-event rows supplied in the CSV. On a narrow screen, comparison steps show the current partition; the first and last steps show the whole map. Outlined events qualify; “skip” marks a partition proved outside the direct range. The four native query shapes were checked separately on PostgreSQL 18.6. The drawing does not run SQL.
+The query from 31 October to 2 November needs two partitions. Its answer crosses their boundary, so neither can be excluded. A query for endpoint /catalogue with no time condition needs all three, even though only three rows qualify. The fact that the table is partitioned by time gives no proof about where an endpoint value occurs.
+Expressions matter. Converting occurred_at to its UTC calendar date and testing for October gives the same two rows in this fixture. But PostgreSQL’s demonstrated plan did not turn that expression back into bounds on the timestamp partition key. It scanned all three partitions. Keep direct typed bounds available when they express the question. Partitioning by an expression instead would be a different design, with its own query-matching and constraint consequences.
+The native experiment used EXPLAIN (ANALYZE, BUFFERS, TIMING OFF). The direct October query contained only a scan of events_oct. The endpoint query and the date-expression query contained an Append with scans of all three partitions. These four rows make pruning visible; they are not large enough to establish a performance advantage.
+When the bounds become known
+Some bounds are known while planning, such as the literals above. Others arrive as parameters or from another operation while a query executes. PostgreSQL can prune at execution time too. A generic prepared plan may show several possible child plans before the parameter values select the useful subset.
+In the worksheet, a generic prepared query receives the October start and November start as parameters. Its measured plan says Subplans Removed: 2 and executes only the October scan. Other runtime cases can show branches that never execute or different loop counts. Read the measured plan rather than assuming that a child’s presence in an estimated plan proves it read rows.
+Pruning does not require an index on the partition key. After excluding partitions, the planner can scan a surviving small piece or use one of its indexes. An endpoint lookup within October might benefit from an endpoint index even though the time bounds performed the pruning. An ID lookup without time bounds might need an index search in every partition. The earlier index article helps choose that route within each surviving piece.
+Keys that cross the boundary
+The example’s primary key is (occurred_at, event_id). That choice is visible in every reference to an event. It is not a declaration that event_id alone is unique across the whole parent.
+PostgreSQL 18 requires a primary-key or unique constraint on a partitioned table to include all partition-key columns, and does not permit expressions in that partition key for this purpose. Its physical unique indexes enforce uniqueness within their own partitions. Including the range key makes equal constrained keys route into the same piece, where a local check can find the duplicate.
+Try to create a unique index on event_id alone in the worksheet and PostgreSQL refuses it. Keep the composite key and a second E2 label at a November timestamp is accepted: the pairs differ. A second E2 at the same October timestamp is refused. Adding time to a unique key has therefore weakened the proposed “one E2 anywhere” rule into a different rule about a pair.
+This matters especially for the shop’s orders. Its core order_id identifies an order globally within that schema, and lines refer to it. Partitioning orders by placement time and casually changing the key to (placed_at, order_id) would allow the same order ID at different instants. Every referencing line would also need the time, or another authority preserving the original identity. That is a model change, not an incidental performance setting.
+If global identity is required, possible designs include keeping an unpartitioned identity relation with a global unique key and partitioning separate detail, or choosing a partition boundary compatible with the required uniqueness. A central identity relation still needs an atomic write and retention protocol; merely adding a registry table does not prove every detail row has exactly one correct identity. Sometimes retaining an ordinary indexed table is the better design.
+References have a lifecycle too
+A child that refers to this example’s partitioned key carries both values:
+CREATE TABLE event_notes (
+occurred_at timestamptz NOT NULL,
+event_id text NOT NULL,
+note text NOT NULL,
+FOREIGN KEY (occurred_at, event_id)
+REFERENCES request_events (occurred_at, event_id)
+);
+The reference promises a matching row in the parent relation. Detaching September removes E1 from that relation even if its bytes remain in a separate table. A retained note pointing to E1 therefore cannot simply be ignored.
+The native drill creates such a note. PostgreSQL refuses the detach with a foreign-key violation while that note still refers to the parent’s September event. In a second, deliberately unconstrained note table, the same note survives a successful detach with no event visible through the parent. That is the counterexample: a retained string saying E1 does not itself preserve a valid relationship.
+A retention policy must decide what happens to related data together. Expire the note too, preserve the event in the relation it references, or move the connected records under a deliberately different archival schema and contract. Co-partitioning related tables can make their dates line up, but it does not by itself make their detach and deletion actions safe. Check the actual foreign keys and operations supported by the engine.
+The worksheet explicitly expires the constrained note before detaching its event partition. This is a small chosen policy drill, rather than a recommendation to remove notes whenever a reference blocks maintenance. A database refusal is information about the promise the operation would break.
+Remove a month as a unit
+Deleting old rows one by one creates row and index work and, in a versioned engine, later cleanup. Removing a whole expired partition can avoid that per-row operation. But the unit is the entire piece. If even one row must remain available there, the partition has not wholly expired under that policy.
+Suppose this drill’s retention rule permits September’s request events to leave the operational parent. The September upper bound is 1 October UTC, so every event in it occurred before that instant. This is an illustrative cutoff; the article prescribes no retention duration for real request data.
+Check that rule against every row class in the partition: holds, exceptions, ongoing references and correction requirements. If some events must stay, either choose another storage boundary or move the exceptions under a verified policy before removing the rest. A row’s age alone does not decide what the application is obliged to retain.
+Figure 2 Leaving the parent is not leaving storage
+Parent: request_events
+September · E1
+October · E2, E3
+November · E4
+Queries of the parent can see 4 rows.
+Standalone table after detach
+events_sep · E1
+No detached table yet.
+PlayBackNextReset
+An illustrative retirement sequence. September begins attached; after a checked detach, the parent has three rows and the separate table still has E1. Dropping that table is a later policy decision. The worksheet verifies detach and reattach, including a reference that prevents detach; it does not measure an archival service or erase backups.
+ALTER TABLE request_events
+DETACH PARTITION events_sep;
+After the checked detach in PostgreSQL, querying request_events returns three rows. Querying events_sep directly still returns E1. Detach changes membership of the parent; it does not erase the table, archive it elsewhere or make it unreadable. The next action might be a verified export, a period of restricted retention, reattachment or a separate drop.
+Decide the point after which reattachment is no longer an acceptable undo. A pending policy change or an incomplete archive check may call for retaining the detached table. Once a separate drop happens, recovery depends on another copy and its procedure. Exporting without checking counts, identities, schema and the ability to read the result has not established an archive.
+Partition operations also take locks. PostgreSQL’s ordinary detach takes an exclusive parent lock; DETACH … CONCURRENTLY uses a less restrictive parent lock but has additional restrictions and phases, including completion after interruption. It is not a universal “no blocking” switch. Schedule and test the appropriate native operation under the expected readers and writers. Live schema changes and backfills develops change protocols under traffic.
+Late data and the next month
+Dropping the old route does not stop an application from trying to use it. After September is detached, a late September event inserted into the parent fails in this fixture because no attached partition accepts its time. That refusal is better than silently claiming the event was stored, but the application still needs a deliberate response.
+Choose whether late events are rejected, admitted into an explicitly managed exception relation, or routed through an authorised historical correction process. Close or redirect the relevant write path before claiming the month is complete. A process that checked “no more old rows” and then raced an admitted late writer has not established that boundary.
+The choice of time axis affects the policy. Partitioning by occurrence time lets a late event target an old month. Partitioning by receipt time places it with today’s arrivals, but a retention rule based on occurrence age no longer lines up with whole receipt-time partitions. Keep both timestamps if both questions matter, and say which one owns the storage and expiry boundary. History, correction and deletion explains why effective and recorded time answer different questions.
+New partitions need care too. Create the next interval before its first expected write and monitor that the operation succeeded. Without it, a healthy application can begin failing at midnight. A default partition can catch unmatched values, including unexpected or missing keys where permitted, but can also hide a failed provisioning job. Give it explicit monitoring and a procedure for moving its rows when a dedicated range is added.
+Attaching an existing table requires proving that its contents fit the new bound. PostgreSQL may scan it for validation; a suitable validated check can avoid that scan. A default partition may need its own check to prove that no row belongs in the newly attached range. These are real work and locking costs, even when the final map change is small.
+Choose a boundary that earns its cost
+More partitions mean more tables, indexes, statistics and maintenance objects. Queries that cannot prune may plan or execute work against many pieces. Very fine intervals make expiry precise but increase that overhead. Coarse intervals reduce the object count but retain more old rows until the whole piece becomes eligible. Choose the interval by the amount of data per piece, the query windows and the removal unit.
+Table partitioning here remains inside one PostgreSQL database. Its partitions can all live on the same machine and storage device. It has not created additional independent servers, a replicated copy or a way to keep serving after that machine fails. Splitting a hot current month into named tables also does not automatically split its CPU or disk work across machines. Sharding and distributed SQL owns those placement and coordination questions.
+A useful design can explain its saving before deployment. For pruning, show the common query conditions and which bounds they exclude; measure the remaining work. For lifecycle, show a partition whose rows can all leave together, including its references and late writes. Then verify that the chosen keys still enforce the application’s identity rules. If those explanations do not hold, a well-chosen index and an ordinary table may offer a simpler route.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle You’re here
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousQuery execution and bad plans NextTransactions and isolation
+Sources and further reading
+Checked on 24 October 2026 against PostgreSQL 18 documentation. Download the SQL worksheet and its four-row CSV into one directory. From that directory, run psql -X -v ON_ERROR_STOP=1 -f partition-lifecycle.sql in a disposable database. The complete files were checked on an owned PostgreSQL 18.6 instance. They use temporary relations and end with a rollback. The fixture demonstrates routing, pruning, key and reference failures, detach and reattach; it does not measure a production retention duration or execute an external archive or erasure process.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/ddl-partitioning.html] Table Partitioning: declarative range, list and hash partitioning, automatic routing, partition-local indexes, key restrictions and lifecycle tradeoffs.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/ddl-partitioning.html#DDL-PARTITION-PRUNING] Partition Pruning: planning and execution-time pruning, parameters and the evidence in measured plans.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/sql-altertable.html] ALTER TABLE: attach validation, reference checks, detach locks and the concurrent operation’s restrictions and completion.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/ddl-constraints.html] Constraints and  [href=https://www.postgresql.org/docs/18/datatype-datetime.html] Date/Time Types: composite references and explicit instant boundaries.

@@ -1,0 +1,333 @@
+Home
+Relational draft
+Database access and least privilege
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege You’re here
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Database access and least privilege
+Deep diveAbout 10 minutes AI-generated
+A database connection carries authority. If it can read every shop’s orders, any SQL running through it can ask for every shop’s orders. If it owns the tables, it may also be able to change their definitions and remove their protections. A correctly bound parameter does not reduce either power.
+Least privilege means giving an identity the authority its task requires, and making the boundary small enough to test. A catalogue worker needs to read and edit products. A migration process needs to change table definitions. A support tool may need a limited report. Sharing an owner login between all three makes the most exposed task carry the most powerful credentials.
+The examples use PostgreSQL 18 and the collection’s tenant-scoped shop variant. Shop 10 is the original shop; shop 20 is Harbour Tea. Each has a P7, but they are different products. We will derive separate runtime, migration and support access, then test what a shop 10 runtime identity can do when it deliberately asks for shop 20.
+Start from the task
+Separate ownership from runtime
+Grant the objects the task uses
+A shop label is not authority
+Bind the policy to the real caller
+Make privileged paths explicit
+Test allowed and forbidden work
+Keep the boundary as the system changes
+Repeat the access checks
+Start from the task
+Begin with operations and data, before role names. For this example the runtime task is catalogue editing: list products, add a product and change its catalogue price inside one authorised shop. It does not delete products, change their identity or alter the schema. Checkout stock changes and payment processing would be separate tasks with their own grants.
+The migration process creates and changes the objects used by those tasks. The support tool lists product IDs, names and prices across both shops, deliberately. It has no editing task. This is a product-access example; no customer or payment data is needed by any of its reports.
+Authority derived from these three tasks
+TaskNeedsBoundary to test
+Catalogue runtimeRead products, insert permitted fields, update priceOne shop; no deletes, key changes or schema changes
+MigrationAct as the owner while applying a deploymentPowerful path unavailable to runtime; not used for ordinary requests
+Support catalogueRead an explicitly all-shop product projectionView only; no underlying table grant or writes
+A SQL privilege is usually coarser than a business operation. Permission to update price allows arbitrary valid price updates within its row scope; it does not prove that a human approved the price. Likewise, permission to insert an order is not a complete checkout protocol. Keep application authorisation, constraints and transaction rules alongside the database boundary.
+There are several scopes to choose: which database, which schema, which object, which command, which columns and which rows. “Read-only” answers only the command question. A read-only login that sees every tenant’s private records may still have far too much authority.
+Separate ownership from runtime
+In PostgreSQL, a role can own objects, hold privileges and be a member of other roles. A role with LOGIN can be a connection identity. A role without it is useful for grouping privileges or holding ownership, but members may still be able to act through it.
+The experiment gives table ownership to shop_owner, a role without a login. A separate migration login can deliberately assume that owner role. Runtime logins cannot. This preserves a clear distinction between ordinary catalogue work and the power to redefine the catalogue’s rules.
+CREATE ROLE shop_owner NOLOGIN;
+CREATE ROLE migration LOGIN NOINHERIT;
+CREATE ROLE catalogue NOLOGIN;
+CREATE ROLE runtime_10 LOGIN;
+CREATE ROLE runtime_20 LOGIN;
+GRANT shop_owner TO migration
+WITH INHERIT FALSE, SET TRUE;
+GRANT catalogue TO runtime_10, runtime_20
+WITH INHERIT TRUE, SET FALSE;
+The migration login does not automatically inherit ownership in this setup. It can use SET ROLE shop_owner for the deployment. The runtime logins inherit the catalogue grants while keeping their own effective identity. SET FALSE prevents them assuming the shared group role. They have no membership path to the owner or to each other, and no superuser, role-creation or row-security bypass attribute.
+The distinction is authority, not just a nicer name. An owner can change a table’s definition and normally bypasses its row security. Revoking an owner’s ordinary SELECT grant does not turn ownership into a limited runtime identity: the owner can restore its privileges. A role that can become the owner carries that power too.
+Use separate deployment credentials and access paths so ordinary application configuration cannot silently select the migration login. A runtime process that can retrieve the owner’s credential is not contained by the grants on its nominal login. The same reasoning applies to a shared service account used by both a support console and a deployment job.
+Grant the objects the task uses
+The tenant product table is a projection of the shared example: shop_id, product_id, name and price, with primary key (shop_id, product_id). Shop 10 has the three core products. Shop 20 has its Copper mug, P7 at 18.00. Stock is omitted because this task does not change it.
+Objects live in schema shop. To use the products table, the catalogue role needs schema lookup permission as well as table privileges:
+GRANT USAGE ON SCHEMA shop TO catalogue;
+GRANT SELECT ON shop.products TO catalogue;
+GRANT INSERT (shop_id, product_id, name, price),
+UPDATE (price)
+ON shop.products TO catalogue;
+USAGE permits looking up objects in the schema. It is not permission to read every table there. UPDATE (price) permits assigning price, while SELECT permits reading the columns used to find a product and calculate its replacement. No DELETE, TRUNCATE or schema CREATE is granted.
+Generated identifiers can introduce another object: a sequence whose nextval call needs permission. Functions can introduce an EXECUTE privilege. Derive those dependencies from the commands the task really runs; “it can update the table” does not establish that every helper it invokes is available.
+Also inspect privileges granted to PUBLIC, PostgreSQL’s all-roles group. Effective authority combines direct grants, inherited roles, public grants and special attributes. Revoking a direct grant cannot remove the same permission still inherited through another path. The experiment revokes public database access, grants the named logins connection permission and denies public creation in the shared schema.
+A schema name is a namespace, not a sealed tenant boundary. A caller with access can qualify another schema’s table directly. Keep untrusted object creation out of schemas that trusted code searches: allowing someone to create a function or table where another task resolves unqualified names can change which object that task uses.
+A shop label is not authority
+The table key makes (10, P7) and (20, P7) distinct. Scoped foreign keys keep stored relationships inside one shop. Neither rule stops a well-formed query from requesting the other shop. Constraints and tenant boundaries separates that integrity question from authorisation.
+With the grants above and no row policy, either runtime login can read all four product rows. Adding WHERE shop_id = 10 to the application’s usual query narrows that query. It does not prevent a missing condition, a support query or arbitrary SQL under the same connection from reading shop 20.
+PostgreSQL row security can impose a row condition at the table. But the condition is only as trustworthy as the identity it uses. Consider a policy that compares the row’s shop with current_setting('app.shop_id'). If this runtime login can set that value, it can choose 20. A policy now exists, but the caller still chooses whose data it sees.
+In Figure 1, keep the database login at runtime_10 and change the caller setting to 20. Then switch the policy to Database identity and try the same change.
+Figure 1 Which identity decides the visible shop?
+Database login runtime_10runtime_20Caller sets app.shop_id 1020 The policy trusts Caller setting Database identity
+SELECT name, price FROM shop.productsWHERE product_id = 'P7';
+Policy: shop_id = caller setting (10)
+Two different products share the text P7
+KeyProductPriceQuery result
+(10, P7)Blue mug20.00Returned
+(20, P7)Copper mug18.00Hidden
+runtime_10 receives Blue mug, 20.00.
+What the comparison shows
+With the caller-setting rule, setting 10 returns Blue mug and setting 20 returns Copper mug, whichever database login is used. With the database-identity rule, runtime_10 returns Blue mug and runtime_20 returns Copper mug, whichever setting the caller supplies. This assumes neither runtime login can become the other or assume the owner’s authority.
+An illustrative comparison of two policies, not a database running in the browser. “Hidden” means this SELECT returns no such row; it is not a claim that row security covers every privileged path or information channel.
+The first rule returns the Copper mug to the shop 10 runtime. The second keeps returning the Blue mug. A database identity that the runtime cannot replace supplies the scope; a text value supplied by that same runtime does not.
+A trusted application backend may intentionally use one database login for many shops. It authenticates the web caller, establishes the authorised shop and supplies a transaction-local context for its SQL. That can protect against accidentally omitted filters, provided the context is set and cleared correctly. It does not isolate tenants from arbitrary SQL running with a credential that can choose any shop context. State which of those threats the design covers.
+Bind the policy to the real caller
+The native example instead uses two runtime logins, one per shop. The trusted backend selects the appropriate connection credentials; an incoming request cannot select another login. Each login inherits the same command privileges but cannot become the other. This is a small, explicit identity model, not a recommendation to create an unbounded number of tenant connection pools.
+ALTER TABLE shop.products ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_products
+ON shop.products TO catalogue
+USING (
+shop_id = CASE current_user
+WHEN 'runtime_10' THEN 10
+WHEN 'runtime_20' THEN 20
+END
+)
+WITH CHECK (
+shop_id = CASE current_user
+WHEN 'runtime_10' THEN 10
+WHEN 'runtime_20' THEN 20
+END
+);
+The small mapping is fixed by the owner. An unmatched identity receives no true shop comparison. USING restricts existing rows available to commands; WITH CHECK restricts proposed rows. Neither grants the command itself. Both table privileges and an applicable policy are needed.
+Through an actual runtime_10 login session, the experiment returns three products and the Blue mug at 20.00. runtime_20 returns one product and the Copper mug at 18.00. Asking explicitly for shop 20 through runtime_10 returns no rows; an update of those hidden rows affects zero. An attempted shop 20 insert is refused even though its values are well formed. Changing the caller-settable shop setting does not change these outcomes.
+A hidden row and an error are different observations. A SELECT may succeed with an empty result, and an UPDATE may succeed with zero affected rows. The application must interpret that result, rather than treating “no SQL exception” as proof that a requested edit happened.
+Connection identity also has more than one name. session_user identifies the session identity; current_user identifies the effective execution context. SET ROLE and privileged code can change the latter. The test records both at entry and attempts forbidden role switches. It does not infer safety from a role’s name containing “runtime”.
+A proxy or pool can alter that context. If every backend connection runs as an owner while the application merely labels it runtime_10, this policy is not being tested under the intended identity. Verify the effective identity on the actual application connection and test whatever role/context setup the pool performs on checkout. Session settings must not leak to the next borrower; SQL at the application boundary follows the ownership of that connection and transaction.
+Make privileged paths explicit
+The migration path is powerful on purpose. When it assumes shop_owner, the experiment can read both shops and alter the table. A superuser can do so too. Their successful reads are controls demonstrating why owner sessions are unsuitable for tenant acceptance tests.
+Support has a different deliberate exception. The owner creates a view exposing the named catalogue fields across both shops, then grants support only that view:
+-- Run as shop_owner.
+CREATE VIEW support_read.catalogue AS
+SELECT shop_id, product_id, name, price
+FROM shop.products;
+GRANT USAGE ON SCHEMA support_read TO support;
+GRANT SELECT ON support_read.catalogue TO support;
+In this ordinary PostgreSQL view, underlying access uses the owner’s authority. The owner normally bypasses the table’s row policy, so support intentionally sees all four rows. The runtime logins receive no grant on this view. This is not a way to carry their tenant policy through automatically.
+The support login cannot read the base table or update the view in the native test. Listing columns also prevents a future table column from appearing in the view merely because it was added. A security_invoker view has a different privilege model; choose and test the model that implements the intended interface.
+Privileged functions, exports, replicas and backups are further paths to the same data. Row policies on ordinary table queries do not establish their authority. Catalogue them separately, including who can call privileged code and who can read copied data. PostgreSQL roles, policies and privileged code develops those PostgreSQL-specific boundaries; Operating and securing a CockroachDB cluster follows secure identity and native tenant acceptance there.
+Test allowed and forbidden work
+Use the real runtime credential and connection setup for acceptance. An administrator issuing a query with WHERE shop_id = 10 tests a filter, not runtime containment. Record effective identity, inherited memberships, object ownership, policies and the data that makes each attempted escape distinguishable.
+Acceptance cases in the disposable PostgreSQL run
+AttemptExpected observation
+runtime_10 reads P7Blue mug, 20.00
+runtime_10 asks for shop 20No returned row; cross-shop update affects zero
+runtime_10 inserts a shop 20 productRefused by row security
+runtime_10 changes a key, truncates or alters the tableRefused by privileges or ownership
+runtime_10 assumes runtime_20 or ownerRefused
+support reads the report, then tries the base tableReport succeeds; base-table access refused
+The other-shop row must actually exist. An empty shop 20 would let a broken policy appear correct. Keep a permitted operation too: the run reinserts the core tea product inside shop 10 and performs a price edit that is rolled back. A test suite where every operation is forbidden has not established that the application can do its job.
+Counterexamples make the protection visible. Before row security, runtime_10 reads both shops. Under the caller-setting policy, it can select shop 20 itself. After installing the identity policy, that same attempt stays within shop 10. The final fixture retains all original prices.
+Keep the boundary as the system changes
+Access must evolve with schema changes. A grant on existing tables does not necessarily cover tomorrow’s table. PostgreSQL default privileges apply to objects created later by the specified creating role; they do not repair existing grants. An object created under the wrong deployment role can therefore get different defaults.
+The experiment chooses an explicit object allowlist: a table created later by the migration owner is unreadable to runtime until deliberately granted. If you instead grant runtime access to every future table, also arrange its row policies and sensitive columns before exposure. Broad defaults can turn an additive schema change into an unintended access change.
+Revocation needs the same complete view. The run removes the catalogue group’s SELECT grant, verifies that a fresh runtime login loses reading, then restores the scoped result. Revoking a redundant direct grant would prove less. In an incident, separately stop credential reuse, inspect or terminate existing sessions as required, and account for data already exported; removing a grant cannot retract a copied result.
+Authentication and transport are another layer. Limit which service can reach the database, authenticate the named identity, verify the server and protect credentials. A shared password copied into a browser is not a tenant identity model. For credential rotation, test new connection establishment and retire the old path, including pools that keep sessions alive. These operational checks are separate from proving SQL privileges.
+Repeat the access checks
+Download the access experiment and its shop data into one directory. Run python3 run-access.py --bindir /path/to/postgresql/bin. It needs only Python’s standard library and PostgreSQL binaries. It creates and verifies a private temporary cluster, connects separately as each login and removes the cluster afterwards.
+Verified on PostgreSQL 18.6 and Python 3.14.5. The private local socket uses trust authentication so the controlled test launcher can choose each identity. This verifies privileges under actual login sessions; it does not verify production password or certificate authentication, TLS, a proxy, credential storage or a pool’s context resets. The browser figure illustrates the two rules and does not execute SQL.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege You’re here
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousDiagnosing a database incident NextSharding and distributed SQL
+Sources and further reading
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/ddl-priv.html] Privileges and  [href=https://www.postgresql.org/docs/18/sql-grant.html] GRANT: object, column and inherited authority, PUBLIC and ownership.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/role-membership.html] Role Membership and  [href=https://www.postgresql.org/docs/18/sql-set-role.html] SET ROLE: inheritance and deliberate role assumption.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/ddl-rowsecurity.html] Row Security Policies: existing/proposed rows, owner and bypass exceptions.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/functions-info.html] System Information Functions: session and effective identity;  [href=https://www.postgresql.org/docs/18/sql-createview.html] CREATE VIEW: owner and invoker access.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/ddl-schemas.html] Schemas and  [href=https://www.postgresql.org/docs/18/sql-alterdefaultprivileges.html] ALTER DEFAULT PRIVILEGES: lookup, trusted object creation and future-object grants.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/auth-pg-hba-conf.html] The pg_hba.conf File: authentication rules are separate from SQL authority.

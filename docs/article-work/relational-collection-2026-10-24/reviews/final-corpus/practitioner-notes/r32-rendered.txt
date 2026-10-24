@@ -1,0 +1,300 @@
+Home
+Relational draft
+PostgreSQL vacuum and transaction age
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age You’re here
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+PostgreSQL vacuum and transaction age
+Deep diveAbout 7 minutes AI-generated
+A table can need vacuum even when it has spare disk space and almost no deleted rows. PostgreSQL must reclaim obsolete versions, maintain information that lets reads avoid heap visits and keep old transaction identifiers safe to interpret. Those jobs share a maintenance mechanism, but their warning signs differ.
+That matters when deciding what to change. More aggressive workers cannot remove a version that an old snapshot still needs. Rebuilding a bloated file does not explain why the same backlog will return. A recent vacuum timestamp does not establish that transaction-age risk has been resolved.
+Start with the scratch mug update from the architecture article: a read-only Repeatable Read report sees P7 at 20.00, another backend commits 25.00, and a fresh reader sees the replacement. This is an independent storage experiment. It changes neither order 103’s agreed price nor the collection’s dated catalogue history.
+The version that cannot go
+Space, visibility and statistics
+Why old transaction IDs matter
+Find the retained horizon
+Can maintenance keep up?
+Choose the work that remains
+The version that cannot go
+The report’s snapshot is a promise that PostgreSQL must continue to honour. Removing its 20.00 tuple would break that promise. Vacuum therefore needs a safe horizon: a boundary before which obsolete versions are no longer required. Commit makes a replacement visible to eligible readers; it does not, by itself, make its predecessor removable.
+Follow the two vacuums in Figure 1. The first does run, but cannot reclaim the version the report still needs. The second has a different horizon because the report has finished.
+Figure 1 Vacuum cannot move past the report’s need
+1 · Report takes snapshot
+P7 · 20.00visible to report
+The report remains open.
+2 · Writer commits 25.00
+P7 · 20.00still needed by report
+P7 · 25.00visible to fresh reader
+Vacuum keeps both tuple bodies.
+3 · Report ends; vacuum runs
+Reusable spaceold tuple removed
+P7 · 25.00visible to current readers
+The old version’s space can be reused.
+A conceptual schedule matching the native check below. The cleanup boundary is about snapshots that can still need versions, rather than a fixed number of seconds after commit.
+On an owned PostgreSQL 18.6 instance, the first vacuum left one current tuple and one dead tuple according to pgstattuple. The open report still returned 20.00 afterwards. Once it committed, another vacuum removed the dead tuple. The visible table had one product throughout.
+This is a counterexample to “vacuum ran, so all dead rows are gone”. It also separates a cleanup delay from a worker that never started. Repeatedly vacuuming behind the same retained horizon spends work without changing what is eligible for removal.
+A long query can retain a snapshot. A session left idle inside a transaction can retain one too, depending on the transaction’s work and isolation level. An idle connection outside a transaction is different. Inspect what the backend retains rather than treating every old connection as a blocker.
+Space, visibility and statistics
+After removal, the space is normally reusable inside the existing heap. Ordinary vacuum does not pack all survivors together. It may truncate entirely empty end pages, but scattered gaps usually remain in the file. That can be a healthy steady state for a table that will fill them again.
+Bloat describes an excess of allocated space over what the useful data and expected working slack need. A large file alone does not quantify that excess. Separate the heap, its indexes and TOAST storage; distinguish live data, versions still required, removable tuples and space already free for reuse. Each points to different work.
+Visibility has another representation. Every heap page has two bits in the visibility map. An all-visible bit says the page’s tuples are known to be visible to all relevant readers. An index-only scan can use it to avoid inspecting the heap. An all-frozen bit additionally says that the page needs no further tuple freezing. The second implies the first, but the first does not imply the second.
+The same one-page native fixture, with a covering index
+StateDead tuplesAll-visible pagesIndex-only heap fetches
+Vacuum while report is open102
+Report ends; second vacuum010
+The test discouraged sequential scans explicitly to inspect this index-only route on one row; it is not a natural plan-choice benchmark. Two heap fetches in the first state reflect physical index entries, rather than two logical products. The second state lets the same query avoid the heap. A later change to the page can clear visibility-map information again.
+The standalone ANALYZE command has a separate job: sampling data to update the planner’s statistics. VACUUM (ANALYZE) combines cleanup and statistics collection. Plain vacuum is not a substitute for collecting fresh distributions when data changes, and plain analyze does not remove obsolete tuples.
+Why old transaction IDs matter
+Tuple visibility uses transaction identifiers, whose normal on-disk form has 32 bits. Their counter eventually wraps. Comparisons work within a moving window, so PostgreSQL cannot keep interpreting an arbitrarily old committed insertion as an ordinary recent ID forever.
+Freezing records that an eligible old insertion is permanently in the committed past. It changes how visibility treats that tuple; it does not freeze its business values against future updates. Modern PostgreSQL can preserve the original xmin value while setting the relevant flag, so looking for a special number in xmin is not a reliable freeze check. The fixture’s second vacuum requested freezing as well as cleanup, and its page became both all-visible and all-frozen.
+For each relation, relfrozenxid tracks a conservative boundary for unfrozen transaction IDs. Its age counts transaction-ID distance from the current point, not days since the table was edited. A quiet catalogue table ages as transactions elsewhere consume IDs. A young dead-tuple estimate therefore cannot establish that an old table is safe.
+SELECT c.oid::regclass AS relation,
+age(c.relfrozenxid) AS xid_age,
+mxid_age(c.relminmxid) AS multixact_age
+FROM pg_class AS c
+WHERE c.relkind IN ('r', 'm', 't')
+ORDER BY age(c.relfrozenxid) DESC;
+SELECT datname, age(datfrozenxid) AS xid_age
+FROM pg_database
+ORDER BY age(datfrozenxid) DESC;
+The first query includes ordinary tables, materialised views and TOAST tables in the current database. The second compares database boundaries across the cluster. Inspect all databases, including those an application rarely uses. System catalogues matter too; a maintenance role that skips them cannot establish database-wide completion.
+Multixact IDs are another finite identifier space, used when row-lock information describes multiple transactions. Their age and retention have related but distinct maintenance rules. Monitor mxid_age(relminmxid) alongside transaction age rather than assuming that a low XID age covers both.
+Find the retained horizon
+Start with evidence about sessions. The age of backend_xmin shows how far back a backend’s snapshot horizon reaches; backend_xid identifies a transaction ID it has acquired. Some fields can be null and visibility into other sessions depends on the monitoring role.
+SELECT pid, usename, state, xact_start,
+backend_xid, age(backend_xid) AS xid_age,
+backend_xmin, age(backend_xmin) AS snapshot_age,
+wait_event_type, wait_event
+FROM pg_stat_activity
+WHERE backend_xid IS NOT NULL OR backend_xmin IS NOT NULL
+ORDER BY age(backend_xmin) DESC NULLS LAST;
+A session is not the only possible holder. Prepared transactions can remain after their client disconnects. Replication slots can retain an xmin for ordinary rows or catalog_xmin for catalogue rows. A standby using hot-standby feedback can also hold cleanup back on the primary. Identify the owner and the purpose of each retained boundary.
+SELECT gid, prepared, owner, database,
+age(transaction) AS xid_age
+FROM pg_prepared_xacts;
+SELECT slot_name, slot_type, active,
+xmin, age(xmin) AS row_age,
+catalog_xmin, age(catalog_xmin) AS catalog_age,
+restart_lsn
+FROM pg_replication_slots;
+restart_lsn concerns retained WAL. It is not another measure of tuple age. A slot can create log-retention and row-cleanup problems with different boundaries. Dropping a needed slot can force its consumer to rebuild; resolving a prepared transaction requires knowing the transaction’s intended outcome. These are ownership decisions, not automatic consequences of sorting an age column.
+Can maintenance keep up?
+Once retention is understood, inspect maintenance itself. pg_stat_user_tables reports estimated live and dead tuples, vacuum and analyze timestamps and activity counts. Estimates can lag. A counter gives useful trends, but does not replace physical inspection when deciding whether a large rewrite is justified.
+pg_stat_progress_vacuum shows a running vacuum’s phase and progress. Logs can reveal repeated lock conflicts, skipped work, index cleanup and the horizon used. A long interval since completion means something different from a worker repeatedly completing but being unable to remove recently dead versions.
+Autovacuum scheduling uses change counts, table size and configured thresholds, with separate triggers for different maintenance needs. Large tables can accumulate substantial work before a scale-factor threshold is reached. Small, intensely updated tables may need more frequent attention. Table-level settings let a particular workload earn a different policy without moving every table to the same threshold.
+Triggering earlier helps only if workers have enough time, I/O capacity and memory to finish. Cost throttling reduces interference with foreground queries, while also slowing the work. More workers increase concurrency and resource demand. Measure whether the backlog drains between bursts and whether age boundaries advance; changing one setting because “vacuum is slow” skips that diagnosis.
+Anti-wraparound maintenance can run even when normal autovacuum is disabled. Treat forced activity and age warnings as maintenance urgency, not proof that PostgreSQL will always rescue a neglected cluster. Near exhaustion the server protects data by refusing commands that need new IDs. Use the version’s documented recovery procedure and an operator who can inspect every retention holder. Operating and diagnosing PostgreSQL owns that intervention.
+Choose the work that remains
+Match the evidence to the maintenance job
+EvidenceQuestion to resolve
+Old snapshot; dead tuples remain after vacuumWhen can that owner release its history?
+Removable backlog grows; no retained horizon explains itDoes vacuum start and complete quickly enough?
+Many heap fetches in a covering readAre page changes or delayed vacuum preventing all-visible coverage?
+Old XID or multixact boundaryIs eligible freezing completing across all relevant relations?
+Large reusable gaps persist and hurt the workloadDoes reclaiming the excess justify a planned rewrite?
+Bad row estimates after a distribution changeAre analyze and the statistics model appropriate?
+VACUUM FULL writes a compact replacement and takes an exclusive lock that blocks normal table use. It needs working disk space as well as time. It can solve an established space problem, but it does not make old snapshots cease to exist or supply a sustainable maintenance policy. Index rebuilds and the locks involved belong with schema changes under load.
+Healthy maintenance leaves room for the next round of updates, enough visibility coverage for the intended reads and safe transaction-age boundaries. File size need not fall after each successful vacuum. The useful result is that the next cycle of work fits and the boundaries keep moving.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age You’re here
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousPostgreSQL processes, pages and row versions NextPostgreSQL index methods and operators
+Sources and further reading
+Checked against PostgreSQL 18 on 24 October 2026. The one-row experiment ran on a private disposable PostgreSQL 18.6 server, using pgstattuple and pg_visibility. The before/after counts are observed; the horizon drawing is an explanatory schedule. Forced index routing and disabled autovacuum were confined to that fixture. No wraparound incident, production setting recommendation or throughput result was simulated.
+[href=https://www.postgresql.org/docs/18/routine-vacuuming.html] Routine vacuuming: space reuse, freezing, finite identifiers and maintenance urgency.
+[href=https://www.postgresql.org/docs/18/storage-vm.html] Visibility map,  [href=https://www.postgresql.org/docs/18/pgvisibility.html] pg_visibility and  [href=https://www.postgresql.org/docs/18/pgstattuple.html] pgstattuple: the two bits and physical inspection.
+[href=https://www.postgresql.org/docs/18/monitoring-stats.html] Cumulative statistics,  [href=https://www.postgresql.org/docs/18/progress-reporting.html#VACUUM-PROGRESS-REPORTING] Vacuum progress reporting and  [href=https://www.postgresql.org/docs/18/runtime-config-autovacuum.html] Autovacuum settings: estimates, completed and running work, triggers and cost limits.
+[href=https://www.postgresql.org/docs/18/view-pg-replication-slots.html] pg_replication_slots,  [href=https://www.postgresql.org/docs/18/view-pg-prepared-xacts.html] pg_prepared_xacts and  [href=https://www.postgresql.org/docs/18/runtime-config-replication.html#GUC-HOT-STANDBY-FEEDBACK] Hot-standby feedback: retained horizons outside an ordinary client query.
+[href=https://www.postgresql.org/docs/18/sql-vacuum.html] VACUUM and  [href=https://www.postgresql.org/docs/18/sql-analyze.html] ANALYZE: the different commands and their options.

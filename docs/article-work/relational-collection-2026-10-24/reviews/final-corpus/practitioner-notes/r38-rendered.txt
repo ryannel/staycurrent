@@ -1,0 +1,276 @@
+Home
+Relational draft
+PostgreSQL physical replicas and promotion
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion You’re here
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+PostgreSQL physical replicas and promotion
+Deep diveAbout 7 minutes AI-generated
+A PostgreSQL physical standby follows the primary’s WAL and reconstructs the same cluster’s files. It can hold a durable copy of a committed purchase before its queries can see that purchase. It can also be promoted without containing the primary’s last acknowledged commits.
+Operating a standby therefore requires two decisions: which progress a commit must wait for, and which history may become authoritative after a failure. Promotion ends recovery. It does not fence the former primary, recover unavailable WAL or merge two writable histories.
+This article’s separate local drill starts before Mina’s purchase 103, with P3 stock 12 and P7 stock 1. It commits the complete purchase, deliberately holds standby replay behind receipt, then transfers authority and rebuilds the former primary as a standby. Anonymous scratch rows expose a later loss boundary without changing the collection’s core purchase history.
+Build a copy of the same cluster
+Read the progress in order
+Choose the remote acknowledgement
+Keep the needed WAL available
+Fence before promotion
+Return the old primary as a standby
+Build a copy of the same cluster
+Physical replication begins with a supported base backup, not independently created tables that happen to have the same names. WAL records refer to the cluster’s physical structures. Primary and standby normally use the same PostgreSQL major version and compatible architecture. Keep minor versions aligned where practical and follow the release procedure; physical replication is not a general major-version migration path.
+pg_basebackup -d 'host=/owned/socket port=55440 user=replicator application_name=copy_a'   -D /owned/empty/standby -X stream -R -C -S copy_a
+This command shape takes a base with streaming WAL, writes standby connection settings with -R and creates a physical replication slot named copy_a. The role needs replication permission and an appropriate connection rule. -R creates standby.signal; on startup that signal makes the restored server continue recovery rather than open as another primary.
+Review the copied configuration before starting. Ports, socket locations, tablespace paths, archive commands, credentials and connection rules need to suit the destination. primary_conninfo points the standby at its upstream source. The standby’s application name identifies its connection for monitoring and synchronous selection; it is not a security identity.
+A streaming connection carries WAL promptly instead of waiting for whole segment files. An archive can also supply older WAL when it remains available independently of the primary. If no source retains a required segment, the standby cannot catch up from its old position and may need another base.
+Read the progress in order
+On the primary, pg_stat_replication reports each directly connected sender’s sent, written, flushed and replayed positions. “Sent” says what left the primary. The other fields reflect standby progress reported back to it. A connected sender is therefore only the beginning of the observation.
+SELECT application_name, state, sync_state,
+sent_lsn, write_lsn, flush_lsn, replay_lsn
+FROM pg_stat_replication;
+On the standby, pg_stat_wal_receiver describes the receiver, while pg_last_wal_receive_lsn() reports streaming WAL received and synchronised to disk. Despite its name, this function is not simply an unflushed network-receipt counter. pg_last_wal_replay_lsn() reports the applied position. Check pg_is_in_recovery() too, since the recovery positions remain historical after promotion.
+The native drill paused replay and confirmed the actual state was paused, using pg_get_wal_replay_pause_state(). It then committed purchase 103 with synchronous_commit = on and a configured synchronous standby. Remote flush reached 0/300EB58, while replay remained at 0/3000000. A fresh standby query found no 103. Receipt and durable storage had caught up; application visibility had not.
+Pausing replay does not pause receipt. WAL can keep accumulating, and a long pause can fill standby storage. Nor does it safely manufacture an asynchronous failover loss test: promotion ends a replay pause and can apply WAL already present. The later loss test stopped the standby before the deliberately unreplicated write.
+Choose the remote acknowledgement
+synchronous_standby_names defines which standby acknowledgements count. For example, FIRST 1 (copy_a, copy_b) chooses by priority; ANY 1 (copy_a, copy_b) accepts an acknowledgement from any one of the listed candidates. They express different selection policies. Neither means every replica has the commit.
+Once that set is configured, synchronous_commit determines the required progress. Step through Figure 1. Change the setting while holding the figure at the remote-flush state to see why a successful commit can still be missing from a standby query.
+Figure 1 · What is allowed to answer COMMIT?
+Conceptual progression with one selected synchronous standby. Compare on and remote_apply at the remote-flush step.
+Primary
+WAL: earlier history
+→ WAL →
+Selected standby
+WAL: earlier history
+Fresh read: no order 103
+Application waits
+Purchase 103 has not committed. Both copies begin before the purchase.
+Commit requirement localremote_writeonremote_apply
+PlayBackNextReset
+The chosen setting moves the earliest permitted success reply. It does not make a different asynchronous standby participate or refresh an old query snapshot. File write and durable flush remain separate storage promises.
+Read the boundaries as text
+Every mode shown waits for the primary’s local flush. local adds no remote wait; remote_write waits for the selected standby’s file write; on waits for its durable flush; remote_apply waits for its replay. A fresh standby query includes 103 only after replay of the commit. With no configured synchronous standby set, all four modes shown have only the local wait.
+All four illustrated settings wait for local WAL flush. local adds no remote condition. remote_write waits for the selected remote filesystem write, which may still be volatile through an operating-system crash. on waits for remote durable flush. remote_apply additionally waits for replay. With an empty synchronous standby configuration, these names all reduce to the same local wait.
+The native on transaction returned while standby replay was paused. A subsequent remote_apply scratch transaction remained waiting at SyncRep. After replay resumed, that client completed, and fresh standby queries found the scratch row and the complete purchase: two order lines, P3 10 and P7 0. This checks the distinction between the two configured modes, rather than inferring it from their names.
+The stronger wait adds a dependency. If the required copy cannot reach the chosen boundary, commits can wait even though the primary is locally healthy. Removing that requirement to restore write availability changes the loss promise. Treat the configuration change as a deliberate service decision, and resolve request outcomes if a client disconnects while waiting.
+remote_apply does not refresh a Repeatable Read snapshot established earlier, and a different asynchronous standby can still lag. To read your own write, choose the intended copy, wait for its required history boundary and start a suitable fresh snapshot. Replicas, lag and read routing develops that application protocol.
+Keep the needed WAL available
+A physical slot retains WAL that its consumer may still need. That helps a disconnected standby resume, while making an abandoned slot a threat to primary disk space. wal_keep_size provides a minimum retained amount; it is not a promise to retain an arbitrarily long outage.
+Observe the slot’s restart_lsn, WAL availability and retained byte distance as well as whether a consumer is active. max_slot_wal_keep_size can limit retention at checkpoint time, but exceeding that allowance may remove WAL needed by the standby. A storage safeguard can therefore turn into a rebuild requirement. An archive may supply the gap if its chain is usable.
+Transmission, flush and replay need different remedies. Growing sent-to-flush distance can point towards transport or remote storage. Growing flush-to-replay distance means the remote log is ahead of its data state. Time-based lag fields are observations about recent acknowledgements, not a forecast of catch-up time. Subtracting the last replayed transaction’s timestamp from now on a quiet primary can report age even when there is no missing work.
+Read queries share the standby’s resources with replay and can conflict with recovery. A long report may need versions that vacuum removed on the primary; replay can wait or cancel the report according to policy. hot_standby_feedback can reduce some cleanup conflicts by retaining versions on the primary, moving cost into bloat there. A reporting standby and a tightly bounded failover candidate need an explicit policy for those trade-offs.
+Fence before promotion
+First decide who can still write. An unreachable primary may remain alive for another client. Changing DNS or a pool target does not close old sessions. PostgreSQL’s promotion command does not turn off the former primary. Failover and fencing explains why an enforced authority boundary must accompany the role change.
+For a planned transfer, close admissions, settle in-flight and uncertain requests, capture the final required history boundary and verify that the chosen candidate contains it. Then enforce the old writer’s exclusion. For an unplanned failure, the latest old-primary boundary may be unknowable; candidate selection must follow the service’s stated loss policy and the history evidence actually available.
+SELECT pg_promote(wait => true, wait_seconds => 60);
+SELECT pg_is_in_recovery();
+These commands show the PostgreSQL part of the procedure. A false recovery result confirms that this server left recovery; it does not prove any remote fence or application acceptance. Promotion creates a new timeline, preserving a distinct continuation of WAL. It does not reconcile transactions that exist only on the abandoned branch.
+The native loss boundary was explicit. After the complete purchase had replayed, the controller stopped the standby. The old primary committed a scratch row named local-only using local acknowledgement, then exported its known scratch history. The controller stopped that primary, confirmed its private endpoint was unavailable and had no supervisor capable of restarting it. This was the fixture’s enforced process fence.
+Starting and promoting the stopped candidate retained the complete purchase but not local-only. Its unavailable source could no longer supply that WAL. The scratch row’s deliberate exclusion demonstrates the cost of accepting local commits while the candidate is absent. It is not a claim that synchronous purchase 103 was lost, or that the amount of a production failure’s missing history would always be known.
+Keep application traffic closed until accepted and uncertain requests have been accounted for. If discarded history contains a confirmed purchase, copying only its order row omits its lines and stock effect. External effects have separate authorities too. Recovery and reconciliation follows that complete operation.
+Return the old primary as a standby
+The former primary must not restart independently with its old files. Preserve evidence of its discarded history, then make it follow the chosen authority. A fresh base backup from the new primary is the straightforward method. Start that copy with the correct standby signal and upstream settings, then verify its role and actual replication.
+pg_rewind can instead synchronise a divergent copy by copying changed blocks from the selected source. It requires the relevant WAL and timeline history, full_page_writes, and either data checksums or wal_log_hints set appropriately before the divergence. Review its precise prerequisites for the installed version. Rewind chooses one history; it does not merge the valid business operations unique to both.
+Rewind also copies configuration files. Correct the destination’s ports, paths, credentials and recovery settings before restart. If rewind fails partway through, the target may be unusable; rebuilding from a fresh backup can be necessary. A successful tool exit still needs recovery completion and acceptance.
+The drill used a fresh base, rather than claiming a rewind test. It replaced only the stopped, owned old-primary directory with a backup of the promoted source and started it as a standby. The former endpoint reported recovery, replayed a new scratch write from the new authority, and rejected an attempted local insert as a read-only transaction. One endpoint was now the writer and the other a following copy.
+The complete physical-replication drill creates and cleans its own private PostgreSQL 18.6 pair. Run it with Python 3 and the stated binaries from an empty working directory. It records progress, waits, the known discarded scratch tail and rejoin acceptance. Two processes on one host demonstrate these mechanisms; they do not demonstrate independent disks, power domains, regional latency or a production fencing integration.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion You’re here
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousRestoring PostgreSQL to a recovery target NextPostgreSQL logical replication and change feeds
+Sources and further reading
+PostgreSQL 18 primary documentation checked on 24 October 2026. The figure is conceptual; the described paused-replay, synchronous-wait, locally acknowledged scratch loss, process fence and fresh-base rejoin were executed with PostgreSQL 18.6 in owned local instances. No power-loss, independent failure-domain or native rewind result is claimed.
+[href=https://www.postgresql.org/docs/18/warm-standby.html] Log-shipping standby servers and  [href=https://www.postgresql.org/docs/18/app-pgbasebackup.html] pg_basebackup: physical seeding, streaming, slots and compatible copies.
+[href=https://www.postgresql.org/docs/18/runtime-config-replication.html] Replication settings and  [href=https://www.postgresql.org/docs/18/runtime-config-wal.html#GUC-SYNCHRONOUS-COMMIT] synchronous_commit: selection, acknowledgement levels and retention.
+[href=https://www.postgresql.org/docs/18/monitoring-stats.html] Monitoring statistics and  [href=https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-RECOVERY-CONTROL] Recovery functions: reported positions, durable receipt, replay pause state and promotion.
+[href=https://www.postgresql.org/docs/18/hot-standby.html] Hot standby: read-only restrictions, visibility and query/recovery conflicts.
+[href=https://www.postgresql.org/docs/18/warm-standby-failover.html] Failover and  [href=https://www.postgresql.org/docs/18/app-pgrewind.html] pg_rewind: former-primary exclusion, rebuilding redundancy and rewind prerequisites.

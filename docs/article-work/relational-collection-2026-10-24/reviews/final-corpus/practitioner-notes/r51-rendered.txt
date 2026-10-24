@@ -1,0 +1,287 @@
+Home
+Relational draft
+CockroachDB schema jobs under load
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load You’re here
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+CockroachDB schema jobs under load
+Deep diveAbout 6 minutes AI-generated
+A CockroachDB schema change can keep ordinary SQL available while it changes stored data in the background. That makes a large index or new stored column possible without one long table-wide outage. It also makes the change an operation to observe: the statement, its job, concurrent application work and final data can give different evidence about completion.
+The shop needs hundredths alongside each order line's decimal agreed price. In the collection's fixed-scale variant, 20.00 becomes 2000 and 4.50 becomes 450. We will choose a CockroachDB 25.4 computed-column design, follow its backfill under concurrent writes, then use a failed unique index to distinguish an accepted definition from a successfully enforced rule.
+Choose the compatible change first
+Follow the job that owns the work
+Keep room for the backfill
+Accept values, then accept their meaning
+A unique index must prove uniqueness
+Keep DDL boundaries explicit
+Choose the compatible change first
+Live schema changes and backfills establishes the application protocol: expand compatibly, keep new writes correct, fill existing rows, accept the new representation, then retire old callers before removing their interface. Online schema machinery handles database transitions; it cannot retire a forgotten worker or make yesterday's application understand a new unit.
+Here the decimal remains the write authority. A stored computed column derives its hundredths in the database:
+ALTER TABLE order_items
+ADD COLUMN unit_price_minor INT8
+AS ((unit_price * 100)::INT8) STORED;
+The source column is finite DECIMAL(8,2) NOT NULL. Multiplying by 100 is exact for this declared domain, and the result fits INT8. Check exceptional numeric values, bounds and scale if your source domain differs. This article does not turn an arbitrary currency model into integers merely by naming a column “minor”.
+STORED means that the derived value is kept with the row, so existing data needs to be filled. Later decimal changes derive the corresponding integer. An old caller using explicit column lists can continue writing the decimal; a new reader can use the integer after acceptance. A caller cannot independently assign 7 to the computed column and make the two disagree.
+This choice has a deliberate limit: it does not make the integer the writable authority. An integer-only writer or a later removal of the decimal needs another compatible handover. Do not drop the column on which the generated value depends and assume the application migration is complete.
+Figure 1 · The schema job and the application have separate completion points
+Database work
+Publish compatible definitions→Fill and validate stored data→Job succeeded
+Application contract
+Old explicit-column callers continue→Check equivalent prices and receipts→Enable new readers
+The upper lane cannot prove the lower lane's acceptance. Neither lane proves that old writers have retired.
+Decimal priceWritable authority→↓ ×100 →↓Stored hundredthsDerived; cannot be assigned independently
+Conceptual dependencies, not a trace of CockroachDB's internal schema states. In this chosen computed-column design the decimal remains authoritative throughout; the drawing does not promise a writable integer-only interface.
+Explicit column lists matter even for an additive change. A positional insert may no longer match the table, and a prepared SELECT * can have a changed result shape. Exercise the deployed driver and prepared commands; successful DDL is not evidence about their result decoding.
+Follow the job that owns the work
+CockroachDB records schema changes as jobs. Capture the identity of the intended operation, then inspect its status, detailed running state, progress, error and timestamps. On a busy cluster, “the newest job” may belong to somebody else's deployment.
+SELECT job_id, job_type, description, status,
+running_status, fraction_completed, error
+FROM [SHOW JOBS]
+WHERE description LIKE '%order_items%'
+ORDER BY created DESC;
+-- After identifying the intended operation:
+SHOW JOB <job_id>;
+The description in a list may be abbreviated; the exact job view provides more context. Keep the original statement, user, table and job ID in the deployment record so an operator can distinguish the failed attempt from a later retry with the same index name.
+Job observations and the question they leave open
+ObservationMeaningNext check
+Pending or runningWork is admitted or in progressIs progress changing, or is the job retrying the same failure?
+Pause requestedA pause was requestedHas it reached paused?
+PausedExecution is pausedWhat schema/caller state remains supported, and what resources are retained?
+RevertingFailed or cancelled work is being undoneHas cleanup finished, and what is actually present?
+Revert failedCleanup encountered a terminal errorInvestigate the exact error and supported recovery; do not assume the old state returned
+SucceededThe job completed its operationDo stored data and application behaviour satisfy the intended contract?
+A progress fraction measures the job's reported work. It is not a percentage of the application's deployment, a reliable countdown, or proof that the next stage will need the same time. A job that remains running can be repeatedly retrying an allocation error. Compare successive state and error evidence with resource observations.
+Keep room for the backfill
+The schema job shares the cluster with ordinary requests. Reading existing rows, building new entries and writing replicated data consumes CPU, memory, storage bandwidth and capacity. An online operation can therefore preserve logical availability while making customer work too slow. Keep a budget for request latency and errors, resource pressure, contention and range health.
+The native rehearsal first used a deliberately small 64 MiB SQL memory allowance. Even the five-row computed backfill stayed running while its log repeatedly reported insufficient memory to create a BulkAdder. No useful completion followed merely from waiting. That observation concerns the test's process settings, not a minimum production sizing rule.
+The fixture was rerun with a 256 MiB process-local SQL allowance. A separate generated table of 50,000 anonymous line-shaped rows provided work for a computed-column backfill while another connection updated quantities. Its IDs and updates are synthetic; they do not add orders or change the collection's purchase history. The record captures committed updates during the DDL interval and checks every resulting price pair. It is a functional concurrency check, not a throughput or latency benchmark.
+For your deployment, establish a baseline and watch the workload during the operation. A growing resource problem is reason to investigate or use supported job controls, rather than to keep launching the same schema change. PAUSE JOB and CANCEL JOB are requests with observable state transitions. A cancellation can start cleanup; it is not an instantaneous return to the previous physical storage state.
+Keep the supported application population explicit while work pauses. Here old readers can continue using the decimal. New integer readers have not been enabled merely because the new column was requested. For a manually writable target column, the application bridge must keep every admitted new or edited row correct while the backfill drains old work; a paused cursor cannot supply that protection.
+Accept values, then accept their meaning
+After the job succeeds, query the complete intended table for missing or unequal values:
+SELECT order_id, line_no, unit_price, unit_price_minor
+FROM order_items
+WHERE unit_price_minor IS NULL
+OR unit_price_minor IS DISTINCT FROM unit_price * 100;
+Use an acceptance identity and read path that cover the whole scope. A tenant-filtered result, a partial key range or a stale observation can hide the rows that matter. Keep the write rule active during and after the check so a concurrent writer cannot recreate the inconsistency.
+The unchanged agreed prices in the native shop projection
+Order · lineDecimalHundredths
+101 · 14.50450
+101 · 235.003500
+102 · 120.002000
+103 · 120.002000
+103 · 24.50450
+The native check finds no unequal pairs and calculates order 103 as 2900 hundredths: its mug and two teas still total 29.00. It also attempts an independent assignment to the computed column and requires refusal. Those observations establish the chosen derivation; they do not prove that a new receipt displays 29.00 rather than 2900.00. Compare the actual application results before enabling that reader.
+A unique index must prove uniqueness
+An index can finish its physical work only to discover that the intended rule is false. Consider a separate anonymous import fixture with two rows carrying the same required source_id. Creating a unique index on that column must reject the existing duplicate.
+CREATE UNIQUE INDEX source_once
+ON import_keys (source_id);
+The native test requires that first build to fail, records its job and error, and waits until the failed index is absent from SHOW INDEXES. It then resolves the declared duplicate in this scratch fixture, repeats the build, and requires success. Finally it tries another duplicate insert and a distinct insert. The former must fail; the latter must work. A successful build without those semantic checks would leave the meaning of the key untested.
+In a real import, resolving duplicates is a business decision. Repeated identical input, conflicting payloads and old source versions can need different treatment. Deleting arbitrary production rows to make an index build pass can destroy valid history. Keep writes that would recreate duplicates controlled until the index is successfully enforcing the rule.
+CockroachDB creates indexes online; its accepted CONCURRENTLY keyword is compatibility syntax, not PostgreSQL's concurrent-index protocol. A PostgreSQL-specific repair recipe for an invalid concurrent index is therefore not evidence about this job. Inspect the CockroachDB job and current descriptor, then follow its supported cleanup path. Logical disappearance also does not prove that all old bytes have already been garbage-collected.
+Keep DDL boundaries explicit
+Run these changes as individual schema statements with explicit acceptance between them. CockroachDB documents limitations on general multi-statement transactions containing schema changes: some ordinary work may commit even when schema work fails. Do not wrap an entire deployment in BEGIN and assume every possible DDL failure restores every previous statement.
+Before contraction, account for old application processes, workers, imports and in-flight transactions. A completed job cannot prove that they have stopped using a column. Pause or fence obsolete writers, resolve their work, then apply the separately planned authority change or removal. The safe pause point is a compatible schema with known callers, not simply a green migration-runner status.
+The native fixture stops after accepting derived integer reads and enforcing the scratch unique key. It does not perform an integer-only writer handover, remove the decimal, measure production load or simulate independent machines. Upgrading a CockroachDB cluster owns the different compatibility boundary between binaries and cluster version.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load You’re here
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousCockroachDB backup and recovery NextUpgrading a CockroachDB cluster
+Sources and further reading
+Checked against CockroachDB 25.4 primary documentation on 24 October 2026; native execution pins 25.4.17 with psycopg 3.3.3. One private loopback development process and bounded generated data establish the stated mechanisms. The figure is conceptual, and all owned test processes/stores are cleaned afterwards.
+[href=https://docs.cockroachlabs.com/docs/v25.4/online-schema-changes] Online schema changes: jobs, transaction limitations, prepared statements and cleanup.
+[href=https://docs.cockroachlabs.com/docs/v25.4/computed-columns] Computed columns: stored derivation and write restrictions.
+[href=https://docs.cockroachlabs.com/docs/v25.4/show-jobs] SHOW JOBS,  [href=https://docs.cockroachlabs.com/docs/v25.4/pause-job] PAUSE JOB and  [href=https://docs.cockroachlabs.com/docs/v25.4/cancel-job] CANCEL JOB: progress, errors and control states.
+[href=https://docs.cockroachlabs.com/docs/v25.4/create-index] CREATE INDEX: unique enforcement and the meaning of CONCURRENTLY.

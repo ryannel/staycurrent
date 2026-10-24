@@ -1,0 +1,350 @@
+Home
+Relational draft
+Outboxes and database-backed jobs
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs You’re here
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Outboxes and database-backed jobs
+Deep diveAbout 12 minutes AI-generated
+An outbox records work to do in the same transaction as the change that requires it. When the shop creates order 103, it can also record “send this order’s confirmation”. Either both records commit or neither does. A worker performs the external work later, after the purchase request has finished.
+That closes one failure gap: a committed order whose process stopped before recording its confirmation work. It leaves another. A worker can send the confirmation and stop before recording that it succeeded. Recovering the job may send it again. The database can make the intention atomic with the order; the receiver must help make a repeated effect safe.
+We continue from Retries when a commit reply is missing and Locks, contention and deadlocks. Order 103 is Mina’s pending purchase of one mug and two packs of tea, worth 29.00. This article adds an outbox event, order-103-created, as an explicitly separate record of intended work. It does not add a payment or claim that an email has been delivered.
+Commit the intention
+Claim work briefly
+Finish only your claim
+Make the receiver recognise a repeat
+What fencing adds
+Keep the work recoverable
+Repeat the boundaries
+Commit the intention
+Sending an email inside the purchase transaction does not extend that transaction into the email provider. If the provider accepts the email and the database later rolls back, the email can still leave. Sending after commit reverses the gap: the order can commit, then the process can stop before calling the provider.
+Put the intention inside the database boundary instead. The purchase transaction reserves stock, records the order and its two lines, and inserts an outbox row. The worker sees only committed work.
+Figure 1 What commits together, and what happens later
+One purchase transaction
+Stock → P3 10, P7 0Order 103 + two linesOutbox: order-103-created
+COMMIT makes all three available together.
+WorkerClaims the committed event
+later →↓
+ReceiverAccepts the confirmation work
+The enclosing box is a database transaction. The receiver is outside it. No arrow promises delivery time or end-user receipt.
+Give each event a stable identity and a defined payload. Here one event means “order 103 was created”, with a payload naming order 103. A real event may need immutable receipt facts or a schema version so that a delayed consumer can interpret it. Decide whether it carries facts as they were at the event or asks a worker to read current state; those are different contracts.
+The request key purchase-mina-103 still identifies the logical purchase across request retries. The outbox event ID identifies one event produced by that purchase. Replaying a resolved purchase must return its outcome without creating another event. If one purchase emits several events, give each its own stable identity and meaning.
+-- Inside the purchase transaction, after creating order 103:
+INSERT INTO outbox (event_id, order_id, payload)
+VALUES (
+'order-103-created', 103,
+'{"order_id":103}'::jsonb
+);
+-- Commit this with stock, order, lines and request outcome.
+The event’s primary key prevents two copies of this identity. It cannot tell whether a programmer invented a second identity for the same intended effect. Nor does ON CONFLICT DO NOTHING justify ignoring a changed payload under an existing event ID. Preserve immutable events and reject a conflicting duplicate.
+In a disposable PostgreSQL 18.6 experiment, committing the order before inserting its event left one order and no outbox row when the next write was omitted. Terminating a client while the combined transaction remained open left neither. Committing the combined transaction left both. This scratch fixture isolates that boundary; it does not re-enact the complete stock purchase.
+Claim work briefly
+A background worker polls for available work. Several workers may poll together, so a plain select followed by an unguarded update lets both choose the same event. Claim the row under a database lock and commit the claim before making a network call.
+The example’s outbox table has event_id as its primary key, a required order_id reference and required payload. Scheduling and ownership add five columns:
+Fields used by this worker protocol
+FieldMeaning
+available_atEarliest database time to attempt this work
+lease_untilDeadline of the current claim; missing means unclaimed
+claim_tokenIncreasing generation for claims of this event, initially 0
+attemptsNumber of successful claims, initially 0
+completed_atWhen this event’s delivery contract was confirmed; missing means unfinished
+The deadlines and completion time use timestamptz. Claim token and attempts are required integers; the download uses bigint for the token. A lease gives a claim a deadline, after which unfinished work becomes eligible for recovery. It survives the short transaction which acquired it, allowing the row lock to be released while the worker calls the receiver. Expiry makes recovery possible; it cannot stop a paused process from resuming.
+BEGIN ISOLATION LEVEL READ COMMITTED;
+WITH candidate AS (
+SELECT event_id FROM outbox
+WHERE completed_at IS NULL
+AND available_at <= clock_timestamp()
+AND (lease_until IS NULL
+OR lease_until <= clock_timestamp())
+ORDER BY available_at, event_id
+FOR UPDATE SKIP LOCKED
+LIMIT 1
+)
+UPDATE outbox AS o
+SET lease_until = clock_timestamp() + interval '5 minutes',
+claim_token = o.claim_token + 1,
+attempts = o.attempts + 1
+FROM candidate AS c
+WHERE o.event_id = c.event_id
+RETURNING o.event_id, o.payload, o.claim_token;
+COMMIT;
+The candidate query locks the row it selects; the update gives that claim a deadline and a generation. The returned token is provisional until the worker receives a successful commit reply. If that reply is missing, this protocol abandons the claim: discard its token and never use it to call the receiver, renew the lease or record completion. Dispose of the broken connection and finish its cleanup. Resume polling through the normal claim query, accepting a claim only when its commit succeeds. If the uncertain claim did commit, its lease keeps the event unavailable until expiry; this deliberately trades some recovery time for a simpler ownership contract.
+A matching token in a later lookup cannot recover that ownership. A can receive token 1 before commit, then disconnect and have its update rolled back. B can then commit a claim with token 1. Locking the row now reveals B’s current lease, even though its number matches A’s discarded token. The increment orders committed claims of this event; it does not identify every attempted claim.
+SKIP LOCKED lets another worker omit a row already being claimed and seek other work. With only this event, an empty claim can mean it is locked, leased, scheduled for later or already complete. It does not prove the queue is empty. This incomplete view suits independent jobs; it was unsuitable for the class capacity decision.
+Five minutes is an illustrative lease, not an execution measurement. Choose the duration against expected work and recovery needs. Use the database’s clock consistently for granting, checking and renewing it. PostgreSQL’s now() stays at transaction start; clock_timestamp() reads current wall time, which is why this protocol uses it explicitly. Keep claim transactions short rather than using a long transaction as a clock.
+If a job needs more time, renew only a claim whose commit was acknowledged. For renewal, completion and release, first lock the event row in a short Read Committed transaction, then test the token and deadline in a separate update. An ordinary update can test its time condition before waiting for a row lock; a lock holder that changes no data need not make it test again. Taking the lock first puts that wait before the expiry check.
+The subsequent update authorises the change when its condition finds the current generation unexpired. Keep the lock until commit so another worker cannot replace that generation between the test and the change. Commit and its reply may arrive after the deadline: this is a check under a lock, not a promise to finish before a wall-clock instant. Wait for renewal’s successful commit reply before continuing; if it changes no row or its outcome becomes uncertain, abandon the claim and stop starting work under it. Neither a renewal reply nor local abandonment can recall a network request already sent.
+Finish only your claim
+The worker calls the receiver after its claim’s commit was acknowledged. On a confirmed receiver success, it records completion with the event ID and that claim’s token:
+BEGIN ISOLATION LEVEL READ COMMITTED;
+SELECT event_id FROM outbox
+WHERE event_id = $1
+FOR UPDATE;
+-- A separate statement, after acquiring the row lock:
+UPDATE outbox
+SET completed_at = clock_timestamp(),
+lease_until = NULL
+WHERE event_id = $1
+AND claim_token = $2
+AND lease_until > clock_timestamp()
+AND completed_at IS NULL
+RETURNING event_id;
+COMMIT;
+A row returned by the update and a successful commit reply confirm completion. No updated row means the claim was expired at the post-lock check, was replaced or was already completed. Do not turn it into an unconditional update. The token prevents an old worker from marking a later worker’s claim complete. If completion’s reply is missing, retire the claim as well: do no further work under it. A committed completion removes the event from polling; otherwise the unfinished event becomes claimable after expiry and release of any transaction lock.
+A worker that dies before calling the receiver leaves the event unfinished. Once its lease expires, another worker can claim it. A worker that dies after the receiver acts leaves the same unfinished event. Those two failures look alike to the outbox, just as the two commit histories looked alike to the purchase caller.
+Figure 2 follows the harder history. Worker A pauses after the receiver has accepted its request. Its lease expires and B takes a newer generation. A is still a process capable of resuming.
+Figure 2 Expiry permits recovery; it does not stop A
+1
+A claims event · token 1
+A commits its claim, then asks the receiver to act.
+2
+Receiver accepts · A pauses
+The outbox still has no completed_at. The effect may already exist.
+3
+Lease expires · B claims token 2
+B can recover the unfinished event. A’s memory still contains token 1.
+4
+B repeats the same effect identity
+A cooperating receiver returns the existing result. Without duplicate handling it may act again.
+5
+A resumes with its old token
+A’s completion changes no row. Its old token cannot complete B’s claim, but expiry alone cannot prevent A making another external call.
+A chosen failure schedule. Claim tokens 1 and 2 are generations of one event; the external effect identity stays the same.
+The native experiment held an uncommitted claim while another worker polled: the second skipped the locked row. After the claim committed, its active lease excluded the event. The test then explicitly moved the deadline into the past to model expiry. B obtained token 2; A’s completion with token 1 changed zero rows, while B’s completion changed one. For renewal, completion and release, a further test held an unchanged row lock across a short deadline. A direct guarded update began before expiry, waited and still changed the row afterwards. With the separate locking statement, the later update changed zero rows. When a competing worker instead committed a newer generation, the old token also changed zero rows. These are controlled schedules, not measurements of the five-minute lease.
+The experiment also reproduced A’s rolled-back token 1 matching B’s committed token 1. The worker discarded A’s uncertain claim in that history and in a second history where A’s commit succeeded but its reply was withheld; neither authorised a receiver call, renewal or completion. Normal polling recovered the unfinished event.
+Make the receiver recognise a repeat
+Use a stable effect identity at the receiver. For this one confirmation, the example uses order-103-created:confirmation. It identifies the same intended effect whether A or B sends it. A new claim token must not become a new effect identity, or every recovery would ask for a different effect.
+The receiver needs a real contract: record that identity with the effect atomically, compare the meaningful payload, and return the recorded result on a replay. The sender must know how long that record is retained and how to query an uncertain result. If a provider forgets an identity before the outbox can replay it, repetition may act again.
+A provider’s “accepted” reply also needs interpretation. Acceptance into its queue is not the same as an email reaching Mina. Choose what completed_at means: perhaps the provider has durably accepted responsibility, while delivery reports are a separate workflow. An HTTP success code alone does not define that contract.
+The native test uses a receiver stand-in in a second database on the same local PostgreSQL server. Two deliveries with one stable effect ID left one keyed effect. A deliberately unprotected receiver log accumulated two effects from the same two attempts. This checks the duplicate boundary under controlled application logic; it does not establish any email or payment provider’s behaviour, or independent machine failure.
+A consumer with its own database
+A consumer that changes its own database can implement that contract with an inbox. Its key is the pair (consumer, event_id), so two different consumers may each process the event once. Store the normalised payload alongside that key. Inside the consumer’s Read Committed transaction, insert the receipt; if newly inserted, apply the local effect; commit both. On a duplicate, read the stored payload in a separate subsequent statement and compare it: a matching replay can skip the effect, while changed input under the same identity must be rejected. The separate statement sees a receipt that an overlapping insertion may have waited for, just as the purchase request protocol did.
+BEGIN ISOLATION LEVEL READ COMMITTED;
+INSERT INTO inbox (consumer, event_id, payload)
+VALUES ('confirmation-projection', 'order-103-created', $1)
+ON CONFLICT DO NOTHING
+RETURNING event_id;
+-- Only if the receipt was newly inserted:
+-- apply this consumer's local database change here.
+-- Otherwise: read the stored payload in a new statement,
+-- compare it and reject a conflicting replay.
+COMMIT;
+Committing the receipt first creates a lost-work gap: a crash before the effect leaves a receipt that makes the replay skip unfinished work. Applying the effect first creates a duplicate gap: a crash before the receipt allows the effect again. The receipt and effect must be within one authority’s transaction.
+The experiment checks those boundaries with a scratch counter. Rolling back the combined receipt and increment left neither. Committing both, then replaying the receipt, left one increment. A deliberately separate receipt commit left one receipt and zero increments when its effect was omitted. Calling an external provider inside the consumer transaction would reopen the same boundary; another outbox may be needed.
+What fencing adds
+A token can do more than guard the outbox’s completion update, but only if the authority performing the effect checks it. A fence rejects work from an older owner. For a protected resource, the receiver remembers the highest generation it has accepted and refuses lower ones. After seeing generation 2, it rejects A’s delayed generation 1.
+This needs a generation ordered across every contender for that resource, enforced atomically at the resource. Our per-event claim_token orders claims of one event. It is not automatically a resource-wide fence for several different events updating one account or file. Each event could independently have token 1. Choose the token authority and scope to match the resource being protected.
+Fencing also does not deduplicate the logical effect. Generation 1 can legitimately act before generation 2, so both may be accepted in order. A stable effect identity prevents repeating one intention; an ordered token rejects an obsolete owner. A receiver may need both. If an email provider accepts neither a stable identity nor a fence, the database cannot manufacture those guarantees around it.
+For an external operation with an uncertain result and no reliable replay contract, keep it unresolved and reconcile with the receiver’s records or a human workflow. Marking it complete before sending risks loss; retrying forever risks duplicates. The application must choose and expose that trade rather than calling the outbox “exactly once”.
+Keep the work recoverable
+Retry temporary failures with bounded backoff and jitter, carrying the same event and effect identities. To set available_at for a later attempt and release the lease, use the same lock-first transaction as completion: lock the event, then update only if the acknowledged token still matches and the lease is unexpired at that post-lock check. Commit before discarding the claim. If no row changes or the outcome becomes uncertain, abandon it; normal polling follows the state that actually committed. Retain the attempt count and useful error information. Stop retrying a permanently invalid payload as though elapsed time will repair it.
+A failed-work state or dead-letter queue gives operators somewhere to inspect work that cannot proceed. It must preserve the payload, identity and failure reason. Moving a row there is not successful delivery. Alert on the age of the oldest eligible unfinished work, repeated failures and expired leases; a low queue length can hide one important stranded event.
+The claim query needs an access path suited to unfinished eligible work. As completed rows accumulate, consider a partial index over the unfinished set and an explicit retention policy. Many workers polling the same small head can compete for database resources even with skipped row locks. Bound batch size and worker admissions against actual receiver and database capacity.
+Claims do not establish business ordering. ORDER BY available_at, event_id chooses eligible rows for this query, but skipped locks, leases and retries let later work finish first. If one order’s events must be applied in sequence, give that order a sequence contract and enforce it at the consumer, or serialise its processing. Do not infer commit order from opaque event IDs or a timestamp alone.
+Keep unfinished events and receiver deduplication records for compatible replay windows. Archive completed history deliberately, and preserve a way to distinguish an old replay from new work. A restore may bring back an outbox event whose external effect survived; reconciliation needs the stable effect identity at that external authority. A restored queue flag is not evidence that the provider never acted.
+Repeat the boundaries
+Download the outbox experiment and run python3 run-outbox.py --bindir /path/to/postgresql/bin. The standard-library script starts an owned disposable PostgreSQL cluster with a private socket, checks its identity and removes it afterwards. The second database is explicitly a local receiver stand-in.
+The recorded PostgreSQL 18.6 run checks the separate-write gap, combined commit and rollback, locked-row skipping, active leases, abandoned uncertain claims, expiry across unchanged row-lock waits, injected expiry, newer claims, stale completion, duplicate effects, receiver fencing and atomic consumer receipts. It terminates an owned client before commit and withholds selected successful replies from a simulated worker. These are controlled fault injections, alongside deliberately held row locks, short deadlines, modelled worker pauses and omitted follow-up writes. They do not measure a network failure, lease duration, production throughput, broker delivery or a provider’s service contract.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs You’re here
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousRetries when a commit reply is missing NextWrite-ahead logs and crash recovery
+Sources and further reading
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/sql-select.html#SQL-FOR-UPDATE-SHARE] The locking clause: selected-row locking and SKIP LOCKED for queue-like access;  [href=https://www.postgresql.org/docs/18/queries-with.html] WITH queries: connecting candidate selection to its update.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/protocol-flow.html] Message Flow and  [href=https://www.postgresql.org/docs/18/transaction-iso.html#XACT-READ-COMMITTED] Read Committed: replies, connection termination, row-lock waits and the fresh statement after locking used by follow-up updates.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/functions-datetime.html#FUNCTIONS-DATETIME-CURRENT] Current date and time: transaction time versus clock_timestamp().
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/sql-insert.html] INSERT and  [href=https://www.postgresql.org/docs/18/index-unique-checks.html] Index Uniqueness Checks: identities and conflict handling used by the receiver and inbox.
+Stripe,  [href=https://docs.stripe.com/api/idempotent_requests] Idempotent requests: one concrete provider contract, including payload comparison, differing API-version behaviour and retention. Check the actual endpoint you use; no Stripe request was made here.
+On this site, Failover and fencing develops authority across database primaries; PostgreSQL logical replication and change feeds develops another way to carry committed changes to consumers.

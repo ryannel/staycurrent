@@ -1,0 +1,295 @@
+Home
+Relational draft
+Vector search in PostgreSQL
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL You’re here
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Vector search in PostgreSQL
+Deep diveAbout 8 minutes AI-generated
+A nearest-neighbour query can return exactly the vectors you asked for and still give an unhelpful answer. It can also use an approximate index, return a full page of products and silently miss nearer eligible vectors. Those are different failures, with different tests.
+We will first give the distance calculation a small, visible meaning. Then we will compare exact and approximate retrieval against the same filtered baseline. Only after those checks can we ask what an embedding model’s distances mean for a shopper.
+A distance is a rule over coordinates
+Define the exact answer before approximating it
+What an approximate index skips
+Filters spend the candidate budget
+Choose the filtered set and search effort
+Keep the representation current
+Test meaning separately from neighbour recall
+A distance is a rule over coordinates
+The pgvector extension adds vector types, distance operators and nearest-neighbour index methods to PostgreSQL. This article’s native drill runs PostgreSQL 18.6 with pgvector 0.8.7. The extension must be available on the server before CREATE EXTENSION vector can enable it in a database; extension lifecycle covers that operational boundary.
+For a transparent example, give the three shop products chosen two-dimensional coordinates. P3 is [1, 0], P7 [0, 1] and P9 [0.6, 0.8]. The query is [0, 1]. These are toy points, not generated embeddings. Neither axis represents a product property or a semantic judgement.
+Euclidean, or L2, distance is the square root of the sum of squared coordinate differences. The native calculation gives P7 distance 0, P9 about 0.6325 and P3 about 1.4142. A vector’s dimensions describe the stored representation; its distance acquires application meaning only through how that representation was produced and evaluated.
+CREATE EXTENSION vector;
+CREATE TABLE product_vectors (
+shop_id integer NOT NULL,
+product_id text NOT NULL,
+stock integer NOT NULL,
+embedding vector(2) NOT NULL,
+PRIMARY KEY (shop_id, product_id)
+);
+SELECT product_id, embedding <-> '[0,1]'::vector AS distance
+FROM product_vectors
+WHERE shop_id = 10 AND stock > 0
+ORDER BY distance, product_id
+LIMIT 2;
+The operator <-> computes L2 distance. With the agreed stock after order 103, P7 is excluded. The exact eligible order is P9, then P3. Choosing the nearest point globally and removing unavailable rows afterwards would describe a different set.
+Figure 1 The closest point may be ineligible
+Chosen two-dimensional coordinates · Euclidean distance · no embedding model or semantic axis
+011Coordinate 1Coordinate 2  Query = P7 [0, 1]P7 stock: 0 P9 [0.6, 0.8] P3 [1, 0]
+Request: nearest one in-stock product Stock filter inside retrieval Limit first, stock filter outside
+PlayBackNextReset
+The geometry and both queries, as text
+The query is [0,1]. P7 is at the same point, distance 0; P9 [0.6,0.8] is about 0.6325 away; P3 [1,0] is about 1.4142 away. P7 has no stock after order 103. Filtering eligibility inside the exact retrieval query makes P9 the nearest returned product. Taking one nearest product globally first chooses P7, then the outer stock filter removes it and returns no rows. The coordinates are chosen examples, not generated embeddings or evidence that a teapot answers a shopper’s request.
+The drill verifies both forms. Limiting the global search to one returns P7 inside the subquery, then the outer stock filter removes it. The final result is empty even though eligible products exist. This mistake is possible with an entirely exact scan; approximate indexing introduces a separate candidate-selection problem.
+Define the exact answer before approximating it
+Exact nearest-neighbour retrieval evaluates the chosen distance over the eligible rows and identifies the nearest ones. It can scan the table, or use a structured index to narrow a small eligible set before calculating and sorting distances. A selective shop filter may make that approach sufficient without any approximate vector index.
+The answer depends on the metric. pgvector also provides cosine distance through <=> and negative inner product through <#>. The negative sign lets an ascending scan retrieve larger inner products first. Choose the operator expected by the representation and match its index operator class. An L2 index is not a generic accelerator for every notion of similarity.
+For unit-length vectors, squared L2 distance is twice cosine distance, so those two orderings agree. That follows from the dot-product formula, not from a promise that all embeddings are normalised. Magnitude can matter with another representation. Record the preprocessing and metric rather than changing them to obtain a preferred-looking result.
+Define the comparison precisely: query vector, metric, model/representation revision, eligibility predicate, data snapshot and requested count. Break or account for equal distances consistently. Recall at k compares the approximate result identities with the exact nearest identities under that same definition. If fewer than k eligible rows exist, use that smaller reference set rather than demanding impossible results.
+Do not compare an approximate stock-filtered search with an unfiltered exact baseline, or run the two against changing membership and call the difference an index error. A fixed copy or one suitable transaction snapshot keeps the experiment about retrieval. Also verify the plan really is exact: an approximate index already present can change how the apparently unchanged SQL is executed.
+What an approximate index skips
+HNSW builds a graph with several levels. Search follows connections towards promising neighbours rather than calculating every stored distance. Its m and ef_construction settings influence graph construction; hnsw.ef_search controls the search candidate-list budget. Graph quality and search effort are distinct decisions. An index can be built before rows arrive because this method does not need a separate clustering-training stage.
+IVFFlat groups vectors into lists around centres learned from data during construction. A query searches selected nearby lists. The index’s lists count controls the partitioning; ivfflat.probes controls how many lists a query searches. More lists with very few probes can omit useful neighbours near another list’s boundary. Build it with representative existing data and test the list/probe choices together.
+Both methods spend work selectively. A neighbour can be missed even if every distance calculated for a visited row is correct. Returning the visited candidates in strict distance order does not prove that an unvisited point was farther away.
+-- Alternatives: choose and measure one, rather than building both by habit.
+CREATE INDEX product_vectors_hnsw
+ON product_vectors USING hnsw (embedding vector_l2_ops);
+CREATE INDEX product_vectors_ivf
+ON product_vectors USING ivfflat (embedding vector_l2_ops)
+WITH (lists = 100);
+These are index-shape examples, not sensible parameters for a three-point catalogue. The query needs an ascending distance-operator ordering and a limit to expose the nearest-neighbour access path. Wrapping the distance in an unrelated expression or sorting a transformed similarity in the opposite direction can prevent that path. Check the actual plan before interpreting a result as evidence about the index.
+Filters spend the candidate budget
+In an approximate vector scan, PostgreSQL can filter visited rows after the index supplies candidates. The SQL still describes the right eligible set, but the access method may stop searching before it has found enough eligible neighbours. A condition matching one percent of rows can discard most of a small initial candidate set.
+The native drill separates this effect from the toy geometry. It constructs 30,000 anonymous eight-dimensional vectors from a documented deterministic hash recipe. Exactly 300 belong to the selected cohort. The query asks for the nearest 20 within that cohort. The vectors have no product or embedding meaning.
+One Repeatable Read transaction holds an unchanged fixture for the exact baseline and all approximate comparisons. The baseline uses a sequential scan over eligible rows and a sort; no approximate index exists yet. The script then builds one approximate index at a time. For each approximate trial it disables sequential scans locally to expose that method, records its plan and removes the index before testing the other method. These are diagnostic access-path comparisons, not evidence that the normal planner would choose those paths.
+Figure 2 Twenty returned rows can still miss half the exact neighbours
+One observed PostgreSQL 18.6 / pgvector 0.8.7 run · 30,000 anonymous vectors · 300 eligible · exact filtered top 20 baseline
+Exact neighbour returned Other eligible row Unfilled slot
+HNSW · ef_search 40 · iteration off
+0 rows returned · 0/20 exact neighbours · recall 0%
+HNSW · ef_search 40 · strict iteration
+20 rows returned · 20/20 exact neighbours · recall 100%
+IVFFlat · 100 lists · 1 probe
+4 rows returned · 4/20 exact neighbours · recall 20%
+IVFFlat · 100 lists · 10 probes
+20 rows returned · 10/20 exact neighbours · recall 50%
+Slots show counts, not rank order. The same eligibility predicate and unchanged snapshot are used throughout. Local enable_seqscan=off exposes each approximate path; this is a diagnostic comparison, not a natural planner choice or semantic-quality test.
+In this run, HNSW with ef_search = 40 and iterative scanning off returned no eligible row. Enabling strict iterative scanning with the same initial budget and max_scan_tuples = 20000 returned 20 rows, all in the exact top 20. The index definition and fixture were unchanged between those queries.
+IVFFlat used 100 lists. One probe returned four eligible rows, all exact neighbours. Ten probes filled the requested 20 slots, but only ten belonged to the exact top 20: recall was 50%. A full page therefore did not establish complete neighbour retrieval. The matched identities, returned count, settings and plans are retained with the drill.
+pgvector’s iterative scans can continue searching when filtering leaves too few rows, up to their configured work limits. HNSW supports strict ordering; relaxed modes can trade ordering for retrieval behaviour and may need an outer sort of materialised candidates. Neither “strict” nor “20 rows returned” means perfect global recall. Re-sorting a candidate set cannot recover a neighbour that was never included.
+The measured counts describe one construction and query. The input recipe is deterministic, but graph construction, clustering, data shape and execution environment can affect results across runs. The drill’s local build times and index sizes are recorded for reproduction; they are not a latency or capacity recommendation for real embedding dimensions.
+Choose the filtered set and search effort
+For a small filtered set, compare exact retrieval using a B-tree on the eligibility key. It gives complete geometric recall without maintaining an approximate graph or clustered lists. For a larger set, vary approximate search effort and measure recall together with execution work and latency.
+A partial vector index can isolate one stable, frequently used predicate; partitioning can isolate groups where the operational and planning costs are justified. Neither makes thousands of per-value objects free. A predicate on stock changes with orders, so its update cost belongs in the design. A shared index may spend its candidate budget on other tenants even when every returned row is correctly tenant-filtered.
+Keep permission checks inside the database query as well. Over-fetching vectors and checking tenant access only after returning them to application code expands the data boundary and makes the filtered-baseline comparison misleading. Search quality and authorisation are separate conditions that must both hold.
+Use representative filters and query families, including rare cohorts and no-match cases. Compare p50 and tail latency under meaningful concurrency, plus buffer work, memory and recall. Increasing a search budget can improve coverage while consuming more CPU and pages. A setting that wins one warm query can lose under concurrent demand.
+Keep the representation current
+A database row can be current while its embedding represents an older description. Store enough provenance to recognise that difference: source identity and revision, representation/model revision, dimensions and preprocessing. If embedding work runs asynchronously, accept its result only when it still corresponds to the intended source revision. Otherwise an older job can overwrite a newer representation.
+Changing a model while retaining the same dimension count does not establish that old and new coordinates share a meaningful space. Plan a transition with a separately identifiable representation, backfill and evaluation, then route queries to compatible document vectors. Track missing, failed and stale rows; nearest-neighbour recall over only the successfully embedded subset cannot reveal absent documents.
+The lifecycle cost also belongs to the index choice. Inserts and updates maintain search structures; deletions and obsolete row versions need PostgreSQL cleanup. Measure bulk construction, ongoing writes, vacuum and any rebuild alongside reads. A graph that fits in construction memory on one host can behave differently once it does not. IVFFlat’s learned grouping also needs re-evaluation if the data distribution changes substantially.
+Test meaning separately from neighbour recall
+The toy query’s exact nearest eligible product is a Teapot. That says nothing about whether the shopper wanted one. No model produced these coordinates, and no user judgement was measured. Similarly, 100% nearest-neighbour recall with real embeddings can reproduce an unsuitable representation perfectly.
+Keep two evaluation sets. One contains exact vector neighbours for fixed queries, filters and snapshots; it tests the retrieval method. The other contains human-judged search tasks and acceptable results; it tests whether the representation and final ranking serve the task. When a useful result is missing, first ask whether it was absent from the eligible corpus, far away under the metric, skipped by approximate retrieval or discarded by final ranking.
+A hybrid search can combine lexical candidates with vector candidates, but their raw scores are not automatically comparable. A fusion or reranking rule needs its own evaluation. Reranking can improve the ordering of candidates already found; it cannot rescue a relevant item omitted by every candidate source.
+Download the disposable vector-retrieval drill. Run with Python 3, PostgreSQL 18 binaries supplied through --bindir and pgvector 0.8.7 already installed for that server. It verifies its owned private endpoint, records exact and approximate results, then stops and removes its instance. It calls no embedding service and installs no machine-wide software.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL You’re here
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousFull-text search in PostgreSQL NextTypes and extensions in PostgreSQL
+Sources and further reading
+[href=https://github.com/pgvector/pgvector/tree/v0.8.7#readme] pgvector 0.8.7 documentation — operators, query shapes, filters, iterative scans and index maintenance.
+[href=https://arxiv.org/abs/1603.09320] Malkov and Yashunin: Hierarchical Navigable Small World graphs — the graph search method.
+[href=https://github.com/pgvector/pgvector/blob/v0.8.7/src/hnsw.c] pgvector HNSW implementation and settings and  [href=https://github.com/pgvector/pgvector/blob/v0.8.7/src/ivfflat.c] IVFFlat implementation and settings — the version used in the drill.
+[href=https://www.postgresql.org/docs/18/using-explain.html] PostgreSQL 18: using EXPLAIN — plans, filtering and measured work.

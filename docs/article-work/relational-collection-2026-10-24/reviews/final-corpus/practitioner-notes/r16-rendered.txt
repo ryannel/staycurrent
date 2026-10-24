@@ -1,0 +1,307 @@
+Home
+Relational draft
+Retries when a commit reply is missing
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing You’re here
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Retries when a commit reply is missing
+Deep diveAbout 8 minutes AI-generated
+A missing commit reply leaves a question that another connection cannot answer merely by being healthy: did the purchase happen? The database may have rolled the transaction back when the connection ended. It may instead have committed just before its reply was lost. Sending the purchase again has to be safe in both histories.
+This differs from a transaction the database has explicitly rejected. A serialization failure says this attempt did not succeed and its whole decision must run again. A broken connection during commit says the application does not yet know the outcome. Treating both as “try the SQL again” loses that distinction.
+We follow Mina’s order 103, rewinding to before it exists. There is 1 blue mug and twelve packs of tea. She wants the mug and two packs, with agreed unit prices 20.00 and 4.50. The purchase must record its order and two lines while taking stock to P7 0 and P3 10. It remains pending payment. PostgreSQL 18 supplies the concrete protocol; the same uncertainty appears wherever a reply can go missing.
+Two histories, one missing reply
+Name the logical request before attempting it
+Commit the identity with the purchase
+Choose the retry from the outcome
+The record has a lifetime
+Repeat the protocol
+Two histories, one missing reply
+A transaction can commit before the application hears that it committed. The change and the message reporting it are separate events. The gap can be small and still matter.
+Figure 1 The caller sees the same thing
+Connection ends before commit
+Reserve stock and write order 103.
+Connection ends with the transaction open.
+Database aborts the transaction.
+Caller: no success reply
+Database: no order 103; stock unchanged.
+Commit succeeds; reply goes missing
+Reserve stock and write order 103.
+Database commits the transaction.
+Success reply never reaches the caller.
+Caller: no success reply
+Database: order 103 exists; stock reduced.
+Chosen histories, not a timing measurement. What the database did differs; what the caller received does not.
+In the second history a blind stock reservation now finds no mug. Reporting “out of stock” would lose Mina’s successful purchase even if a primary key prevented a duplicate order. With replenished stock, a new order ID and no request identity, another attempt could instead become a second purchase. A guard against negative stock is not a record of which logical request used it.
+Nor does a timeout establish the first history. It says a deadline expired. The server may still be working, and a cancellation can race with completion. Dispose of a broken connection, let the owner finish its cancellation and cleanup, and resolve the purchase separately. Replacing a connection repairs transport capacity; it does not resolve the old operation.
+Name the logical request before attempting it
+Give this purchase a stable opaque request key, purchase-mina-103. Create it before the first attempt, retain it through a dropped reply and reuse it on every retry of that purchase. A second attempt must not generate a second key. The example’s readable spelling is for us; an actual key need not contain an order number.
+The key identifies an intention across attempts. A database transaction ID identifies one attempt inside a database. Order ID 103 identifies a stored order. A payment provider’s effect ID identifies work at that provider. They have different authorities and lifetimes. Retrying the same purchase should retain its request key even when it needs a fresh connection and a fresh database transaction.
+A key alone is insufficient. Suppose the caller reuses it while changing the quantity of tea. The application must reject that conflicting reuse, rather than return the old order as though it matched the new request. Store a fingerprint of every meaningful input alongside the key.
+Here the fingerprint is a normalised JSON value containing Mina’s customer ID, both product IDs, quantities and agreed unit prices. The application first establishes the customer’s authority, validates quantities and obtains prices from an authorised quote. It orders lines consistently and represents exact prices consistently. Comparing arbitrary request JSON would make incidental formatting or omitted fields decide whether two intentions match.
+The experiment stores that normalised value itself as jsonb and compares it for equality. A compact hash is another representation, but then canonicalisation, the hash algorithm and collision handling belong to the contract. Do not leave the meaning of “same payload” to whichever serialiser happens to run.
+Commit the identity with the purchase
+Add a purchase_requests table to record successful purchases. One row means “this logical purchase committed, with this payload and this resulting order”. For this example the successful result is the order ID. It does not claim that payment arrived or that the order’s later status will never change.
+CREATE TABLE purchase_requests (
+request_key text PRIMARY KEY,
+payload jsonb NOT NULL,
+order_id integer NOT NULL
+REFERENCES orders (order_id)
+DEFERRABLE INITIALLY DEFERRED
+);
+The primary key is immediate, so two simultaneous attempts cannot both claim the same request key. The order reference is deferred: the transaction can claim the request before it inserts the order, but the order must exist at commit. The request, stock deductions, order and lines all belong to that one transaction.
+Claim the identity before doing purchase work. These placeholders represent bound values in application code:
+BEGIN ISOLATION LEVEL READ COMMITTED;
+INSERT INTO purchase_requests
+(request_key, payload, order_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (request_key) DO NOTHING
+RETURNING request_key;
+A returned key means this transaction inserted it. Reserve the products in a consistent order, using conditional stock updates; insert order 103 and its two lines; commit. If any product is unavailable or another operation fails, roll back the whole transaction, including the new request record. Report success only after commit succeeds.
+No returned key means another attempt owns or has recorded it. PostgreSQL’s uniqueness check can wait for an overlapping transaction to finish. If that transaction aborts, this insertion can proceed. If it commits, this insertion does nothing. Start a separate subsequent statement to read the stored result:
+SELECT payload, order_id
+FROM purchase_requests
+WHERE request_key = $1;
+-- Same normalised payload: return that order_id.
+-- Different payload: reject conflicting key reuse.
+-- Do not run the stock updates on this branch.
+End the replay transaction before returning its recorded result. The separate statement matters at Read Committed: it gets a fresh snapshot after a possibly waiting insertion. A single statement combining “insert if absent” with a fallback lookup can have an earlier snapshot that cannot see the conflicting row which made the insert do nothing. An unexpectedly missing result requires bounded resolution, not permission to run an unowned purchase.
+This protocol assumes request records are not concurrently deleted or rewritten. The authoritative lookup goes to the write authority, not a replica that may be behind. An earlier absence query is never the claim: the original attempt could still be in progress and commit afterwards. The unique insertion coordinates those overlapping attempts.
+Figure 2 starts at the missing reply. Follow the committed history, then switch to the disconnected-before-commit history. Both reuse the same identity; only the second performs the purchase during resolution.
+Figure 2 The same request finds either outcome safely
+What happened to the first attempt? Committed · reply withheldDisconnected before commit
+Logical purchase, across every attemptpurchase-mina-103Mina · 1 mug + 2 tea · agreed prices unchanged
+Caller
+Success reply missingRetains request key and payload
+Database
+Order 103 committedCommitted stock · P3: 10 · P7: 0
+Request record in the purchase transactionpurchase-mina-103 → order 103
+The caller has no confirmed result. In this selected history the database has already committed the whole purchase and its request record.
+PlayBackNextReset
+Conceptual histories using the fixed stock values. The animation exposes the server’s chosen history to the reader; the caller cannot infer it from the missing reply.
+Resolution as text
+If the first attempt committed, the retry’s insertion of the same request key finds the existing record. A subsequent Read Committed statement compares the payload and returns order 103 without taking stock again. If the first attempt aborted, no request record or purchase effect remains. The retry claims the same key and performs the purchase, committing the record, stock, order and lines together. An overlapping first attempt can make that key insertion wait; absence in an earlier lookup alone does not grant ownership.
+The disposable PostgreSQL 18.6 experiment deliberately withheld a real successful commit’s acknowledgement from a simulated caller. Replaying the same key and payload returned 103 with stock and row counts unchanged. Without that resolution branch, another conditional mug reservation returned no row, reproducing the misleading refusal. A separate client termination before commit left no request or purchase effects, so the same key could perform the purchase on a fresh attempt.
+The experiment also overlapped two key insertions. The second waited for the first transaction and then read its committed order in a new statement. A changed payload was rejected before any stock work. The reply withholding is an explicit fault injection at the caller boundary; it is not a measured network partition, power failure or driver’s automatic retry behaviour.
+Choose the retry from the outcome
+The application needs an error policy that preserves what it actually knows. PostgreSQL SQLSTATEs are stable identities for database errors; a transport exception is a different kind of evidence.
+What the application knows, and what it may do next
+ResultMeaningNext action
+Successful commit replyPurchase committed under the configured durability promiseReturn its recorded outcome
+40001, serialization failureThis attempt cannot commit as executedRoll back; repeat the complete transaction and decision
+40P01, deadlock victimThis attempt was selected to break a deadlockRoll back; bounded whole-operation retry where appropriate; fix recurring ordering
+Insufficient stockAn application precondition failedRoll back this new purchase and return a refusal
+Connection loss while commit is in flightCommit outcome unknownReconnect and resolve with the same request identity
+Different payload under the same keyConflicting request reuseReject; do not reinterpret it as the old purchase
+Rerunning a transaction includes its application decisions. A new snapshot may show that the class is full or the stock is gone. Reusing a value calculated from an earlier attempt defeats the reason for retrying. Keep network calls and other irreversible effects outside the retrying transaction; an aborted database attempt cannot recall an email already sent.
+Do not retry every constraint violation. A duplicate request key is handled by the protocol above; another duplicate key may indicate invalid input or a bug. A check violation does not become valid because the application waits. Classify the relevant object and SQLSTATE, and keep unexpected errors visible.
+Use a bounded retry budget with backoff and jitter, so competing clients do not all immediately collide again. Bound total elapsed time as well as attempt count, and include connection acquisition, lock waits and cleanup. Exhausting that budget while the outcome is uncertain must remain an unresolved purchase. Retain the key and offer a status lookup or later reconciliation; do not translate exhaustion into “the purchase did not happen”.
+The record has a lifetime
+Keeping the request key only in process memory would lose it on the next process restart. The caller or its durable workflow must retain it for as long as it may need to repeat the intention. If the browser creates a fresh key on every submit, a double-click can still become two logical requests. The interface must decide when the user is resuming a purchase and when they are starting another.
+The server must retain the outcome too. Deleting a request record while an old retry is still possible makes that retry look new. Choose retention from the maximum replay and reconciliation window, and keep a durable rejection of expired identities if deletion would otherwise reopen them. Authorise status lookups; knowing an opaque key alone should not grant access to someone else’s order.
+This deliberately small relation records successful purchases. An insufficient-stock attempt rolls back its key, so a later retry can try the purchase again against later stock. If the product contract promises to remember refusals permanently, model those terminal outcomes explicitly and commit them under the same identity. That is a different contract from assuming every failed attempt has been remembered.
+A database record also has the database’s durability and recovery limits. Restoring a backup that excludes a previously acknowledged request can remove its deduplication record along with its order. Reconcile valid later requests and any external effects before reopening an old history; a key cannot recognise a record that recovery discarded.
+Repeat the protocol
+Download the retry experiment and its fixed shop data into the same directory. Run python3 run-retries.py --bindir /path/to/postgresql/bin. It uses the Python standard library and PostgreSQL client, checks an owned disposable cluster through a private socket and removes it afterwards.
+The scratch schema keeps the purchase’s identity, stock, order and lines; historical orders and payments are outside this fixture. Checks compare the complete resulting stock vector and row counts. No provider charge is attempted. Outboxes and database-backed jobs carries this identity reasoning across a boundary that the database transaction cannot commit for itself.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing You’re here
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousRow versions, storage and cleanup NextOutboxes and database-backed jobs
+Sources and further reading
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/protocol-flow.html] Message Flow: transaction messages, connection termination and the distinction between a server operation and its reply.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/index-unique-checks.html] Index Uniqueness Checks and  [href=https://www.postgresql.org/docs/18/sql-insert.html] INSERT: a conflicting insertion waits, and RETURNING reports rows actually inserted.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/transaction-iso.html#XACT-READ-COMMITTED] Read Committed: new statement snapshots and a conflict that can prevent insertion despite not being visible to that statement’s snapshot.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/sql-createtable.html] CREATE TABLE: immediate identities and deferred references;  [href=https://www.postgresql.org/docs/18/mvcc-serialization-failure-handling.html] Serialization Failure Handling: retrying the whole decision.
+On this site, Locks, contention and deadlocks develops waiting and ordering; Backup, restore and reconciliation develops recovery across the lifetime of recorded requests.

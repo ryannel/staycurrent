@@ -1,0 +1,281 @@
+Home
+Relational draft
+PostgreSQL processes, pages and row versions
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions You’re here
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+PostgreSQL processes, pages and row versions
+Deep diveAbout 7 minutes AI-generated
+One PostgreSQL query crosses several kinds of boundary. An application sends SQL to a server process. That process works on pages shared in memory, finds a physical row version and decides whether the requesting transaction may see it. The product ID names a logical product; the address found in an index names a place in storage.
+Keeping these roles separate explains several otherwise surprising observations. A second connection can find a page warmed by the first. Updating one price can create another physical tuple without changing the product’s identity. An index can contain an address for an older version and still lead a new reader to the right answer.
+We will follow the shop’s blue mug, P7, through a lookup and an update. Its starting catalogue price is 20.00. The later update to 25.00 is a scratch storage experiment, separate from the collection’s dated price-correction history. Order 103’s agreed unit price stays 20.00.
+One connection, one backend
+What a page address means
+Shared pages, private work
+Which version is visible?
+The same-page shortcut
+Wide values and later work
+One connection, one backend
+The main postgres process accepts connections and starts a server process for each one. That process, usually called a backend, handles the connection’s commands. The client library communicates with it directly after connection setup; the supervisor does not relay each SQL statement.
+This is why a connection is a resource even while it has no query to run. Each backend has its own process state and private working memory. A connection pool reuses a smaller set of connections across application requests. It does not make those requests share one SQL transaction unless the application explicitly arranges that.
+For a query, the backend parses the SQL, resolves names and types, plans a route through the data and executes it. Prepared statements can reuse some of that work. A plan can also enlist parallel workers, so “one backend per connection” does not mean every query is limited to one process. The connection’s backend still coordinates its result.
+SELECT price
+FROM products
+WHERE product_id = 'P7';
+Suppose the planner chooses the primary-key index. Figure 1 follows that route. The index and table are separate structures, but both are read through the server’s shared buffers.
+Figure 1 One lookup, across process and storage boundaries
+An application sends a query to its backend process. The backend searches index pages in shared buffers, follows P7's tuple address to a heap page and checks visibility before returning the price. A missing page is read from its server-side file into shared buffers. All server processes share this cache.   DATABASE SERVER · process boundary is not a machine boundary Application / driver SQL ↓ ↑ 20.00 Connection’s backend  SHARED BUFFERS · memory Index pageP7 → (0,1) Heap page 01: P7 · 20.00 1 · search key  2 · visibility Table / indexfiles on a cache miss
+Illustrative addresses and a chosen index route. The tiny three-product table may be cheaper to scan. Index and heap pages use the same shared cache; the drawing separates them so their jobs stay visible.
+The index supplies a location. The heap supplies the row values and visibility information. Returning the price requires both jobs unless an eligible index-only scan can answer without visiting the heap. On the actual three-product table, a sequential scan may sensibly be cheaper than using the index; the drawing isolates the indexed route rather than claiming it is this query’s captured plan.
+What a page address means
+A normal PostgreSQL heap is a sequence of fixed-size pages, usually 8 kB each. A page holds a header, an array of small item identifiers, free space and the tuple bodies themselves. The item identifiers grow from the beginning of the page; the tuple bodies are allocated from the other end. Each item identifier, also called a line pointer, records where its tuple lies within the page.
+An address such as (0,1) means page 0, item 1. It does not mean the first product in key order. PostgreSQL can move a tuple body within its page when compacting space and update the line pointer without changing that item number. Moving the row version to a different item or another page changes its physical address.
+SELECT product_id, price, ctid, xmin, xmax
+FROM products
+WHERE product_id = 'P7';
+ctid exposes this version’s page-and-item address. xmin identifies the transaction that inserted the version. xmax can describe a deletion or replacement, but also carries locking information. A non-zero value is not sufficient evidence that the row is absent: transaction outcome, tuple flags and the reader’s snapshot matter.
+These columns help explain storage; they are poor application identities. An update can change ctid, a rewrite can move every tuple, and a freed address can later be reused. Keep P7 as the product identity. A transaction ID is likewise not a durable business sequence or a substitute for an explicit history record.
+Shared pages, private work
+Before examining a heap or index page, a backend needs it in shared buffers, PostgreSQL’s shared page cache. A hit finds the page there. A miss reads the page from its file into a buffer slot. The operating system may satisfy that read from its own file cache, so a PostgreSQL buffer read does not prove that the physical drive was accessed.
+A query on another connection can reuse the same buffered page. Disconnecting the first client does not empty the shared cache. Conversely, restarting the server loses shared buffers even though its data files remain. A correct server can therefore need substantial reads while its working set warms again.
+Private work has a different shape. Sorting candidate rows or building a hash table can need memory belonging to a query operation. The work_mem setting governs many such operations before they spill to temporary files; it is not a single reservation for the whole server or even a hard total for one query. Several nodes, workers and concurrent sessions can multiply that demand. Enlarging shared buffers and enlarging sort memory address different work.
+Backends also share coordination structures, including locks. A long transaction can hold a row lock while doing little CPU work. A page being present in memory therefore says nothing about whether a query can proceed without waiting. Operating and diagnosing PostgreSQL connects process activity, waits and memory pressure to an incident.
+Which version is visible?
+Now a report begins a read-only Repeatable Read transaction and reads P7 at 20.00. Another connection updates the scratch catalogue to 25.00 and commits. PostgreSQL adds a replacement tuple to the heap rather than simply overwriting the old price.
+The report retains the snapshot it established at its first query. The writer’s later committed version is outside that snapshot. A fresh reader can see the replacement, while the report continues to see the earlier tuple. Both readers can examine the same heap page and return different prices correctly.
+Observed on the owned PostgreSQL 18.6 scratch instance
+ReadPricectid
+Report before update20.00(0,1)
+Fresh reader after commit25(0,2)
+Same report after commit20.00(0,1)
+This decision is more than comparing a transaction number with a clock. A snapshot records which transactions were still in progress as well as a visibility boundary; commit and abort status also matter. A transaction can obtain an ID before another and commit after it. The IDs in tuple headers alone do not reveal a total commit order.
+At the default Read Committed level, a new statement takes a fresh snapshot. Two successive reads in one transaction can therefore return different committed prices. Repeatable Read was chosen deliberately for the report. Its older view also has a physical cost: the earlier tuple must remain available while a relevant snapshot can need it.
+The same-page shortcut
+A replacement tuple normally needs new ordinary index entries, even for indexes whose key values stayed the same. Their entries locate physical versions. PostgreSQL can avoid that work with a heap-only tuple, or HOT, update.
+Two conditions make the shortcut possible. The update must not change columns referred to by the table’s non-summarising indexes, including expressions and included values. And the replacement must fit on the same heap page. The original index entry can then reach the new version through a same-page chain.
+Step through Figure 2, then choose the price-indexed and full-page cases. Watch the primary-key index even though P7 never changes.
+Figure 2 When can the index keep its original address?
+Update case Price not indexed · same-page spacePrice indexed · same-page spacePrice not indexed · page full
+Primary-key index
+P7 → (0,1)
+Heap page 0
+Item 1 · P7 · 20.00 current version
+Heap page 1
+Item 1 · P7 · 25.00
+The primary-key entry leads to item 1. P7 costs 20.00.
+PlayBackNextReset
+Read the three outcomes as text
+With room on the page and no ordinary index referring to price, the new version is heap-only: the original index entry follows a same-page chain. Indexing price prevents HOT even though both versions fit together. Without page space, the new version lands on another page and ordinary indexes need new entries even though their key values did not change.
+Conceptual layout using the native experiment’s addresses. The new price becomes visible to fresh snapshots after commit. A report retaining an earlier Repeatable Read snapshot still sees 20.00.
+The native check produced all three outcomes. With room and only the primary-key index, page inspection marked the new tuple heap-only. Adding an ordinary price index prevented HOT despite the same-page replacement. Filling a page with four wide scratch rows forced the changed row from (0,1) to (1,1), also preventing HOT despite unchanged indexed values.
+A lower table fillfactor reserves space during insertion and can make same-page replacements more likely. It also puts fewer initial rows on each page, increasing the pages a scan may need. It creates an opportunity rather than guaranteeing HOT indefinitely. A continually updated row can exhaust its space while old snapshots retain earlier versions.
+Summarising indexes have a special rule. PostgreSQL’s built-in BRIN can allow HOT when one of its referenced columns changes, although the summary may still require maintenance. Treat “no indexed column changes” as shorthand for the ordinary index case, rather than a universal rule covering every access method.
+Wide values and later work
+A tuple must fit within a heap page. For suitable variable-length types, TOAST can compress wide values or store them in chunks in a separate relation, leaving a reference in the main tuple. This can keep the main heap compact, but the bytes still exist and a query asking for the value may have to retrieve them.
+An unchanged out-of-line value can be reused by a replacement tuple. Updating stock therefore need not copy an enormous unchanged description. That is different from saying wide attributes are free: reading, transferring or changing the description has its own cost. Measuring only the main heap misses its TOAST storage and indexes.
+Updates also dirty buffered pages and generate WAL. Background writers and the checkpointer help write data pages; the WAL writer handles another part of the log work. A backend can have to write a dirty buffer itself when it needs to reuse that slot. These processes share the server’s work, but none changes which snapshot may see a tuple. WAL, checkpoints and durability follows their ordering and the commit reply.
+Finally, obsolete versions need cleanup. HOT chains can be pruned during ordinary page access; vacuum handles broader heap and index maintenance and maintains visibility information. Cleanup cannot discard a version merely because a newer one committed. Vacuum and transaction age follows the boundary that lets old versions go, and the maintenance required even when a table’s visible row count barely changes.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions You’re here
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousRebalancing and cluster change NextPostgreSQL vacuum and transaction age
+Sources and further reading
+Checked against the PostgreSQL 18 manual on 24 October 2026. The drawings are conceptual. The visibility and three HOT cases were executed on an owned, disposable PostgreSQL 18.6 instance with 8 kB pages. The recorded addresses and tuple flags describe that fixture, not stable addresses or a performance forecast. No timing or production workload result is claimed.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/tutorial-arch.html] Architectural fundamentals,  [href=https://www.postgresql.org/docs/18/query-path.html] The path of a query and  [href=https://www.postgresql.org/docs/18/parallel-query.html] Parallel query: connection backends, planning and worker processes.
+[href=https://www.postgresql.org/docs/18/storage-page-layout.html] Database page layout and  [href=https://www.postgresql.org/docs/18/ddl-system-columns.html] System columns: line pointers, tuple headers and physical addresses.
+[href=https://www.postgresql.org/docs/18/mvcc.html] Concurrency control and  [href=https://www.postgresql.org/docs/18/transaction-iso.html] Transaction isolation: snapshots, transaction outcomes and the selected report protocol.
+[href=https://www.postgresql.org/docs/18/storage-hot.html] Heap-only tuples: both HOT conditions, summarising indexes and pruning.
+[href=https://www.postgresql.org/docs/18/storage-toast.html] TOAST and  [href=https://www.postgresql.org/docs/18/runtime-config-resource.html] Resource consumption: wide values, shared buffers and per-operation memory.
+[href=https://www.postgresql.org/docs/18/pageinspect.html] pageinspect: the native tuple-flag inspection used to distinguish same-page placement from HOT.

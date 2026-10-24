@@ -1,0 +1,291 @@
+Home
+Relational draft
+Reading and repairing PostgreSQL plans
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans You’re here
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Reading and repairing PostgreSQL plans
+Deep diveAbout 7 minutes AI-generated
+A useful PostgreSQL plan reading ends with a cause you can test. “There is a sequential scan” names an operation. “The query casts the indexed integer column to text, so the integer index cannot supply that comparison” explains why the scan remains. The second statement suggests a repair and predicts what the next plan should show.
+There are several distinct reasons for excessive work: wrong counts, an unsuitable access path, information lost through parameters, repeated inner work or an operation that spills. A single change rarely fixes them all. We will keep those causes separate while repairing one generated workload, checking the answer alongside the plan.
+The fixture uses the collection’s shop labels in a separate synthetic workload: shop 10 has 99,000 paid records; shop 20 has 1,000 pending records. It contains no purchase lines, payments or stock effects and is not a new history of the shop. Its deliberate skew lets a small test expose decisions that are hard to see with evenly distributed rows.
+Capture the query that runs
+Read counters at their scope
+Fix the first wrong estimate
+Knowledge is not an access path
+A partial index needs a proof
+Test both sides of the skew
+When the counts are right
+Capture the query that runs
+Keep the SQL text, parameter values and types, relation definitions, statistics state and relevant session settings with the plan. A console query with a literal is not necessarily the same planning problem as a prepared application query with unknown parameters. Roles, row policies and search paths can change which work is required too.
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SETTINGS)
+SELECT order_id
+FROM plan_orders
+WHERE shop_id = 20 AND status = 'pending';
+ANALYZE here executes the statement. It does not mean the standalone statistics command. Use a statement whose execution is acceptable, on a representative disposable copy when necessary. An analysed update really updates; rolling back row changes does not undo every possible external effect of arbitrary called code.
+TIMING OFF preserves counts and whole-query execution time while avoiding repeated node clock reads. SETTINGS exposes relevant non-default planning settings, but is not a complete environment manifest. JSON output is useful for tools that need the plan tree without parsing wrapped text.
+First establish whether execution work is actually the delay. A query can wait for a lock, sit behind a connection queue or deliver rows to a slow client. Operator improvements cannot remove an application queue. Operating and diagnosing PostgreSQL establishes that service boundary.
+Read counters at their scope
+Read a branch from its row sources towards its result. Estimated rows means rows emitted by a completed node, after its filtering, rather than every tuple it examines. An aggregate emitting one count can consume a million inputs. A Limit can stop its child early, so a large estimate and a small actual output beneath it are not automatically a statistics failure.
+For a node with several loops, actual rows and times are averages per execution. Multiply rows by loops to understand the repeated output, allowing for displayed rounding. Buffer accesses already accumulate across executions. Multiplying those by loops again invents work.
+Reading three hypothetical node lines; these are arithmetic examples
+ReportedWhat it establishes
+actual rows=3 loops=1000About 3,000 rows emitted across executions
+Buffers: shared hit=40004,000 shared-buffer accesses satisfied there, not 4,000 distinct pages
+Parent 5,000 accesses; child 4,000The parent includes child work; adding them would double-count the child
+shared read counts blocks brought into shared buffers, including reads satisfied from the operating-system cache. local refers to session-local relations such as this fixture’s temporary tables. temp read and temp written describe temporary work files, such as a spilling sort. These categories answer different questions.
+With node timing enabled, parent time includes child time. Find the expensive branch, then descend to explain it. Parallel plans add worker scopes: inspect worker detail, launched versus planned workers and imbalance before adding or multiplying counts. One slow worker can hold up a gather even when totals look reasonable.
+Fix the first wrong estimate
+For branches consumed to completion, compare expected and actual outputs from the leaves upward. A join’s error can have arrived from an earlier scan. Find the earliest material disagreement before changing the join method.
+Fresh single-column statistics in the fixture know that about one percent of records belong to shop 20, and about one percent are pending. They do not describe that these are the same records. Treating the conditions independently predicts roughly ten matches; execution returns 1,000.
+CREATE STATISTICS plan_joint (mcv)
+ON shop_id, status FROM plan_orders;
+ANALYZE plan_orders;
+The joint most-common-value summary changed the observed scan estimate from 10 to 977 rows for 1,000 actual rows. Sampling explains why the new estimate was close rather than exact. The route remained a sequential scan over the same table: improved knowledge had not yet created a cheaper access path.
+Choose statistics from the error. Stale counts after a bulk load suggest analyze. A rare but important skewed value may need a larger target. Correlated conditions can need joint common values or dependency statistics; grouping estimates can need distinct-count statistics. PostgreSQL 18 does not use extended statistics to estimate cross-table joins, so do not expect a within-table object to repair every join estimate.
+Knowledge is not an access path
+Now put a B-tree on integer shop_id, but ask for shop_id::text = '20'. The planner has an index for integer comparison, while the query compares text produced by an expression. In the experiment this remained a scan.
+CREATE STATISTICS plan_shop_text
+ON (shop_id::text) FROM plan_orders;
+ANALYZE plan_orders;
+The estimated output improved from 500 to 960 for the same 1,000 records. All 100,000 rows still needed the expression check. An expression statistic is not a stored search structure.
+If the application’s intended operation is integer equality, keep the column as an integer and type the parameter accordingly. The fixture’s corrected condition, shop_id = '20'::integer, became an index scan with 25 local buffer accesses, compared with 2,048 for the cast-column scan. For a real parameterised query, bind an integer rather than accepting arbitrary text as an identity.
+If text conversion really is the application’s required operation, an expression index is a different candidate. Choose it for that meaning and verify matching expressions and operators. Rewriting arbitrary comparisons just to make an index appear can change collation, missing-value or conversion-error behaviour.
+A partial index needs a proof
+The pending list now gets a specialised index:
+CREATE INDEX pending_history
+ON plan_orders (shop_id, order_id)
+WHERE status = 'pending';
+PREPARE order_list(integer, text) AS
+SELECT order_id FROM plan_orders
+WHERE shop_id = $1 AND status = $2
+ORDER BY order_id
+LIMIT 10;
+With the supplied values 20, 'pending', a custom plan can prove that every requested row belongs in the index. It scans that shop’s entries in order and stops at ten. A generic plan must work for any permitted second parameter. If it were paid, the pending-only index would omit the required rows.
+Figure 1 compares the two planning contexts, then fixes pending in the SQL itself. This is appropriate only when the application is asking for a pending list, rather than a general list whose status may vary.
+Figure 1 What does the planner know about status?
+Query and plan Custom · status supplied as pendingGeneric · status remains $2Generic · pending is fixed in SQL
+Query condition
+shop_id = 20 AND status = 'pending'
+Partial-index proof
+The answer lies within status = 'pending'.
+Observed route
+Ordered index-only scan → Limit 10
+3 local buffer accesses at Limit; 10 rows returned.
+Read all three observed routes
+Custom with pending uses the partial index and three local buffer accesses. Generic with an unknown status scans 2,048 heap pages and sorts. Generic with pending fixed in SQL uses the partial index and three local accesses. Each returns the same first ten pending order IDs for shop 20. These counts come from the native fixture; the boxes explain the proof, rather than simulating PostgreSQL.
+One PostgreSQL 18.6 run with a deliberately sparse index: (shop_id, order_id) WHERE status = 'pending'. Plan modes were forced to expose the distinction. No automatic switch to a generic plan or general speed ratio is claimed.
+The generic two-parameter plan scanned 2,048 heap pages and used a top-N sort. Top-N kept only ten rows in sort memory, but still consumed the 1,000 candidates to identify the first ten. The custom pending plan touched three local buffers at Limit and stopped after ten index outputs. Its label was Index Only Scan, yet it reported ten heap fetches: covering columns did not eliminate visibility checks on this unvacuumed fixture.
+A generic plan for the revised pending-only statement could also use the partial index. The status predicate was now known before binding the shop parameter. Its scan estimate described the possible complete run, while Limit still consumed only ten rows. The returned IDs were 99001 through 99010, the same pending result as before.
+Test both sides of the skew
+The pending-only query is not a replacement for a paid-order query. In the general statement’s custom paid case, shop 10 returned 99,000 candidates before Limit’s final ten; the pending index could not help. An additional full ordered index might remove that scan too, but would maintain entries for every record. The workload must earn it.
+To expose plan contexts, the worksheet uses plan_cache_mode = force_custom_plan and force_generic_plan. Automatic mode makes its own estimated-cost comparison after initial custom executions. The experiment does not show that PostgreSQL would automatically choose the forced generic plan or that all prepared statements should be forced custom.
+Read EXPLAIN EXECUTE for the session’s actual prepared statement. Generic plans retain symbols such as $1; custom plans show supplied constants. pg_prepared_statements can report the session’s prepared objects and plan-use counts. An unnamed protocol statement or a connection pool can make session state differ from a separate SQL console, so reproduce the driver’s behaviour as well as the text.
+For each repair, compare common, rare and empty values, as well as small and large tenants. Verify stable identities and ordering, then compare the work predicted to disappear. A warm run after building an index can benefit from cached data the baseline did not have. Keep page-access evidence and latency evidence distinct; repeat latency tests under the concurrency and cache conditions that matter.
+When the counts are right
+Accurate estimates do not guarantee that the requested work is cheap. A nested-loop inner lookup can be individually efficient and still run hundreds of thousands of times. Check the outer cardinality, whether the full join key narrows the inner search and whether repeated keys allow Memoize reuse. A hash or merge comparison can test a hypothesis, but disabling nested loops globally does not explain the original decision.
+For a sort, inspect method, memory, disk use and temporary I/O. For a hash operation, inspect batches and build width. Removing an unused large payload before either operation can reduce memory demand without changing the result. An ordered access path can sometimes remove a sort entirely; increasing work_mem merely changes how a remaining operation is paid for.
+Test memory changes locally and account for concurrent nodes, sessions and parallel workers. Avoid tuning server-wide page costs to make one demonstration choose a preferred route. Cost settings describe the expected environment; they cannot fix a predicate asking for the wrong operation or a missing index.
+A good repair record keeps the result contract, original plan, hypothesis, one relevant change and the new plan together. State what changed: an estimate became credible, a scan became bounded, repeated work fell, or a spill disappeared. Then state the limit: which values, data shape and execution context were actually checked. That makes the next regression diagnosable instead of merely surprising.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans You’re here
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousPostgreSQL index methods and operators NextPostgreSQL JSON and structured alternatives
+Sources and further reading
+Checked on 24 October 2026. Download the plan-repair worksheet and run psql -X -v ON_ERROR_STOP=1 -f plan-repairs.sql in a disposable database. The complete file ran on a private PostgreSQL 18.6 instance. It uses temporary synthetic relations, disables parallel gathering for legible comparisons, forces the two stated plan modes and resets both changes. Counts and estimates in the article are observed; the counter arithmetic and proof diagram are explanations. No automatic-plan-switch or production-latency claim is made.
+[href=https://www.postgresql.org/docs/18/using-explain.html] Using EXPLAIN and  [href=https://www.postgresql.org/docs/18/sql-explain.html] EXPLAIN: node scopes, partial consumption, loops, buffers, rechecks and execution caveats.
+[href=https://www.postgresql.org/docs/18/planner-stats.html] Planner statistics and  [href=https://www.postgresql.org/docs/18/sql-createstatistics.html] CREATE STATISTICS: joint and expression summaries and the join-estimation limitation.
+[href=https://www.postgresql.org/docs/18/sql-prepare.html] PREPARE,  [href=https://www.postgresql.org/docs/18/view-pg-prepared-statements.html] pg_prepared_statements and  [href=https://www.postgresql.org/docs/18/indexes-partial.html] Partial indexes: plan contexts and predicate implication.
+[href=https://www.postgresql.org/docs/18/runtime-config-resource.html] Resource consumption,  [href=https://www.postgresql.org/docs/18/runtime-config-query.html] Query planning settings and  [href=https://www.postgresql.org/docs/18/parallel-plans.html] Parallel plans: operation memory, diagnostic settings and worker scopes.

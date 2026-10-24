@@ -1,0 +1,351 @@
+Home
+Relational draft
+Joins and the meaning of a result row
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row You’re here
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Joins and the meaning of a result row
+Deep diveAbout 8 minutes AI-generated
+A join returns a row for each matching pair of input rows. That small rule explains both its usefulness and its most expensive mistakes. Adding a customer name to each order may leave the row count unchanged. Adding payments to order lines may multiply it. Both queries can be valid SQL, and both can return plausible amounts.
+The first question is therefore what one result row should mean. A receipt wants one row per order line. A list of orders wants one per order. A list of customers who have ordered wants one per customer, however many orders they have. Keep that meaning in view while choosing the matches.
+This article builds the shop’s still-due report: the value of each order, its recorded payments and the difference. It uses PostgreSQL 18 and the same three orders as the introduction. The figures illustrate result construction; the downloadable SQL checks the results on PostgreSQL 18.6.
+One row for each match
+Two independent collections
+Total before combining
+Keeping unmatched rows
+Whether a match exists
+Checking the question
+One row for each match
+Begin with orders and customers. Each order carries a customer_id, and the customer primary key makes that value unique on the other side.
+SELECT o.order_id, c.name
+FROM orders AS o
+JOIN customers AS c ON c.customer_id = o.customer_id
+ORDER BY o.order_id;
+One result row per order
+OrderCustomer
+101Mina Shah
+102Tariq Aziz
+103Mina Shah
+Order 101 finds Mina, order 102 finds Tariq, and order 103 finds Mina again. Mina appears twice because she has two orders. These are different order rows carrying the same customer fact, rather than duplicate customers in the source table.
+The key tells us that each order finds at most one customer. The non-missing foreign key tells us that the customer exists, so in this schema every order finds exactly one. A join condition alone promises neither. Joining on a non-unique name could find several people, and joining to an optional relation could find none.
+Now join orders to their lines instead. Order 101 has two matching lines, 102 has one and 103 has two. The result has five rows. One row now means one order line, identified by (order_id, line_no). The order’s date and customer ID repeat on each of its lines because they describe the order to which those lines belong.
+This meaning is often called the result’s grain. Write it as “one row per …” before adding a sum or another join. It gives you a concrete check: if one row should mean an order, why does order 101 appear twice?
+Two independent collections
+Order 101 has two lines, worth 4.50 and 35.00, and two payments, 30.00 and 9.50. The line numbers identify what was bought. The payment IDs identify payments towards the order; no payment belongs to a particular line.
+Joining these collections on order_id therefore matches every line with every payment for that order. Read the four pairs in the drawing, then choose Total each side first.
+Figure 1 Two lines meet two payments
+Order 101’s lines
+Line 1P3 · 4.50
+Line 2P9 · 35.00
+Order 101’s payments
+Payment 501card · 30.00
+Payment 502gift card · 9.50
+Join the details Total each side first
+One result row = one line–payment pair.
+Order 101 · four matching pairs
+LineLine amountPaymentPayment amount
+14.5050130.00
+14.505029.50
+235.0050130.00
+235.005029.50
+4 pairs → line sum 79.00; payment sum 79.00
+One result row = one order.
+One matching pair of totals
+OrderLine totalPayment total
+10139.5039.50
+1 pair of totals → still due 0.00
+Every line matches both payments on order_id. Read down either amount: each original contribution appears twice.
+The matches as text
+Line 1, amount 4.50, matches payments 501 (30.00) and 502 (9.50). Line 2, amount 35.00, matches those same two payments. Totalling each side separately gives 39.50 and 39.50, then one joined row. This is a model of the result’s meaning, not an execution plan.
+The detailed join has four rows: two lines times two payments. With three lines and four payments, it would have twelve. The match is a pair of facts about the same order, not evidence that one payment paid for that particular line.
+SELECT i.order_id,
+SUM(i.quantity * i.unit_price) AS order_total,
+SUM(p.amount) AS paid
+FROM order_items AS i
+JOIN payments AS p ON p.order_id = i.order_id
+GROUP BY i.order_id
+ORDER BY i.order_id;
+For 101 this reports 79.00 for the order and 79.00 paid. Subtracting gives zero, the correct balance for the wrong reason. Order 102 also looks correct because it has one line and one payment. Order 103 disappears because it has no payment. Testing only a single-line paid order would miss both defects.
+GROUP BY does not undo the multiplication. It adds the values on the rows it receives, including every repeated contribution. Nor does SUM(DISTINCT amount) repair it. That removes repeated values, so two legitimate payments of the same amount would be counted once. The identities are different even when their amounts agree.
+SELECT DISTINCT removes identical projected result rows. It is useful when that is the requested answer, but it cannot decide which line or payment each amount belongs to. Keep the right identities through the calculation instead of asking a duplicate-removal step to reconstruct them.
+Total before combining
+The report wants one row per order, so first make each collection have that grain. Total the lines by order_id, and separately total payments by order_id. Each derived result then has at most one row for any order. Combining them cannot multiply an order’s amounts.
+WITH lets us name these intermediate query results. Such a name is a common table expression, or CTE. It is available to this statement, rather than being a stored report table.
+WITH line_totals AS (
+SELECT order_id, SUM(quantity * unit_price) AS order_total
+FROM order_items
+GROUP BY order_id
+), payment_totals AS (
+SELECT order_id, SUM(amount) AS paid
+FROM payments
+GROUP BY order_id
+)
+SELECT o.order_id, c.name, l.order_total,
+COALESCE(p.paid, 0::numeric) AS paid,
+l.order_total - COALESCE(p.paid, 0::numeric) AS due
+FROM orders AS o
+JOIN customers AS c ON c.customer_id = o.customer_id
+LEFT JOIN line_totals AS l ON l.order_id = o.order_id
+LEFT JOIN payment_totals AS p ON p.order_id = o.order_id
+ORDER BY o.order_id;
+The still-due report, using recorded line prices and payments
+OrderOrder totalPaidDue
+10139.5039.500.00
+10240.0040.000.00
+10329.000.0029.00
+Order 101 now combines one line-total row with one payment-total row. Order 103 has a line total but no payment-total row. A LEFT JOIN retains its order row and supplies NULL for the missing payment columns. COALESCE turns that missing total into zero: no recorded payments contributed to it.
+We do not apply the same substitution to a missing line total. This schema does not enforce that every order has a line. An order with no lines would remain in this report with a missing total and balance, signalling that its value has not been established. Treating it as a free order would be a different business rule. The three core orders all have lines.
+The calculation uses the agreed unit_price on each line. Joining today’s product price into the sum would change old receipts when the catalogue changed. Likewise, the status text is not a substitute for summing payments. Here 101 and 102 are paid, but a status field does not prove that recorded amounts equal what is owed.
+The CTEs make the reasoning readable. They do not require PostgreSQL to execute the clauses as a series of stored temporary tables. The planner may combine work while preserving the result. Query execution and bad plans follows the physical choices; Aggregates, windows and ordered results develops the grouped calculations.
+Keeping unmatched rows
+An ordinary JOIN, also called an inner join, retains matches only. A left join additionally keeps each left-side row with no match, filling the right side with missing values. It does not add one missing row alongside existing matches. If an order has two matching payments, it still produces two result rows.
+That preservation happens at the join. A later WHERE can discard the preserved row again. Suppose we want every order alongside its card payments, if any. Compare the position of the card condition in the next figure.
+Figure 2 Where does the card condition act?
+In ONIn WHERE
+ON p.order_id = o.order_id AND p.method = 'card'
+Orders after the left join and filter
+OrderPaymentAmount
+10150130.00
+10250340.00
+103NULLNULL
+Order 103 has no card match. The left join preserves it, with missing payment columns.
+Both answers as text
+With the condition in ON, orders 101, 102 and 103 remain; their card payments are 501, 503 and no match. With the condition in WHERE, only 101 and 102 remain. The generated missing payment method on 103 does not equal 'card'.
+SELECT o.order_id, p.payment_id, p.amount
+FROM orders AS o
+LEFT JOIN payments AS p
+ON p.order_id = o.order_id AND p.method = 'card'
+ORDER BY o.order_id, p.payment_id;
+In ON, the condition defines a match. Order 103 has no card payment, so the left join keeps it with missing payment columns. Move p.method = 'card' to WHERE, and it tests the joined rows instead. The condition on 103 is unknown, and WHERE retains only true, so 103 disappears.
+Adding OR p.payment_id IS NULL in WHERE is not generally equivalent to putting the card restriction in ON. An order with only non-card payments already found matches at the join, so no missing placeholder row was created. The later filter would remove every one of those matches and lose the order. Make the join’s matching rule express the optional fact you want.
+A condition on the preserved side can still belong in WHERE. For example, WHERE o.customer_id = 1 deliberately selects Mina’s orders while retaining missing payments on them. Decide whether each condition chooses the parent rows, defines an optional match or filters the final result.
+A right join preserves the right input instead. A full join preserves unmatched rows from both sides, useful for comparing two independently supplied lists. Neither changes the pairing rule. Choosing a different outer join will not make two many-sided collections safe to sum together.
+Whether a match exists
+Sometimes we need no columns from the other side. “Which customers have ordered?” asks whether an order exists for each customer. Joining customers to orders would return Mina twice. EXISTS tests for at least one matching row without adding a result row for every match.
+SELECT c.customer_id, c.name
+FROM customers AS c
+WHERE EXISTS (
+SELECT 1
+FROM orders AS o
+WHERE o.customer_id = c.customer_id
+)
+ORDER BY c.customer_id;
+The answer is Mina and Tariq, one row each. The inner query refers to c.customer_id from the outer query; this makes it a correlated subquery. SELECT 1 is conventional because only the existence of a result matters. It does not count orders or choose a particular one.
+Reverse the test with NOT EXISTS to find customers without orders: Edda. For orders without any payment, change the outer table and the matching condition:
+SELECT o.order_id
+FROM orders AS o
+WHERE NOT EXISTS (
+SELECT 1
+FROM payments AS p
+WHERE p.order_id = o.order_id
+)
+ORDER BY o.order_id;
+This returns 103. It asks a different question from “which orders still have an amount due?” A partly paid order has a payment, so it fails this absence test while still owing money. To find positive balances, name the completed report as another CTE and filter its due > 0. In the core snapshot both questions happen to select 103.
+The matching condition is essential. Without p.order_id = o.order_id, the query asks whether the entire payments table is empty. Since payment 501 exists, every order would fail NOT EXISTS, including 103.
+A left join followed by WHERE p.payment_id IS NULL can express the same absence test. Test a right-side column guaranteed non-missing in a real match, such as its primary key. A nullable note or reference could be missing on a real payment and would give a false absence.
+NOT IN needs more care. If its right-hand result contains a NULL, an otherwise unmatched value can produce unknown rather than true. The shop’s payments.order_id is non-missing, but a later union or optional relation could change that guarantee. NOT EXISTS keeps “no matching row” explicit; Values, missing data and equality follows the three-valued comparisons.
+Checking the question
+Check a query with rows that separate its possible meanings: a parent with no children, one with one child and one with several children on both joined sides. The shop deliberately contains all three payment shapes. Compare identities as well as totals; a plausible balance can hide doubled contributions.
+At each join, identify the key of each input and how many matches a row can find. Before each sum, say what one input row means and whether the same fact has already repeated. Before each absence test, say exactly which match must not exist. These checks continue to work as queries grow, because they follow the meaning of the rows rather than the length of the SQL.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row You’re here
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousHistory, correction and deletion NextAggregates, windows and ordered results
+Sources and further reading
+Checked on 24 October 2026 against PostgreSQL 18 documentation and a disposable PostgreSQL 18.6 instance. Download the SQL experiment and run it in a disposable database with psql -X -v ON_ERROR_STOP=1 -f joins-experiment.sql. It creates temporary tables, checks the incorrect and corrected results, and rolls back. The figures use the collection’s fixed rows; they do not run SQL or depict a chosen join algorithm.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/queries-table-expressions.html#QUERIES-JOIN] Joined Tables: matching pairs, outer joins and the difference between an ON condition and a WHERE restriction.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/queries-with.html] WITH Queries: naming intermediate results and when the planner can fold them into a larger query.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/functions-subquery.html] Subquery Expressions: correlated EXISTS, NOT EXISTS and missing values in NOT IN.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/sql-select.html#SQL-DISTINCT] SELECT DISTINCT,  [href=https://www.postgresql.org/docs/18/functions-aggregate.html] Aggregate Functions and  [href=https://www.postgresql.org/docs/18/functions-conditional.html] Conditional Expressions: duplicate result rows, sums and COALESCE.

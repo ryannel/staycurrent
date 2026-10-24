@@ -1,0 +1,280 @@
+Home
+Relational draft
+Moving a SQL application to CockroachDB
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB You’re here
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Moving a SQL application to CockroachDB
+Deep diveAbout 7 minutes AI-generated
+A PostgreSQL driver can connect to CockroachDB and still send a command with a different meaning. A complete copy can contain every expected row and still be unsafe to serve. Moving an application therefore has two linked jobs: preserve the contract its callers rely on, then transfer authority over a closed, accounted-for history.
+We will use an explicitly separate migration rehearsal, rewound to before Mina's order 103. Historical orders 101 and 102 and their payments exist; P7 has one blue mug and P3 has twelve packs of tea. PostgreSQL 18.6 starts as the only write authority. After a consistent copy to CockroachDB 25.4.17, Mina's request purchase-mina-103 creates order 103 there. A return to PostgreSQL must preserve that purchase, including stock P7 0 and P3 10. It cannot just reconnect the old application to its old rows.
+Test meaning before copying
+Port the purchase contract
+Choose a copy whose end is knowable
+Compare facts and effects
+Transfer one authority
+Reconcile the return before reopening it
+Accept the service that will run
+Test meaning before copying
+CockroachDB supports PostgreSQL's wire protocol and much of its SQL syntax. That makes drivers and familiar tooling useful starting points. It does not make PostgreSQL's complete behaviour the target contract. Inventory what the application actually uses: schema definitions, generated SQL, stored code, extensions, transaction settings, result types and error handling. Check those against the pinned target release and test the important paths.
+A small arithmetic probe exposes a difference without any copying:
+SELECT n / 2 FROM division_probe;
+-- n is an integer with value 5.
+-- PostgreSQL 18.6: 2
+-- CockroachDB 25.4.17: 2.5
+The native fixture observes those answers. If the caller means a fraction, use an explicit decimal expression on both engines and retain the driver's exact decimal value. If it means a count of complete pairs, choose and test the rounding rule. CockroachDB's // supplies floor division, but replacing operators without considering negative inputs would not establish equivalence to every PostgreSQL expression.
+Type names need the same scrutiny. PostgreSQL's ordinary integer is 32-bit; CockroachDB's default INT is 64-bit. The rehearsal explicitly uses INT4 for the source's 32-bit contract. Test boundary values, returned driver types and serialisation, rather than deciding compatibility from these small IDs. Prices remain exact two-decimal values; timestamps are compared as UTC instants.
+Check transaction behaviour separately. PostgreSQL normally defaults to Read Committed; CockroachDB normally defaults to Serializable and can require whole-transaction retries with SQLSTATE 40001. Choose the target isolation deliberately and preserve the business rule under that protocol. A transport failure during commit still leaves an uncertain outcome, not an instruction to invent another purchase key. Retries when a commit reply is missing develops that distinction.
+Port the purchase contract
+A concrete incompatibility appears in that earlier PostgreSQL purchase. It claims a unique request key before taking stock, with a non-null order reference checked at commit through a deferred foreign key. The native CockroachDB 25.4.17 probe rejects that deferred definition. Removing the reference silently would lose part of the source's protection; keeping the original SQL in an untested migration file would not preserve it either.
+This fixture chooses an application-owned bridge. Its immediate foreign key remains, but the outcome may be null while the transaction owns a new claim:
+CREATE TABLE purchase_requests (
+request_key TEXT PRIMARY KEY,
+payload JSONB NOT NULL,
+order_id INT4 REFERENCES orders (order_id)
+);
+The transaction claims the key with the normalised payload and a null outcome, using INSERT ... ON CONFLICT DO NOTHING RETURNING. If it owns the claim, it conditionally reserves both products, inserts the order and lines, then fills order_id = 103. The application refuses to commit an incomplete claim. An exception rolls back the claim and all purchase effects together. The immediate reference checks the completed outcome against an order that now exists.
+This changes the enforcement boundary. A nullable foreign key permits a committed null; it does not recreate PostgreSQL's non-null deferred reference. The procedure relies on trusted writers that all run the completion check, with access preventing bypass. The fixture tests that application contract and audits zero incomplete committed claims. If arbitrary writers must be prevented by the database alone, this bridge is insufficient: choose another schema or enforced procedure and verify it before moving the application.
+If another attempt already claimed the key, the operation reads its payload and completed outcome. Matching payload returns 103 without taking stock; different payload is refused. An incomplete committed outcome is an error to resolve, never permission for another purchase. A retryable failure restarts the whole decision with the same identity and a bounded retry budget.
+In the native run, two overlapping identical requests return 103 with one order and one stock effect. A deliberately raised exception after the tea deduction leaves neither a claim nor a deduction. Withholding an actual successful purchase's acknowledgement from the simulated caller, then repeating its identity, returns the stored outcome unchanged. This tests the application boundary; it is not a claim that a network partition occurred. No provider or message sender is called.
+Choose a copy whose end is knowable
+For this small rehearsal, accept a write pause. Stop new source admissions, finish or cancel admitted work, resolve uncertain requests and fence every old write path. Keep PostgreSQL fenced while taking the final copy and validating it. The pause includes copy and acceptance, so its duration must fit the service's maintenance budget.
+The fixture makes admission visible through one gate row. Every application purchase updates it only while it is open, holding the transaction's conflict through the purchase. Closing the same row serialises with those admissions. Both engines are tested with a closing transaction held open and another purchase racing it: the request waits and is refused after the fence commits, with complete retries where needed. Only then is the closed history enumerated.
+This cooperative gate covers its declared participants. A production application also has importers, privileged scripts, workers and old sessions. They must obey an effective fence too. Changing a web deployment or a connection address does not stop an already-running writer.
+The final PostgreSQL export reads all intended tables in one Repeatable Read, read-only transaction after the fence. The target stays closed to application writes while related rows are loaded. Schema creation and indexes are separate controlled work; the example keeps ordinary foreign keys active and loads parents before children.
+A larger migration can bulk-copy while the source remains active and then apply captured changes. That adds a precise join between the copy's snapshot and the stream, dependency ordering, deletes, retries and a final applied position after source fencing. A low lag estimate does not prove that every transaction before the fence arrived. This paused-write run does not execute MOLT, CDC or a zero-downtime migration; those are different procedures to rehearse.
+Compare facts and effects
+Define equality before comparing two engines. The fixture orders rows by their complete keys, normalises exact decimals and UTC instants, and compares every selected value in customers, products, orders, order lines, payments and request outcomes. Control rows and each instance's ownership marker are checked separately; they are not copied business identities.
+Counts find obvious omissions. They do not establish equality. In a scratch target branch, changing the teapot line in order 101 from 35.00 to 34.00 keeps every table's count unchanged. The complete value comparison detects the mismatch; restoring the agreed 35.00 makes it pass. Copying both data and a mistaken aggregate from the same faulty query would not provide an independent check.
+Add acceptance that gives those rows meaning. The native run checks the core receipts and still-due report, the complete stock vector, foreign-key refusal and request replay. After Mina's accepted purchase, order 103 totals 29.00, has no payment and is due 29.00. Orders 101 and 102 remain fully paid. Existing payments are historical rows, not evidence of a new provider action.
+Re-establish and test roles, ownership, runtime grants, policies, TLS identities and connection routes in the target deployment too. A successful copy run as administrator cannot prove that the application can use its rows or that an unrelated caller cannot. Operating and securing a CockroachDB cluster develops those checks.
+Transfer one authority
+Open CockroachDB only after the closed copy and application checks pass, while PostgreSQL remains fenced. Record the routing and credentials that make the new authority effective. A gradually changing client population must still obey that authority; independently directing purchases to each database creates two histories that a later row copy cannot safely merge.
+The player follows the purchase through both handovers. Watch its request identity and both stock values when the old database becomes the candidate for a return.
+Figure 1 · Move the authority with its accepted history
+PostgreSQL
+Order 103Request outcomeP7 · P3 stock
+CockroachDB
+Order 103Request outcomeP7 · P3 stock
+PlayBackNextReset
+Migration and return as text
+PostgreSQL alone serves writes, before order 103. CockroachDB has no copied business rows.
+Fence PostgreSQL and settle admissions; copy and compare the closed history. Both copies have P7 stock 1, P3 stock 12 and no order 103.
+Open CockroachDB only. Mina's request creates order 103 there, with request outcome 103, P7 stock 0 and P3 stock 10. PostgreSQL remains fenced at the earlier state.
+Before a return, fence CockroachDB and enumerate its closed accepted history. Both write gates are closed.
+Reconcile Mina's complete operation on still-fenced PostgreSQL. Repeating its request preserves one order, P7 stock 0 and P3 stock 10. Compare both complete states.
+Open PostgreSQL only after acceptance. CockroachDB remains fenced; the same request still resolves to 103 on PostgreSQL.
+Conceptual authority sequence using the fixture's accepted results. A fence means the declared write protocol refuses new admissions; it does not mean a browser illustration can stop a real database. No provider or message effect is generated.
+The first target purchase makes returning a data operation. PostgreSQL still has stock P7 1 and no order 103. Opening it immediately could sell the last mug again and lose Mina's acknowledged purchase. Keeping that server running supplies capacity for a return, not a current history.
+Reconcile the return before reopening it
+Close CockroachDB's admissions and settle in-flight work first. Enumerate the accepted history while it remains closed. Here the new operation is Mina's stable request key, normalised payload and order outcome. PostgreSQL has stayed fenced since the first handover, so there is no competing source history to merge.
+Controlled reconciliation on PostgreSQL applies the complete operation in one transaction: request claim, both stock deductions, order 103, its two lines and completed outcome. The fixture checks the expected starting rows before replay; a conflict stops reconciliation instead of overwriting it. Repeating the same operation returns 103 without another deduction; changing its payload is refused. The fixture then compares the entire closed business state on both databases and runs the receipts again.
+Only after acceptance does PostgreSQL reopen. CockroachDB stays fenced. A later retry of Mina's key on the returned authority still resolves to 103, with P7 0 and P3 10. This is a reconciled return, not a route change followed by a hope that stock will converge.
+The fixture creates no provider payments, messages or emails. A real return must reconcile those authorities too: a missing outbox row on PostgreSQL cannot prove that CockroachDB's worker never sent its event. Preserve effect identities and consult the provider or consumer's record before repeating external work. CockroachDB backup and recovery develops the same problem when replacement history comes from a restore.
+Accept the service that will run
+Passing these tiny functional checks establishes the declared copy, purchase and return mechanics. It does not establish production latency, contention, connection-pool capacity or placement. Test representative generated SQL, realistic key distributions and mixed caller versions, including retry exhaustion, prepared commands and actual reconnection routes. Keep operational acceptance separate from a correct row comparison.
+The native run uses one private PostgreSQL cluster and one private CockroachDB process on a single host, then removes both. It records exact binaries, driver and actual licence setting; temporary feature execution is not production entitlement. There is no independent-host failure, live replication, elapsed-time objective or external-effect result. Keep those limits visible when choosing the migration and its return window.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB You’re here
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousUpgrading a CockroachDB cluster NextWhere distributed PostgreSQL work runs
+Sources and further reading
+Primary documentation checked on 24 October 2026; native semantics pinned to PostgreSQL 18.6 and CockroachDB 25.4.17 with Psycopg 3.3.3.
+[href=https://docs.cockroachlabs.com/docs/v25.4/postgresql-compatibility] CockroachDB PostgreSQL compatibility: protocol versus SQL behaviour, including integer division.
+[href=https://docs.cockroachlabs.com/docs/molt/migration-strategy] Migration best practices: application changes, integer widths and preparation.
+[href=https://docs.cockroachlabs.com/docs/v25.4/transaction-retry-error-reference] Transaction retry error reference: Serializable retries and SQLSTATE 40001.
+[href=https://docs.cockroachlabs.com/docs/v25.4/foreign-key] CockroachDB foreign keys and  [href=https://www.postgresql.org/docs/18/sql-createtable.html] PostgreSQL CREATE TABLE: reference enforcement, nulls and the deferred source contract. Target rejection is also checked natively.
+[href=https://www.postgresql.org/docs/18/transaction-iso.html] PostgreSQL transaction isolation: the final consistent read transaction.
+[href=https://docs.cockroachlabs.com/docs/molt/migration-considerations-validation] Migration validation strategy and  [href=https://docs.cockroachlabs.com/docs/molt/migration-considerations-rollback] Rollback plan: comparison scope and accounting for post-cutover writes.

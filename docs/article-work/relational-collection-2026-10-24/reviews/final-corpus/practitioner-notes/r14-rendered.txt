@@ -1,0 +1,314 @@
+Home
+Relational draft
+Locks, contention and deadlocks
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks You’re here
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Locks, contention and deadlocks
+Deep diveAbout 8 minutes AI-generated
+A lock makes one transaction wait for another. That wait is useful when two writers must take turns over the same decision: who gets the last mug, who takes the last class place, or which worker claims a job. It costs time, and it protects only what the transactions actually lock. Two writers can wait politely and still make a decision from the wrong data.
+The design therefore has two parts. Find the row or other authority that every competing writer must pass through. Then decide what each writer may read after it gets its turn. The first prevents simultaneous decisions; the second makes each decision account for the one before it.
+We use PostgreSQL 18 and the shop’s tea classes. Session S501 has capacity 1 and starts with no bookings. Mina attempts booking B201; Tariq attempts B202. The intended outcome admits Mina and refuses Tariq. The drawings choose a schedule so that we can follow it; separate experiments on PostgreSQL 18.6 check the engine behaviour.
+What a row lock stops
+Lock the authority, including the empty case
+Waiting does not refresh a snapshot
+Contention is a queue at an authority
+When a queue becomes a cycle
+Read the wait before changing the lock
+Repeat the schedules
+What a row lock stops
+An update takes a row lock automatically. A separate SELECT … FOR UPDATE asks to lock the rows it returns, keeping another transaction from changing or taking an incompatible lock on them until this transaction ends. A plain reader can still read its permitted row version. Locking a product does not make it disappear from the catalogue.
+The introduction’s stock update puts the condition and the change in one command. At Read Committed, an overlapping update waits and tests its condition again against the row the first writer committed. For a decision needing several statements, a locking read can hold the row while application code does the rest:
+BEGIN;
+SELECT stock FROM products
+WHERE product_id = 'P7'
+FOR UPDATE;
+-- Check the returned stock, change it, record the order and lines.
+-- Roll back the complete purchase if stock is insufficient.
+COMMIT;
+The useful scope is the transaction, rather than just the time the select runs. Ending the transaction immediately after reading the stock would release the lock before the purchase used it. A pool helper on another connection would be outside that protection. SQL at the application boundary follows connection ownership.
+FOR UPDATE is the strongest row-lock mode. PostgreSQL also has FOR NO KEY UPDATE, FOR SHARE and FOR KEY SHARE, with different conflicts. For example, a non-key update can coexist with a key-share lock used to protect a referenced key. Choose a mode from the operations it must exclude. Taking a stronger mode than necessary creates extra waiting; taking a weaker one can leave the decision unprotected.
+Lock the authority, including the empty case
+Class capacity lives across rows. The application counts bookings for S501, compares the count with capacity 1, then inserts one booking if there is room. Locking the matching bookings sounds plausible:
+SELECT booking_id FROM bookings
+WHERE session_id = 'S501'
+FOR UPDATE;
+At the start there are no matching rows. Both buyers get an empty result, and neither has locked a booking row that could make the other wait. Each can insert a different booking ID. The booking primary key correctly permits B201 and B202; it does not enforce the class capacity.
+Use an authority that exists before the first booking. In this schema variant, sessions has one row per session, with session_id as its primary key and a required capacity. Each booking has a unique booking_id, a reference to its session and its customer ID. The session row is the guard: every operation that can affect the capacity decision takes it first.
+BEGIN ISOLATION LEVEL READ COMMITTED;
+SELECT capacity FROM sessions
+WHERE session_id = 'S501'
+FOR UPDATE;
+SELECT count(*) FROM bookings
+WHERE session_id = 'S501';
+-- Compare that count with the returned capacity.
+-- If full: ROLLBACK and return "full".
+-- Otherwise, for Mina:
+INSERT INTO bookings (booking_id, session_id, customer_id)
+VALUES ('B201', 'S501', 1);
+COMMIT;
+Those are two read statements on purpose. Mina holds S501 while she counts and inserts. Tariq cannot acquire that row until Mina finishes. Once he does, his next statement starts a fresh Read Committed snapshot, which includes Mina’s committed booking. He counts 1 and refuses B202.
+Combining the lock and a booking count in one statement would not establish that fresh view after the wait. Nor can a writer count first, wait for the guard and then use its saved count. The protocol is “acquire, then count in a new statement, then decide”. Cancelling a booking, moving it between sessions and changing capacity need compatible protocols too; moving between two sessions requires both authorities in a consistent order.
+Waiting does not refresh a snapshot
+Repeatable Read changes the result. Suppose Tariq establishes his transaction’s snapshot while S501 is still empty. He waits for Mina’s lock, Mina commits B201, and Tariq acquires S501. Mina only locked that session row; she did not update it. Tariq can acquire the row while retaining his older view of the bookings. His count still returns zero.
+Figure 1 keeps the guard and Tariq’s view separate. Follow Read Committed to the final count, then choose the lock-only Repeatable Read protocol. The turn passes in both; the booking set Tariq can count differs.
+Figure 1 A turn at the guard, and a view of the bookings
+ProtocolLock guard · Read CommittedLock guard · Repeatable ReadUpdate guard · Repeatable Read
+Session S501 · capacity 1Guard is freeCommitted bookings: none
+Mina · B201
+Ready to bookWill count after acquiring the guard
+Tariq · B202
+Ready to bookEach count gets a new snapshot
+Both buyers need the same guard. The committed booking set starts empty.
+PlayBackNextReset1 / 5
+A chosen schedule, not a database running in your browser. In the Repeatable Read cases Tariq establishes his snapshot before Mina commits. Both writers use the selected guard protocol.
+The schedules as text
+Read Committed: Mina locks S501 and counts zero. Tariq waits for S501. Mina inserts B201 and commits. Tariq acquires S501, then starts a separate count statement; it sees B201 and refuses B202.
+Repeatable Read with a lock only: Tariq first establishes an empty snapshot. Mina locks S501 and Tariq waits. Mina inserts B201 and commits without updating S501. Tariq acquires S501, but his count still sees zero. Inserting B202 overbooks the class.
+Repeatable Read with an update: Tariq first establishes an empty snapshot. Mina updates S501's guard_epoch; Tariq's conflicting update waits. Mina inserts B201 and commits. Tariq receives 40001, rolls back and starts the whole operation again. The new attempt counts B201 and refuses B202.
+A lock-only guard is therefore not a recipe detached from isolation. On the disposable server, the Read Committed protocol left one booking. The Repeatable Read schedule with an earlier empty snapshot and the same unchanged guard row left two. Waiting itself was observed in both runs.
+One Repeatable Read alternative deliberately updates the guard. Add a required integer guard_epoch, initially 0, to sessions. It is a conflict marker, not capacity or a booking count. Every capacity-changing transaction updates it before counting:
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+UPDATE sessions
+SET guard_epoch = guard_epoch + 1
+WHERE session_id = 'S501'
+RETURNING capacity;
+-- Count bookings, decide and insert in this transaction.
+-- On 40001: roll back and repeat the whole operation.
+COMMIT;
+If Mina’s guard update commits after Tariq’s snapshot, PostgreSQL refuses Tariq’s conflicting update with 40001. He must start a new transaction and repeat his reads and decision. In the experiment that retry counted B201. Merely retrying the failed update inside the old transaction would not supply the required new view.
+Serializable is another complete choice: make all transactions participating in this rule Serializable, keep their reads and writes inside the transaction, and retry serialization failures. Our separate two-reader, two-insert schedule allowed one booking and rejected the other transaction with 40001. Serializable preserves a serial outcome; it does not promise that the first buyer to start wins. Transactions and isolation develops that choice.
+Contention is a queue at an authority
+The session guard deliberately makes bookings for S501 take turns. Bookings for a different session can use a different row. One guard for the whole shop would force unrelated classes into the same queue. A guard per customer would do the opposite: Mina and Tariq could both pass different rows while competing for S501.
+A sound lock scope follows the rule’s shared authority. Narrowing it is helpful only while every conflicting decision still meets. If one popular session receives more attempts than its guarded transactions can finish, adding application connections adds waiters. It does not make the session row serve two decisions at once.
+Keep the guarded transaction short. Do validation that does not depend on changing database state before it starts. Acquire the needed locks, read and change the data, then finish. Waiting for a user, an email provider or another slow service while holding S501 makes everyone behind the holder wait too. External work can be recorded and performed later, as Outboxes and database-backed jobs explains.
+Bound the wait as part of the request’s budget. A transaction-local lock_timeout limits each lock acquisition. statement_timeout bounds a statement, including its lock waiting. Leave time for rollback and for the application to return a meaningful result; neither setting is a complete end-to-end request deadline.
+SET LOCAL lock_timeout = '200ms';
+SET LOCAL statement_timeout = '2s';
+These durations are examples to choose against your own budget, not measured safe defaults. A lock timeout reports 55P03; the application must end or appropriately recover the failed transaction. NOWAIT on a locking read refuses an unavailable row immediately. SKIP LOCKED omits unavailable rows, which is useful for some work queues. It would be wrong for this capacity guard: skipping S501 cannot mean that S501 is empty or that a booking is allowed.
+When a queue becomes a cycle
+One waiter and one holder are contention. A deadlock needs a cycle: each transaction is waiting for a lock that another transaction in the cycle holds. A purchase containing several products can create it even if no code explicitly writes FOR UPDATE, because updates take locks too.
+Use a separate illustrative two-product schedule. Writer A locks P3, and writer B locks P7. A then asks for P7; B asks for P3. Neither can finish and release its first row while it waits for the second.
+Figure 2 Two waits close a cycle
+Writer Aholds P3wants P7
+waits for B →↓
+Writer Bholds P7wants P3
+←↑ B also waits for A
+Each arrow means “cannot proceed until this other transaction releases its row”. A longer wait alone is not a cycle.
+PostgreSQL detects the cycle and aborts a participant with 40P01. Which one loses is not an application contract. Roll back that attempt, then rerun the whole transaction if retrying is appropriate. The experiment reproduced this cycle and recorded one deadlock error; it did not assume which writer would receive it.
+Prevent this particular cycle by agreeing one order before acquiring any product lock. Both writers take P3 before P7. B then waits for P3 before holding P7, so A can acquire P7 and finish. For variable baskets, sort the distinct product IDs and acquire each row in that order; use the same rule on every path. Do not assume an unordered update over several IDs acquires locks in the order written in the input list.
+Order spans tables and helpers too. If one path locks an order before its products and another does the reverse, sorting only the products does not fix their cycle. Foreign-key checks, triggers and lock upgrades can introduce more dependencies. Acquire the needed strength early where possible, make the order explicit, and retain deadlock handling even after removing the known cycle.
+Read the wait before changing the lock
+A slow statement is not enough to identify a blocker. Establish which session is waiting, which session blocks it, and what transaction that holder is keeping open. PostgreSQL’s pg_blocking_pids(pid) gives the immediate blocking sessions; pg_stat_activity supplies their state and transaction start.
+SELECT pid, state, xact_start,
+wait_event_type, wait_event,
+pg_blocking_pids(pid) AS blockers
+FROM pg_stat_activity
+WHERE cardinality(pg_blocking_pids(pid)) > 0;
+Follow the blockers until you reach a holder that can make progress, or find a cycle. An idle transaction can hold the row while doing no current SQL. A queued incompatible request can also block a request behind it. The longest-running query is not necessarily the transaction responsible for the wait.
+Use that evidence to change the cause: shorten the holder, remove an unnecessary lock, repair ordering or reduce admissions to an overloaded authority. Cancelling a waiting query does not release the holder’s locks. Cancelling the holder’s statement may still leave its transaction needing rollback. Live intervention and detailed PostgreSQL wait tools belong to Operating and diagnosing PostgreSQL.
+Repeat the schedules
+Download the lock experiment and run python3 run-locks.py --bindir /path/to/postgresql/bin. It uses the Python standard library and PostgreSQL’s client, creates an owned disposable cluster with a private socket, checks its identity and removes it afterwards. It needs permission to create local sockets and shared memory.
+The recorded PostgreSQL 18.6 run checks the empty-booking counterexample, the fresh Read Committed count, the stale Repeatable Read count, a changed-guard conflict and complete retry, a Serializable conflict, a deadlock and a lock timeout. Blocking is coordinated through observed blocking sessions rather than an assumed sleep. These are functional schedules on one local server, not throughput measurements or proof that another engine implements the same isolation names.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks You’re here
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousTransactions and isolation NextRow versions, storage and cleanup
+Sources and further reading
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/explicit-locking.html] Explicit Locking: lock conflicts, lifetime, deadlocks and advisory locks. Advisory locks can name an application authority without a row, but every writer must honour them and their scope must fit the connection lifetime.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/transaction-iso.html] Transaction Isolation and  [href=https://www.postgresql.org/docs/18/mvcc-serialization-failure-handling.html] Serialization Failure Handling: snapshots, concurrent guard updates and complete retries.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/sql-select.html#SQL-FOR-UPDATE-SHARE] The locking clause: selected rows, NOWAIT and the incomplete view from SKIP LOCKED.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/runtime-config-client.html] Client Connection Defaults and  [href=https://www.postgresql.org/docs/18/functions-info.html] System Information Functions: timeout scope and blocking-session identities.
+On this site, Connections, overload and capacity develops queue budgets; Retries when a commit reply is missing separates a known abort from an uncertain outcome.

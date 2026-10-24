@@ -1,0 +1,312 @@
+Home
+Relational draft
+Types and extensions in PostgreSQL
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL You’re here
+Browse all subjects →
+Relational collection · Draft for review
+Types and extensions in PostgreSQL
+Deep diveAbout 8 minutes AI-generated
+A specialised type makes a value’s useful operations part of the database. A range can answer whether two intervals overlap. A spatial point can participate in a distance predicate under a declared coordinate system. The type, its operators and its index support work together; storing the same characters as text does not provide that contract.
+PostgreSQL includes many such types and can install more through extensions. That lets a relational schema keep its ordinary keys and transactions while expressing richer questions. It also creates dependencies: application tables may need an extension’s types, indexes may need its operator classes, and a restored server must supply compatible supporting files.
+We will begin with a room reservation, then test proximity on an invented local grid. These are independent examples. The room belongs to the collection’s tea-class setting, but its reservations do not describe session S501’s capacity race. The spatial points are anonymous test data, with no claimed shop locations or regional distances.
+Types establish operations
+What an interval includes
+Enforce the overlap rule
+Spatial values need units
+Installation has two layers
+Restore the dependencies too
+Updates and removal follow dependencies
+Types establish operations
+Ordinary types already do this work. A numeric value supports arithmetic; an instant supports temporal comparisons. A domain can reuse an underlying type while giving a named constraint to its values. An enum declares a particular set of labels. Arrays, composites and JSONB assemble values in different ways, without necessarily giving their components independent row identities.
+Choose the meaning before the convenience of its spelling. A string containing two timestamps requires every query to parse and interpret it. Two typed columns can be a sound representation, but every overlap query must use both endpoints correctly. A range packages that interval and its boundary rules into one typed value.
+Built-in range types need no extension. tstzrange uses timestamp-with-time-zone instants; tsrange uses zone-free calendar readings. Use the former when reservations occupy particular instants. The display zone remains a separate concern, as Values, missing data and equality explains.
+What an interval includes
+For room R1, choose 4 November 2026 and a reservation from 18:00 to 19:00 UTC. Write it as [18:00,19:00): include its start and exclude its end. A following reservation starting at 19:00 can then meet it without overlap.
+SELECT tstzrange(
+'2026-11-04 18:00:00Z',
+'2026-11-04 19:00:00Z', '[)'
+) && tstzrange(
+'2026-11-04 19:00:00Z',
+'2026-11-04 20:00:00Z', '[)'
+) AS overlaps;
+-- false
+&& asks whether the ranges share any element. @> asks containment. These operators describe interval meaning directly, whereas comparing starts alone cannot establish overlap. A reservation from 18:30 to 19:30 overlaps the existing one even though the starts are different.
+Ranges can also be empty or unbounded. Those are useful values for some applications, but this room contract requires a non-empty, finite, half-open interval. Declare that policy. Merely requiring the range column to be non-missing leaves these other values available.
+Multiranges represent several disjoint ranges as one value. They can suit availability containing a morning and an afternoon interval. They do not turn separate bookings with their own identities into one booking; choose whether you are storing one set-valued fact or several independent reservations.
+Enforce the overlap rule
+An index can find overlapping reservations. A rule must also prevent conflicting writes. Two clients can both ask whether R1 is free before either inserts its reservation. The empty answer is not a lock on every future interval.
+An exclusion constraint forbids pairs of rows for which all the declared comparisons hold. Here the room IDs must compare equal and the intervals must overlap. Built-in range GiST support supplies overlap; the supplied btree_gist extension adds suitable GiST equality support for text room IDs.
+CREATE EXTENSION btree_gist;
+CREATE TABLE reservations (
+room text NOT NULL,
+during tstzrange NOT NULL,
+CHECK (
+NOT isempty(during)
+AND lower_inc(during) AND NOT upper_inc(during)
+AND NOT lower_inf(during) AND NOT upper_inf(during)
+AND isfinite(lower(during)) AND isfinite(upper(during))
+),
+EXCLUDE USING gist (room WITH =, during WITH &&)
+);
+The lower and upper infinity tests reject absent bounds; isfinite also rejects explicit infinite timestamp values. Required columns keep missing values from escaping the intended pairwise rule. A reservation identity and any room foreign key would belong in the application’s fuller schema; this fragment isolates interval validity and conflict.
+Try each proposal in Figure 1. Changing only the room changes the rule’s answer, even though the times still overlap.
+Figure 1 Same room and overlapping instants must both hold
+Proposed reservation R1 · 19:00–20:00R1 · 18:30–19:30R2 · 18:30–19:30
+18:0019:0020:00
+Existing R1
+[18:00, 19:00)
+Proposed R1
+[19:00, 20:00)
+Same room: yes. Overlap: no. Permitted; adjacent half-open intervals share no instant.
+Illustrative intervals on 4 November 2026, all times UTC. Square bracket includes the start; round bracket excludes the end. This is a room-reservation variant, independent of session S501’s capacity race. The native worksheet checks the same three cases.
+The worksheet accepted the adjacent R1 interval and an overlapping R2 interval, then refused R1’s overlapping proposal with SQLSTATE 23P01. Without the exclusion constraint, the counterexample stored both conflicting R1 reservations.
+A separate two-connection native check also tested the conflict while the first insert was uncommitted. The second writer waited on the first transaction’s outcome. After the first committed, the second received the exclusion error and one reservation remained. This is concurrent enforcement by the constraint, rather than two successful application preflight checks.
+The rule covers one room’s non-overlap. It does not enforce a class capacity greater than one, instructor coverage or every cross-row scheduling rule. Those need their own declared model and protocol. Range syntax makes the interval precise; it does not infer the rest of the business.
+Spatial values need units
+PostGIS extends PostgreSQL with geometry, geography and associated functions and index support. A geometry point records coordinates in a spatial reference system. Distances on geometry use that system’s units. A geography distance instead uses a geodetic model and metre-based predicates. Decide which question and accuracy the application requires before choosing between them.
+Longitude and latitude degrees are not metres. Nor does assigning a spatial reference ID transform coordinates from one system into another. ST_SetSRID labels a value; ST_Transform performs a supported coordinate transformation. An apparently plausible numeric answer can still have the wrong units.
+The native example avoids real geography altogether. It declares a local Cartesian grid whose numbers represent metres, using geometry(Point,0). SRID 0 identifies no geodetic reference system. Points A, B, C and D have coordinates (300,400), (600,800), (0,1200) and (700,700). Ten thousand additional generated points are deliberately far away.
+CREATE INDEX points_location
+ON r57_spatial.points USING gist (location);
+SELECT label
+FROM r57_spatial.points
+WHERE ST_DWithin(location, ST_Point(0,0), 750)
+ORDER BY label;
+ST_DWithin asks whether the points are within the supplied distance and can make use of a suitable spatial index. Figure 2 separates the index’s bounding candidates from the precise distance test.
+Figure 2 A square admits candidates; distance decides the answer
+An invented metre grid shows a radius750 circle centred on0,0, inside its bounding square. A at300,400 lies within the circle. D at700,700 lies inside the square but outside the circle, so exact distance rejects it. B at600,800 and C at0,1200 lie outside the square too.    750 m Origin (0,0) A · 500 m ✓ B · 1,000 m C · 1,200 m D · 989.95 m
+Dashed square: box candidates. Solid circle: distance ≤ 750 m.
+Local Cartesian illustration with one drawing unit representing a fixed number of metres. Native geometry uses SRID 0, with no geodetic coordinate system. It is neither a map nor a model of the collection’s logical regions.
+A is exactly 500 grid metres from the origin, so it qualifies. D is inside the 750-by-each-direction bounding square but about 989.95 metres away, so distance rejects it. B and C are outside that box. The query returns only A.
+Index Scan using points_location on points
+Index Cond: (location && st_expand(origin, 750))
+Filter: st_dwithin(location, origin, 750)
+Rows Removed by Filter: 1
+actual rows=1 loops=1
+This extract replaces the printed binary point constant with origin and omits costs and timings. The native plan used the GiST box condition to obtain candidates, then the distance filter rejected D. Reading ST_Distance(location,origin) <= 750 as mathematically similar does not establish the same indexed route. Verify the supported predicate and actual plan.
+The observed distance is geometric straight-line distance in our grid. It says nothing about walking routes, road access or delivery time. A real collection-point application must declare its actual coordinate system and use a suitable distance definition; the collection’s logical region names cannot supply one.
+Installation has two layers
+An extension’s supporting files must exist in the PostgreSQL installation before a database can load it. These can include control files, SQL installation and update scripts, compiled libraries and other native dependencies. CREATE EXTENSION then installs and records the extension’s SQL objects in one database.
+Files available on the host are not the same as an installed database extension. Inspect both:
+SELECT name, default_version, installed_version
+FROM pg_available_extensions
+WHERE name IN ('btree_gist', 'postgis');
+SELECT extname, extversion, extnamespace::regnamespace
+FROM pg_extension
+ORDER BY extname;
+Many extensions require privileged installation. A trusted extension can be installed by a role with the required database privilege; “trusted” is a specific extension flag, not a claim that arbitrary packages are harmless. A managed service may provide only selected versions or forbid particular installation options.
+Use the supported package and PostgreSQL-major-version combination. Installing into a schema does not give that schema an isolated execution engine: extension functions still run in the database server’s processes, and native code can have the server process’s capabilities. Keep installation schemas and search paths controlled. Roles, policies and privileged code handles that authority boundary.
+Restore the dependencies too
+A logical dump knows which SQL objects belong to an extension. It normally records creation of the extension instead of embedding every member function and type definition. That keeps the dump manageable, but it does not package native libraries or prove the destination can load a compatible version.
+Before restoring a schema that uses geometry, prepare the destination’s PostGIS installation and its prerequisites. Check the version and installation schema the restore will use. Creating whatever default happens to be available may change the environment from the one tested. Application tables, indexes, constraints and queries all form part of the compatibility check.
+The owned native drill dumped the example database and restored it into a new database on the same private PostgreSQL 18.6 server. The restored copy reported btree_gist 1.8 and PostGIS 3.6.4; its proximity query still returned one point and the protected room table still contained one reservation. This tests a same-host logical restore with those supporting files already installed. It does not test a different operating system, new extension release or server-major upgrade.
+Record both the extension version and relevant library versions. The spatial run reported GEOS 3.15.0 and PROJ 9.9.0 with network access disabled. Neither a version string alone nor the existence of its control file establishes that the article’s exact predicate and index work; the native query and restore supplied that evidence.
+Updates and removal follow dependencies
+An extension update changes database objects through supported scripts, usually using ALTER EXTENSION … UPDATE. Installing a new host package and running the database update are related steps, but they are not interchangeable. Some packages also require additional upgrade procedures or index work. Use the extension’s documented path and test representative results before changing the service.
+Keep that path separate from a PostgreSQL major upgrade. The target server needs compatible extension libraries, and the extension may impose an ordering on its own update. Upgrading and migrating PostgreSQL owns the server route. A backup is useful only if the older environment and a supported recovery path remain available when needed.
+Removal follows dependency direction. The reservations constraint depends on a GiST text operator class supplied by btree_gist. The native attempt to drop the extension under those dependencies was refused with 2BP01. A geometry column similarly depends on PostGIS’s type.
+CASCADE is permission to remove dependent objects too; it is not an automatic migration to ordinary types. First replace or remove the application’s uses deliberately, including columns, views, functions and indexes, and verify their replacement behaviour. Then remove the extension when its dependants no longer require it.
+The value of a specialised type is the precise operation it makes available. The operational cost is keeping that operation valid through installation, concurrency, backup and change. Treat both as part of the schema the application depends on.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL You’re here
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousVector search in PostgreSQL
+Sources and further reading
+Checked on 24 October 2026. Download the range worksheet and the spatial worksheet. Run with psql -X -v ON_ERROR_STOP=1 -f filename.sql only in a disposable database: they install their named extensions; the spatial file also retains its declared schema and table. The exact files ran on owned PostgreSQL 18.6 with btree_gist 1.8 and PostGIS 3.6.4. The separate native verifier performed the two-connection conflict and same-host dump/restore. No production concurrency rate, geographic latency or version upgrade was measured.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/rangetypes.html] Range types,  [href=https://www.postgresql.org/docs/18/functions-range.html] Range operators,  [href=https://www.postgresql.org/docs/18/ddl-constraints.html#DDL-CONSTRAINTS-EXCLUSION] Exclusion constraints and  [href=https://www.postgresql.org/docs/18/btree-gist.html] btree_gist: intervals, overlap and same-room enforcement.
+PostGIS,  [href=https://postgis.net/docs/using_postgis_dbmanagement.html] Data management,  [href=https://postgis.net/docs/ST_DWithin.html] ST_DWithin,  [href=https://postgis.net/docs/ST_SetSRID.html] ST_SetSRID and  [href=https://postgis.net/docs/ST_Transform.html] ST_Transform: spatial types, units, indexed proximity and coordinate transformations.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/sql-createextension.html] CREATE EXTENSION,  [href=https://www.postgresql.org/docs/18/extend-extensions.html] Packaging related objects,  [href=https://www.postgresql.org/docs/18/sql-alterextension.html] ALTER EXTENSION and  [href=https://www.postgresql.org/docs/18/sql-dropextension.html] DROP EXTENSION: installation, privileges, dependencies and update scripts.
+PostGIS,  [href=https://postgis.net/docs/postgis_installation.html] Installation and upgrades, and PostgreSQL,  [href=https://www.postgresql.org/docs/18/app-pgdump.html] pg_dump and  [href=https://www.postgresql.org/docs/18/app-pgrestore.html] pg_restore: preparing and checking a usable restored environment.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/domains.html] Domains and  [href=https://www.postgresql.org/docs/18/datatype-enum.html] Enumerated types: named value contracts that do not themselves require external extension packages.

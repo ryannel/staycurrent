@@ -1,0 +1,304 @@
+Home
+Relational draft
+CockroachDB table locality and region survival
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival You’re here
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+CockroachDB table locality and region survival
+Deep diveAbout 8 minutes AI-generated
+Shop 10 normally accesses its data from eu-north; Harbour Tea, shop 20, normally accesses its own from eu-west. Putting both shops in one regional table gives that entire table one home. Giving rows individual homes can bring each shop’s ordinary work nearer its application. Neither choice says which failures the database must survive.
+CockroachDB expresses these as separate policies: table locality describes the access pattern to optimise, while the database’s survival goal describes the failure its replication should tolerate. Choose both from an operation’s requirements, then inspect the replicas and execution that result.
+We use the tenant-scoped variant, with shop IDs in related keys and references. The three region names eu-north, eu-west and us-east are logical teaching labels. The native worksheet checks CockroachDB 25.4.17 on six local processes with those labels; it does not simulate independent geographical regions.
+Give the database region information
+One table home, or one home per row?
+The indexes and rules travel too
+Current reference reads in every region
+Choose the failure separately
+Compare the policy with the replicas
+Prove the promise at the right boundary
+Give the database region information
+A business column named home_region is ordinary data until a placement policy uses it. Cluster regions begin with node startup localities, such as --locality=region=eu-north,zone=z1. Those labels must describe the actual deployment. Renaming three processes on one machine does not remove their shared power, disk or network fate.
+A database then chooses its regions from those advertised by the cluster. One is primary. This supplies defaults; it is not a declaration that every row has only one copy or that the primary region is the only SQL entry point.
+SHOW REGIONS FROM CLUSTER;
+CREATE DATABASE locality_lab PRIMARY REGION "eu-north"
+REGIONS "eu-west", "us-east";
+SHOW REGIONS FROM DATABASE locality_lab;
+Check the running version, deployment product and entitlement as well as syntax. The recorded self-hosted drill had no installed licence key and ran within the documented fresh-cluster grace period. That records this ephemeral test’s conditions, not an entitlement for a long-lived service.
+One table home, or one home per row?
+REGIONAL BY TABLE gives a table one home region. It suits a table whose latency-sensitive reads and writes mostly originate there. It is the default locality in a multi-region database, normally using the primary region. An explicit home can be a different database region.
+CREATE TABLE shop_directory (
+shop_id INT PRIMARY KEY,
+name STRING NOT NULL,
+home_region STRING NOT NULL
+) LOCALITY REGIONAL BY TABLE IN "eu-north";
+The directory’s Harbour Tea row can say home_region = 'eu-west' while the table remains homed in eu-north. That string does not relocate the row. If the directory is small and seldom read remotely, this can be acceptable; if remote current reads dominate, choose a locality that matches that requirement.
+REGIONAL BY ROW gives individual rows homes. CockroachDB adds a region column, normally the hidden crdb_region, and partitions the table’s indexes by region. Shop 10’s orders can use eu-north while shop 20’s future orders use eu-west within the same table.
+CREATE TABLE locality_orders (
+shop_id INT NOT NULL,
+order_id INT NOT NULL,
+customer_id INT NOT NULL,
+status STRING NOT NULL,
+PRIMARY KEY (shop_id, order_id),
+INDEX locality_orders_customer (shop_id, customer_id)
+) LOCALITY REGIONAL BY ROW;
+INSERT INTO locality_orders
+(crdb_region, shop_id, order_id, customer_id, status)
+VALUES ('eu-north', 10, 103, 1, 'pending');
+This is an order projection for placement inspection, not the complete purchase transaction. The worksheet includes the agreed three shop 10 orders. It adds no shop 20 purchases, stock movements or payments.
+Without an explicit region, the normal default uses the inserting gateway’s region when it belongs to the database, falling back to the primary region otherwise. A failover that sends shop 10’s inserts through eu-west can therefore change the selected default. Derive the home from the application’s shop policy and set it deliberately, or use a carefully verified schema mechanism that does so.
+Existing row homes do not ordinarily change just because a request uses another gateway. Changing crdb_region moves the row’s regional placement and associated index entries; it is more than updating an informational label. Optional auto-rehoming and region-inference features need an explicit version-specific design, rather than an assumption behind the default shown here.
+The indexes and rules travel too
+The customer index on the regional-by-row table is partitioned automatically too. A lookup with a known row region can target that partition. A query without a regional restriction may search more widely, although locality-optimised search can avoid remote work in suitable cases. Inspect the actual plan; a hidden region column does not make every query local.
+Region-aware access also does not replace tenant access control. Requesting shop 10’s rows from the correct region still requires the correct shop predicate and authorisation. Every child reference in the tenant-scoped purchase carries the same shop ID.
+Uniqueness needs equal care. Leaving crdb_region out of a declared unique key asks CockroachDB to enforce that key across regions, which can require additional checks. Including it changes the rule to uniqueness within each region. Adding the region merely to remove remote checks can silently permit duplicate business identities.
+Here the declared primary key remains (shop_id, order_id). Order (10, 103) must not be independently created in another region. For products, orders and lines intended to work together, align homes and their reference design. A transaction still crosses regions when one of its required rows or constraints lives elsewhere.
+Current reference reads in every region
+GLOBAL serves another pattern: reference data read frequently across regions and changed infrequently. It supports low-latency current reads in each database region, using a write protocol with additional coordination and timestamp-related cost.
+CREATE TABLE policy_reference (
+policy_id INT PRIMARY KEY,
+description STRING
+) LOCALITY GLOBAL;
+The worksheet creates an empty reference table to inspect its policy. A real candidate might contain agreed reference descriptions that many regional operations need; measure its updates and freshness requirements before adopting the setting.
+These current reads differ from deliberately choosing an old snapshot with AS OF SYSTEM TIME. GLOBAL pays on writes to support its current-read contract. It does not create an independent writable authority in every region, and is a poor default for a stock row changed on every purchase.
+Figure 1 compares the access choices. Start with a current read, then switch to an update. The database uses the same region-survival goal in every case.
+Figure 1 Choose where access should be efficient
+Table policy REGIONAL BY TABLE · eu-northREGIONAL BY ROW · each shop’s homeGLOBAL · reference reads everywhereOperation Current point readUpdate
+eu-north
+Home for both shops’ rows
+eu-west
+Requests reach eu-north
+us-east
+Requests reach eu-north
+The whole table has one home. A request from another region still reaches that home for an ordinary current read.
+A comparison of access contracts, not a replica map or measured route. Shop 10’s home is eu-north; shop 20’s is eu-west. Regional-by-table deliberately gives this entire example table one home. GLOBAL describes suitable reference data, not a recommendation for frequently updated stock. Other replicas exist; the database survival goal separately governs voting placement. Eligible historical reads are outside this comparison.
+A global promotion limit of 100 remains one protected entitlement. Replicating its value near every shop does not grant every region its own allowance of 100. A local read of a description can be cheap; taking the last voucher still needs a correct coordinated decision. The table’s name or locality does not supply that protocol.
+Choose the failure separately
+The default database survival goal is zone failure. To require continued reads and writes after an entire region becomes unavailable, configure region failure and supply at least three database regions.
+ALTER DATABASE locality_lab SURVIVE REGION FAILURE;
+SHOW CREATE DATABASE locality_lab;
+For the ordinary three-region configuration, this produces five voting replicas per range, spread 2–2–1. Three votes form a majority. Losing either two-vote region leaves three; losing the one-vote region leaves four, provided the survivors can communicate. A zone-surviving configuration does not imply that same regional guarantee.
+Only two votes can be in the home region in this arrangement. Even a request entering beside its home leaseholder needs agreement from outside the region to complete the range’s replicated write. That dependency buys survival of the home region’s loss. Moving the SQL gateway cannot remove it.
+Locality still determines which accesses should be efficient; survival still determines the required failure tolerance. The word “regional” does not mean all replicas remain inside the home. The word “global” does not itself select a region-survival goal. All tables in this database share the chosen survival goal.
+A complete purchase can touch several groups, constraints and its transaction record. Its availability depends on that entire path, reachable gateways and sufficient surviving capacity, rather than one stock range’s arithmetic. Regional placement also does not replace backup, restore or a complete data-residency assessment.
+Compare the policy with the replicas
+Accepted SQL records a desired policy. It does not show that data has finished moving. Inspect the schema, regional partitions, generated zone settings and current ranges separately.
+SHOW TABLES;
+SHOW CREATE TABLE locality_orders;
+SELECT crdb_region, shop_id, order_id FROM locality_orders;
+SHOW PARTITIONS FROM TABLE locality_orders;
+SHOW ZONE CONFIGURATIONS;
+SHOW RANGES FROM TABLE locality_orders WITH DETAILS;
+SHOW TABLES exposes locality; SHOW CREATE exposes the region column and keys. SHOW PARTITIONS shows regional index partitions, while zone configurations describe generated placement constraints and lease preferences. Prefer the high-level multi-region settings over casual manual edits to their generated configuration.
+Range details identify voting and non-voting copies, replica localities and the leaseholder. Match those actual node IDs to startup localities. Check the relevant primary and secondary spans, not just one convenient row, and inspect again after convergence. Detailed range inspection is administrative work with a cost; scope it to the object under investigation.
+The final local run accepted all three table policies, exposed the region-default expression and produced six regional index partitions: three for the primary index and three for the customer index. Their generated settings requested five voters with regional constraints and home-region lease preferences. An attempted duplicate (10, 103) in eu-west failed with 23505, leaving the three original rows unchanged.
+Physical inspection was narrower. The objects still shared one range; a later snapshot showed five voters, distributed two in eu-north, one in eu-west and two in us-east, with its leaseholder in eu-north. That verifies a five-voter placement at that instant. It does not verify distinct regional partition ranges, every home preference or completed convergence of every generated constraint. Accepted policy and that shared snapshot cannot establish the complete intended placement.
+The distinction matters during repair and topology change. A database can have the right desired constraints and temporarily lack enough replicas in the required places. A plan can also reveal an unexpected remote lookup despite suitable table homes. Query work and hot ranges develops that execution check.
+Prove the promise at the right boundary
+Download the locality inspection worksheet. It requires a new disposable cluster advertising these three regions and sufficient nodes for the policy. It creates its own database, projections and index; run it with appropriate administrative privileges. The recorded harness verified every listener’s owned process and each client’s cluster identity before mutation, then removed all six processes and their temporary resources.
+The final inspection used in-memory stores, and those processes share one host. The drill can verify accepted SQL, hidden columns, partitions, generated configuration and observed replica placement. It cannot establish inter-region latency, independent zone or regional failures, application failover or service capacity after such a failure. A port responding after another process stops would not prove those promises either.
+In a deployment with the real failure domains, start from inspected healthy placement. Exercise labelled complete purchases through each intended gateway, remove the promised domain and check acknowledged and uncertain outcomes through recovery. A surviving application must reach every dependency; an ambiguous response still needs the request-reconciliation protocol.
+Record the actual versions, topology, operation and load with the results. Verify restored redundancy and headroom as well as the first successful request. Operating a CockroachDB cluster develops the operational response; transactions and retries supplies the purchase outcome contract.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival You’re here
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousCockroachDB query work and hot ranges NextOperating and securing a CockroachDB cluster
+Sources and further reading
+Checked on 24 October 2026. Access diagrams are policy models. Native observations use CockroachDB 25.4.17 on one host, with explicit limits on what that proves.
+CockroachDB 25.4,  [href=https://docs.cockroachlabs.com/docs/v25.4/multiregion-overview] Multi-region capabilities: cluster/database regions and policy layers.
+[href=https://docs.cockroachlabs.com/docs/v25.4/table-localities] Table localities and  [href=https://docs.cockroachlabs.com/docs/v25.4/alter-table#set-localities] ALTER TABLE: localities: home defaults, partitioning, unique-key semantics and explicit row homes.
+[href=https://docs.cockroachlabs.com/docs/v25.4/global-tables] Global tables: current reads and the write trade-off.
+[href=https://docs.cockroachlabs.com/docs/v25.4/multiregion-survival-goals] Survival goals: database scope, required regions and replication cost.
+[href=https://docs.cockroachlabs.com/docs/v25.4/show-partitions] SHOW PARTITIONS,  [href=https://docs.cockroachlabs.com/docs/v25.4/show-zone-configurations] SHOW ZONE CONFIGURATIONS and  [href=https://docs.cockroachlabs.com/docs/v25.4/show-ranges] SHOW RANGES: inspect desired and actual placement.
+[href=https://docs.cockroachlabs.com/docs/v25.4/licensing-faqs] Licensing FAQs: recorded ephemeral no-key grace conditions, not a production entitlement.

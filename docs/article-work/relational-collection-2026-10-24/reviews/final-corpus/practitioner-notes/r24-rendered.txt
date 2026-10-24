@@ -1,0 +1,292 @@
+Home
+Relational draft
+Diagnosing a database incident
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident You’re here
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Diagnosing a database incident
+Deep diveAbout 8 minutes AI-generated
+A slow request is an observation. “The database is slow” is a hypothesis about where its time went. The request may still be waiting for a connection, sitting behind another transaction, executing an expensive query or waiting for the application to read its answer. Each can produce the same timeout and call for a different intervention.
+Diagnosis means finding evidence that separates those explanations, then changing one thing whose effect you can check. During an incident, the first aim is to reduce harm and preserve enough evidence to explain it. A complete account can follow once customers can use the service again.
+We follow the shop’s request path, then reproduce one lock wait on PostgreSQL 18.6. The request timelines are invented comparisons. The lock states and cancellation results are observations from the downloadable disposable experiment; they are not an account of a production outage.
+Locate the time
+Keep a small incident record
+Follow the lock to its owner
+Cancel is not the same as end
+When the wait is before SQL
+When the query is doing too much
+Change one thing with a stop condition
+Repeat the lock investigation
+Locate the time
+Start with a concrete operation: which route, customer or shop scope, time interval and failure? “Checkout became slow at 10:15 UTC” is more useful than “latency rose”. Establish whether it affects every request or a subset, whether successful completions slowed or errors increased, and whether callers are retrying. Use one request trace to connect that symptom to the underlying work.
+Record the wait to borrow a connection separately from the interval in which the connection is owned. Within that interval, identify statements and commit, and where possible server waits. A single application span called database may include acquisition, network transit, server execution and fetching rows. Its name does not prove all that time was server CPU.
+The three requests below each take 1.5 seconds. Read the labelled intervals before deciding which deserves a query-plan investigation.
+Figure 1 One symptom, three different waits
+Illustrative timelines · every row totals 1,500 ms · widths share one scale · labels below each bar follow its intervals from left to right
+A · waiting to borrow
+Pool 1,200 msSQL 200 msOther 100 ms
+B · waiting on a transaction
+Other 100 msLock wait 1,200 msSQL 200 ms
+C · doing expensive work
+Other 100 msSQL execution 1,400 ms
+All numbers are milliseconds. “Other” combines the remaining application and transport time only for this comparison. Pool time is outside the database session; a lock wait is inside it. SQL execution can itself include CPU and I/O waits.
+A spends most of its time before SQL starts. B already has a session but cannot acquire a lock. C reaches execution promptly and spends its time there. An index change might help C; it will not release B’s blocker or return A’s borrowed connections. It may eventually reduce contention or ownership time, but first establish that causal link.
+A trace can be incomplete. Missing pool spans do not prove acquisition was quick, and clock times from different machines need not line up perfectly. Prefer durations measured within one process for an interval, and use identities and message boundaries to connect processes. Record the uncertainty rather than assigning the unexplained time to the database.
+Keep a small incident record
+Capture a common observation window: UTC times, affected operation, request rate, useful completions, latency percentiles, errors, queue depth, connection ownership and database resource use. Compare with a healthy window of the same operation. An average over the whole service can conceal one tenant or one hot product.
+Keep a short timeline of changes too: deployments, traffic shifts, backfills, maintenance, configuration and failures. A deployment just before the symptom is a useful candidate cause, not proof. A report that runs every hour may be the competing demand that makes an otherwise harmless change visible.
+Preserve a few representative query shapes, parameters with sensitive values removed, plans if already available, and activity snapshots. Counters need their reset time and interval; a lifetime total says little about the last five minutes. Avoid enabling vast logging or repeatedly collecting expensive diagnostics while the server is already overloaded.
+Write down the current hypothesis and the observation that could disprove it. “Pool waiting rose because a transaction holds P7” predicts borrowed sessions waiting for that lock and a blocker that outlives their queries. If activity instead shows sessions idle outside transactions while application tasks retain them, investigate connection scope.
+Follow the lock to its owner
+A blocked query is often the victim. In the experiment, one session opens a transaction and reads P7 with FOR UPDATE, keeping a row lock. It then sends no more commands. A second session tries a conditional stock update and waits. The fixture rewinds to P7 stock 1; it does not replay orders 101–103 or change their shared history.
+-- Holder:
+BEGIN;
+SELECT stock FROM products WHERE product_id = 'P7' FOR UPDATE;
+-- Leave this transaction open.
+-- Waiter, on a different connection:
+BEGIN;
+UPDATE products SET stock = stock - 1
+WHERE product_id = 'P7' AND stock >= 1
+RETURNING stock;
+The waiter appears in PostgreSQL’s activity view with state active and wait type Lock. The holder appears as idle in transaction. CPU need not be busy: the blocked query is waiting for a transaction to end. Reading the longest-running query alone would point at the waiter.
+For a small targeted investigation, inspect the current sessions and their blockers together:
+SELECT pid, application_name, state,
+clock_timestamp() - xact_start AS transaction_age,
+wait_event_type, wait_event,
+pg_blocking_pids(pid) AS blockers
+FROM pg_stat_activity
+WHERE datname = current_database()
+AND pid <> pg_backend_pid()
+ORDER BY xact_start NULLS LAST;
+pid identifies a server session now; application_name helps connect it to an owner. The transaction age is distinct from the current statement’s age. For an idle session, the displayed query text is its last query, not a command currently executing. Follow each blocker as well: it can be waiting behind another session. Collect the snapshot at a modest rate and use the appropriate monitoring authority; visibility and signalling privileges are separate.
+Do not turn the query into an automatic “kill every old transaction” rule. An old transaction may be a required operation, and the process ID can later be reused. Before a targeted intervention, recheck the session’s identity, age, current state, affected work and owner. Locks, contention and deadlocks explains the underlying protocol and the costs of changing it.
+Cancel is not the same as end
+PostgreSQL’s pg_cancel_backend signals the current query. pg_terminate_backend ends the session. Neither name should substitute for deciding which work may be interrupted and how its application will recover.
+The idle holder makes the distinction visible. The experiment sends it a cancellation signal, then checks whether the waiter is still blocked. It is. There was no running query to stop, and the holder’s transaction was still open.
+Figure 2 What the cancellation actually changed
+Holder owns P7’s lockHolder: idle in transaction. Waiter: active, waiting for Lock.
+Cancel the idle holder’s queryThe signal is sent. The transaction remains open; the waiter remains blocked.
+Cancel the waiting statementThe waiter receives an error and becomes idle in an aborted transaction. It still needs rollback before reuse.
+End both transactions, then retryThe fixture rolls both back. A fresh conditional update commits P7 stock 0.
+Observed on the disposable PostgreSQL 18.6 fixture. These are ordered states, not a time scale. Cancelling the waiter relieves that request; ending the holder’s transaction removes the original lock obstacle.
+A successful signal return reports that the signal was sent, not that the desired recovery has finished. After cancelling a statement, observe its final result and transaction state. In this run the waiter needed ROLLBACK before its connection could be used normally. Ask the owning application to finish a known idle transaction where possible. If ending the session is necessary, account for discarded work, application errors, reconnects and retries.
+Interrupting a transaction can be the right incident action. It is also a change to the workload. A thousand awakened waiters or reconnecting clients can all act together when a blocker disappears. Bound their admission and retries, then watch useful completion and the queue rather than treating “lock cleared” as the end of the incident.
+When the wait is before SQL
+A full pool means all its connections are owned. Check whether those owners are executing, blocked, idle inside a transaction or held by application work outside SQL. Pool statistics and database activity describe different sides of that boundary; neither alone explains the queue.
+If the database has spare capacity and the application spends time establishing connections, a startup or connection-creation problem may be responsible. If existing borrowers wait on a blocker, raising the pool creates more blocked sessions. If borrowers hold connections across external calls, shorten the borrow scope. If the database is saturated, additional sessions can increase contention.
+Reduce optional traffic or its concurrency while collecting evidence. Give acquisition a bounded wait and refuse excess work in a way clients understand. A fleet-wide restart can make every process reconnect at once, erase useful state and replace one overloaded queue with another. Connections, overload and capacity develops the budgets and overload policy after this branch is established.
+When the query is doing too much
+If work reaches execution promptly and dominates the delay, preserve the query shape, representative values, data distribution, plan and relevant resource evidence. Ask what changed: more executions, more rows per execution, a different plan, a colder working set or less available resource. A query that takes the same time but runs ten times as often is a different problem from one execution becoming ten times slower.
+An estimated plan is a useful low-cost starting point. EXPLAIN ANALYZE actually executes the statement. On a busy service it can repeat the expensive operation you are trying to stop; for writes it performs the writes, and external effects or sequence consumption need not be undone merely by a later rollback. Choose a safe representative copy or an explicitly bounded diagnostic execution.
+Compare rows processed with rows returned, estimates with actual counts, repeated loops, pages touched and spills. The detail belongs to Query execution and bad plans. Avoid declaring a sequential scan wrong just because an index exists. The query may need most of the table, or the index may not match its conditions.
+For I/O or commit waits, distinguish read demand, log flushes, checkpoint writes and storage degradation. For retained-history growth, look for long snapshots and lagging cleanup before launching a large rewrite. A maintenance operation can compete for the very I/O and disk space the incident lacks. The evidence should choose the next deeper reading, rather than every incident triggering every tuning action.
+Change one thing with a stop condition
+State the predicted effect before intervening. Pausing an optional export should reduce its resource demand and leave checkout more capacity. Cancelling a known lock waiter should end that statement. Rolling back the identified holder should remove its lock. None predicts that every other source of delay vanishes.
+Choose a narrow scope and a short observation window. Record what changed, who owns the action, how to undo it and when to stop. Check useful completions, latency, errors, queues and the limiting resource together. A lower error count caused by admitting no requests is not service recovery; a higher completion rate with exploding queue age is not stability.
+After the first improvement, restore traffic gradually. Look for delayed demand: retries, scheduled jobs, replica catch-up and clients that kept waiting. Keep the intervention until the cause is repaired or an explicit temporary operating limit is in place. Preserve the timeline and evidence for the follow-up change.
+The lasting repair should address the causal branch: a connection scope, a transaction protocol, an access path, an admission policy or insufficient recovery capacity. Add a test or observable signal that distinguishes that cause next time. The aim is a service whose next slow request tells you where to begin.
+Repeat the lock investigation
+Download the incident experiment. With Python 3 and PostgreSQL’s installed tools, run python3 incident.py --bindir /path/to/postgresql/bin. It creates a private temporary cluster, disables TCP listening, clears inherited PostgreSQL connection settings, checks the server’s data directory and role, and labels its two sessions before signalling them. It then stops the server and removes the temporary directory.
+The script creates only the displayed P7 scratch stock row. Checked on macOS, Python 3.14.5 and PostgreSQL 18.6: the waiter was active with a Lock wait and the holder’s PID in its blockers; cancelling the idle holder left that dependency intact; cancelling the waiter stopped its statement and left an aborted transaction; rollback and a fresh attempt produced stock 0. Linux execution and production timings were not checked. These functional observations demonstrate why state and ownership matter before intervention.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident You’re here
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousConnections, overload and capacity NextDatabase access and least privilege
+Sources and further reading
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/monitoring-stats.html] Monitoring statistics: activity states, waits, transaction ages and cumulative-statistics intervals;  [href=https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-SESSION] Session information functions: pg_blocking_pids and its cost.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-SIGNAL] Server signalling functions: cancelling a query, terminating a session and signal return values.
+PostgreSQL 18,  [href=https://www.postgresql.org/docs/18/using-explain.html] Using EXPLAIN: estimates, actual execution, instrumentation and cautions;  [href=https://www.postgresql.org/docs/18/explicit-locking.html] Explicit locking: lock lifetime and conflicts.
+Google SRE,  [href=https://sre.google/sre-book/effective-troubleshooting/] Effective Troubleshooting: observations, hypotheses and controlled changes;  [href=https://sre.google/sre-book/handling-overload/] Handling Overload: resource demand and bounded service under load.
+Operating and diagnosing PostgreSQL and Operating and securing a CockroachDB cluster: the engine-specific operational tools.

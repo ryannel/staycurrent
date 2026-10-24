@@ -1,0 +1,291 @@
+Home
+Relational draft
+Operating and securing a CockroachDB cluster
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster You’re here
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Operating and securing a CockroachDB cluster
+Deep diveAbout 7 minutes AI-generated
+A CockroachDB cluster can answer SQL while operating outside the boundary you intended. An application may be connected as an administrator. The next server failure may make some of its data unavailable. In both cases a successful query is real evidence, but it answers a smaller question than “is this service safe to depend on?”
+Operating the cluster means checking those boundaries before an incident makes them matter. Follow two changes to the shop: give its catalogue runtime a secure, limited identity, then permanently remove a node. The examples use CockroachDB 25.4.17. The security fixture uses the explicit tenant-scoped variant: shop 10 has the Blue mug, P7 at 20.00; shop 20 has a different P7, the Copper mug at 18.00.
+Follow the connection to its authority
+Grant a task, then test the forbidden neighbour
+Read health at the range
+Remove a node without spending the next failure twice
+What the local check establishes
+Follow the connection to its authority
+Transport security answers who the peer is and who can read the connection. SQL authorisation answers what that authenticated identity may do. Keep both in the acceptance test. An encrypted connection to the wrong server is not the intended service, and a verified server does not make an administrator login suitable for application requests.
+A secure self-hosted cluster uses certificates for node and client communication. A client trusts a certificate authority, verifies the server name, and authenticates its own SQL identity. Use the actual DNS name through which the application connects, including a proxy or load balancer where present. The server certificate must cover that name. Disabling hostname verification to make a deployment connect removes the check you needed.
+SELECT session_user, current_user;
+SHOW GRANTS ON TABLE shop.products;
+SHOW ROLES;
+session_user identifies the login; current_user identifies the effective role. Test the connection after the pool has performed its setup. A backend running as root does not become a runtime identity because its application name says “catalogue”. Protect node and root private keys especially carefully: they confer broad cluster authority. Keep certificate signing keys out of deployed application configuration.
+For rotation, establish new connections with the replacement trust and identity first. Then retire the old credential and account for existing sessions. A pool that continues using an old session has not tested the new connection path. Network reachability, certificate expiry, authentication failures and the connection's effective role are separate observations.
+Grant a task, then test the forbidden neighbour
+For this fixture, catalogue runtime needs to read products, insert products and update them within one authorised shop. It receives no schema-change, deletion, role-management or cluster-setting task. Table ownership stays with a separate deployment authority. CockroachDB role membership and public grants contribute to effective privileges, so inspect the complete path rather than only the direct grants on a login.
+Table privileges alone do not separate the two shops. A runtime with SELECT on the tenant product table can ask for both P7 rows unless another rule restricts rows. A composite primary key prevents the rows being confused as identities; it does not authorise the caller. This is the same distinction established in Database access and least privilege.
+CockroachDB 25.4 supports row-level security. In this small identity model the trusted service selects one of two database logins, and neither login can assume the other. The row policy derives its shop from that effective identity:
+ALTER TABLE shop.products ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_products ON shop.products
+TO runtime_10, runtime_20
+USING (shop_id = CASE current_user
+WHEN 'runtime_10' THEN 10
+WHEN 'runtime_20' THEN 20 END)
+WITH CHECK (shop_id = CASE current_user
+WHEN 'runtime_10' THEN 10
+WHEN 'runtime_20' THEN 20 END);
+USING filters existing rows. WITH CHECK checks proposed rows. Ordinary SQL privileges still have to permit the command. The mapping is deliberately fixed by the deployment authority; an unmatched identity gets no true shop comparison. Runtime has no ownership or bypass grant that would defeat the test.
+A policy based instead on a session setting that runtime can change has a different boundary. It can help a trusted backend avoid omitted filters, but arbitrary SQL under that credential can choose another setting. Changing application_name to “shop20” must not turn the shop 10 credential into shop 20. This fixture keeps the identity model small enough to test; it does not prescribe one pool per tenant for every service.
+Evidence to require from actual runtime sessions
+AttemptRequired observation
+runtime_10 reads P7Blue mug at 20.00
+runtime_20 reads P7Copper mug at 18.00
+runtime_10 explicitly asks for shop 20No returned rows; an update affects zero
+runtime_10 inserts a shop 20 rowRejected by the row policy
+runtime_10 disables the policy or assumes adminRejected by authority checks
+runtime_10 performs an allowed shop 10 editSucceeds; the acceptance transaction can then roll back
+Keep both shops populated during the test. An empty forbidden shop can hide a broken boundary. Keep a permitted edit too: a system that refuses everything has not established a usable runtime. Before enabling the policy, the same shop 10 login should expose the other-shop row; that counterexample shows which protection made the difference.
+Row policies are not a complete boundary around every copy of the data. Backup and changefeed paths have their own authority and behaviour. Review them, privileged functions, ownership, bypass grants and administrative access separately. A restored table or an export can expose data through a route the ordinary runtime query never uses.
+Read health at the range
+The connection and permission tests above can be used on their own. Node maintenance needs a further model: Keys, ranges and replication follows SQL data into ranges, their voting copies and the leaseholder that coordinates ordinary access. Then Rebalancing and cluster change follows copying, catch-up and safe membership changes, including the capacity and failure allowance needed while data moves. Use that preparation before the health checks and permanent removal below.
+A node is one running CockroachDB process; a range covers part of the keyspace and has replicas on several nodes. Its leaseholder coordinates ordinary current reads and writes, but writes still need a voting majority. Moving that lease changes the serving authority among existing replicas. Moving a replica requires a copy of the range on another node. The replica allocator chooses placements subject to the configured constraints and available capacity; an extra node is useful only if it is an eligible destination.
+Availability belongs to each range's replica group. A healthy gateway can execute a query against one range while another range lacks a majority. Start with cluster-wide unavailable and under-replicated range counts, then inspect the affected ranges and their actual placement.
+Unavailable means the range cannot serve work because it lacks the required available majority. Under-replicated means it has fewer replicas than its intended configuration. A three-voter range with two available voters can still have a majority, but it has no remaining voter-failure allowance. A non-voting or unfinished copying replica does not add another vote.
+SHOW RANGES FROM DATABASE shop WITH DETAILS;
+SHOW ZONE CONFIGURATION FOR DATABASE shop;
+-- From the operator shell, with the intended cluster's credentials:
+-- cockroach node status --all --timeout=10s
+Compare intended replication and constraints with available voters, replica localities, leases and destination capacity. Check the age of the status: a stale last report is not current health. Storage exhaustion, a disk stall, an unreachable peer and an impossible placement rule can all prevent repair, but need different actions. The DB Console's Problem Ranges and range report help identify which replica group is affected and why the allocator cannot place another copy.
+Do not fix every replication alarm by reducing the configured replica count. That can silence a mismatch by reducing the promise. Restore eligible capacity or connectivity, then verify that the intended placement has returned. Locality labels describe the configured topology; they do not prove separate power, storage or network failures. Table locality and region survival develops that larger placement contract.
+Remove a node without spending the next failure twice
+A temporary restart and permanent removal need different procedures. Draining moves work such as leases and SQL connections away so a node can stop cleanly; it does not evacuate all its stored replicas. Decommissioning removes a node from the cluster and transfers its replicas elsewhere. The latter can involve substantial copying while ordinary workload continues.
+Suppose one range votes on A, B and C. A must leave permanently. D is an eligible destination with spare capacity. Watch when D first contributes a usable replacement, then follow a later failure of B.
+Figure 1 Remove a replica only after its replacement can vote
+Node A
+Node B
+Node C
+Node D
+PlayBackNextReset
+Drawing as text
+A, B and C vote; D is an eligible destination.
+Copy the range to D while A remains available.
+D catches up and joins the voting configuration; the drawing omits intermediate membership configurations.
+Remove A after the handover. B, C and D provide three voters.
+If B now fails, C and D can still form a majority; no further voter can fail before repair.
+A conceptual handover for one three-voter range. Actual CockroachDB placement, membership transitions and headroom must be inspected for every affected range. Four local processes do not establish four independent failure domains.
+Stopping A before repair leaves B and C carrying the majority while copying still needs resources. Stopping B too can make that range unavailable. Scheduling two independent maintenance tickets does not give the range two separate failure budgets. Check the overlapping range placements before either ticket starts.
+For a planned removal, first repair existing unavailable or under-replicated ranges and check the remaining nodes' storage, placement eligibility and workload headroom. Remove the target from application routing with enough time for the actual load balancer to react. Run decommissioning preflight checks for its verified node ID:
+-- Operator shell; substitute the verified cluster and node ID.
+-- cockroach node decommission <node-id> --dry-run ...
+-- cockroach node decommission <node-id> --wait=all ...
+A dry run checks the current cluster; it cannot reserve future capacity or prevent another failure. After starting the real operation, inspect its progress. Do not turn a stalled move into a success by killing the source. Find the blocked placement, unavailable replica or destination resource instead. Wait for replica evacuation and the decommissioned state, confirm the intended ranges and surviving application path, then stop the removed process. Keep monitoring until the promised failure headroom has been restored.
+What the local check establishes
+The companion native record runs fresh secure processes with private test certificates and stores, verifies the exact binary, connects separately as each runtime and checks the permitted and forbidden operations above. It also inspects voting placement and rehearses a four-node cluster becoming three through decommissioning. Certificate material and stores are removed afterwards.
+These are local mechanism checks. All processes share one host and storage failure domain, with a tiny fixture and no production load. They do not measure regional latency, independent machine failure, production survival, certificate rotation through a real proxy or an application's complete connection-pool behaviour. Make those separate acceptance exercises in the deployment you intend to operate.
+For the next maintenance operation, Upgrading a CockroachDB cluster adds binary and cluster-version boundaries. Backup and recovery handles the saved history that replication cannot provide after a valid but mistaken write.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster You’re here
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousCockroachDB table locality and region survival NextCockroachDB backup and recovery
+Sources and further reading
+Checked against CockroachDB 25.4 documentation on 24 October 2026. The handover drawing is conceptual. Native results and their exact capability limits are kept with the article's evidence; installing a CCL binary alone establishes neither licence entitlement nor production acceptance.
+[href=https://docs.cockroachlabs.com/docs/v25.4/architecture/replication-layer] Replication Layer: lease authority, voting agreement, replica allocation and movement.
+[href=https://docs.cockroachlabs.com/docs/v25.4/cockroach-cert] cockroach cert: node/client certificates, names, signing authority and private keys.
+[href=https://docs.cockroachlabs.com/docs/v25.4/security-reference/authorization] Authorisation: roles, membership, ownership, public grants and system privileges.
+[href=https://docs.cockroachlabs.com/docs/v25.4/row-level-security] Row-level security: policies, privilege interaction and backup/changefeed limitations.
+[href=https://docs.cockroachlabs.com/docs/v25.4/show-ranges] SHOW RANGES and  [href=https://docs.cockroachlabs.com/docs/v25.4/monitoring-and-alerting] Monitoring and alerting: placement, status and health evidence.
+[href=https://docs.cockroachlabs.com/docs/v25.4/cluster-setup-troubleshooting] Troubleshoot self-hosted setup: under-replication, unavailable ranges and blocked relocation.
+[href=https://docs.cockroachlabs.com/docs/v25.4/node-shutdown] Node shutdown and  [href=https://docs.cockroachlabs.com/docs/v25.4/cockroach-node] cockroach node: draining, decommissioning, preflight and completion.
+[href=https://docs.cockroachlabs.com/docs/v25.4/licensing-faqs] Licensing FAQs: ephemeral development and deployment requirements.

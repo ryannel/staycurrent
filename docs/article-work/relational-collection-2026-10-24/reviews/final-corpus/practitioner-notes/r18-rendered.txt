@@ -1,0 +1,268 @@
+Home
+Relational draft
+Write-ahead logs and crash recovery
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery You’re here
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+Write-ahead logs and crash recovery
+Deep diveAbout 6 minutes AI-generated
+A commit can survive a crash even while the table's newest pages exist only in memory. The database makes that possible by first preserving enough information to rebuild them. Its write-ahead log records changes in an order that recovery can follow after the process stops.
+This separates two jobs that look like one from the application. Committing a transaction makes its outcome recoverable. Writing every changed table and index page back to its file can happen later. Waiting for all those scattered page writes at every commit would make even a small transaction pay for the whole set.
+Rewind the shop to before Mina's purchase 103: P3 has stock 12 and P7 has stock 1. One transaction takes two packs of tea and the last mug, records order 103 and writes its two lines. The protected outcome is P3 10, P7 0 and the complete pending order. This is a separate recovery drill using the collection's purchase, rather than a later change to its core snapshot.
+What must go first
+A commit and its reply
+What durable means
+Where replay begins
+Changing the acknowledgement
+Recovery is part of the outage
+What must go first
+The engine changes copies of table and index pages in memory. A changed page is called dirty until it has been written back to its file. Losing that memory would lose the only new copy unless something durable describes the change.
+A write-ahead log, usually shortened to WAL, supplies that description. The engine appends records sufficient to redo the changes. These are internal recovery records, not simply the SQL text. Re-running stock = stock - 1 against an arbitrary later state could take another mug; recovery must reconstruct the intended physical change.
+The ordering rule has two parts. Before a changed data page reaches its file, the log describing that page change must be durable. Before a normally durable commit is acknowledged, the transaction's commit record and the preceding log it depends on must be durable. A page can reach its file before its transaction commits, provided the first rule holds.
+That last case is why recovery also needs transaction outcomes. A file can contain some unfinished work. Finding changed bytes is not evidence that their transaction committed. PostgreSQL can replay changes belonging to an unfinished transaction while keeping its row versions invisible. Engines that update records in place can use undo information to reverse unfinished work.
+A commit and its reply
+Compare three cuts through the purchase. The table files start in the same older state. What changes is whether a durable commit record exists and whether the application heard the reply.
+Figure 1 Which evidence survives the crash?
+Cut the history Before commit After durable commit, before reply After reply
+Table files
+Before purchase: P3 12 · P7 1 · no 103
+Durable log
+No purchase commit record
+Application knows
+Purchase in progress
+Start before Mina's purchase. No order 103 is present yet.
+PlayBackNextReset1 / 4
+Read the three outcomes as text
+Before a durable commit, no success was promised; this model recovers without the purchase. After a durable commit but before its reply, recovery keeps order 103, both its lines and stock P3 10/P7 0, while the application has an uncertain outcome. After the reply, it keeps that same purchase and the application has received success. In all three histories the table files may still contain older pages before recovery.
+Conceptual cuts, not an observed power failure. The before-commit case deliberately has no surviving commit record; a real connection failure during commit does not reveal which side of the durable boundary it reached.
+The two committed histories recover the same purchase. The application knows different things. A crash just before the reply and one just before durable commit can both look like a dropped connection, so the missing reply cannot decide whether Mina should buy again. Retries when a commit reply is missing uses request identity to resolve that uncertainty.
+A multi-row transaction can require many change records. Recovery does not expose half of the purchase merely because it replays those records one by one. Visibility depends on the transaction's outcome. After recovery finishes, a reader sees the committed order, its lines and stock effects together, or none of that transaction's effects.
+On an owned PostgreSQL 18.6 instance, the native drill committed purchase 103, left a separate scratch insert uncommitted, then stopped that server with its immediate shutdown mode and restarted it. Order 103, both its lines and stock P3 10/P7 0 were present afterwards. The scratch insert was absent. The server log recorded crash recovery. This verifies a process restart on this machine; it did not cut the power, remove the operating system's cache or damage a page.
+What durable means
+Writing a log record to a file is not necessarily enough. It may have reached only the operating system's memory cache. The database asks the operating system to flush it to durable storage, using an operation such as fsync, and waits for success before acknowledging the normal commit.
+Storage can have another cache behind that operation. The promise ultimately depends on the filesystem, device or storage service retaining what a successful flush says is safe. A database process crash leaves the operating system running, so it is a weaker test than a machine losing power. A fast process-restart experiment cannot certify the entire storage path.
+Many small transactions can share one flush. Their commit records accumulate in the log, one flush covers a group, and each covered transaction can receive its reply. This is group commit. It reduces the number of storage flushes per transaction without weakening the acknowledgement boundary. It also means a single client's commit rate does not predict the whole server's throughput.
+Batching several related rows in one transaction can reduce commit overhead too, but it changes lock duration, failure scope and retry cost. The shop's purchase belongs together for correctness. Putting unrelated purchases in one enormous transaction just to reduce flushes creates a different operational cost.
+Where replay begins
+If recovery had to begin at the database's creation, the log could never be discarded and every restart would take longer. A checkpoint establishes a point from which recovery can proceed using sufficiently up-to-date data files. Background work writes dirty pages so the next recovery need not redo all earlier history.
+The checkpoint record and its recovery position are related but not interchangeable. PostgreSQL's checkpoint records a redo position; recovery can begin before the checkpoint record itself, because writes continued while checkpoint work ran. Think of a safe restart boundary, rather than an instantaneous photograph of every page at one clock time.
+Pages carry log sequence numbers, or LSNs, identifying progress through the log. Recovery uses them to recognise changes already reflected in a page and apply missing changes. It can redo a history that contains both older and newer page copies without applying the same change twice. An LSN is a log position, not an application order ID or a wall-clock timestamp.
+More frequent checkpoints can reduce the log that a restart must replay, while making active pages get written more often. Less frequent checkpoints can reduce repeated page work but leave more recovery work. The useful balance depends on the actual write workload and recovery requirement. PostgreSQL WAL, checkpoints and durability develops the settings and the observations that justify changing them.
+A half-written page needs additional protection. A few redo bytes cannot repair an arbitrary mixture of old and new page contents. PostgreSQL normally includes a full-page image with the first modification of a page after a checkpoint, giving replay a sound page to rebuild from. A checksum can help detect damage, but detecting damage does not by itself supply the missing good copy.
+Changing the acknowledgement
+PostgreSQL's synchronous_commit = off allows a successful reply before the local WAL flush. A background writer flushes later. A crash before that happens can remove a transaction the application already heard was successful. Recovery still follows a consistent surviving history; the guarantee about the most recent acknowledgements has changed.
+Three durability decisions with different consequences
+DecisionWhat success waits forConsequence
+Normal local durable commitLocal WAL flush, plus any configured synchronous replication requirementLocal recovery can reconstruct it if its durable storage survives
+Asynchronous local commitLess than that local flushRecent acknowledged commits may be lost after a crash
+Disable storage ordering safeguardsThe engine can no longer rely on its required durable orderingCorruption is possible, rather than merely losing a recent consistent tail
+The third choice is materially different from the second. Turning off fsync is not just a larger version of the asynchronous-commit window. It can invalidate ordering between the log and pages and leave the files unrecoverable. Keep these separate when someone proposes a “faster commit” setting.
+Choose the acknowledgement boundary from the consequence of loss. A counter that can be rebuilt from a retained source has different needs from a confirmed order whose only record is this database. The application receives an ordinary success in either commit mode, so it cannot discover the weaker promise from the reply text.
+Recovery is part of the outage
+A server accepting connections again is only one point in recovering a service. Someone must detect the failure and start the server; log replay must finish; applications must reconnect and resolve uncertain requests; useful data must be read back into memory. A correct database can initially answer more slowly because its working set is cold.
+Measure those phases in a disposable recovery drill shaped like the service you need to run. Record the log span, storage state, workload and acceptance queries. A replay rate observed with warm filesystem caches on a laptop is not a production recovery-time guarantee. Neither is the configured checkpoint interval.
+Crash recovery also faithfully preserves a committed mistake. If an operator deletes order 103 and commits, the log's job is to make that deletion survive. A replica can copy it too. A lost disk or missing recovery files may leave the local log unable to recover anything. Those failures require another usable history, which Backup, restore and reconciliation follows from a saved copy through acceptance of later valid work.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery You’re here
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousOutboxes and database-backed jobs NextBackup, restore and reconciliation
+Sources and further reading
+Checked against the PostgreSQL 18 manual. The native evidence uses PostgreSQL 18.6 on an owned local instance with default durability settings, a private Unix socket and asserted data-directory ownership. Its process-stop test and conceptual power-failure cuts are deliberately separate. No power-loss survival, torn-page injection, storage-loss recovery or production latency is claimed.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/wal-intro.html] Write-ahead logging: ordering WAL before data-file writes and redo recovery.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/wal-configuration.html] WAL configuration: checkpoints, redo positions, full-page images and group commit.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/wal-reliability.html] Reliability: volatile caches and the storage system's flush contract.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/wal-async-commit.html] Asynchronous commit and  [href=https://www.postgresql.org/docs/18/runtime-config-wal.html] WAL settings: acknowledgement choices and the distinction from disabling fsync.
+PostgreSQL,  [href=https://www.postgresql.org/docs/18/app-pg-ctl.html] pg_ctl: immediate shutdown and restart recovery.
+MySQL,  [href=https://dev.mysql.com/doc/refman/8.4/en/innodb-recovery.html] InnoDB recovery: redo followed by undo of unfinished transactions.

@@ -1,0 +1,290 @@
+Home
+Relational draft
+PostgreSQL logical replication and change feeds
+Relational databases: draft articles
+Relational databases
+Design facts and guarantees
+Relations, keys and normalisation
+Values, missing data and equality
+Constraints and tenant boundaries
+History, correction and deletion
+Query and change the right rows
+Joins and the meaning of a result row
+Aggregates, windows and ordered results
+Pagination and consistent exports
+Updates, upserts and bulk imports
+SQL at the application boundary
+Make query work affordable
+Indexes and access paths
+Query execution and bad plans
+Table partitioning and data lifecycle
+Concurrency and durable application work
+Transactions and isolation
+Locks, contention and deadlocks
+Row versions, storage and cleanup
+Retries when a commit reply is missing
+Outboxes and database-backed jobs
+Durability, copies and recovery
+Write-ahead logs and crash recovery
+Backup, restore and reconciliation
+Replicas, lag and read routing
+Failover and fencing
+Change and operate the service
+Live schema changes and backfills
+Connections, overload and capacity
+Diagnosing a database incident
+Database access and least privilege
+Distribute relational work
+Sharding and distributed SQL
+Transactions across partitions
+Time, snapshots and distributed reads
+Regional placement and survival
+Rebalancing and cluster change
+PostgreSQL implementation
+PostgreSQL processes, pages and row versions
+PostgreSQL vacuum and transaction age
+PostgreSQL index methods and operators
+Reading and repairing PostgreSQL plans
+PostgreSQL JSON and structured alternatives
+PostgreSQL WAL, checkpoints and durability
+Restoring PostgreSQL to a recovery target
+PostgreSQL physical replicas and promotion
+PostgreSQL logical replication and change feeds You’re here
+PostgreSQL schema changes under load
+Operating and diagnosing PostgreSQL
+PostgreSQL roles, policies and privileged code
+Upgrading and migrating PostgreSQL
+CockroachDB implementation
+CockroachDB keys, ranges and replication
+CockroachDB transactions and retries
+CockroachDB isolation and follower reads
+CockroachDB query work and hot ranges
+CockroachDB table locality and region survival
+Operating and securing a CockroachDB cluster
+CockroachDB backup and recovery
+CockroachDB schema jobs under load
+Upgrading a CockroachDB cluster
+Moving a SQL application to CockroachDB
+Further PostgreSQL reading
+Where distributed PostgreSQL work runs
+Full-text search in PostgreSQL
+Vector search in PostgreSQL
+Types and extensions in PostgreSQL
+Browse all subjects →
+Relational collection · Draft for review
+PostgreSQL logical replication and change feeds
+Deep diveAbout 7 minutes AI-generated
+PostgreSQL logical replication sends selected table changes to another database, where an apply worker locates rows by their replication identity. The destination has its own tables, indexes and physical layout. It follows a row stream rather than copying the publisher’s pages.
+This makes a selective reporting copy or a move between compatible major versions possible. It also leaves work that a physical copy handled differently: creating schema, choosing row identity, following initial synchronisation, managing conflicts and preparing independent sequence state before a destination can write.
+The examples use an isolated catalogue copy. P7 begins at the core price 20.00 and post-purchase stock 0. A scratch update to 25.00 tests replication; it is separate from the dated price-correction history and never changes order 103’s agreed unit price. Anonymous relations expose identity, schema and sequence failures without adding purchase history.
+Publish rows into an existing schema
+Give updates an old-row identity
+A selection is not a complete copy
+Keep schema and sequences ready
+Resolve apply failures without skipping history
+A slot is a retention responsibility
+A change feed still needs an effect protocol
+Publish rows into an existing schema
+A publication describes which tables and operations a database offers. A subscription connects a destination database to one or more publications. The publisher decodes WAL through the built-in pgoutput plugin; the subscriber maps those logical changes onto its local relations.
+CREATE PUBLICATION catalogue
+FOR TABLE products, identity_case, feed_rows;
+Create compatible destination tables first. Names and published columns must map correctly; the same physical file layout is unnecessary. Choose suitable destination indexes and keep any extra destination columns compatible with incoming rows. DDL is not carried by the row stream.
+CREATE SUBSCRIPTION catalogue_copy
+CONNECTION 'host=/owned/socket port=55442 user=replicator dbname=postgres'
+PUBLICATION catalogue;
+The paths and role above show the command shape, not production connection details. The publisher needs wal_level = logical, enough WAL senders and slots, and an appropriately permitted replication connection. Initial copying also needs read access to the published tables. The subscriber needs capacity for apply and table-synchronisation workers. Credentials, role ownership and supported plugin configuration belong to that setup.
+By default, subscription setup copies existing rows, then catches each table up through changes that occurred during its copy. Tables can become visible independently during initial synchronisation. Do not treat the first table’s arrival as a transactionally complete copy of every related table. The native drill waited until all three relations reached their ready state before using its initial copy.
+After synchronisation, publications within one subscription preserve the publisher’s transactional change order and consistency. Separate subscriptions are separate streams; they do not establish one global visibility boundary across all their tables. If an operation needs its related rows together, design the publication and subscription boundaries with that requirement in mind.
+Give updates an old-row identity
+An insert carries a new row. An update or delete also needs to identify the old row at the destination. PostgreSQL calls the information used for that match the table’s replica identity. The default uses its primary key.
+A table without a suitable identity can be published and can send inserts, yet fail when the application first updates or deletes a row. In the native identity_case(row_no, value) fixture, the initial row copied successfully. Its source UPDATE then failed because the table had no replica identity and published updates. Adding a primary key on row_no on both sides allowed the update to reach the subscriber.
+Change Figure 1’s identity. Watch whether the failure occurs before a logical message can be applied.
+Figure 1 · Which old row does the update mean?
+Anonymous scratch table: try to change row 1’s value from before to after.
+Replica identity Primary key: row_noNo identityFULL: entire old row
+PublisherAttempted source update
+Rowrow_novalue
+Before1before
+Requested1after
+UPDATE allowed
+Logical message
+Match the old row by its primary key.
+Old row matchrow_no = 1New row valuesvalue = after
+SubscriberRow after apply
+row_novalue
+1after
+The primary key identifies the old row. The subscriber does not need the publisher’s physical page address.
+A conceptual comparison, rather than a protocol packet capture. In the native drill, the source UPDATE failed without identity and succeeded after a primary key was added on both sides. The FULL case is documented behaviour, not an additional native test.
+Read the three cases as text
+The old source row has row_no 1 and value before; the requested new row has row_no 1 and value after. Default identity matches old row_no 1, then changes value to after. Without an identity, an UPDATE on a table publishing updates fails on the publisher before it can become a usable stream change. The subscriber keeps row_no 1 and value before. FULL matches old row_no 1 and value before, then changes value to after, with more old data to send and datatype/index restrictions to consider.
+REPLICA IDENTITY USING INDEX can choose another eligible unique index; it must meet PostgreSQL’s requirements, including non-null identity columns and a non-partial, non-deferrable form. That is an explicit replication identity, not an arbitrary index the worker happened to find.
+ALTER TABLE identity_case REPLICA IDENTITY FULL;
+FULL uses the entire old row. It can be useful when no narrower identity is available, but sends more old information and can make matching expensive. Suitable subscriber indexes can help; unsupported equality/operator-class cases still matter for some datatypes. A stable primary key is usually a clearer boundary. The native drill used the primary-key repair; FULL is explained from the manual.
+Replica identity is distinct from a request key. It identifies which database row an update means. It does not recognise that two checkout attempts represent the same logical purchase, and it is not a delivery identity for an external message.
+A selection is not a complete copy
+Publications can select rows and columns as well as tables. A filtered catalogue or analytics projection can be useful, provided its meaning remains explicit. A subset of the orders without the necessary customers, lines or payments is not automatically a self-contained application database.
+Row filters evaluate both old and new values for updates. A row entering the selected set can become an INSERT at the subscriber; leaving it can become a DELETE. An UPDATE on the source therefore does not always remain an UPDATE in the stream. Columns needed by an update/delete filter must be covered by replica identity.
+Column lists must retain the identity columns when updates or deletes are published. An explicit list of every current column is also different from omitting the list: a later column is automatically included only in the latter case. Filters and column lists do not constrain TRUNCATE in the same row-by-row way.
+Selection is not a complete security boundary. PostgreSQL’s documentation warns that a malicious subscriber can obtain unpublished columns, and another publication can expose overlapping data. Protect the source through its actual access design rather than trusting a publication’s projection to authorise arbitrary consumers.
+Apply normally runs with session_replication_role = replica, so ordinary triggers and rules do not fire by default. Foreign-key checking is implemented with triggers and requires particular attention; do not assume application-side trigger behaviour is reproduced on the subscriber. Unique, not-null and other applicable constraints can still reject incoming data. Validate the resulting relationships and intentionally configured replication triggers.
+Keep schema and sequences ready
+The native catalogue update reached the destination at 25.00. The next experiment added a note column on the publisher and wrote checked. The subscriber still had only product_id, price, stock. Apply stopped with a missing-replicated-column error; adding the compatible column on the subscriber allowed the original change to apply.
+This is why an additive rollout often prepares the subscriber first, then changes the publisher and its writers. A publication is not a schema migration service. Type changes, removed columns, constraints, partition mappings and generated columns have their own compatibility rules. Test the actual publisher/subscriber versions and schema changes, especially across major versions.
+Sequences are independent too. Replicating an identity-column value inserts that value; it does not advance the destination’s sequence. In the anonymous feed_rows fixture, source row 1 arrived while the subscriber sequence remained at last_value = 1, is_called = false. A local default insert tried to allocate 1 and failed with a duplicate key.
+The native sequence counterexample
+Destination stateAttemptResult
+Replicated row 1; sequence uncalled at 1Insert using its defaultDuplicate row ID 1
+Closed source history contains rows 1 and 2; sequence explicitly alignedFirst isolated destination insertRow ID 3
+Align sequences only after the old write history and all ID allocators are closed and the copied rows are accepted. Cached allocations, descending or cycling sequences and IDs reserved outside the database can complicate a simple maximum-plus-one rule. The fixture used one ordinary ascending sequence with no other allocator. Large objects, schema and other unreplicated state need their own plan; row counts do not cover them.
+Resolve apply failures without skipping history
+A logical subscriber is an ordinary writable PostgreSQL database. Allowing local writes to replicated rows can overwrite an incoming value or create a conflict. Replication is not a general conflict-resolution policy.
+The native test inserted local scratch row 2 on the subscriber, then let the publisher generate its own row 2. Apply reported insert_exists and could not advance that transaction. The controlled repair removed the known local scratch conflict; the original publisher row then arrived. No stream transaction was skipped.
+Other failures can be less obvious. In PostgreSQL 18, an UPDATE or DELETE whose target row is missing is recorded as a conflict but skipped without stopping apply. A running worker and advancing position therefore do not prove that the destination contains the intended state. Check the conflict statistics and important row-level outcomes.
+pg_stat_subscription shows subscription workers and their progress; pg_subscription_rel shows table-synchronisation state. pg_stat_subscription_stats and the subscriber log reveal apply failures and conflicts. On the publisher, inspect the sender and logical slot too. Diagnose missing schema, privileges, bad local data or missing WAL separately.
+Skipping a conflicting transaction is an acceptance decision about every change in that transaction, including changes that caused no error. Advancing an origin or using an explicit skip can make the stream move while silently losing valid related effects. Preserve evidence, repair the known cause where appropriate, and compare the required rows before accepting the result.
+A slot is a retention responsibility
+The logical slot remembers a consumer’s stream position and retains resources needed to decode from there. confirmed_flush_lsn tracks consumer acknowledgement; restart_lsn can be earlier because decoding still needs older WAL. The distance retained by a slot is not the same as its count of unapplied application rows.
+A disabled subscriber does not automatically remove its slot. WAL and catalogue history can remain pinned while the consumer is absent. Monitor progress, retained bytes, WAL availability and configured retention or idle limits. If a slot becomes invalid, establish a supported resynchronisation route; reconnecting cannot recreate missing history.
+Dropping a subscription normally contacts its publisher to drop the associated slot. If that source is unavailable, detaching the slot association may permit local removal, but it leaves a separate publisher cleanup obligation if the source still exists. The native drill dropped the subscription while its source remained reachable and verified that no slots remained, before stopping both owned instances.
+Publisher failover needs its own slot plan. PostgreSQL supports synchronising appropriately configured logical failover slots to a physical standby, with explicit prerequisites and readiness checks. Promoting a physical copy alone does not establish that every logical consumer can resume. This drill did not execute slot failover.
+A change feed still needs an effect protocol
+Logical decoding can feed another service instead of PostgreSQL’s built-in apply worker. An output plugin converts WAL into a chosen logical form, and the consumer decides how to store or act on it. A row mutation is still not automatically a business event: the reason for an update, its stable request identity and the intended external action may not be inferable from the final row.
+A decoding client must also tolerate repetition. A slot can restart from an earlier persisted position after a crash and resend recent changes. A consumer that records its resume position before storing the effect can lose work; one that acts first and records position later can repeat the effect after a crash.
+Where the effect and checkpoint share a transaction authority, commit them together and recognise repeated identities. An external provider action requires its own idempotency or reconciliation protocol. “The slot acknowledged the change” does not establish that an email arrived or a payment happened exactly once. Outboxes and database-backed jobs develops application intent and delivery separately.
+The complete logical-replication drill exercises initial copying and the identity, schema, sequence and conflicting-write counterexamples on an owned PostgreSQL 18.6 pair. Its controlled final sequence repair stops the source first; it is not a full live migration. Upgrading and migrating PostgreSQL follows cutover, version compatibility and rollback boundaries.
+The relational database collection
+Drafts for review. Browse by subject; planned articles will become available here as they are written.
+Relational databases
+Design facts and guarantees4 drafts
+Relations, keys and normalisation
+Choose what a row means, identify it reliably and separate facts that must change independently.
+Values, missing data and equality
+Choose exact amounts, meaningful times and text comparison rules, then follow what NULL changes in filters and uniqueness.
+Constraints and tenant boundaries
+Turn row, identity and reference rules into enforced schema boundaries, keep every relationship inside its shop, and recognise the rules that need a transaction protocol.
+History, correction and deletion
+Keep agreements intact, distinguish effective time from recorded history, and follow cancellation or deletion through its consequences.
+Query and change the right rows5 drafts
+Joins and the meaning of a result row
+Follow matching rows, repeated amounts and missing payments to build a still-due report at the right grain.
+Aggregates, windows and ordered results
+Choose what a total counts, keep rows beside their groups and make window frames and ties explicit.
+Pagination and consistent exports
+Preserve ties with a keyset cursor, follow changes between requests and choose one snapshot for an exact export.
+Updates, upserts and bulk imports
+Make a write's precondition explicit, then stage and reconcile a batch that can be replayed without changing its meaning.
+SQL at the application boundary
+Keep query meaning, transaction ownership and cancellation intact as SQL crosses into application code.
+Make query work affordable3 drafts
+Indexes and access paths
+Derive an index from the rows a query must find, the order it needs and the work each maintained entry adds.
+Query execution and bad plans
+Follow rows through operators, find the first wrong estimate and account for repeated work, spills and machine boundaries.
+Table partitioning and data lifecycle
+Derive pruning from query bounds and choose a removal unit that preserves identity, references and the late-write policy.
+Concurrency and durable application work5 drafts
+Transactions and isolation
+Choose transaction boundaries and isolation from the rule your writers must preserve, from the last mug to a decision across two rows.
+Locks, contention and deadlocks
+Choose what competing writers must lock, read the right state after waiting, and keep lock queues and deadlocks bounded.
+Row versions, storage and cleanup
+Follow an update through old snapshots, physical row versions and the difference between reusable space and a smaller file.
+Retries when a commit reply is missing
+Separate a known abort from an uncertain commit, then resolve one purchase with a stable request key and an atomic outcome record.
+Outboxes and database-backed jobs
+Commit the intention to do external work, then claim and recover it with leases, duplicate handling and clear authority.
+Durability, copies and recovery4 drafts
+Write-ahead logs and crash recovery
+Follow a purchase from memory to durable log, then distinguish recovery of the database from uncertainty about the commit reply.
+Backup, restore and reconciliation
+Choose a usable saved history, prove the restore target and reconcile valid later work while the old write history stays closed.
+Replicas, lag and read routing
+Separate received, durable and replayed progress, then choose read routes that meet the application's freshness promise.
+Failover and fencing
+Separate failure suspicion from write authority, check the candidate's history and bring the former primary back as a replica.
+Change and operate the service4 drafts
+Live schema changes and backfills
+Move a live schema through compatible states, keep changing rows correct and prove when the old representation can go.
+Connections, overload and capacity
+Separate connection counts from useful work, bound waiting, and measure capacity with room for failure and recovery.
+Diagnosing a database incident
+Follow a slow request to acquisition, locks or execution, then choose a bounded intervention whose effect you can verify.
+Database access and least privilege
+Derive runtime, migration and support authority from their tasks, then test tenant access through the identity the database actually trusts.
+Distribute relational work5 drafts
+Sharding and distributed SQL
+Choose a distribution boundary by tracing local work, shared rules, skew and the queries that must cross owners.
+Transactions across partitions
+Separate replicated agreement from a transaction’s atomic outcome, and follow the durable decision through coordinator loss.
+Time, snapshots and distributed reads
+Choose one view across partitions, distinguish timestamp order from wall time, and establish when a replica can safely answer history.
+Regional placement and survival
+Derive regional survival from communicating votes, then follow the remote dependencies of local purchases and global rules.
+Rebalancing and cluster change
+Follow a replacement from snapshot to catch-up and safe membership, then budget removal and software changes around live work and failure tolerance.
+PostgreSQL implementation13 drafts
+PostgreSQL processes, pages and row versions
+Follow one lookup from its connection backend through shared pages, tuple visibility and the conditions for a HOT update.
+PostgreSQL vacuum and transaction age
+Separate retained row versions, reusable space, visibility and freezing before choosing maintenance.
+PostgreSQL index methods and operators
+Choose a search structure from the operation, then count candidate pages, rechecks and the work its writes add.
+Reading and repairing PostgreSQL plans
+Separate cardinality, predicate and prepared-plan problems, then verify each repair on a skewed workload.
+PostgreSQL JSON and structured alternatives
+Choose documents, columns and related rows from their validation, search and update boundaries.
+PostgreSQL WAL, checkpoints and durability
+Read local WAL progress, understand checkpoint work and test the precise promise of an isolated process-crash drill.
+Restoring PostgreSQL to a recovery target
+Build a base-and-WAL recovery chain, prove an exclusive target, and reconcile later accepted work before transferring authority.
+PostgreSQL physical replicas and promotion
+Separate remote flush from replay, choose a commit acknowledgement, and transfer write authority with a tested former-primary return.
+PostgreSQL logical replication and change feeds You’re here
+Build a selective row stream with explicit replica identity, then account for schema, sequence, apply conflicts and consumer lifecycle.
+PostgreSQL schema changes under load
+Bound schema lock waits, validate a live price backfill and recover concurrent index builds from the state PostgreSQL actually left.
+Operating and diagnosing PostgreSQL
+Connect request ownership to PostgreSQL waits, recover a blocked two-connection pool and account for the work an intervention discards.
+PostgreSQL roles, policies and privileged code
+Test inherited authority, policy bypass and privileged routines under real runtime logins, including a temporary-table lookup counterexample.
+Upgrading and migrating PostgreSQL
+Choose a major-version transfer, rehearse compatibility and write handover, and identify when a return to old files would lose accepted work.
+CockroachDB implementation10 drafts
+CockroachDB keys, ranges and replication
+Follow SQL rows into ordered keys, range leases and replica agreement, then inspect the boundary a split actually changes.
+CockroachDB transactions and retries
+Connect intents and Parallel Commits to the client contract: retry a complete decision after40001 and resolve a missing commit reply under one request identity.
+CockroachDB isolation and follower reads
+Choose between a serializable decision, statement snapshots and an exact historical view, then verify the conditions a follower needs to answer safely.
+CockroachDB query work and hot ranges
+Follow a query from SQL operators into KV work, remove unnecessary primary lookups and distinguish a hot index end from a contested row.
+CockroachDB table locality and region survival
+Choose table and row homes or GLOBAL reference reads, configure a separate survival goal and check the actual placement behind the policy.
+Operating and securing a CockroachDB cluster
+Verify the runtime's identity and tenant boundary, read range health, and remove a node with the next failure still in view.
+CockroachDB backup and recovery
+Restore a covered history, close the old write authority, and reconcile one booking and its capacity effect exactly once.
+CockroachDB schema jobs under load
+Observe backfill work and failures, preserve the application contract, and accept derived prices and unique keys by their actual meaning.
+Upgrading a CockroachDB cluster
+Rehearse mixed binaries and the return path, then treat cluster-version finalisation as its own compatibility boundary.
+Moving a SQL application to CockroachDB
+Port SQL meaning and request identity, validate a closed copy, and return writes without losing the new history.
+Further PostgreSQL reading4 drafts
+Where distributed PostgreSQL work runs
+Follow joins, snapshots and write authority across native partitions, application shards, Citus and foreign tables.
+Full-text search in PostgreSQL
+Build a text-search query from tokens and phrases, then separate indexed matching, eligibility and useful ranking.
+Vector search in PostgreSQL
+Separate semantic usefulness from nearest-neighbour recall, then compare exact, HNSW and IVFFlat retrieval under filters.
+Types and extensions in PostgreSQL
+Express room conflicts and spatial proximity precisely, then keep their extension dependencies usable through restore and change.
+PreviousPostgreSQL physical replicas and promotion NextPostgreSQL schema changes under load
+Sources and further reading
+Checked on 24 October 2026 against PostgreSQL 18 primary documentation. Native evidence uses two owned local PostgreSQL 18.6 instances, private sockets, explicit ownership checks and cleanup. The identity drawing is conceptual. FULL identity, filtered streams, custom decoding consumers and logical-slot failover are documented mechanisms without native success claims here.
+[href=https://www.postgresql.org/docs/18/logical-replication.html] Logical replication,  [href=https://www.postgresql.org/docs/18/logical-replication-publication.html] Publications and  [href=https://www.postgresql.org/docs/18/logical-replication-subscription.html] Subscriptions: scope, identity, initial copy and lifecycle.
+[href=https://www.postgresql.org/docs/18/logical-replication-architecture.html] Architecture and  [href=https://www.postgresql.org/docs/18/logical-replication-config.html] Configuration: decoding/apply, initial synchronisation, triggers and worker capacity.
+[href=https://www.postgresql.org/docs/18/logical-replication-restrictions.html] Restrictions: schema, sequence, large-object and datatype responsibilities.
+[href=https://www.postgresql.org/docs/18/logical-replication-row-filter.html] Row filters,  [href=https://www.postgresql.org/docs/18/logical-replication-col-lists.html] Column lists and  [href=https://www.postgresql.org/docs/18/logical-replication-security.html] Security: selection, identity requirements and access boundaries.
+[href=https://www.postgresql.org/docs/18/logical-replication-conflicts.html] Conflicts and  [href=https://www.postgresql.org/docs/18/logical-replication-monitoring.html] Monitoring: stopped and skipped changes, observations and the consequences of skipping a transaction.
+[href=https://www.postgresql.org/docs/18/logicaldecoding-explanation.html] Logical decoding concepts: retained resources, repeated messages and failover-slot prerequisites.
