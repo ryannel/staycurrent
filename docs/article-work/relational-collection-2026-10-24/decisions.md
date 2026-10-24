@@ -140,3 +140,11 @@ User explicitly requests committing/pushingaseacharticlecompletes. Pushorigin/ma
 ## D063 · consolidate PostgreSQL operations/specialist repairs
 
 All4initial10perspectivescomplete;rootreadallreportsfully. Accept41mediumphonebudgettableand42mediumunheadedrelationvalues, fold42lowACLterminology. Select56lowphonegeometryfontandoptional40/56plain-skimheadingsforonefresh4piece repair, notsubstantiveseverityinflationorablanketmetaphorban. No consequentialnativechangeanticipated; qualifiedreuseandaffectedprimary/renderedchecksrequired. repairs/batch10-v02/accepted.md/assignment/workspace preparedwithoutpriorfeedback/sourceedits; freshdispatchnext.
+
+## D064 · completed repair delivery checkpoint
+
+Eight author-complete repair units36/37/39/40/41/42/43/56 and their frozen confirmation inputs were committed and pushed at460ea4c0600567dbe7091d8121db23fea964b7a0 under the user's incremental delivery instruction. Normal build passed173 built/150 checked/all13 rules, excluding draft collection/reference routes; deployment workflow40072868055 passed. Current repair confirmations remain pending and are not represented as completed review. The fixed core, examples and all131 preservation-baseline files remain unchanged.
+
+## D065 · current eight-piece technical confirmation
+
+Fresh informed practitioner confirmation applies all five checks to each current36/37/39/43 and40/41/42/56 article on the exact147/129-input manifests at4548. Root read both full reports. No findings. The changed37 verifier/data/environment/results/download agree; all other native reuse is qualified, with no new native execution or browser-saving claim. Current teaching/editorial/visual confirmations and fresh complete/corpus coverage remain separate.
