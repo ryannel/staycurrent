@@ -98,6 +98,38 @@ BEGIN
  IF EXISTS(SELECT FROM orders o WHERE o.order_id NOT IN (SELECT order_id FROM payments UNION ALL SELECT NULL::integer)) THEN RAISE EXCEPTION 'NOT IN null counterexample failed'; END IF;
  IF (SELECT SUM(DISTINCT amount) FROM (VALUES (1,10::numeric),(2,10::numeric)) v(id,amount)) <>10 THEN RAISE EXCEPTION 'distinct counterexample failed'; END IF;
 END $$;
+\echo Appending customer IDs with UNION ALL
+SELECT customer_id FROM orders WHERE status = 'paid'
+UNION ALL
+SELECT customer_id FROM orders WHERE status = 'pending'
+ORDER BY customer_id;
+\echo The same projection with UNION
+SELECT customer_id FROM orders WHERE status = 'paid'
+UNION
+SELECT customer_id FROM orders WHERE status = 'pending'
+ORDER BY customer_id;
+\echo Including order identity keeps Mina's two distinct rows
+SELECT customer_id, order_id FROM orders WHERE status = 'paid'
+UNION
+SELECT customer_id, order_id FROM orders WHERE status = 'pending'
+ORDER BY customer_id, order_id;
+DO $$ BEGIN
+ IF (SELECT array_agg(customer_id ORDER BY customer_id) FROM (
+  SELECT customer_id FROM orders WHERE status = 'paid'
+  UNION ALL
+  SELECT customer_id FROM orders WHERE status = 'pending'
+ ) AS combined) IS DISTINCT FROM ARRAY[1,1,2] THEN RAISE EXCEPTION 'UNION ALL contributions'; END IF;
+ IF (SELECT array_agg(customer_id ORDER BY customer_id) FROM (
+  SELECT customer_id FROM orders WHERE status = 'paid'
+  UNION
+  SELECT customer_id FROM orders WHERE status = 'pending'
+ ) AS combined) IS DISTINCT FROM ARRAY[1,2] THEN RAISE EXCEPTION 'UNION projected duplicates'; END IF;
+ IF (SELECT array_agg(customer_id::text || ':' || order_id::text ORDER BY customer_id,order_id) FROM (
+  SELECT customer_id,order_id FROM orders WHERE status = 'paid'
+  UNION
+  SELECT customer_id,order_id FROM orders WHERE status = 'pending'
+ ) AS combined) IS DISTINCT FROM ARRAY['1:101','1:103','2:102'] THEN RAISE EXCEPTION 'UNION retained identities'; END IF;
+END $$;
 -- Synthetic edge case only, not an addition to the collection's shop history:
 INSERT INTO orders VALUES(999,3,'2026-10-24 00:00Z','pending');
 DO $$ BEGIN
