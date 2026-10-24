@@ -122,3 +122,5 @@
 - `reviews/final-corpus/teaching-v01.md`: fresh independent58×7/fullfinishedroutes/everyactualstyledfigure, nofindings, rootfullyread267line report. Specific accepted other-perspective local problems are retained rather than waived by broad teaching pass. Value report pending; no source edit yet.
 
 - Final local first4 author checkpoint: `normal-build-final-local-first4-v02.json`, `repairs/final-local-v02/root-rendered/observations.json`; current08/20/34/42 desktop/phone light/dark, no page overflow,42condition/alternative inspected. Unchanged controls/native qualified, no new execution claimed. Current05newSQL native blocked by host IPC limit; no unrelated IPC removed.
+
+- Currentall6exactversion: normal-build-final-local-all6-v02-clean.json; final-download-byte-equality.json(50); preservation-current.json(131); all58writersstructure0. CleanSQL evidence repairs/final-local-v02/evidence/r05-hosted-clean-result.json +rawlog, root-rendered-05-54/observations.json. Frozenmanifestsfinal-corpus/v02(656)/repair-final-local/v02(171); nofeedback/qualitynotesincluded.

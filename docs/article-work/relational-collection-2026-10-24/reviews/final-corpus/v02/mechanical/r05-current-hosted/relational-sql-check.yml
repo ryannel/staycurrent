@@ -1,0 +1,61 @@
+name: Relational SQL check
+
+# Explicit verification only; this job never deploys or touches a live database.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  query-results:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: postgres:18.6-bookworm
+    services:
+      article-db:
+        image: postgres:18.6-bookworm
+        env:
+          POSTGRES_USER: sc_article_check
+          POSTGRES_PASSWORD: disposable-article-check
+          POSTGRES_DB: sc_${{ github.run_id }}
+        options: >-
+          --health-cmd "pg_isready -U sc_article_check -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify the exact reader download on PostgreSQL 18.6
+        shell: bash
+        env:
+          PGPASSWORD: disposable-article-check
+          ARTICLE_DATABASE: sc_${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          unset PGHOST PGPORT PGDATABASE PGUSER PGSERVICE PGSERVICEFILE PGOPTIONS
+          export PGPASSFILE=/dev/null
+          export PGSERVICEFILE=/dev/null
+          sql_file=src/components/relational-collection/r05/downloads/joins-experiment.sql
+          sha256sum "$sql_file" .github/workflows/relational-sql-check.yml
+          psql --version
+          psql -X -h article-db -p 5432 -U sc_article_check -d "$ARTICLE_DATABASE" \
+            -v ON_ERROR_STOP=1 -v expected_database="$ARTICLE_DATABASE" \
+            -f - -f "$sql_file" 2>query-results-stderr.txt <<'SQL' | tee query-results-output.txt
+          SELECT current_user = 'sc_article_check'
+             AND current_database() = :'expected_database'
+             AND current_setting('server_version_num')::integer = 180006
+             AND inet_server_port() = 5432 AS owned_endpoint_ok \gset
+          \if :owned_endpoint_ok
+          SELECT version(), current_user, current_database(), inet_server_addr(), inet_server_port();
+          \else
+          \quit 1
+          \endif
+          SQL
+          cat query-results-stderr.txt
+          if grep -E '(^|: )(ERROR|FATAL|PANIC|error):' query-results-stderr.txt; then
+            exit 1
+          fi
+          grep -F 'All join checks passed' query-results-output.txt
