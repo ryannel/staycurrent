@@ -27,3 +27,7 @@ Continuity pass complete on source, captions, controls and fallback. Neighbour l
 ## Rendered author finishing
 
 Awaiting root integration and immutable preview. Desktop,375px, light/dark, all options, meaningful playback and keyboard checks must be completed before final first return. Actual rendered download href must be byte-checked, without download-event/path waits. Reset controls and restore1280×720/System afterwards.
+
+## Final rendered verification
+
+Root immutable4510 and4512 structural checks report zero issues. All4 key-space choices and12 quorum states checked, keyboard Next/Back, Reset and playback through4/4, textual fallback and byte-identical download checked. Desktop1280×720 and phone375×812 inspected in light/dark. The final4512 keys selector computes11.2px top and zero other panel margins on both widths, removing the global64px section gap. Page widths match viewports; no clipped controls or unreadable labels. Caption/model boundaries reread. Final restored1280×720/System, reset controls and closed owned tabs; lease explicitly released. Browser save remains unverified. Native results unchanged by final tag/style corrections.

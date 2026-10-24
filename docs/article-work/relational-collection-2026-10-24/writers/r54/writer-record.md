@@ -22,6 +22,10 @@ Author reread the complete article in source as a connected explanation, then ch
 
 The continuity pass preserves tenant-scoped P7 identity, shop 10 Blue mug 20.00, shop 20 Copper mug 18.00, P3 4.50, P9 35.00 and receipt 103's captured-line total29.00. The rendered total imports shared core.json. Scratch prices21/19 are explicitly temporary independent experiments, not price history. The revision and operation identifiers are local protocol instrumentation, not new shared business facts. No shared example changes proposed. Sharding/transactions/architecture assigned prerequisites were read; native partition lifecycle and generic rebalancing stay with their neighbours.
 
-## Pending author finishing
+## Complete author return
 
-Immutable preview, structural diagnostics, rendered reread, all six stepper states, playback/keyboard, both themes at actual desktop and 375px target sizes, actual rendered download href bytes. Browser save behaviour will remain unverified.
+Root's exact immutable4510 /review/relational-collection/postgresql/sharding/ has zero structural issues. The author reread the rendered article and both figures in context; all six handover states match the native schedule. Back/Next/Reset and the text disclosure work by keyboard; autoplay advanced to4/6 and Pause stopped it. Actual target dimensions were1280×720 and375×812 in Light/Dark. Both figures fit640px desktop/343px phone; phone document scrollWidth375. The snapshot timeline and pair remain readable in both themes and phone layout. Sampled active text contrast is at least6.0347:1 (disabled controls excluded); no console warnings/errors. Evidence/browser-checks.json and four PNG captures record the actual run.
+
+The actual rendered download href omits its trailing slash. Bounded HTTP verification returned200 and14815 source-identical bytes, SHA256 5760c15b938865258def185bc298681d4df4eddda2a2867ab6ef270a91748ed8. No browser download event/path/save was attempted; saving remains unverified. Root owns independent review and publication decisions. No requested author work remains for r54.
+
+Viewport/theme lease was restored to1280×720/System, controls reset, owned tabs closed and release reported to root after the joint r54/r55 checks. Source remains fixed for independent review.

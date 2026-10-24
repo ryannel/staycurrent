@@ -100,3 +100,7 @@ All five recovery-writer sources, native experiments and complete author continu
 ## D053 · ready initial review scope
 
 The undispatched same-perspective initial teaching/editorial assignments now include complete batch09 alongside05–08:25exact firstversions, every per-piece check/input preserved and one common full reference calibration for the coherent assignment. The undispatched practitioner assignment similarly includes06–09:23exact firstversions. Existing active07/08visual scope remains unchanged. This follows D034 and waives no initial, repair, complete or corpus role. Informed confirmations remain separate.
+
+## D054 · complete PostgreSQL first returns
+
+Root completed the remaining ordinary r56 preview-owner author display checks while the fresh CockroachDB operations writer calibrated. All32 manual query-form/step/width/theme states, static native comparison, phone code scrolling, playback/pause/reset/keyboard, final disclosures and served-byte equality were checked against unchanged4512 source. This is author verification only, not independent review. All six r40/r41/r42/r54/r55/r56 first returns are frozen for batch10. Final download-save behaviour was not claimed. CockroachDB operations public text audit verified19/19 complete reference chunks and34rendered study was separately reported; design acknowledgement sent before source writing.
