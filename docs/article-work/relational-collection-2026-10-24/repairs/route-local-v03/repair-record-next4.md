@@ -1,0 +1,31 @@
+# Local route repair · v03
+
+Prepared inputs and bounded reference/render receipts: preparation.md. Accepted reader problems: input/accepted.md. Root is sole integration/build/publication owner.
+
+## r20 · P5 · source ready / frozen
+
+Changed only the full-text progress alternative in `src/components/relational-collection/r20/Progress.astro`: ordinary word/number spacing. The fourth item remains unchanged, including conditional storage flush, replay0 and absent103. Script, states, live captions, article body and native fixture remain unchanged. Full r20 reread and component caption/control/alternative reread complete; continuity preserves complete purchase103 and its separate replication history. No changed consequential claim or mechanics; no native rerun warranted. Frozen hash: evidence/units-r20-r49.json. Render need: expand the current text alternative, check spacing and state4 replay0/no103 in the integrated immutable preview.
+
+## r49 · P6 · source ready / frozen
+
+Changed only What the local check establishes and its Sources preface: state the completed local observations directly in the past tense and remove the unlinked internal-record signpost. No new evidence link or new observation. Full r49 reread complete, including unchanged Removal captions/controls; full continuity audit retains tenant-specific P7 identities/prices, runtime privileges, range/lease/voter model, node maintenance order and local capability limits. The native applicability record and unchanged verifier/data/environment continue to qualify these same mechanism observations; no new execution or production claim. No changed consequential technical claim. Frozen hash: evidence/units-r20-r49.json. Render need: read the changed local-check paragraph/Sources and its surrounding handoffs in the current integrated preview.
+
+No passages beyond those findings restructured; no cross-article ownership or canonical-tree change. Remaining units are in progress.
+
+### r20/r49 author rendered completion
+
+Completed on immutable first2 preview4562, supplied by root from source hashes above. Chrome1, own tab315244757, default viewport/System unchanged. r20: expanded All progress states as text and advanced Next three times to4/5. Styled screenshot/DOM show received/durable through2, replay0, No order103, readable separated words/numbers in all five list items and unchanged conditional-flush fourth item. r49: followed the contents link to What the local check establishes, read its three full paragraphs and opened Sources; styled screenshots/DOM show direct past-tense local observations, all same-host/production/proxy/pool limits and unchanged upgrade/recovery links. No internal unavailable evidence pointer remains. Both units are author-complete and remain frozen. Build/ordinary QA belong to root; this is affected author inspection, not independent review.
+
+## r46/r47/r48 · P1 · source ready / frozen
+
+Each local route now establishes the minimal native model before its first dependent operational use, with a link to the existing r44 owner. r46 adds range/gateway/leaseholder/voting distinctions at Why a follower can know the answer, then returns immediately to answering history. r47 adds them between the SQL/KV opening and the ten-order experiment, grounding later remote lookup and hot-range diagnosis. r48 adds them before region configuration, grounding row homes, leaseholder and voter placement. Added primary architecture sources to each source list. r46 also repairs the adjacent ordinary spacing in omit103→omit 103; no meaning change.
+
+All three complete articles reread after repair, including downstream plans/routing/placement inspection, captions, controls and handoffs. Full continuity audit: r46 keeps S502 instructor write skew distinct from the complete purchase103 history and retains model/native boundaries; r47 keeps synthetic customer42 rows separate from core purchase facts and all120/20/10 counts, bucket spans and one-node limits unchanged; r48 keeps tenant/shop/region identities, declared primary key, locality versus survival distinction, shared-range observation and convergence limits unchanged. The native examples/worksheets/figures and their applicability are unchanged. New consequential claims checked against primary documents in evidence/architecture-primary-check.md. No new executable verification needed.
+
+Frozen files/hashes: evidence/units-r46-r47-r48.json. Affected author render needs: read each new paragraph with its preceding/following explanation; confirm the owner link resolves to the existing r44 draft; follow the downstream native terms and first figure without a knowledge jump. No parent articles, architecture owner, metadata or canonical tree changed. No restructuring beyond P1 and the declared spacing polish.
+
+## r40 · P4 · source ready / frozen
+
+Changed only the bridge into Finish the backfill with a complete check. Replaced the repeated full two-row batch SQL and its derivation with a direct anchored link to r22's existing recipe/retry contract and a short exact account of the local locked103/1, four filled rows, empty third batch and later final fill. The full intended-scope acceptance SQL and every following validation, ShareUpdateExclusiveLock, validated-check SET NOT NULL/schema-lock, unchanged file/constraint/receipt and concurrent-index phase/failure/recovery lesson remain intact.
+
+Complete r40 reread and full continuity audit complete, including both figure captions/controls, five original line prices, decimal authority and finite fixed-scale domain, native versus conceptual boundaries and29.00 receipt. No change beyond P4's section opening and removed duplicate listing; no data/script/figure mechanics change. input/mechanical/r40/native-results.json was read: backfill batches are2+2+empty+103/1, price acceptance is the five fixed pairs and recorded index/rewrite mechanisms remain unchanged. Existing evidence still applies to the same exact protected download/environment/verifier; no rerun or new technical claim. Frozen hash: evidence/unit-r40.json. Render need: read the shortened bridge through complete acceptance and validation; follow anchored r22 link and confirm it reaches the original batch explanation; inspect transition into the unchanged concurrent-index lesson.
