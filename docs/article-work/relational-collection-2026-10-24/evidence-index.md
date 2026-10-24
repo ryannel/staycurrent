@@ -98,3 +98,10 @@
 - `repairs/batches11-12-v02/accepted.md`: consolidated49 branch preparation and51 contrast, plus selected local polish; fresh five-piece repair dispatched after all initial perspectives.
 - `incremental-delivery.json`: user-authorised origin/main checkpoints95847ecb,460ea4c0,375b6a4a and successful deployment workflows. Earlier local-only checkpoints above have now been pushed. Draft collection remains gated from normal builds.
 - `preservation-current.json`: all131 baseline files unchanged. Required current teaching/editorial/visual confirmations and independent final/corpus coverage still pending; source completion is not review completion.
+
+## Current reading confirmations and final local repair
+
+- Four current `teaching-confirmation` and four current `editorial-confirmation` reports under repair-set, repair-batches07-08, repair-batch09 and repair-batch10: twenty pieces/140checks per perspective, no substantive findings; root read all eight reports. `reviews/teaching-confirmation-coordinator-note.json` qualifies the optional40 heading trace; fresh editorial/practitioner directly confirm the actual heading.
+- `repairs/batches11-12-v02/repair-record.md` and evidence: full current source/primary/continuity/applicability, affected1280/375 lightdark author checks, exact download serving and honest viewport-reset/native limits. Author verification supplies no independent coverage.
+- `reviews/repair-batches11-12/v02/manifest.json`:182 curated current source/context/mechanical inputs, immutable4550; stale screenshots removed, original hashes separated, unchanged native reuse qualified. Fresh five-piece confirmations begun.
+- `normal-build-batches11-12-v02.json`:173 built/150checked/all13rules, no new draft/reference routes;131protected files unchanged.

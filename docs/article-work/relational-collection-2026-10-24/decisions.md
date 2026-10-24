@@ -152,3 +152,11 @@ Fresh informed practitioner confirmation applies all five checks to each current
 ## D066 · complete initial coverage and final CockroachDB repair batch
 
 All58 initial articles now have all four prescribed independent perspectives; root read the complete final visual report. The fresh44 supplement closes only the missing pre-prose combinations, retaining the other applicable initial checks. Accept49 teaching medium for the unprepared security-to-physical-health branch and51 visual medium for meaningful18px multiplication text at4.06:1 light contrast; fold51 low arrow orientation and selected44/48/51/52 local wording polish into one fresh five-piece repair. No other initial12 visual finding. See repairs/batches11-12-v02/accepted.md. Final complete/corpus reviews and outstanding informed confirmations remain required.
+
+## D067 · current twenty-piece reading confirmations
+
+Fresh informed teaching and editorial confirmations each cover twenty repaired pieces on their exact three version sets, seven checks per piece, current surroundings and affected dependencies. Root read all eight complete reports. No substantive finding. Teaching optional40 heading description names an adjacent unchanged heading; no focused trace credited for that row. Current practitioner and fresh editorial reports directly confirm the actual changed heading and NOT VALID/bridge sequence, so this optional polish requires no extra round. No informed report supplies independent final/corpus credit. Current seventeen-piece visual confirmation remains active.
+
+## D068 · final local author repair frozen for independent confirmation
+
+Fresh44/48/49/51/52 author completed six changed files with no native/canonical/runtime change. Exact4550 preview passed existing checks; current label contrast minima8.51light/10.34dark, downward phone mapping, clear44caption/fourstates and49branch/52heading wraps checked. Full reread/continuity/primary/applicability records integrated. Normal173/150/all13 build and131preservation pass.182curated inputs frozen as repair-batches11-12-v02. Active fresh visual17 assignment extends coherently with this previously unseen5-piece segment, preserving five exact separate reports and all checks; fresh practitioner/teaching5 dispatched, editorial5 ready. This is informed confirmation, not blind final/corpus credit.

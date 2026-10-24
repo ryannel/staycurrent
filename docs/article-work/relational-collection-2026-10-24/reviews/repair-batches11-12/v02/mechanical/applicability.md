@@ -1,0 +1,7 @@
+# Mechanical applicability · repair-batches11-12-v02
+
+Current source and preview are the frozen author-final five-piece version at4550, built output /private/tmp/staycurrent-relational-batches11-12-v02-author. Current article/component hashes are per-key current-source-hashes.json. The original-source-hashes files identify the executed first-version baseline, not current presentation.
+
+All native scripts, fixtures, database commands, downloadable worksheets, core facts and recorded native results are byte-identical to the supplied first-version evidence. Current changes are text, captions, r49 documented operational orientation, and r51 responsive arithmetic presentation. Original native result evidence remains limited to its original versions/one-host fixtures and recorded commands; no new native execution is claimed. Original screenshots were removed. Original browser-state/colour/download records apply only to unchanged mechanics; current presentation is represented by current-author-observations and still requires each assigned checker's fresh use.
+
+Current-author-observations contains mechanical measurements/screenshots and exact source applicability only, with no author teaching notes or review verdicts. Normal build and existing structure checks pass separately; neither certifies reader quality. Browser save behaviour remains unverified. The author's final reset cleared its viewport override; its fresh tab native baseline then measured1488×973/System-dark. Reviewers must verify their own actual test dimensions.
