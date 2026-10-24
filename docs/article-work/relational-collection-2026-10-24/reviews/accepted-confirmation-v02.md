@@ -1,0 +1,27 @@
+# Accepted informed-confirmation findings · current v02 → v03
+
+Initial four-perspective coverage was complete before these scoped confirmations. The fresh practitioner read affected surroundings and challenged the executable contract, finding three concrete causes. Accept both critical technical contradictions and the shared medium setup failure at proposed severities, for the reader effects below. Reports remain immutable: batch03/practitioner-confirmation-v02.md; batch04/practitioner-confirmation-v02.md; batch02/practitioner-confirmation-v02-supplement.md. No rule additions or article-wide style reset.
+
+## B023-ENV · medium · in-process connection defaults
+
+Accept one shared cause with per-piece traceability: r04 practitioner-1, r08 practitioner-1, r09 practitioner-2. Each runner gives child PostgreSQL tools a PG-free dictionary, but in-process Psycopg (and r09 pooled connections) retain os.environ defaults. Exact frozen downloads reached their verified owned endpoints and then failed fixture creation under the sole deliberate PGOPTIONS=-c default_transaction_read_only=on. Successful clean baseline observations remain real. The reader following the stated setup must diagnose an undeclared inherited setting before reaching the lesson.
+
+Pass: the intended environment/connection-default contract applies to every actual connection, including later worker and pool connections, as well as child tools. Preserve private explicit endpoints, ownership verification before mutation, disabled TCP, supported setup and finally cleanup. Verify each exact changed full runnable under clean baseline and the demonstrated non-conninfo PGOPTIONS challenge; scope any environment claim to what is actually cleared. No Linux execution claim without execution. Choose the implementation; no extra tutorial of deployment settings is required.
+
+## B03-P10F1 · critical · index entry contents across the explanation
+
+Accept r10 practitioner-1. Figure1 puts ordinary order101/102/103 text inside customer-only index entry boxes, while the repaired next model and prose say that business IDs are learnt from table fetches and are absent from those entries. The first model contradicts the second and can falsely imply an order-ID return is covered.
+
+Pass: actual indexed keys/row locations, explanatory annotations and values obtained by fetching rows are unambiguous across every representation/state, caption, prose and alternative. Read the whole current article and trace that distinction through all media and later conclusions. The canonical orders and native measurements remain fixed; preserve the already-correct three-route Figure2 and tie explanation. Choose the smallest coherent reference-led repair, without a prescribed figure or replacement wording.
+
+## B04-P17-EXP · critical · lease expiry after a row-lock wait
+
+Accept r17 practitioner-2. The current renewal/completion/release claims require an unexpired lease, but an ordinary UPDATE can evaluate WHERE lease_until>clock_timestamp() and SET expressions before waiting on an unchanged row lock. An owned18.6 challenge held SELECT FOR UPDATE without changing the tuple; each mutation began before a two-second deadline, visibly waited on Lock, then returned the event after the observer verified expiry and released the locker. Completion even stored its earlier evaluated timestamp. This disproves the stated strict timing guarantee; it does not establish broken generation fencing, multiple committed claims or repeated external effects.
+
+Pass: the chosen expiry/authorisation moment is explicit and matches the actual follow-up protocol under lock waits. Make renewal, completion and release/rescheduling consistent, including current generation, replacement, uncertainty and recovery. Check a lock held without row change across expiry, the contrasting competing newer generation, and any time/permission claims through the complete article. Preserve permanent retirement of uncertain returned claims, stable event/effect identities, receiver deduplication, inbox and resource-wide fencing distinctions; keep in-flight requests distinct from local abandonment. The writer chooses a coherent bounded contract and implementation, rather than adding detached caveats or claiming physical-time guarantees beyond the evidence. Exact native proof must cover the new boundary and preserve the existing token-alias/two uncertainty histories and six retirement cases. No schema/media change is prescribed.
+
+## Current coverage and next confirmation
+
+The earlier r17 uncertain-token ABA repair passes separately; the expiry finding is new and does not erase that result. r11 early-stop and r12 pruning semantics pass practitioner confirmation; batch03 current changed visual areas passed fresh visual confirmation. r16 table meaning is confirmed technically. Keep unchanged evidence where source/data/environment/verifier and judgement still apply.
+
+Two fresh coherent repair assignments may work separately: r04/r08/r09/r10 together; r17 separately. Teaching and focused editorial confirmations of all earlier and new affected additions remain pending and will use the final current repair set. Fresh practitioner checks each new changed technical area and dependencies. Fresh visual checks changed media/code/prose layout/downloads, using unchanged-media evidence only where applicable. Independent final complete practitioner/blind editorial plus full corpus roles remain required. No accepted substantive issue is waived.

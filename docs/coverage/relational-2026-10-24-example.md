@@ -138,6 +138,8 @@ Vector search may add labelled low-dimensional **toy** product vectors for geome
 
 JSON examples may add optional product attributes such as material or brewing temperature. These do not replace products’ identities, prices or stock. Spatial examples may add collection points for shops; coordinate system, units and points must be declared with the native experiment. No geographic distance is inferred from the region labels.
 
+The optional catalogue-attributes variant uses P7 `{"material":"ceramic"}`, P3 `{"brewing_c":80}` and P9 `{"material":"ceramic"}`. These are illustrative attributes, not additional purchase history or evidence of a complete product specification. Anonymous documents may supply missing, null and wrong-type counterexamples; generated index-plan rows remain a separate native fixture. The variant is stored in `src/lib/relational-collection/catalogue-attributes.json`.
+
 ## Accepted extension E8: optional delivery notes
 
 The values article may add an explicitly labelled optional `delivery_note` variant to core orders 101–103: 101 has `Leave by door`, 102 has empty text (`''`) and 103 has SQL `NULL`. This does not alter any core status, line, payment, total or stock fact, and does not assert that the core schema already contains this column. The authoritative variant values are in `src/lib/relational-collection/values.json`.

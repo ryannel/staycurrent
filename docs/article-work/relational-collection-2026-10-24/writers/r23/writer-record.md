@@ -21,3 +21,11 @@ Complete author reread: the distinction between open/borrowed/progressing sessio
 Primary sources opened on 24 October 2026: PostgreSQL 18 connection/resource/client settings and monitoring statistics; Psycopg pool guide/API; PgBouncer features; Google SRE Handling Overload; Amazon Builders' Library Timeouts, retries, and backoff with jitter. Version-sensitive pool APIs are attributed to installed-version verification, not claimed executed here.
 
 Rendered finishing and final hashes pending preview integration.
+
+## Completed first return
+
+Root-built immutable output on port4452 passed the site check with zero issues (209 pages including all then-ready articles). Author inspected the actual article at1280×720 and375×812 in light and dark; actual dimensions and document width were checked. Figures, captions, options, keyboard controls and text alternatives were read with their prose. Final ordinary layout fixes were reintegrated before confirmation. Viewport was reset to1280×720, System restored, controls reset and only temporary tabs closed. Representative screenshots are under evidence/. No independent review has been performed by this writer.
+
+All18 interactive combinations reached the expected endpoint. Back/Next keyboard, actual timed Play advance, Pause, Reset and text disclosure checked. Panel margins are0 after integration. No download offered.
+
+Final source hashes are in evidence/source-hashes.json. This is the complete first return; source is frozen for the orchestrator to arrange fresh independent review.

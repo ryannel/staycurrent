@@ -1,0 +1,13 @@
+# r33 author record
+
+Common19-part text/34-drawing calibration and root acknowledgement recorded in r31, reused for this coherent assignment. Current write/figures/continuity skills followed; supplied r10/r11/r02 and introduction context read. No delegation or external review.
+
+Teaching choices: inverted element table makes the whole-array/element distinction visible. New BRIN min/max interactive directly adapts the reference Indexes comparison of identical rows in different physical orders: values, answer and candidates stay visible while order changes. This is an explicitly tiny model, separate from measured native pages. No stepped playback is useful for this direct comparison; native selects provide keyboard operation.
+
+Native proof: complete shipped index-methods.sql run in new owned private18.6 instance, PG connection variables cleared, endpoint data path asserted, TCP disabled and cleanup in finally.50000 deterministic anonymous rows;500 gift matches; increasing/minute time and modulo7919 permutation. Btree array containment baseline Seq Scan; GIN bitmap exact500pages. BRIN forced only for diagnostic comparison;4vs40 lossy heap blocks,170vs1790 discarded,10answers each.24,576byte BRIN indexes each. No timings used. Temporary tables/download only; no shared example extension.
+
+Complete author reread and continuity pass: type/operator/class established before names; exact versus lossy and Recheck Cond versus actual removals distinguished; method eligibility separated from planner choice. Tiny toy values are neither timestamps nor native page counts. JSON snippet labelled schema illustration; lifecycle, text, range/spatial and vector depth linked to owners. Sources complete, no unsupported benchmark claim.
+
+Rendered checks/download href: pending root immutable preview and lease. Actual browser saving remains unverified; no download-event wait will be used. No build/publication/commit/push.
+
+Final rendered author pass: immutable4464, verified actual1280×720 and375×720. Light/Dark inspected. No document overflow, captions/control labels/text alternatives readable. Dynamic summary range/row styling repaired after first render and verified in both arrangements. Selector endpoints and 5..6 comparison exercised; same answer2 with4or16candidates. Native select keyboard focus inspected; selection changes used semantic option actions. Actual rendered download href read, bounded HTTP200 bytes match executed/shipped file (evidence/download-check.json). Browser saving unverified. Defaults reset,1280×720/System restored, temporary tab closed. Complete first return ready.

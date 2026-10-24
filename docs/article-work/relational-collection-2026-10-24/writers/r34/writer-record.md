@@ -1,0 +1,13 @@
+# r34 author record
+
+Common19-part text/34-drawing calibration and root acknowledgement recorded in r31, reused for this assignment. Current write/figures/continuity skills followed; supplied complete r11 and introduction context read; own r31/r33 provide immediate implementation knowledge. No delegation or external review.
+
+Teaching development: follows fixed Indexes’ reading of scan versus index condition and its before/after work accounting. Prepared proof figure makes what is known at planning time explicit, then connects that proof to observed operations. It is a selector over recorded cases, not a planner simulation. Native HTML query/route boxes and complete text alternative use site tokens. Control is a native select with keyboard operation.
+
+Native proof: complete shipped plan-repairs.sql ran on an owned private18.6 instance, PG variables cleared, socket/data ownership asserted, TCP disabled and cleanup in finally. Generated independent100000records:99000shop10/paid and1000shop20/pending. Joint MCV10→977estimate for1000actual, unchanged scan. Unknown generic status cannot imply pending-only index:2048accesses versus custom3 and fixed-pending-generic3. Actual pending answer99001..99010. Column cast expression stats500→960estimate, unchanged2048page scan; integer comparison changes to25access index route. Forced modes and parallel-gather disable reset by worksheet. No automatic-mode switch, production performance, native loop or spill measurement claimed.
+
+Complete author reread and continuity pass: counts scoped correctly, parent/child inclusivity and loops explained without multiplying buffer totals; partially consumed scan distinguished from misestimate; top-N input distinguished from emitted10; index-only label distinguished from10heapfetches. Synthetic records explicitly not shop history; tenant labels consistent, no stock/payments/prices invented. Separate statistics/predicate/access/prepared causes connect to predicted changes. Sources and further reading complete.
+
+Rendered checks/download href pending immutable preview and viewport lease. Actual browser saving unverified; bounded HTTP byte check planned. No build/publication/commit/push.
+
+Final rendered author pass: immutable4464, verified actual1280×720 and375×720. Light/Dark inspected. No document overflow, captions/control labels/text alternatives readable. All3 prepared contexts exercised; text alternative opened/closed with Enter; query/proof/route/result remain consistent. Actual rendered download href read, bounded HTTP200 bytes match executed/shipped file (evidence/download-check.json). Browser saving unverified. Defaults reset,1280×720/System restored, temporary tab closed. Complete first return ready.

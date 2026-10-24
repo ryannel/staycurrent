@@ -19,3 +19,11 @@ Counterexample: cancelling the idle holder returned true but left the blocker re
 Opened PostgreSQL 18 monitoring statistics, session information, signalling functions, Using EXPLAIN and explicit-locking manuals; Google SRE Effective Troubleshooting and Handling Overload. Checked 24 October 2026. Sources are linked in the complete article. Exact observed native command/output retained; no invented service evidence.
 
 Rendered finishing, actual download byte check and final hashes pending immutable preview. Browser saving will remain unverified by design.
+
+## Completed first return
+
+Root-built immutable output on port4452 passed the site check with zero issues (209 pages including all then-ready articles). Author inspected the actual article at1280×720 and375×812 in light and dark; actual dimensions and document width were checked. Figures, captions, options, keyboard controls and text alternatives were read with their prose. Final ordinary layout fixes were reintegrated before confirmation. Viewport was reset to1280×720, System restored, controls reset and only temporary tabs closed. Representative screenshots are under evidence/. No independent review has been performed by this writer.
+
+Both static diagrams checked; narrow phone timeline labels confirmed in final output. Native download actual rendered href returned HTTP200 with exact delivered bytes under a5-second read bound. Browser saving remains unverified.
+
+Final source hashes are in evidence/source-hashes.json. This is the complete first return; source is frozen for the orchestrator to arrange fresh independent review.

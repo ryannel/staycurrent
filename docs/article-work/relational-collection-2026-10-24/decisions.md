@@ -68,3 +68,15 @@ Prepared clean r15/r18/r20 row-version/storage → recovery → replica writing 
 ### D045 · combine pending informed confirmations with identical perspective scope
 
 Once both repaired versions are frozen, the pending batch03 and batch04 practitioner, teaching and focused editorial confirmations may be scheduled together by perspective. Each article retains its exact frozen version, accepted problems, required affected-area/surrounding/downstream checks and report. This combines common calibration and coordination only. It is informed confirmation, never the independent final complete/corpus role. Batch03 visual confirmation has already passed separately; affected batch04 visual layout remains a fresh scoped assignment.
+
+### D046 · fix the optional catalogue-attributes values under E7
+
+Approve the proposed illustrative r35 variant: P7 material ceramic, P3 brewing_c80, P9 material ceramic. Record exact values centrally and in catalogue-attributes.json. Core identities/prices/stock/history remain unchanged. Anonymous missing/null/type documents and generated plan rows remain separate fixtures. Add the protected optional input to the current r35/r57 workspaces before use; no writer's existing reference/brief input is changed. No new writing rule or public route.
+
+### D047 · preserve a wrapped sources section when relocating it
+
+The shared draft shell cut immediately before a Sources heading. r29 validly wrapped that heading and its reading list in a dedicated section; cutting the heading out left unmatched section tags across the article and collapsed disclosure, and the structural parser lost the main landmark. Handle the complete dedicated wrapper in the shell, retaining balanced fragments. No article wording or writing rule changes. Verify all current page structure and compare unchanged article bodies/disclosures against the prior immutable build; earlier frozen previews remain unchanged.
+
+### D048 · accept three causes from fresh informed practitioner challenges
+
+Accept reviews/accepted-confirmation-v02.md: medium shared process-environment defect in exact r04/r08/r09 downloads, critical inconsistent customer-index entry contents in r10 Figure1, and critical strict-expiry assertion disproved by unchanged-row lock waits in r17 follow-up mutations. Preserve the original r17 token-alias repair's separate pass, and r11/r12/current r10Figure2 technical passes. New fresh repairs are split by coherent implementation/contract scope, with current final confirmations still required. Do not count these as cosmetic review preferences or restart unrelated whole perspectives.

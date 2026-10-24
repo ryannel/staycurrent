@@ -6,9 +6,15 @@ No existing database connection.
 """
 import argparse,json,os,pathlib,shutil,subprocess,tempfile,threading,time
 from decimal import Decimal,InvalidOperation
+# This standalone experiment controls every connection, including later workers.
+# Clear PG-prefixed defaults in this process as well as in its child tools.
+for name in tuple(os.environ):
+    if name.startswith('PG'):
+        del os.environ[name]
+env=os.environ.copy()
 import psycopg
 parser=argparse.ArgumentParser();parser.add_argument('--bindir',required=True);args=parser.parse_args()
-binpath=pathlib.Path(args.bindir).resolve();env={k:v for k,v in os.environ.items() if not k.startswith('PG')}
+binpath=pathlib.Path(args.bindir).resolve()
 base=pathlib.Path(tempfile.mkdtemp(prefix='sc-r08-owned-',dir='/tmp')); data=base/'data';sock=base/'sock';sock.mkdir();started=False
 
 def tool(name,*args):return subprocess.run([str(binpath/name),*map(str,args)],env=env,check=True,text=True,capture_output=True).stdout

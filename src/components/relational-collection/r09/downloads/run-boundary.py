@@ -4,6 +4,12 @@ Place shop.json beside this file. Never connects to an existing server.
 """
 import argparse, json, os, pathlib, shutil, subprocess, tempfile, threading, time
 from decimal import Decimal
+# This standalone experiment controls every connection, including later workers.
+# Clear PG-prefixed defaults in this process as well as in its child tools.
+for name in tuple(os.environ):
+    if name.startswith('PG'):
+        del os.environ[name]
+env=os.environ.copy()
 import psycopg
 from psycopg import sql
 from psycopg.pq import TransactionStatus
@@ -15,7 +21,6 @@ parser.add_argument('--bindir', required=True)
 parser.add_argument('--tmpdir', default='/tmp', help='writable short temporary parent (default: /tmp; macOS/Linux)')
 args=parser.parse_args()
 binpath=pathlib.Path(args.bindir).resolve()
-env={k:v for k,v in os.environ.items() if not k.startswith('PG')}
 base=pathlib.Path(tempfile.mkdtemp(prefix='sc-r09-owned-', dir=args.tmpdir))
 data=base/'data'; sock=base/'sock'; sock.mkdir()
 started=False

@@ -15,3 +15,11 @@ Complete author reread and continuity pass checked: partitioning/replication/sha
 Opened PostgreSQL 18 native partitioning; Citus 13 distribution-column/co-location documentation; CockroachDB 25.4 architecture/distribution and hash-sharded-index manuals on 24 October 2026. Full links and attributed claims are in Sources and further reading. No native distributed execution was necessary for the conceptual design comparison. There are no performance measurements, unexecuted runnable downloads or physical-region claims.
 
 Rendered finishing and final hashes pending integration. The routing buttons require desktop/phone/theme and keyboard checks for all three operations.
+
+## Completed first return
+
+Root-built immutable output on port4452 passed the site check with zero issues (209 pages including all then-ready articles). Author inspected the actual article at1280×720 and375×812 in light and dark; actual dimensions and document width were checked. Figures, captions, options, keyboard controls and text alternatives were read with their prose. Final ordinary layout fixes were reintegrated before confirmation. Viewport was reset to1280×720, System restored, controls reset and only temporary tabs closed. Representative screenshots are under evidence/. No independent review has been performed by this writer.
+
+All3 routing options, Enter/Space activation, pressed states, results and text alternative checked. Both figures have0 inherited panel margins. No download offered.
+
+Final source hashes are in evidence/source-hashes.json. This is the complete first return; source is frozen for the orchestrator to arrange fresh independent review.

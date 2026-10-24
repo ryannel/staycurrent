@@ -17,6 +17,8 @@ class Session:
         assert self.run('SHOW unix_socket_directories;')==str(sock)
         assert self.run('SELECT current_user;')=='writer'
         assert self.run('SELECT current_database();')==dbname
+        assert self.run('SHOW port;')=='55417'
+        assert self.run('SHOW listen_addresses;')==''
         self.pid=int(self.run('SELECT pg_backend_pid();'))
     def send(self,sql):
         self.n+=1; self.mark=f'END_{self.n}'; self.p.stdin.write(sql+'\n\\echo '+self.mark+'\n'); self.p.stdin.flush()
@@ -30,6 +32,14 @@ class Session:
     def close(self):
         if self.p.poll() is None:
             self.p.stdin.write('ROLLBACK;\n\\q\n'); self.p.stdin.flush(); self.p.wait(timeout=5)
+
+lock_sql="SELECT event_id FROM outbox WHERE event_id='order-103-created' FOR UPDATE;"
+def mutate(session,sql):
+    session.run('BEGIN ISOLATION LEVEL READ COMMITTED;')
+    session.run(lock_sql)
+    row=session.run(sql)
+    session.run('COMMIT;')
+    return row
 
 class Worker:
     """The article's bounded contract: uncertain replies permanently retire a claim.
@@ -57,6 +67,7 @@ class Worker:
             self.blocked.append(kind); return 'abandoned'
         self.sent.append(kind)
         self.session.run('BEGIN ISOLATION LEVEL READ COMMITTED;')
+        if kind!='receiver':self.session.run(lock_sql)
         row=self.session.run(sql.format(token=self.token))
         if disconnect_before_commit:
             self.session.p.kill(); self.session.p.wait(); self.session.p.stdin.close()
@@ -94,12 +105,12 @@ FROM candidate AS c WHERE o.event_id=c.event_id RETURNING o.event_id,o.claim_tok
     deliver="INSERT INTO effects VALUES ('order-103-created:confirmation','{\"order_id\":103}') ON CONFLICT(effect_id) DO NOTHING RETURNING effect_id;"
     assert provider.run(deliver)=='order-103-created:confirmation'; provider.run("INSERT INTO raw_effects VALUES ('order-103-created:confirmation');")
     renew="UPDATE outbox SET lease_until=clock_timestamp()+interval '5 minutes' WHERE event_id='order-103-created' AND claim_token=1 AND lease_until>clock_timestamp() AND completed_at IS NULL RETURNING event_id;"
-    assert a.run(renew)=='order-103-created'; results['current_renewal']='matching unexpired generation renewed'
+    assert mutate(a,renew)=='order-103-created'; results['current_renewal']='matching unexpired generation renewed'
     # Deterministic fault injection: move deadline into the past, no real 5min wait.
-    o.run("UPDATE outbox SET lease_until=clock_timestamp()-interval '1 second';"); assert a.run(renew)==''; results['expired_renewal']='expired claim changed0 rows'; assert b.run(claim)=='order-103-created|2'; assert provider.run(deliver)==''; provider.run("INSERT INTO raw_effects VALUES ('order-103-created:confirmation');")
+    o.run("UPDATE outbox SET lease_until=clock_timestamp()-interval '1 second';"); assert mutate(a,renew)==''; results['expired_renewal']='expired claim changed0 rows'; assert b.run(claim)=='order-103-created|2'; assert provider.run(deliver)==''; provider.run("INSERT INTO raw_effects VALUES ('order-103-created:confirmation');")
     assert provider.run('SELECT count(*) FROM effects; SELECT count(*) FROM raw_effects;')=='1\n2'; results['effect_then_worker_loss']={'deduplicated_effects':1,'unprotected_effects':2,'delivery_attempts':2}
     assert provider.run("SELECT payload='{}'::jsonb FROM effects WHERE effect_id='order-103-created:confirmation';")=='f'; results['payload_mismatch']='receiver detects changed payload under same effect identity'
-    def ack(s,token):return s.run(f"UPDATE outbox SET completed_at=clock_timestamp(),lease_until=NULL WHERE event_id='order-103-created' AND claim_token={token} AND lease_until>clock_timestamp() AND completed_at IS NULL RETURNING event_id;")
+    def ack(s,token):return mutate(s,f"UPDATE outbox SET completed_at=clock_timestamp(),lease_until=NULL WHERE event_id='order-103-created' AND claim_token={token} AND lease_until>clock_timestamp() AND completed_at IS NULL RETURNING event_id;")
     a.run('BEGIN;'); assert a.run("UPDATE outbox SET completed_at=clock_timestamp() WHERE event_id='order-103-created' RETURNING claim_token;")=='2'; a.run('ROLLBACK;'); results['unguarded_stale_completion']='old worker could mark token2 complete without a token predicate; counterexample rolled back'
     assert ack(a,1)==''; assert ack(b,2)=='order-103-created'; results['stale_completion']='token1 changed0 rows; token2 changed1'; assert o.run('SELECT claim_token,attempts,completed_at IS NOT NULL FROM outbox;')=='2|2|t'
 
@@ -117,6 +128,67 @@ FROM candidate AS c WHERE o.event_id=c.event_id RETURNING o.event_id,o.claim_tok
         for kind,sql in [('receiver',receiver_sql),('renew',renew_sql),('complete',complete_sql),('release',release_sql)]:
             assert worker.perform(kind,sql)=='abandoned'
         assert worker.sent==before
+
+    # A lock-only holder does not change the tuple. Observe the waiting backend,
+    # then let the short deadline pass before releasing it. No timing assumption
+    # substitutes for checking both the Lock wait and expiry on the server.
+    def wait_for_lock(session):
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            if o.run(f"SELECT wait_event_type='Lock' FROM pg_stat_activity WHERE pid={session.pid};")=='t':return
+            time.sleep(.01)
+        raise AssertionError('expected row-lock wait was not observed')
+    def wait_for_expiry():
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            if o.run("SELECT lease_until<=clock_timestamp() FROM outbox;")=='t':return
+            time.sleep(.01)
+        raise AssertionError('expected short deadline did not expire')
+    results['lock_wait_expiry']={}
+    for kind,sql in [('renew',renew_sql),('complete',complete_sql),('release',release_sql)]:
+        results['lock_wait_expiry'][kind]={}
+        for lock_first in (False,True):
+            reset_claim(); assert a.run(claim_full).endswith('|1')
+            o.run("UPDATE outbox SET lease_until=clock_timestamp()+interval '1 second';")
+            before=o.run('SELECT lease_until::text FROM outbox;')
+            b.run('BEGIN;'); b.run(lock_sql)
+            a.run('BEGIN ISOLATION LEVEL READ COMMITTED;')
+            assert o.run('SELECT lease_until>clock_timestamp() FROM outbox;')=='t'
+            a.send(lock_sql if lock_first else sql.format(token=1))
+            wait_for_lock(a); wait_for_expiry()
+            expiry_seen=o.run('SELECT clock_timestamp()::text FROM outbox;')
+            b.run('COMMIT;'); waited=a.finish()
+            changed=a.run(sql.format(token=1)) if lock_first else waited
+            a.run('COMMIT;')
+            assert changed==('' if lock_first else 'order-103-created')
+            results['lock_wait_expiry'][kind]['lock_first' if lock_first else 'direct_counterexample']={
+                'lock_wait_observed':True,'expired_before_unlock':True,
+                'original_deadline':before,'observer_before_unlock':expiry_seen,
+                'updated_row':changed,'state':o.run('SELECT claim_token,lease_until,completed_at,available_at FROM outbox;')}
+
+        # A contrasting waiter meets a newly committed generation, not the same
+        # unchanged tuple. A fresh post-lock statement rejects the old token.
+        reset_claim(); assert a.run(claim_full).endswith('|1')
+        expire(); b.run('BEGIN ISOLATION LEVEL READ COMMITTED;')
+        assert b.run(claim_full).endswith('|2')
+        a.run('BEGIN ISOLATION LEVEL READ COMMITTED;'); a.send(lock_sql)
+        wait_for_lock(a); b.run('COMMIT;'); assert a.finish()=='order-103-created'
+        assert a.run(sql.format(token=1))==''; a.run('COMMIT;')
+        assert o.run('SELECT claim_token,completed_at IS NULL FROM outbox;')=='2|t'
+        results['lock_wait_expiry'][kind]['newer_generation']={'lock_wait_observed':True,'committed_token':2,'old_token_updated_row':''}
+
+    # The chosen boundary is the post-lock check, not the COMMIT time.
+    reset_claim(); assert a.run(claim_full).endswith('|1')
+    o.run("UPDATE outbox SET lease_until=clock_timestamp()+interval '1 second';")
+    original_deadline=o.run('SELECT lease_until::text FROM outbox;')
+    a.run('BEGIN ISOLATION LEVEL READ COMMITTED;'); a.run(lock_sql)
+    assert a.run(complete_sql.format(token=1))=='order-103-created'
+    o.run('SELECT pg_sleep(1.1);')
+    assert o.run(f"SELECT clock_timestamp()>'{original_deadline}'::timestamptz;")=='t'
+    assert b.run(claim_full)==''
+    a.run('COMMIT;')
+    assert o.run('SELECT completed_at IS NOT NULL FROM outbox;')=='t'
+    results['post_lock_authorisation']={'completion_checked_before_expiry':True,'commit_deliberately_delayed':True,'poll_while_locked':'no claim','completed':True}
 
     # Exact false-match history: A sees token1, disconnects before COMMIT;
     # B commits token1; A's fresh locking equality lookup matches B's lease.
@@ -183,7 +255,7 @@ FROM candidate AS c WHERE o.event_id=c.event_id RETURNING o.event_id,o.claim_tok
     assert provider.run("SELECT payload='{\"order_id\":103}'::jsonb FROM inbox WHERE consumer='confirmation-projection' AND event_id='order-103-created';")=='t'
     assert provider.run("SELECT payload='{}'::jsonb FROM inbox WHERE consumer='confirmation-projection' AND event_id='order-103-created';")=='f'; results['inbox_payload_conflict']='stored payload matches identical replay and rejects changed input before effect'
     provider.run('TRUNCATE inbox; UPDATE counter SET n=0;'); provider.run(receipt); assert provider.run('SELECT count(*) FROM inbox; SELECT n FROM counter;')=='1\n0'; results['separate_receipt_gap']='receipt committed before effect; simulated crash leaves1 receipt but0 effects'
-    results['limits']='Receiver is a stand-in in a second database on the same local PostgreSQL server. Claim-fault cases gate a synchronous receiver-call marker; the existing separate receiver-database cases test effect deduplication. A client is killed before COMMIT and successful replies are withheld from a simulated worker: controlled fault injection, not a real network fault. No email/payment provider, broker, independent machine failure, real lease duration or latency measured. Deadline expiry was injected explicitly. Retirement cannot recall a request already sent.'
+    results['limits']='Receiver is a stand-in in a second database on the same local PostgreSQL server. Claim-fault cases gate a synchronous receiver-call marker; the existing separate receiver-database cases test effect deduplication. A client is killed before COMMIT and successful replies are withheld from a simulated worker: controlled fault injection, not a real network fault. No email/payment provider, broker, independent machine failure, real five-minute lease duration or latency measured. Lock-wait cases use observed one-second deadlines; other expiry is injected explicitly. Follow-ups authorise at a post-lock predicate test; a delayed commit need not precede the deadline. Retirement cannot recall a request already sent.'
 finally:
     for s in sessions:
         try:s.close()

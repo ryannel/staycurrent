@@ -1,0 +1,123 @@
+---
+import Decision from '../../components/relational-collection/r27/Decision.astro';
+import Sql from '../../components/explainers/querying/Sql.astro';
+---
+
+<p>A purchase is one business change even when its data has several owners. The stock reductions, order 103 and its two lines must all commit, or all be discarded. Once these facts cross database partitions, a successful local commit is only one part of that promise.</p>
+
+<p>Replication and transaction commit answer different questions. Replicas of one partition need to agree about that partition’s history. A transaction spanning several partitions needs one outcome for all of its participants. A majority of the replicas holding the stock cannot decide that an unrelated order partition has committed its part.</p>
+
+<p>We rewind the shop to just before order 103. P7 has stock 1 and P3 has stock 12; Mina wants the mug and two packs of tea. For this article’s placement example, participant A owns product stock and participant B owns the order and lines. This deliberately crosses the boundary that tenant co-location can keep local. The protocol drawings are conceptual; a separate PostgreSQL experiment demonstrates prepared-state recovery on one machine.</p>
+
+<h2 id="two-local-commits-leave-a-gap">Two local commits leave a gap</h2>
+
+<p>Suppose the application commits the stock changes on A, then creates order 103 on B. If B rejects an order line, A has already committed. Rolling back B cannot return the stock on A. Reversing the commits changes the gap: the order can survive without its stock reservation.</p>
+
+<p>The disposable experiment makes that failure visible. It reduces P7 from 1 to 0 and P3 from 12 to 10, then commits those changes. On the second database it tries to insert an order line with quantity 0. The line’s check constraint rejects it and that transaction rolls back. The result is no order 103 and stock already taken. Both databases have behaved correctly for their local transactions.</p>
+
+<p>A compensating change can return stock later, but it is another transaction. Other work can observe or act on the intermediate state, and the compensation can itself fail. That may be a valid business process if its states and recovery are designed. It is a different contract from accepting the purchase atomically.</p>
+
+<h2 id="which-agreement-is-being-made">Which agreement is being made?</h2>
+
+<figure class="agreements" aria-labelledby="r27-agreements-title">
+ <figcaption id="r27-agreements-title"><span>Figure 1</span> Agreement within a participant and across participants</figcaption>
+ <div class="across"><strong>Transaction decision</strong><span>A and B must reach the same final outcome</span></div>
+ <div class="groups"><section><p class="panel-title">A · product stock</p><p>Local transaction state</p><div class="voters"><span>A1</span><span>A2</span><span>A3</span></div><p>A majority of this group preserves A’s records.</p></section><section><p class="panel-title">B · order and lines</p><p>Local transaction state</p><div class="voters"><span>B1</span><span>B2</span><span>B3</span></div><p>A majority of this group preserves B’s records.</p></section></div>
+ <p>Illustrative replicated participants. A1–A3 copy A’s data; B1–B3 copy B’s. The boxes are roles, not a claim about six physical machines, regions or a particular engine’s configuration. Per-participant agreement can preserve a prepared record without deciding the whole purchase.</p>
+</figure>
+
+<p>A replica consensus protocol such as Raft orders changes within one replicated group. Those changes can include a provisional transaction write or a record saying that the participant is prepared. Replicating that record makes its promise survive the loss of a replica; it does not turn “prepared” into “the whole transaction committed”.</p>
+
+<p>The transaction protocol needs information from every write participant. Does each have the required provisional state? Can each honour a commit? Where is the final decision recorded, and how can another process recover it? A distributed engine combines these layers, often with optimisations that share messages or avoid a separate phase in common cases.</p>
+
+<p>Keep the two scopes visible when interpreting a failure. A healthy quorum for A does not repair B’s missing state. Conversely, the loss of one machine need not lose the transaction decision if its authoritative state is replicated and a surviving authority can recover it.</p>
+
+<h2 id="prepare-is-a-promise">Prepare is a promise</h2>
+
+<p>Classic <em>two-phase commit</em> separates being able to commit from choosing the outcome. A coordinator asks the fixed participants to prepare. Each either refuses or makes a durable promise that it can finish its part if the decision is commit. A participant that has promised Yes cannot later change its mind merely because it has waited a long time.</p>
+
+<p>In the purchase, A’s provisional stock change needs enough durable information to survive restart. B needs the same for order 103 and its lines. Prepared work remains unresolved; it is not an ordinary committed purchase available for every reader to treat as final. Locks or provisional-write dependencies can remain while the outcome is unknown.</p>
+
+<p>If a participant refuses before promising, the coordinator can choose abort. If all have prepared, the coordinator can record commit. It records the decision durably before announcing it, so a restarted coordinator cannot forget an outcome that one participant has already followed. Participants then finish their local changes according to that same decision.</p>
+
+<p>Step through the normal history in Figure 2. Then choose each coordinator-loss point. The state to watch is what recovery can prove from durable records.</p>
+
+<Decision />
+
+<p>After A committed, B was still prepared for one step. That is incomplete delivery of the same decision, not permission for B to abort. Atomic outcome does not mean every machine flips a bit at the same physical instant. A transaction-aware read protocol must resolve provisional state or choose a suitable common snapshot so that readers receive the promised view.</p>
+
+<p>The isolation protocol remains necessary too. A two-phase commit can faithfully commit two transactions whose decisions violated a business rule at a weaker isolation level. Agreement about a purchase’s outcome does not establish that its stock test was sound. The conditional update and complete transaction logic from <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> still apply.</p>
+
+<h2 id="why-a-prepared-participant-cannot-guess">Why a prepared participant cannot guess</h2>
+
+<p>Consider B, prepared and hearing nothing from its coordinator. Two histories fit what B knows. In one, the coordinator stopped before deciding. In the other, it recorded COMMIT, delivered it to A and stopped before reaching B. A timeout looks the same in both.</p>
+
+<p>If B aborts on that timeout, the second history ends with A committed and B aborted. If B simply commits, a different participant might have refused and caused abort in the first place. Waiting preserves the unresolved promise until recovery obtains enough authoritative information. Classic two-phase commit can therefore block when the coordinator and its decision are unavailable.</p>
+
+<p>This is an information problem, not a slow retry loop. Repeatedly asking an unreachable process does not create the missing decision. A participant may learn the outcome from another participant or a recovered coordinator, but the protocol must justify that evidence. “No reply” is not equivalent to a durable abort record.</p>
+
+<p>The aborted animation chooses a stronger fact: the authorised recovery process has fenced the former coordinator, obtained its authoritative durable state and proved no commit decision exists in this history. Only then does it decide abort. Looking for a record on one stale replica, finding none and guessing would omit that proof.</p>
+
+<h2 id="recover-the-authority-as-well-as-the-record">Recover the authority as well as the record</h2>
+
+<p>A recovered coordinator needs the transaction identity, participant set, their durable promises and the authoritative decision history. It must also be the only authority allowed to make or deliver a conflicting new decision. Two coordinators acting independently after a network break can defeat an otherwise careful log.</p>
+
+<p>Replication can preserve the decision service and let a surviving quorum elect a new authority. The old authority must be unable to produce conflicting accepted decisions. That is the same fencing concern developed in <a href="/learn/databases/relational/failover/">Failover and fencing</a>. Making one coordinator highly available reduces its single-process failure risk; it does not let the transaction ignore an unavailable required participant.</p>
+
+<p>Recovery repeats delivery under the transaction’s identity. A participant that has already followed COMMIT must recognise that the decision is the same, rather than applying the stock decrement again. The durable transaction state supplies that recognition. A purchase request key, a participant’s local transaction ID and an order ID serve different scopes even when a teaching label contains 103.</p>
+
+<p>Completion records also need a lifetime. Deleting the coordinator’s decision while an unresolved participant can still ask for it would turn known work into uncertainty again. A real transaction manager tracks acknowledgements, recovery and safe forgetting; the happy-path arrows alone do not implement that lifecycle.</p>
+
+<p>Operationally, watch the count and age of unresolved transactions, their retained locks or intents and the availability of the recovery authority. Do not resolve an old prepared transaction by a local guess to clear a lock. Oracle’s in-doubt-transaction documentation explicitly describes the risk of inconsistent forced outcomes. Use the selected product’s recovery procedure and evidence from all required authorities.</p>
+
+<h2 id="what-postgresql-demonstrates">What PostgreSQL demonstrates</h2>
+
+<p>PostgreSQL exposes prepared transactions for an external transaction manager. After <code>PREPARE TRANSACTION</code>, the state survives the preparing session and can later be finished with <code>COMMIT PREPARED</code> or <code>ROLLBACK PREPARED</code> from another session. The <code>pg_prepared_xacts</code> view identifies unresolved prepared work.</p>
+
+<Sql label="Participant commands in a transaction manager's protocol" code={`BEGIN;
+-- Perform and validate this participant's changes.
+PREPARE TRANSACTION 'participant-identity';
+
+-- Later, in a separate command outside a transaction block,
+-- only after resolving the authoritative global decision:
+COMMIT PREPARED 'participant-identity';`} />
+
+<p>These commands are building blocks, not a complete cross-database transaction manager. Prepared transactions hold resources after the session ends, and forgotten ones can interfere with cleanup. The feature is normally disabled unless an appropriate manager owns recovery. Do not enable it on a service merely to try the fragment.</p>
+
+<p>The delivered experiment enables it only in its own temporary cluster. Two databases on that one instance act as separate local commit participants. After preparing both, the fixture writes and flushes a small COMMIT decision file, stops PostgreSQL in immediate mode and restarts it. It then rereads the file and completes both prepared transactions.</p>
+
+<p>On PostgreSQL 18.6, both prepared identities survived restart. Before resolution, ordinary reads still saw P7 stock 1, P3 stock 12 and no order 103. After COMMIT PREPARED on both, the state was P7 0, P3 10, order 103 pending and its two original lines at 20.00 and 4.50. No prepared transaction remained.</p>
+
+<p>This checks participant durability and one chosen recovery path. Both databases share one process, machine and storage environment; the decision file shares that machine too. The experiment does not demonstrate a highly available coordinator, physical failure independence, concurrent transaction-manager recovery or a common snapshot across the two databases. The conceptual protocol explains those responsibilities rather than claiming the fixture implements them.</p>
+
+<h2 id="what-distributed-sql-changes">What distributed SQL changes</h2>
+
+<p>A distributed SQL engine integrates transaction records, replicated provisional writes and recovery into the database. The application expresses one transaction; the engine tracks the participants it touches. That removes substantial protocol work from the application, while leaving application-level decisions, retry policy and external effects in its scope.</p>
+
+<p>CockroachDB, for example, uses write intents and a transaction record, with Parallel Commits rather than exactly the classic message schedule drawn here. The commit condition can be established while later cleanup remains. A provisional value’s presence alone is not proof of a committed transaction. <a href="/learn/databases/relational/cockroachdb/transactions/">CockroachDB transactions and retries</a> develops that native protocol.</p>
+
+<p>Cross-partition writes cost communication, durable state and the time participants retain conflicting work. Co-location can reduce the participant set, though a locally scoped write can still replicate to other machines. Measure transaction scope and waits alongside the SQL plan; a statement touching few logical rows can still have several durable owners.</p>
+
+<p>External card charges and emails are outside the database’s participant set unless they explicitly support and join an appropriate transaction protocol. An outbox can record that work atomically with the purchase, but delivery still needs its own identities and recovery. <a href="/learn/databases/relational/outboxes-and-jobs/">Outboxes and database-backed jobs</a> follows that boundary.</p>
+
+<p>Finally, the client can lose its commit reply after the database has decided successfully. Distributed commit does not make that reply infallible. Resolve the same logical request under its stable key before replaying the business action; <a href="/learn/databases/relational/conflicts-and-retries/">Retries when a commit reply is missing</a> distinguishes that uncertainty from a known abort.</p>
+
+<h2 id="repeat-the-prepared-state-drill">Repeat the prepared-state drill</h2>
+
+<p><a href="/review/relational-collection/evidence/r27/prepared.py/" download="prepared.py">Download the prepared-state experiment</a>. Run <code>python3 prepared.py --bindir /path/to/postgresql/bin</code> with Python 3 and PostgreSQL’s installed tools. The script creates and verifies its private temporary cluster, disables TCP, clears inherited PostgreSQL connection settings and owns both databases. It checks the unsafe local-commit counterexample, then the prepared/restart/recovery history, resolves its own remaining prepared work and removes the server and data.</p>
+
+<p>Checked on macOS, Python 3.14.5 and PostgreSQL 18.6. The fixture contains only the stock and order rows needed for the isolated purchase history. Orders 101 and 102 are not replayed as stock deductions. The script is a bounded teaching drill with one coordinator and no competing clients; it is not a reusable production transaction manager or a benchmark.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+
+<p>Checked on 24 October 2026 against the primary sources below and the delivered PostgreSQL fixture. The animation is a classic protocol model; it is distinct from the native participant experiment and CockroachDB’s implementation.</p>
+<ul>
+ <li>Jim Gray and Leslie Lamport, <a href="https://lamport.azurewebsites.net/video/consensus-on-transaction-commit.pdf">Consensus on Transaction Commit</a>: the commit problem, classic two-phase commit, blocking and fault-tolerant coordination.</li>
+ <li>Oracle Database 26, <a href="https://docs.oracle.com/en/database/oracle/oracle-database/26/admin/distributed-transactions-concepts.html">Distributed Transactions Concepts</a> and <a href="https://docs.oracle.com/en/database/oracle/oracle-database/26/admin/managing-distributed-transactions.html">Managing Distributed Transactions</a>: durable prepare/decision roles, in-doubt recovery and inconsistent forced outcomes. Oracle's commit-point optimisation differs from the simple model here.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-prepare-transaction.html">PREPARE TRANSACTION</a>, <a href="https://www.postgresql.org/docs/18/sql-commit-prepared.html">COMMIT PREPARED</a> and <a href="https://www.postgresql.org/docs/18/view-pg-prepared-xacts.html">pg_prepared_xacts</a>: the native fixture and the external-manager requirement.</li>
+ <li>CockroachDB 25.4, <a href="https://www.cockroachlabs.com/docs/v25.4/architecture/replication-layer">Replication Layer</a> and <a href="https://www.cockroachlabs.com/docs/v25.4/architecture/transaction-layer">Transaction Layer</a>: replicated range records, intents, transaction state and Parallel Commits.</li>
+ <li><a href="/learn/databases/relational/distributed-reads/">Time, snapshots and distributed reads</a>: the separate read-consistency question when committed state spans owners.</li>
+</ul>
+<style>
+.agreements{margin:2.5rem 0}.agreements figcaption{font:1.25rem/1.4 var(--font-serif);margin-bottom:.8rem}.agreements figcaption>span{font:.75rem var(--font-sans);color:var(--color-text-secondary);text-transform:uppercase;margin-right:.6rem}.across{display:grid;gap:.5rem;text-align:center;border:2px solid var(--color-accent);padding:1rem;font:.95rem/1.4 var(--font-sans)}.groups{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem}.groups section{margin:0;border:1px solid var(--color-text-secondary);padding:1rem}.groups .panel-title{font:600 .95rem/1.4 var(--font-sans);margin:0}.groups p,.agreements>p{font:.85rem/1.5 var(--font-sans)}.voters{display:flex;gap:.5rem}.voters span{padding:.5rem;border:1px solid var(--color-accent);font:.9rem var(--font-sans);flex:1;text-align:center}.agreements>p{color:var(--color-text-secondary)}@media(max-width:550px){.groups{grid-template-columns:1fr}}
+</style>

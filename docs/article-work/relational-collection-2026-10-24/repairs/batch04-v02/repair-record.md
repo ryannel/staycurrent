@@ -1,6 +1,6 @@
 # r16/r17 coherent repair · batch04-v02
 
-Status: source frozen for root integration; native verification complete; immutable final preview and viewport lease pending. No build, delegation, review loop, commit, push or publication performed by this writer.
+Status: complete coherent repair returned for separately commissioned fresh confirmations. Source frozen and integrated by root; native verification and final immutable4448 rendered/download checks complete. No build, delegation, review loop, commit, push or publication performed by this writer.
 
 ## Readiness and chosen repair
 
@@ -43,4 +43,8 @@ Qualified unchanged evidence is mapped in `evidence/qualified-reuse.json`. r16 n
 
 ## Rendered completion
 
-Pending root’s exact immutable preview and explicit viewport lease. Will inspect affected prose and neighbours at actual1280×720 and375×812 in Light/Dark, expand Sources, inspect final download hrefs and compare bytes with bounded HTTP. No browser download-event/path/save waits are permitted or used; browser save behaviour remains unverified. Restore1280×720/System, reset any exercised controls and close only this writer’s temporary tabs.
+Root integrated the exact three frozen source files into immutable `http://127.0.0.1:4448/review/relational-collection/` and reported207pages/sitecheck zeroissues. Source hashes remained unchanged. Root granted the viewport lease after the preceding author restored defaults. Inspected affected paragraphs and neighbours at measured1280×720 and375×812 in Light/Dark. `evidence/render-checks.json` records17 viewport captures with actual dimensions, theme, changed-paragraph widths/heights/colours and figure widths; all document overflow values are0. The17 correspondingly named JPEGs preserve native viewport evidence. The r16 table introduction, r17 table introduction, claim contract, token-alias explanation, renewal, completion, rescheduling, native-observation and download/fault-limit passages remain legible. No shifted diagram geometry, overlapping text or horizontal page overflow appeared. The unchanged SQL block retains its own scrolling behaviour on phone.
+
+Both final Sources disclosures were read; r17’s new Message Flow and Read Committed links were expanded and visible on the final page. Enumerated the actual rendered download hrefs for r16’s two files and r17’s verifier. `evidence/download-check-final.json` records bounded HTTP200 byte-for-byte matches for all3. A sandboxed local HTTP read was denied by the sandbox; necessary self-escalated bounded read succeeded. No browser download-event/path/save wait was used. Browser save behaviour remains explicitly unverified.
+
+The article-owned drawing/SQL/table/CSS sources and r16 control implementation are unchanged. Reused their prior applicable mechanical/contrast/control checks, with exact hashes and limitations in `qualified-reuse.json`; these are not represented as new exhaustive control testing. r17 has no article-owned interactive controls. Reference playback was reset before its tab closed. Finally reset the viewport override, selectedSystem and measured actual1280×720/overflow0. `evidence/browser-restored.json` records that restoration. Closed only this writer’s temporary reference/article tabs, then explicitly released the viewport lease to root. No source changes followed rendered checking. `evidence/manifest.json` binds the returned evidence and exact changed locations. No accepted substantive defect remains open in this author return; independent confirmation remains the coordinator’s separate commission.
