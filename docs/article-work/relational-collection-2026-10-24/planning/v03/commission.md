@@ -1,0 +1,13 @@
+# Relational collection · 24 October 2026
+
+User request: “Ok, let's try and do the whole relational collection now.” This follows the successful fresh introduction and the authorised template design pass.
+
+Produce a complete fresh draft collection using the revised reference-led skills. Start from the latest introduction at `src/articles/relational-first-version/introduction.astro`; preserve its frozen original. Retain the current relational scope: the introduction, 30 general/distributed articles, 13 PostgreSQL implementation articles, ten CockroachDB articles and four PostgreSQL specialist articles (58 destinations total). A planner may propose sensible boundaries or merges, recording coverage and reader cost. Sandbox/practice links remain usable context; this is not a commission to rebuild those applications or other database families.
+
+Take an intelligent engineer new to relational databases towards expert practice through the collection. Each article develops its own useful understanding; neighbouring scopes are context rather than an introductory checklist. The three complete fixed reference articles lead the prose and teaching. Use the current compact writing, figures and continuity skills; choose each article's headings, examples and media from its explanation. Work from readers' understanding rather than coverage prose. Plain British English.
+
+Reuse the shop facts from input/core-example.md. Necessary extensions are settled centrally and recorded beside the canonical tree. Do not inherit historical draft contradictions or use earlier workshop articles as prose/style templates. Fresh writers receive concise outcomes, boundaries, required finished neighbouring reading and fixed references, rather than earlier drafts or feedback. Complete bounded reference delivery precedes design; rendered reference study is separate.
+
+Root is the sole integration/build/preview owner. Fresh agents perform planning, writing, repair and each independent review perspective under the current orchestration/review schedules. Batch independent reviews to control repeated setup. Consolidate defects before repair; distinguish substantive defects from optional preferences. Reuse only applicable mechanical evidence. Keep exact inputs, versions, reference-readiness records, timing, decisions and evidence with this commission. Ordinary author rereading and continuity belong to writing; they are not independent review.
+
+Build the work as a separate draft collection and preserve the published collection and earlier experiments. No replacement or publication is authorised by this commission. Deliver a navigable collection preview, sources and review status, with limitations stated accurately.

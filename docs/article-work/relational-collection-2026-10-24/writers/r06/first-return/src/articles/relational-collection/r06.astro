@@ -1,0 +1,187 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import GroupWindow from '../../components/relational-collection/r06/GroupWindow.astro';
+import Frame from '../../components/relational-collection/r06/Frame.astro';
+import core from '../../lib/relational-collection/core.json';
+---
+<p>An aggregate combines values from several rows: a sum of order lines, a count of orders or an average purchase value. A window calculation can put that same kind of answer beside each original row. The difference is whether the rows should collapse into groups or remain individually visible.</p>
+
+<p>Both depend on the input’s meaning. Adding the right amounts from multiplied join rows still gives the wrong total. Ordering brings another choice: two orders placed at the same instant can share a rank, contribute together to a running calculation, or take separate positions in a sequence. Those are different questions.</p>
+
+<p>We start with the shop’s three orders and their agreed line values. Later, two explicitly added orders let us inspect a time tie without inventing more sales amounts. The SQL uses PostgreSQL 18; a downloadable experiment checks the results on PostgreSQL 18.6.</p>
+
+<h2 id="from-lines-to-orders">From lines to orders</h2>
+
+<p>The input table <code>order_items</code> has one row per order line. <code>SUM(quantity * unit_price)</code> adds the amount of each line. <code>GROUP BY order_id</code> makes a separate group for each order, so no line contributes to another order’s total.</p>
+
+<Sql label="Turn five order lines into three order totals" code={`SELECT order_id,
+       COUNT(*) AS lines,
+       SUM(quantity * unit_price) AS order_total
+FROM order_items
+GROUP BY order_id
+ORDER BY order_id;`} />
+
+<table><caption>One output row per order represented in the lines</caption><thead><tr><th scope="col">Order</th><th scope="col">Lines</th><th scope="col">Order total</th></tr></thead><tbody>{core.report_totals.map(o=><tr><td>{o.order_id}</td><td>{core.order_items.filter(i=>i.order_id===o.order_id).length}</td><td>{o.total}</td></tr>)}</tbody></table>
+
+<p>The five input rows have become three output rows. Within a group, <code>order_id</code> has one value, while line number and product can vary. Returning an arbitrary product beside the order total would imply that the whole order belonged to that product. PostgreSQL normally requires selected values to be grouped, aggregated or known to depend on the grouped key; make the intended meaning explicit.</p>
+
+<p>The <code>ORDER BY</code> is separate from grouping. It requests 101, 102, 103 as the display order. <code>GROUP BY</code> itself promises no sorted output, even if a particular plan happens to return groups in key order.</p>
+
+<p>To use these totals in later examples, give them the name <code>order_values</code> with a CTE. Carry each order’s customer and placement time alongside its total:</p>
+
+<Sql label="Name the one-row-per-order input used below" code={`WITH order_values AS (
+  SELECT o.order_id, o.customer_id, o.placed_at,
+         SUM(i.quantity * i.unit_price) AS order_total
+  FROM orders AS o
+  JOIN order_items AS i ON i.order_id = o.order_id
+  GROUP BY o.order_id, o.customer_id, o.placed_at
+)
+SELECT * FROM order_values ORDER BY order_id;`} />
+
+<p>Every core order has lines, so all three appear. This definition deliberately contains orders whose value can be calculated from their lines; an order without lines would be absent. Decide how to expose incomplete orders in a production report. The earlier <a href="/learn/databases/relational/query-results/">join article</a> keeps them visible with a missing total instead of silently calling them zero.</p>
+
+<h2 id="what-is-being-counted">What is being counted?</h2>
+
+<p><code>COUNT(*)</code> counts input rows. <code>COUNT(expression)</code> counts only rows on which that expression is non-missing. The distinction matters after a left join, where an unmatched parent still contributes one row.</p>
+
+<Sql label="Count each customer's actual orders" code={`SELECT c.customer_id, c.name,
+       COUNT(*) AS joined_rows,
+       COUNT(o.order_id) AS orders
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id
+GROUP BY c.customer_id, c.name
+ORDER BY c.customer_id;`} />
+
+<p>Mina has two joined rows and two orders; Tariq has one of each. Edda has one joined row, the placeholder retained by the left join, but zero orders. Counting the non-missing order key answers the question. Counting a nullable order attribute would instead count orders on which that attribute had a value.</p>
+
+<p><code>SUM</code> and <code>AVG</code> also ignore missing inputs. An aggregate over no input values returns <code>NULL</code> for these functions, while <code>COUNT</code> returns zero. With payments, substituting zero for an empty sum is useful because no recorded payment contributed. With an unknown measurement, substituting zero changes the answer.</p>
+
+<p>The denominator matters for an average. The five line amounts total 108.50, so their mean is 21.70 per line. The same amount spread over three orders gives about 36.17 per order. Neither is a more accurate version of the other. To find mean order value, average the three rows of <code>order_values</code>, rather than the five lines or repeated customer totals.</p>
+
+<h2 id="filter-inputs-or-filter-groups">Filter inputs or filter groups</h2>
+
+<p><code>WHERE</code> chooses rows before aggregation. <code>HAVING</code> chooses completed groups. Suppose we want customers whose orders in the core snapshot are worth at least 50 in total. Group the order values by customer, then test the sum with <code>HAVING</code>.</p>
+
+<Sql label="Select customers by their combined order value" code={`WITH order_values AS (
+  SELECT o.order_id, o.customer_id,
+         SUM(i.quantity * i.unit_price) AS order_total
+  FROM orders AS o
+  JOIN order_items AS i ON i.order_id = o.order_id
+  GROUP BY o.order_id, o.customer_id
+)
+SELECT customer_id, SUM(order_total) AS customer_total
+FROM order_values
+GROUP BY customer_id
+HAVING SUM(order_total) >= 50
+ORDER BY customer_id;`} />
+
+<p>Mina qualifies with 68.50 from orders 101 and 103. Neither order reaches 50 by itself. <code>WHERE order_total &gt;= 50</code> would remove both before they could be combined and answer a different question.</p>
+
+<p>A condition that applies to one measure can go inside the aggregate with <code>FILTER</code>. On the orders table, <code>COUNT(*) FILTER (WHERE status = 'pending')</code> counts pending orders while <code>COUNT(*)</code> still counts every order. Filtering the entire query to pending orders would change both measures. For a day-based report, also choose the time zone and boundaries before filtering; <a href="/learn/databases/relational/values/">Values, missing data and equality</a> shows why a calendar day is more than a timestamp cast.</p>
+
+<h2 id="keep-the-orders">Keep the orders</h2>
+
+<p>A customer summary has one row per customer. A screen comparing each order with its customer’s total still needs one row per order. Put <code>OVER</code> after an aggregate to make it a window calculation; <code>PARTITION BY customer_id</code> says which other orders belong with the current one.</p>
+
+<p>Switch between the grouped and window results. Watch what happens to order IDs 101 and 103.</p>
+
+<GroupWindow />
+
+<Sql label="Keep each order beside its customer's total" code={`WITH order_values AS (
+  SELECT o.order_id, o.customer_id,
+         SUM(i.quantity * i.unit_price) AS order_total
+  FROM orders AS o
+  JOIN order_items AS i ON i.order_id = o.order_id
+  GROUP BY o.order_id, o.customer_id
+)
+SELECT order_id, customer_id, order_total,
+       SUM(order_total) OVER (PARTITION BY customer_id)
+         AS customer_total
+FROM order_values
+ORDER BY order_id;`} />
+
+<p>The window has not changed the grain. Order 101 still means order 101, but can see order 103 when calculating Mina’s total. The same 68.50 appears on both rows. Summing the <code>customer_total</code> output would count Mina’s total twice, so a later consumer must retain that meaning too.</p>
+
+<p>A partition is the set of rows sharing the window’s partition values. It is unrelated to physically partitioning a database table. With no <code>PARTITION BY</code>, all input rows form one partition. With no order inside <code>OVER</code>, this sum covers the whole customer partition at every row.</p>
+
+<p>Windows see the rows that remain after this query level’s <code>WHERE</code>, grouping and <code>HAVING</code>. If we filter <code>order_values</code> to order 103 before applying the window, Mina’s total becomes 29.00. To calculate over all her orders and then display one, put the window calculation in a CTE or subquery and filter its output outside.</p>
+
+<h2 id="an-order-within-the-window">An order within the window</h2>
+
+<p>Some windows need a sequence. <code>LAG</code> reads a value from the preceding row, and <code>ROW_NUMBER</code> assigns successive positions. Give them an order that says what “preceding” means.</p>
+
+<Sql label="Compare each order with the customer's previous order time" code={`SELECT order_id, customer_id, placed_at,
+       LAG(placed_at) OVER (
+         PARTITION BY customer_id
+         ORDER BY placed_at, order_id
+       ) AS previous_order_at
+FROM orders
+ORDER BY customer_id, placed_at, order_id;`} />
+
+<p>For Mina’s order 103, the previous instant is 101’s <code>2026-10-12 09:30Z</code>. For her first order, there is no preceding row, so the result is missing. Tariq’s only order has the same absence. Partitioning prevents his order from becoming Mina’s previous one just because it falls between hers in global time.</p>
+
+<p>The order inside <code>OVER</code> chooses the calculation’s sequence. The final <code>ORDER BY</code> chooses how the result is presented. Write both when both matter; a window’s sort does not promise the output order. Include a unique tie-breaker when individual positions must be stable.</p>
+
+<h2 id="ties-and-frames">Ties and frames</h2>
+
+<p>Now extend the illustration with later orders 105 for Mina and 106 for Edda, both placed at <code>2026-10-21 12:00:00Z</code>. They have no assigned lines or amounts here and do not alter the earlier still-due report. We need only their identities and times.</p>
+
+<p>Ordering by <code>placed_at</code> alone leaves these two rows tied. They are <em>peers</em>: equal under the window’s ordering expressions. An ordered window aggregate has a default <em>frame</em>, the subset of its partition used for the current calculation. That default runs from the partition’s start through the current row’s last peer.</p>
+
+<p>Choose order 105 in the figure. Compare the default frame with <em>ROWS, with tie-breaker</em>, then move the current row to 106.</p>
+
+<Frame />
+
+<Sql label="Compare a peer-based count with a row-by-row count" code={`SELECT order_id, placed_at,
+       COUNT(*) OVER (ORDER BY placed_at) AS through_peers,
+       COUNT(*) OVER (
+         ORDER BY placed_at, order_id
+         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+       ) AS through_row
+FROM orders
+ORDER BY placed_at, order_id;`} />
+
+<p>The default count is 1, 2, 3, 5, 5. It jumps across both orders at noon together. The explicit <code>ROWS</code> count is 1, 2, 3, 4, 5. <code>UNBOUNDED PRECEDING</code> means the start of the partition; <code>CURRENT ROW</code> ends at this row. The tie-breaker makes the fourth row unambiguously 105.</p>
+
+<p>There are two changes in that second expression, and each has a job. <code>ROWS</code> uses row positions rather than peer boundaries. Adding <code>order_id</code> fixes the order of those positions. <code>ROWS</code> alone with <code>ORDER BY placed_at</code> would still allow either tied order to receive count 4. Conversely, adding a unique tie-breaker to the default frame separates these peers and also produces successive counts. Write the frame that expresses the question.</p>
+
+<p>Frames can also look a fixed number of rows back. <code>ROWS BETWEEN 2 PRECEDING AND CURRENT ROW</code> covers up to three orders, not three days. A time-based frame such as <code>RANGE BETWEEN INTERVAL '7 days' PRECEDING AND CURRENT ROW</code>, ordered by a single timestamp, covers a time interval and includes ties at its boundaries. An average over orders in that frame still weights orders, not days without orders.</p>
+
+<p><code>LAST_VALUE</code> is a common surprise. It returns the last value in the current <em>frame</em>, so the default ordered frame usually does not reach the partition’s last row. For the last order ID across the whole sequence, use <code>LAST_VALUE(order_id) OVER (ORDER BY placed_at, order_id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)</code>. For a whole-partition sum that needs no sequence, omit the window order altogether.</p>
+
+<h2 id="positions-or-shared-ranks">Positions or shared ranks</h2>
+
+<p><code>ROW_NUMBER</code>, <code>RANK</code> and <code>DENSE_RANK</code> answer different tie questions. On the five-order time sequence, the position numbers with the ID tie-breaker are 1, 2, 3, 4, 5. Ranking on time alone gives 1, 2, 3, 4, 4: the noon orders share fourth place. Dense ranking gives the same numbers in this example, because the tie is last.</p>
+
+<p>The difference appears after a tie. In a separate four-value illustration, scores 40, 30, 30 and 20 have ranks 1, 2, 2, 4 but dense ranks 1, 2, 2, 3. <code>RANK</code> leaves the gap occupied by the tied rows; <code>DENSE_RANK</code> counts distinct peer groups. Do not add an ID to the ranking order when equal scores are supposed to share a rank: the ID would make them different peers. You can still add it to the final display order.</p>
+
+<p>For exactly one latest order per customer, use a position with a deliberate tie-breaker, then filter outside the window calculation:</p>
+
+<Sql label="Keep one latest order for each customer" code={`WITH numbered AS (
+  SELECT order_id, customer_id, placed_at,
+         ROW_NUMBER() OVER (
+           PARTITION BY customer_id
+           ORDER BY placed_at DESC, order_id DESC
+         ) AS position
+  FROM orders
+)
+SELECT order_id, customer_id, placed_at
+FROM numbered
+WHERE position = 1
+ORDER BY customer_id;`} />
+
+<p>On the five-order illustration this returns Mina’s 105, Tariq’s 102 and Edda’s 106. If the question instead wants every order tied for a customer’s latest instant, use <code>RANK</code> ordered only by <code>placed_at DESC</code> and keep rank 1. The placement of the tie-breaker follows the business meaning, not a universal rule to append IDs everywhere.</p>
+
+<p>The same care applies when returning only the first few rows. A total order makes their selection deterministic within one view of the data; it does not freeze that view while another transaction changes it. <a href="/learn/databases/relational/large-results/">Pagination and consistent exports</a> follows the order across requests.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+
+<p>Checked on 24 October 2026 against the PostgreSQL 18 manual and a disposable PostgreSQL 18.6 instance. <a href="/review/relational-collection/evidence/r06/windows-experiment.sql/" download="windows-experiment.sql">Download the SQL experiment</a> and run <code>psql -X -v ON_ERROR_STOP=1 -f windows-experiment.sql</code> in a disposable database. It builds temporary inputs, checks the grouped and window results, adds the two later tie rows only for the ordering examples, and rolls back. The figures illustrate those calculations rather than running a database in the page.</p>
+
+<ul>
+ <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/queries-table-expressions.html#QUERIES-GROUP">GROUP BY and HAVING</a> and <a href="https://www.postgresql.org/docs/18/functions-aggregate.html">Aggregate Functions</a>: grouping, counts, empty inputs and non-missing contributions.</li>
+ <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/tutorial-window.html">Window Functions tutorial</a>: retaining rows, partitions, window input and filtering at a later query level.</li>
+ <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/functions-window.html">Window Functions</a>: ranking, <code>LAG</code>, <code>LAST_VALUE</code> and frame-dependent behaviour.</li>
+ <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS">Window Function Calls</a>: explicit <code>ROWS</code> and <code>RANGE</code> frames; <a href="https://www.postgresql.org/docs/18/sql-expressions.html#SYNTAX-AGGREGATES">Aggregate Expressions</a>: <code>FILTER</code>.</li>
+ <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/queries-order.html">Sorting Rows</a>: output order, directions and tie-breaking expressions.</li>
+</ul>

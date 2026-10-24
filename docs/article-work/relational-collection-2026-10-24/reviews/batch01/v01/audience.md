@@ -1,0 +1,1 @@
+An intelligent engineer learning relational databases, familiar with application requests and stored data. Read the introduction first, then modelling, then values; later pieces may rely on understanding established earlier. The three fixed reference articles supply the writing and teaching standard. Plain British English.

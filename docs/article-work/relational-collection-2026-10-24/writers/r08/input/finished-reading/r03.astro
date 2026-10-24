@@ -1,0 +1,213 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import TenantReferences from '../../components/relational-collection/r03/TenantReferences.astro';
+---
+
+<p>A constraint makes a rule part of the table’s definition. A positive order-line quantity, an order number used only once and a product reference that reaches an existing product are different rules, but they share one useful property: the database can refuse a write that breaks them. The checkout application, an import and an administrator’s SQL all meet the same boundary.</p>
+
+<p>Choosing that boundary starts with the state you want to forbid. “A line has a positive quantity” concerns one row. “No two lines have the same order and line number” compares identities across rows. “This line belongs to an order in the same shop” follows a reference. Each needs a declaration that expresses the whole rule.</p>
+
+<p>The examples use PostgreSQL 18 and the shop from the introduction. Later, a labelled tenant variant lets the application serve two shops. It reveals why a reference that merely reaches an existing row can still be the wrong reference. The figure illustrates reference matching; the downloadable SQL checks their accepted and rejected cases on PostgreSQL 18.6.</p>
+
+<h2 id="rules-about-one-row">Rules about one row</h2>
+
+<p>Order 103’s first line contains one blue mug. Its quantity must be present and greater than zero. Those are two separate requirements:</p>
+
+<Sql label="Require a supplied, positive order-line quantity" code={`quantity integer NOT NULL
+  CONSTRAINT order_items_quantity_positive CHECK (quantity > 0)`} />
+
+<p><code>NOT NULL</code> refuses an absent quantity. <code>CHECK</code> evaluates a condition for the row being inserted or changed. Here it refuses zero and negative quantities. Naming the check gives an error a useful identity: <code>order_items_quantity_positive</code> says which rule failed.</p>
+
+<p>As <a href="/learn/databases/relational/values/">Values, missing data and equality</a> showed, a PostgreSQL check rejects false and accepts true or unknown. A missing quantity makes <code>quantity &gt; 0</code> unknown, so the check alone would allow it. The two declarations work together.</p>
+
+<table>
+  <caption>Four attempted quantities under that definition</caption>
+  <thead><tr><th scope="col">Quantity</th><th scope="col">Positive check</th><th scope="col">Result</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>True</td><td>Allowed</td></tr>
+    <tr><td>0</td><td>False</td><td>Refused</td></tr>
+    <tr><td>−1</td><td>False</td><td>Refused</td></tr>
+    <tr><td><code>NULL</code></td><td>Unknown</td><td>Refused by <code>NOT NULL</code></td></tr>
+  </tbody>
+</table>
+
+<p>A check can use several columns of the same row. The shop’s <code>status</code> check allows only <code>pending</code>, <code>paid</code> and <code>cancelled</code>. A table storing two ends of an interval could require its end to follow its start. Neither rule needs to read another row.</p>
+
+<p>The declaration says exactly that much. Allowing the word <code>paid</code> does not establish that the order has enough payments. Requiring <code>stock &gt;= 0</code> does not establish that every sale reduced stock. A constraint can preserve a property of the stored representation without proving the whole business process correct.</p>
+
+<p>A default is different again. <code>DEFAULT 'pending'</code> supplies a status when an insert omits it; it does not restrict what an explicit value may be. Keep the check if other statuses must be impossible.</p>
+
+<h2 id="one-identity-one-row">One identity, one row</h2>
+
+<p>The rule for line identity concerns a pair. Order 103 has lines 1 and 2, and order 101 also has a line 1. The database must permit those repetitions while refusing another line 1 on order 103:</p>
+
+<Sql label="Enforce the identity of an order line" code={`PRIMARY KEY (order_id, line_no)`} />
+
+<p>This primary key makes the pair unique and requires both columns. Separate declarations of <code>UNIQUE (order_id)</code> and <code>UNIQUE (line_no)</code> would mean something else: at most one line per order, and at most one line numbered 1 in the entire table. Composite means that the combination is the identity.</p>
+
+<p><code>UNIQUE</code> can preserve another identity beside the primary key. If a variant introduces a generated <code>line_id</code>, it still needs <code>UNIQUE (order_id, line_no)</code> and required values for that business identity. Generating different IDs for two inserts does not stop them recording the same line twice. <a href="/learn/databases/relational/modelling/">Relations, keys and normalisation</a> develops the choice of keys; constraints carry that choice into every write.</p>
+
+<p>The comparison rule matters too. Uniqueness on text uses the column’s equality rules, so a rule that considers two spellings the same must be reflected in the constrained value or its comparison. Ordinary PostgreSQL uniqueness also permits several missing values. Use <code>NOT NULL</code> for a required identity; choose <code>NULLS NOT DISTINCT</code> when an optional unique value should allow at most one absence.</p>
+
+<h3 id="a-preflight-query-is-not-the-key">A preflight query is not the key</h3>
+
+<p>For a separate insertion experiment, start with line <code>(103, 1)</code> absent. A checkout writer and an import both intend to create it. Each can ask whether the line exists and get no row before either inserts it. A check in application code has now passed twice.</p>
+
+<table>
+  <caption>One possible schedule for two writers of the same line identity</caption>
+  <thead><tr><th scope="col">Step</th><th scope="col">Checkout writer</th><th scope="col">Import writer</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Finds no <code>(103, 1)</code></td><td>Finds no <code>(103, 1)</code></td></tr>
+    <tr><td>2</td><td>Inserts <code>(103, 1)</code>; transaction remains open</td><td></td></tr>
+    <tr><td>3</td><td></td><td>Attempts the same key; waits</td></tr>
+    <tr><td>4</td><td>Commits</td><td>Duplicate-key error; rolls back</td></tr>
+  </tbody>
+</table>
+
+<p>With an immediate primary key, PostgreSQL’s second insert waits for the conflicting transaction’s outcome. If the first commits and keeps the row, the second is refused. If the first rolls back, the second can proceed. The key’s enforcement includes the overlap that the separate lookup missed.</p>
+
+<p>A disposable PostgreSQL 18.6 run checked the commit case: the second insert waited on the first transaction, then received a duplicate-key error, and one row remained. Without the key, two empty preflight results followed by two inserts left two copies. This is a constraint doing concurrent enforcement, rather than a reason to avoid constraints whenever transactions overlap.</p>
+
+<h2 id="a-reference-in-both-directions">A reference in both directions</h2>
+
+<p>An order line’s <code>product_id</code> names a product. A foreign key makes the database preserve that connection:</p>
+
+<Sql label="Require an existing product for every line" code={`product_id text NOT NULL REFERENCES products (product_id)`} />
+
+<p>The parent, <code>products</code>, must offer a unique identity for the reference to target. Its primary key does that. The child, <code>order_items</code>, can repeat P7 on many lines, because each is a separate purchase of that product. The foreign key requires a match; it does not make the child’s product ID unique.</p>
+
+<p>Enforcement works in both directions. Inserting a line for a nonexistent product is refused. Changing a line to that product is refused too. On the parent side, deleting P7 or changing its key would leave existing lines pointing nowhere, so the database must either refuse the change or carry out a declared action that preserves the rule.</p>
+
+<p>With the core schema’s default action, deleting P7 while its lines remain fails. The same is true of deleting order 103 while its lines remain. The foreign keys protect those relationships; they do not decide whether the shop ought to retain an order forever.</p>
+
+<h3 id="what-a-delete-should-mean">What a delete should mean</h3>
+
+<p>An order line is a component of an order. If a separate deletion policy allows an order and all its lines to be removed together, the order reference can say so:</p>
+
+<Sql label="A deletion-policy variant for component lines" code={`FOREIGN KEY (order_id) REFERENCES orders (order_id)
+  ON DELETE CASCADE`} />
+
+<p><code>CASCADE</code> removes the child lines when their order is deleted. Applying that action to the product reference would have a different consequence: deleting a catalogue product would erase lines from old purchases. The references look similar, but the relationships mean different things.</p>
+
+<table>
+  <caption>PostgreSQL foreign-key actions when a referenced parent is deleted</caption>
+  <thead><tr><th scope="col">Action</th><th scope="col">Effect on referencing rows</th></tr></thead>
+  <tbody>
+    <tr><td><code>NO ACTION</code>, the default</td><td>The reference must be valid when checked; otherwise the delete fails.</td></tr>
+    <tr><td><code>RESTRICT</code></td><td>Refuses deleting a referenced parent without postponing that check.</td></tr>
+    <tr><td><code>CASCADE</code></td><td>Deletes the referencing rows.</td></tr>
+    <tr><td><code>SET NULL</code> or <code>SET DEFAULT</code></td><td>Changes the reference; the resulting row must still satisfy its other rules.</td></tr>
+  </tbody>
+</table>
+
+<p><code>SET NULL</code> suits an optional association, rather than the required product on this line. It cannot override <code>NOT NULL</code>. A default is no escape either: a non-missing default reference still needs its parent. <code>ON UPDATE</code> actions make the corresponding choice when the parent’s referenced key changes.</p>
+
+<p>References also need a practical access path. PostgreSQL creates an index for a primary or unique key, but does not automatically create one on the child’s foreign-key columns. Deleting a product requires finding its lines. On a large line table an index on <code>product_id</code> can make that search cheaper; the line primary key already starts with <code>order_id</code> for the order-side search. <a href="/learn/databases/relational/indexes/">Indexes and access paths</a> develops that cost.</p>
+
+<details>
+  <summary>When the reference may be checked at commit</summary>
+  <p>A default foreign key is not deferrable. If a transaction needs to create a connected group in an order that temporarily leaves a missing reference, declare that foreign key <code>DEFERRABLE</code> and defer its check for the transaction. The final state must still be valid.</p>
+  <Sql label="A scratch deferred order reference" code={`CREATE TEMP TABLE deferred_orders (order_id integer PRIMARY KEY);
+CREATE TEMP TABLE deferred_lines (
+  order_id integer NOT NULL,
+  CONSTRAINT deferred_order_exists FOREIGN KEY (order_id)
+    REFERENCES deferred_orders DEFERRABLE INITIALLY DEFERRED
+);`} />
+  <p>Inside one transaction, a line for order 103 can now be inserted before order 103, provided the order is inserted before the check. <code>SET CONSTRAINTS deferred_order_exists IMMEDIATE</code> forces the pending check at that point. Leaving the parent absent still fails; deferral changes when the rule is tested, not what it requires. <code>NO ACTION</code> can participate in this deferred check; <code>RESTRICT</code> does not defer its deletion action. PostgreSQL does not permit deferring <code>CHECK</code> or <code>NOT NULL</code>.</p>
+</details>
+
+<h2 id="the-shop-is-part-of-the-identity">The shop is part of the identity</h2>
+
+<p>Now enter the collection’s <em>tenant-scoped variant</em>. The application serves shop 10, the original shop, and shop 20, Harbour Tea. Each shop is a tenant: one customer organisation whose data shares the application with others. Mina is a customer of shop 10; she is not a tenant herself.</p>
+
+<p>Shop 10’s P7 is the Blue mug at 20.00. Shop 20 has its own P7, a Copper mug at 18.00. P7 alone no longer identifies a product. The pair <code>(shop_id, product_id)</code> does. Orders are identified by <code>(shop_id, order_id)</code>, and lines by <code>(shop_id, order_id, line_no)</code>.</p>
+
+<p>A line therefore needs the shop ID in its references as well as its own key. These small definitions show the identity and reference columns; descriptive order columns and the customer reference are omitted here. The worksheet includes the same-shop customer reference and the line’s quantity and price.</p>
+
+<Sql label="Use the same shop ID in the line's two references" code={`CREATE TABLE products (
+  shop_id integer,
+  product_id text,
+  name text NOT NULL,
+  PRIMARY KEY (shop_id, product_id)
+);
+CREATE TABLE orders (
+  shop_id integer,
+  order_id integer,
+  PRIMARY KEY (shop_id, order_id)
+);
+CREATE TABLE order_items (
+  shop_id integer,
+  order_id integer,
+  line_no integer,
+  product_id text NOT NULL,
+  PRIMARY KEY (shop_id, order_id, line_no),
+  FOREIGN KEY (shop_id, order_id)
+    REFERENCES orders (shop_id, order_id),
+  FOREIGN KEY (shop_id, product_id)
+    REFERENCES products (shop_id, product_id)
+);`} />
+
+<p>The same <code>shop_id</code> participates in both foreign keys. A line in shop 10 must find both an order in shop 10 and a product in shop 10. Giving the line independent shop IDs for its order and product would let those two parents belong to different shops unless another rule tied the IDs together.</p>
+
+<p>Figure 1 follows the mug line on order 103. Start with shop 10, then change the attempted line’s shop to 20. Watch the two lookups separately: the product exists in both shops, but the order does not.</p>
+
+<TenantReferences />
+
+<p>At shop 10 the line reaches order <code>(10, 103)</code> and the Blue mug <code>(10, P7)</code>. At shop 20 it reaches the Copper mug, but there is no order <code>(20, 103)</code>. The order foreign key refuses that attempted line. Finding order 103 in shop 10 cannot satisfy a reference asking for shop 20.</p>
+
+<p>This is more than putting a shop label on a row. Every tenant-owned relationship must carry the scope: an order to its customer, a line to its order and product, a payment to its order. In this variant the order-to-customer reference is <code>FOREIGN KEY (shop_id, customer_id) REFERENCES customers (shop_id, customer_id)</code>. Keeping an old unscoped reference leaves that relationship outside the boundary.</p>
+
+<p>PostgreSQL will not accept <code>REFERENCES products (product_id)</code> against the composite product key above: <code>product_id</code> alone is not unique. Adding global uniqueness merely to make that declaration work would prohibit the two valid P7s. Preserve the intended identity, then reference all of it.</p>
+
+<p>Queries need the same meaning. A join on <code>i.product_id = p.product_id</code> would pair shop 10’s mug line with both P7 products. Include <code>i.shop_id = p.shop_id</code> in that match. Foreign keys protect stored relationships; they do not insert the missing condition into a query.</p>
+
+<h3 id="required-and-optional-pairs">Required and optional pairs</h3>
+
+<p>The tenant line’s primary key already requires its shop and order IDs, and <code>product_id</code> is explicitly <code>NOT NULL</code>. Those required values matter. Under PostgreSQL’s default <code>MATCH SIMPLE</code>, a composite reference with <em>any</em> missing component does not require a parent match. A nullable product ID could therefore leave a line with no checked product reference at all.</p>
+
+<p>For a wholly optional composite association, <code>MATCH FULL</code> allows either a complete matching pair or an entirely missing pair; it rejects a half-missing pair. It still permits both values to be missing. The shop’s required product association needs required columns, rather than treating a missing pair as another way to pass.</p>
+
+<h2 id="integrity-does-not-grant-access">Integrity does not grant access</h2>
+
+<p>The composite foreign keys answer whether stored relationships stay inside one shop. They do not answer whether the caller is entitled to act for that shop. A caller allowed to insert arbitrary values could supply a completely consistent shop 20 order and product pair. Every reference could pass while the caller had no authority over Harbour Tea.</p>
+
+<p>The application must establish the caller’s authorised shop and carry that identity through its requests. Database privileges determine which operations its connection may perform. In PostgreSQL, row security policies can additionally restrict which rows that connection may read or change. These are access rules applied under a particular runtime identity, with their own behaviour for owners and privileged roles.</p>
+
+<p>Keeping those questions distinct makes testing clearer. Try a shop 10 line with a parent from another shop to test integrity. Try a well-formed shop 20 operation through a shop 10 caller to test authority. The latter should fail even though the data would be internally consistent. <a href="/learn/databases/relational/access-control/">Database access and least privilege</a> develops runtime authority; <a href="/learn/databases/relational/postgresql/access-control/">PostgreSQL roles, policies and privileged code</a> works through policy tests.</p>
+
+<h2 id="rules-that-need-a-protocol">Rules that need a protocol</h2>
+
+<p>The shop can declare a positive payment amount and a reference to an order. Neither declaration establishes that an order marked <code>paid</code> has enough payments. If marking an order paid must mean that its payments cover its line total, that rule compares several changing rows, and a write affecting any of them could change its truth.</p>
+
+<p>PostgreSQL row checks are not a supported way to enforce such a rule by reading other rows. Hiding that read in a function does not make it safe: changing a different row does not cause the original row’s check to run again. The same problem applies to a time-dependent check that is expected to become false merely because the clock advances.</p>
+
+<p>Look first for a declarative form the engine supports. A unique key already expresses a cross-row rule. A foreign key expresses an existence rule. PostgreSQL exclusion constraints can forbid certain conflicting pairs, such as overlapping reservations for the same room. These declarations have enforcement designed for their particular relationships.</p>
+
+<p>A class-session capacity limit is different: count several booking rows and keep the total within the session’s capacity. Two transactions can both count a free place before either adds its booking. Each new row can pass all its own checks while the combined result exceeds capacity. A trigger that simply repeats that count can make the same mistake.</p>
+
+<p>Such a rule needs a complete write protocol: which changes belong in one transaction, how competing writers coordinate, what each reads after waiting and which failures require a complete retry. The introduction’s conditional stock update is one protocol for one stock row; it is not a general solution to counting bookings. <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> develops these concurrent multi-row rules.</p>
+
+<p>Keep the simpler constraints alongside that protocol. A booking protocol should not also have to remember to reject every missing reference or duplicate identity itself. Declarations preserve the parts they can express; transaction logic carries the remaining business rule.</p>
+
+<h2 id="trying-the-boundary">Trying the boundary</h2>
+
+<p>Test a constraint with a valid write and the smallest write that would break its promise. For a composite key, repeat the whole key and also repeat just one component in a valid new combination. For a reference, try an absent parent, a changed child reference and a parent deletion. For tenant scope, use a parent that exists in the other shop; an entirely nonexistent ID would not distinguish a scoped reference from an unscoped one.</p>
+
+<p>Check the returned error as well as the unchanged data. PostgreSQL reports <code>23502</code> for a not-null violation, <code>23514</code> for a check violation, <code>23505</code> for uniqueness and <code>23503</code> for a foreign key. Drivers expose the SQLSTATE and relevant object fields. Use those fields and named constraints to recognise an expected refusal, rather than parsing the wording of an error message.</p>
+
+<p>In an explicit PostgreSQL transaction, an ordinary statement error leaves the transaction failed until it is rolled back, or recovered to an appropriate savepoint. The application should turn the refusal into a meaningful result and end or recover that transaction. Repeating the same invalid write is not a useful retry strategy.</p>
+
+<p><a href="/review/relational-collection/evidence/r03/constraints.sql/">Download the PostgreSQL worksheet</a> to repeat the row, identity, reference, deletion and tenant examples with <code>psql -X -v ON_ERROR_STOP=1 -f constraints.sql</code>. It creates temporary objects, checks expected refusals by SQLSTATE and rolls the work back. Counterexamples remove the relevant rule so that the difference is visible. The separate concurrent-key run used two writer connections to a disposable local server; it is described above rather than claimed by this single-session download.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+
+<p>Checked on 24 October 2026 against the PostgreSQL 18 documentation and an owned disposable PostgreSQL 18.6 instance. The fixed shop rows remain unchanged; tenant and deletion examples are labelled variants, and rejected writes are attempts rather than committed history. Figure 1 illustrates lookups implied by the declarations, not the order PostgreSQL executes its checks. No performance or other engine’s execution is claimed.</p>
+
+<ul>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>: row checks, required values, identities, composite references, deletion actions, missing reference components and indexes on referencing columns.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/index-unique-checks.html">Index Uniqueness Checks</a>: why a conflicting insertion waits and checks the first transaction’s outcome.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/sql-createtable.html">CREATE TABLE</a> and <a href="https://www.postgresql.org/docs/18/sql-set-constraints.html">SET CONSTRAINTS</a>: declarations, supported deferral and forcing a pending check.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/ddl-rowsecurity.html">Row Security Policies</a>: the separate question of which rows a runtime identity may access.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/errcodes-appendix.html">Error Codes</a> and <a href="https://www.postgresql.org/docs/18/tutorial-transactions.html">Transactions</a>: identifying a refusal and recovering an explicit failed transaction.</li>
+  <li>On this site, <a href="/learn/databases/relational/data-lifecycle/">History, correction and deletion</a>: deciding what should be retained or removed; <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a>: preserving rules across concurrent changes.</li>
+</ul>

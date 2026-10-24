@@ -1,0 +1,15 @@
+# Primary-source checks
+
+Checked 2026-10-23 UTC (local date 24 October).
+
+- E. F. Codd, *A Relational Model of Data for Large Shared Data Banks* (1970), IBM Research publication record: https://research.ibm.com/publications/a-relational-model-of-data-for-large-shared-data-banks . Establishes the relation model, independence from stored order/access paths and redundancy concerns. Paper text also surfaced at https://db.dobo.sk/wp-content/uploads/2015/11/Codd_1970_A_relational_model.pdf ; this is a copy of the research paper, not independent commentary.
+- E. F. Codd, *Further Normalization of the Data Base Relational Model*, IBM RJ909 (1971), sections 1.3, 2.4–2.6, 3.1–3.4. Research-paper transcription read at https://thaumatorium.com/articles/the-papers-of-ef-the-coddfather-codd/1971b-further-normalization-of-the-data-base-relational-model/ . The transcription has an unfinished marker in later sections; only the delivered definitions and examples are relied on. Candidate keys require uniqueness plus irreducibility; second normal form considers every candidate key, not merely the chosen primary key. Adding a surrogate does not remove a dependency on a proper part of another candidate key.
+- PostgreSQL 18, Table Basics: https://www.postgresql.org/docs/18/ddl-basics.html . SQL tables can contain duplicates; row order is unspecified without requested sorting; types constrain/interpret values.
+- PostgreSQL 18, Constraints: https://www.postgresql.org/docs/18/ddl-constraints.html . Primary key uniqueness and non-nullness; composite keys; foreign-key references; many-to-many relation via a table carrying two references. Enforcement detail belongs to the neighbouring constraints article.
+- PostgreSQL 18, Identity Columns: https://www.postgresql.org/docs/18/ddl-identity-columns.html . Generating an identity is separate from enforcing uniqueness.
+- PostgreSQL 18, Arrays, especially 8.15.5: https://www.postgresql.org/docs/18/arrays.html . Arrays are supported values, but independently searched items may merit rows in a separate table. No claim that PostgreSQL forbids arrays or structured values.
+- PostgreSQL 18, Joins Between Tables: https://www.postgresql.org/docs/18/tutorial-join.html . Join meaning is matching row pairs; conceptual comparison is not an observed execution route.
+- PostgreSQL 18, Materialized Views: https://www.postgresql.org/docs/18/rules-materializedviews.html . Stored derived results can be refreshed and may be stale. No claim of measured performance.
+- Ronald Fagin, *Multivalued Dependencies and a New Normal Form for Relational Databases* (1977), IBM record https://research.ibm.com/publications/multivalued-dependencies-and-a-new-normal-form-for-relational-databases and paper text https://www.comp.nus.edu.sg/~lingtw/papers/fagin.pdf . Functional dependency definition refers to any two rows agreeing on the determinant. Fourth normal form addresses independent multivalued facts; scope beyond ordinary shop decomposition.
+
+No native engine execution has been claimed at this stage. Source research was permitted during the final-plan hold.

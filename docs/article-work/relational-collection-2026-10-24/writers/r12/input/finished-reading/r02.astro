@@ -1,0 +1,175 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Instant from '../../components/relational-collection/r02/Instant.astro';
+import NullFilter from '../../components/relational-collection/r02/NullFilter.astro';
+import core from '../../lib/relational-collection/core.json';
+const lines = core.order_items.filter(row => row.order_id === 103);
+---
+
+<p>A column’s type decides which values it can hold and what operations on those values mean. A price needs arithmetic that preserves agreed amounts. An order time needs to identify the same moment wherever it is displayed. A product code needs a rule for whether two spellings identify the same product. Choosing a type is choosing part of that meaning.</p>
+
+<p>Missing values add another choice. SQL uses <code>NULL</code> to mark the absence of a value, and a comparison involving it usually has a third answer: unknown. A condition that reads naturally as “not empty” can therefore leave out the very rows you wanted to find.</p>
+
+<p>The shop’s order 103 gives us the amounts and times to start from. The examples use PostgreSQL 18. Later, optional delivery notes on the same three orders let us compare missing and empty text. The controls illustrate the logic; the accompanying SQL was checked on a disposable PostgreSQL 18.6 instance.</p>
+
+<h2 id="amounts-you-can-add">Amounts you can add</h2>
+
+<p>Order 103 contains one mug at 20.00 and two packs of tea at 4.50. Its unit prices are <code>numeric(8,2)</code>: decimal numbers with eight digits of precision, two of them after the decimal point. The largest positive value that fits is 999999.99. The type stores these prices exactly, so the line amounts add to 29.00.</p>
+
+<table>
+  <caption>Order 103’s agreed prices</caption>
+  <thead><tr><th scope="col">Product</th><th scope="col">Quantity</th><th scope="col">Unit price</th><th scope="col">Line amount</th></tr></thead>
+  <tbody>{lines.map(line => <tr><td>{line.product_id}</td><td>{line.quantity}</td><td>{line.unit_price}</td><td>{((Number(line.unit_price.replace('.', '')) * line.quantity) / 100).toFixed(2)}</td></tr>)}</tbody>
+</table>
+
+<p><code>real</code> and <code>double precision</code> store approximate binary floating-point numbers. They suit measurements where approximation is acceptable, but many decimal fractions have no exact binary representation. In PostgreSQL, the distinction is visible with three small literals:</p>
+
+<Sql label="Compare exact decimal arithmetic with binary floating point" code={`SELECT 0.1::numeric + 0.2::numeric = 0.3::numeric
+         AS decimal_equal,
+       0.1::double precision + 0.2::double precision
+         = 0.3::double precision AS float_equal;
+-- decimal_equal | float_equal
+-- true          | false`} />
+
+<p>The <code>::</code> notation converts a value to the named type. Writing two decimal places when displaying the floating-point result would hide the difference without changing the stored value. For an exact amount, use exact arithmetic from input through calculation and storage. A decimal column cannot repair rounding that application code has already performed in binary floating point; pass an exact decimal representation through the driver.</p>
+
+<p>An integer number of minor units is another exact representation. With a scale of two decimal places, 4.50 becomes 450 and 20.00 becomes 2000: each integer counts hundredths of one unit. This works only with an agreed scale and adequate integer range. The shop’s example prices have no assigned currency. A real system handling several currencies must retain which currency an amount belongs to and apply its rounding rules; the integer 450 alone says neither.</p>
+
+<h3 id="rounding-is-a-rule">Rounding is a rule</h3>
+
+<p>Exact arithmetic still needs a decision about fractions smaller than the amount you will charge. PostgreSQL rounds a value to a <code>numeric</code> column’s declared scale when it stores it. It does not reject every input with extra fractional digits. For example, <code>1.005::numeric(8,2)</code> becomes 1.01.</p>
+
+<p>Rounding each unit before multiplication can differ from rounding the line afterwards. Here is a separate calculation, not another price in the shop:</p>
+
+<Sql label="Compare two places to round a three-unit charge" code={`SELECT round(3 * 0.335::numeric, 2) AS round_line,
+       3 * round(0.335::numeric, 2) AS round_unit;
+-- round_line | round_unit
+-- 1.01       | 1.02`} />
+
+<p>Both calculations are exact at each step. They answer different charging rules. Decide where tax, discounts and currency conversion are rounded, then make the application and database agree on that point. If excess input precision is an error, validate it before a column conversion has rounded it away.</p>
+
+<h2 id="an-instant-or-a-calendar-reading">An instant or a calendar reading</h2>
+
+<p>The <code>placed_at</code> on an order records an event: when it was placed. It needs an <em>instant</em>, one point on the time line. PostgreSQL’s <code>timestamp with time zone</code>, usually written <code>timestamptz</code>, serves that purpose. A <code>date</code> records a calendar day instead, and <code>timestamp without time zone</code> records a date and clock reading without identifying a zone.</p>
+
+<p>The difference matters when the shop also sells tea classes. Its Tea tasting session S501 starts at <code>2026-11-04 18:00:00Z</code>, with <code>Europe/Stockholm</code> as its display zone. <code>Z</code> means UTC, the common reference for instants. Follow the same start time through the two clocks.</p>
+
+<Instant />
+
+<p>The clock changes from 18:00 to 19:00; the session has not moved. PostgreSQL converts an offset-bearing input to an instant and displays a <code>timestamptz</code> using the connection’s current time zone. The type’s name does not mean it stores the original zone name. Keep <code>Europe/Stockholm</code> separately if the application must display or schedule in that zone.</p>
+
+<Sql label="Render the same class start in its named local zone" code={`SELECT timestamptz '2026-11-04 18:00:00Z'
+         AT TIME ZONE 'Europe/Stockholm' AS local_start;
+-- local_start
+-- 2026-11-04 19:00:00`} />
+
+<p><code>AT TIME ZONE</code> here turns an instant into its local calendar reading, a <code>timestamp without time zone</code>. In the other direction, applying it to a zone-free timestamp interprets that reading in the named zone. Supplying a <code>timestamptz</code> input without an offset or zone instead makes PostgreSQL use the connection’s time zone, so a connection setting can change which instant the input means. Use an explicit offset for event timestamps crossing an application boundary.</p>
+
+<p>A birthday or an accounting date may be a <code>date</code>, because no event time is being claimed. A future appointment specified as “09:00 in Stockholm” needs its local reading and named zone interpreted under an explicit scheduling policy. An offset such as <code>+01:00</code> gives one displacement from UTC; a named zone carries rules for daylight-saving changes. Some local clock readings occur twice when clocks go back, and others do not occur when clocks go forward. The application must resolve those cases when accepting local appointments.</p>
+
+<h3 id="which-local-day">Which local day?</h3>
+
+<p>“Orders on 25 October” needs a zone as well as a date. Midnight in Stockholm is not midnight in UTC, and a local day need not last 24 hours. As a calendar example, 25 October 2026 in Stockholm runs from 22:00 UTC the previous evening to 23:00 UTC that evening: 25 hours across the clock change.</p>
+
+<p>Form the start and the following midnight in the named zone, then use a half-open range: include the start and exclude the end. This query changes no shop rows; it asks which existing orders fall within that local day.</p>
+
+<Sql label="Select a local calendar day with explicit boundaries" code={`SELECT order_id, placed_at
+FROM orders
+WHERE placed_at >= timestamptz
+        '2026-10-25 00:00:00 Europe/Stockholm'
+  AND placed_at < timestamptz
+        '2026-10-26 00:00:00 Europe/Stockholm'
+ORDER BY placed_at, order_id;`} />
+
+<p>The upper bound belongs to the next day, so it cannot be counted in both days. <code>BETWEEN</code> includes both endpoints and would include that next midnight. Avoid converting an event to a date without saying which zone defines the date. The shop’s three orders are all earlier, so this particular query returns no rows.</p>
+
+<h2 id="when-text-is-the-same">When text is the same</h2>
+
+<p>The shop’s product ID <code>P7</code> is text, but it is also an identifier. Before allowing <code>p7</code>, decide whether it names the same product, a different product or invalid input. A type that can store both strings does not make that business decision.</p>
+
+<p>A <em>collation</em> supplies rules for comparing and ordering text. A language-aware order can be useful for a customer list; an identifier may need a stricter rule. In PostgreSQL, the <code>"C"</code> collation gives a byte-based order. Under it, <code>'P7'</code> and <code>'p7'</code> compare as different. Other collations can change ordering, and PostgreSQL’s nondeterministic ICU collations can deliberately treat differences such as case or accents as equal. Test the actual collation chosen for the column.</p>
+
+<p>Unicode adds a less visible difference. The accented character in <code>café</code> can be encoded as one precomposed character or as <code>e</code> followed by a combining accent. They can look identical while their bytes differ. PostgreSQL’s <code>normalize</code> function can put both into a chosen Unicode normal form in a UTF-8 database. Here <code>chr(769)</code> supplies the combining acute accent, and <code>||</code> joins it to the preceding text:</p>
+
+<Sql label="Compare two Unicode representations before and after normalisation" code={`SELECT 'café' COLLATE "C" = ('cafe' || chr(769))
+         AS original_equal,
+       normalize('café', NFC) COLLATE "C"
+         = normalize(('cafe' || chr(769)), NFC) AS normalised_equal;
+-- original_equal | normalised_equal
+-- false          | true`} />
+
+<p>Normalisation does not make uppercase and lowercase equal, remove accents or decide whether spaces matter. Those are separate choices. For a code that people may type in several forms, one design preserves the display spelling and also derives a canonical value under a documented rule. Lookups and uniqueness must use that same rule. Applying <code>lower</code> in one query while enforcing uniqueness on the original text leaves the two definitions of “same” apart.</p>
+
+<p>Choose the rule for the field’s job. A person’s name should retain their spelling; an opaque external identifier should retain the external system’s identity rules. Trimming, lowercasing or removing accents everywhere can merge values that were meant to remain distinct. <a href="/learn/databases/relational/constraints/">Constraints and tenant boundaries</a> develops how to enforce the identity rule once you have chosen it.</p>
+
+<h2 id="a-missing-value-is-not-empty-text">A missing value is not empty text</h2>
+
+<p>For the next example, give each order an optional <code>delivery_note</code>. Order 101 has <code>'Leave by door'</code>, order 102 has <code>''</code>, an empty string, and order 103 has <code>NULL</code>.</p>
+
+<p>The empty string is a known text value containing zero characters. <code>NULL</code> says there is no text value. It does not say why: perhaps nobody asked, the customer omitted it, or the field does not apply. If those reasons require different behaviour, record the reason explicitly. A single marker cannot recover it later.</p>
+
+<p>A <em>predicate</em> is a condition such as <code>delivery_note = ''</code>. With known text, that condition is true or false. With <code>NULL</code>, it is unknown: SQL cannot compare the missing value with empty text. <code>WHERE</code> keeps only rows whose condition is true. Both false and unknown are discarded.</p>
+
+<p>Start with <code>note = ''</code> in the figure, then choose <code>note &lt;&gt; ''</code>. Compare the answer and order 103’s condition result. Finally choose <code>note IS NULL</code>.</p>
+
+<NullFilter />
+
+<p>The first condition returned order 102, whose note is empty. Its apparent opposite returned order 101, whose note is known and non-empty. Order 103 was in neither answer. The comparisons did not establish whether its note equalled empty text, so negating the comparison did not establish the opposite.</p>
+
+<p>Use <code>IS NULL</code> and <code>IS NOT NULL</code> to test absence. Writing <code>delivery_note = NULL</code> does not do that: it makes the ordinary equality comparison with a missing value, which is unknown even for a row whose note is missing. SQL’s <code>NULL</code> is also different from the text <code>'NULL'</code>.</p>
+
+<h3 id="deciding-what-unknown-should-do">Deciding what unknown should do</h3>
+
+<p><code>NOT unknown</code> remains unknown. With <code>AND</code>, a known false side makes the whole condition false; with <code>OR</code>, a known true side makes it true. That is why <code>delivery_note &lt;&gt; '' OR delivery_note IS NULL</code> includes order 103: its second test is true.</p>
+
+<p>That expression chooses a policy: include missing notes alongside known non-empty ones. If that is the intended question, write it explicitly. PostgreSQL also offers <code>IS DISTINCT FROM</code>, which compares while treating <code>NULL</code> as comparable for this purpose. Two missing values are not distinct; a missing value and any non-missing value are distinct. Thus <code>delivery_note IS DISTINCT FROM ''</code> returns the same two orders in the figure.</p>
+
+<p>The reverse, <code>IS NOT DISTINCT FROM</code>, is useful when comparing old and new optional values. It is true for two equal values or for two missing values, and false when only one is missing. Ordinary <code>=</code> leaves those missing-value cases unknown. This is a choice about the comparison, not a claim that two unknown real-world facts must be equal.</p>
+
+<p>Lists have the same trap. <code>7 NOT IN (3, NULL)</code> is unknown: 7 differs from 3, but SQL cannot establish that it differs from the missing value. A nullable result on the right of <code>NOT IN</code> can therefore remove rows unexpectedly. For “no matching row exists”, use a query shaped around existence; <a href="/learn/databases/relational/query-results/">Joins and the meaning of a result row</a> develops <code>NOT EXISTS</code> and the matching condition it needs.</p>
+
+<h2 id="when-to-substitute-a-value">When to substitute a value</h2>
+
+<p><code>COALESCE</code> returns its first non-missing argument. <code>COALESCE(delivery_note, '')</code> makes the missing note look like empty text. That may be convenient for a form display, but using it in a filter deliberately merges the two cases. Once both appear as <code>''</code>, the result cannot tell which was originally missing.</p>
+
+<p>The introductory report uses a more justified substitution. There are no payment rows for order 103. PostgreSQL’s <code>SUM</code> over no input rows returns <code>NULL</code>, so the report uses zero for the sum of that empty payment set. The absence is known: no recorded payments contributed an amount.</p>
+
+<Sql label="Turn the sum of no recorded payments into a paid amount of zero" code={`SELECT COALESCE(SUM(amount), 0::numeric) AS paid
+FROM payments
+WHERE order_id = 103;
+-- paid
+-- 0`} />
+
+<p>This is different from storing a payment whose amount is unknown. An unknown amount must not quietly become a zero payment. The shop requires every payment amount, and <a href="/learn/databases/relational/aggregates-and-windows/">Aggregates, windows and ordered results</a> follows how missing inputs affect counts, sums and averages.</p>
+
+<p>Ordering also needs a deliberate choice. PostgreSQL puts missing values last for ascending order and first for descending order by default. Write <code>NULLS FIRST</code> or <code>NULLS LAST</code> when the position matters, as in <code>ORDER BY delivery_note ASC NULLS LAST, order_id</code>. This positions the marker in the result; it does not turn comparisons with it into ordinary true-or-false comparisons.</p>
+
+<h2 id="missing-values-and-rules">Missing values and rules</h2>
+
+<p><code>WHERE</code> needs true, but a PostgreSQL <code>CHECK</code> constraint accepts true or unknown and rejects false. So <code>CHECK (amount &gt; 0)</code> alone allows a missing amount: the comparison is unknown. Add <code>NOT NULL</code> when a value must be present. These rules answer separate questions: is an amount required, and what values are acceptable when it is present?</p>
+
+<p>Uniqueness has its own treatment of absence too. Consider a scratch table holding optional codes, separate from the shop’s product IDs:</p>
+
+<Sql label="Require distinct supplied codes while allowing several missing ones" code={`CREATE TEMP TABLE optional_codes (
+  row_no integer PRIMARY KEY,
+  code text UNIQUE
+);
+INSERT INTO optional_codes VALUES
+  (1, 'gift'), (2, NULL), (3, NULL);`} />
+
+<p>All three rows are accepted in PostgreSQL 18. An ordinary <code>UNIQUE</code> constraint rejects another supplied <code>'gift'</code>, but allows several missing codes. If the intended rule allows at most one missing code, declare <code>code text UNIQUE NULLS NOT DISTINCT</code> instead. Then the second missing code is refused. Neither definition makes the code mandatory; that needs <code>NOT NULL</code>.</p>
+
+<p>These details vary across database products, so check the engine rather than transferring an assumption about uniqueness. The useful order of decisions stays the same. Decide what the value means, which representations count as equal, and what absence means for that field. Then choose the type, write the predicates and declare the rules that preserve those decisions.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+
+<p>Checked on 24 October 2026 against the PostgreSQL 18 manual and a local PostgreSQL 18.6 instance. <a href="/review/relational-collection/evidence/r02/values-experiment.sql/">Download the SQL experiment</a> to repeat the examples in a disposable database with <code>psql -X -v ON_ERROR_STOP=1 -f values-experiment.sql</code>. It uses temporary tables and rolls its work back. The figures are illustrative; the query results and rejected duplicate cases were checked natively. No timing or other engine’s execution is claimed.</p>
+
+<ul>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/datatype-numeric.html">Numeric Types</a>: exact decimal arithmetic, binary floating point, precision, scale and rounding on input.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/datatype-datetime.html">Date/Time Types</a> and <a href="https://www.postgresql.org/docs/18/functions-datetime.html#FUNCTIONS-DATETIME-ZONECONVERT">AT TIME ZONE</a>: instants, zone-free readings, named zones and conversion.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/collation.html">Collation Support</a> and <a href="https://www.postgresql.org/docs/18/functions-string.html">String Functions and Operators</a>: text comparison rules and Unicode normalisation.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/functions-comparison.html">Comparison Functions and Operators</a>, <a href="https://www.postgresql.org/docs/18/functions-logical.html">Logical Operators</a> and <a href="https://www.postgresql.org/docs/18/queries-table-expressions.html#QUERIES-WHERE">The WHERE Clause</a>: unknown, missing-value tests and the conditions that retain a row.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/functions-subquery.html">Subquery Expressions</a>, <a href="https://www.postgresql.org/docs/18/functions-conditional.html">Conditional Expressions</a>, <a href="https://www.postgresql.org/docs/18/functions-aggregate.html">Aggregate Functions</a> and <a href="https://www.postgresql.org/docs/18/queries-order.html">Sorting Rows</a>: <code>NOT IN</code>, <code>COALESCE</code>, empty sums and missing-value placement.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>: missing values in checks and uniqueness, including <code>NULLS NOT DISTINCT</code>.</li>
+</ul>

@@ -1,0 +1,37 @@
+# Evidence index
+
+- commission.md: authorised scope and delivery boundaries.
+- decisions.md: coordinator decisions and reconciliation.
+- input/inventory.json: current 58-destination scope, extracted before changes.
+- input/core-example.md: shared shop facts, carried forward from the successful introduction.
+- planning/: provisional plan inputs and independent review reports.
+- planning/v01/ and v02/: immutable whole-plan inputs and hashes; original perspective reports and informed confirmations stay beside them.
+- planning/accepted-v01.md and accepted-v02.md: consolidated reader problems and pass conditions, separate from blind inputs.
+- src/lib/relational-collection/core.json: authoritative shared core rows and exact report totals; writers propose extensions centrally.
+- preservation-baseline.json: hashes protecting published reading, fixed references and the accepted original introduction/components.
+- writers/*/reference-delivery.json: coordinator audit of actual complete delivered reference chunks, separate from rendered-study records and design clearance.
+- native-environment.json: identified local pinned binaries and verified official CockroachDB downloads; capability does not imply an article experiment ran.
+- planning/deferred-foreign-key-native.json: minimal owned PostgreSQL/CockroachDB capability probe, including immediate controls and cleanup; not a migration acceptance test.
+- native-specialists-preflight.md: read-only extension/tool availability.
+- native-extension-capability.json: owned PostgreSQL 18.6 instance successfully loaded vector 0.8.7, PostGIS 3.6.4 and postgres_fdw 1.2; simple operator probes and cleanup recorded. Article-specific examples remain unverified. Attempts 1/2 did not start the server with the long default temporary socket path; the final verifier uses a shorter owned /private/tmp path. Earlier attempts are preserved, not counted as passing execution.
+- preview-infrastructure.md and preview-assembly-v01.json: separate gated draft assembly, initial structure/control checks and publication exclusion; later article and endpoint changes require current checks.
+- normal-build-current.json: normal build and all13structural rules passed at the recorded version; gated collection/reference routes absent.
+- writers/r01/first-return.json and writers/r02/first-return.json: frozen complete author returns before independent review/repairs.
+- writers/r01/evidence/ and writers/r02/evidence/: pinned owned PostgreSQL18.6 worksheet runs, exact served-byte receipts, browser state/contrast records and screenshots. Author observations support mechanics; they are not independent quality verdicts.
+- static-download-check.json: built endpoint files and rewritten hrefs match executed worksheet bytes; development endpoints require trailing slashes while static file paths do not.
+- reviews/batch01/v01/manifest.json: first independent article batch's immutable source/context/mechanics and static preview at4370. Each perspective has distinct permitted inputs; editorial receives neither context nor writer notes.
+- reviews/batch01/mechanical-v01.json: structural check of the frozen build; remaining panel-heading tag errors are retained for consolidated repair. Shared isolated-navigation anchor errors were fixed in the current snapshot.
+- native-cockroach-backup-capability.json: pinned25.4.17 owned-node BACKUP command succeeded with one artificial row; client port was checked against the owned server PID before mutation, then process/store removed. This tests availability only, not a restorable chain, reconciliation or production licensing.
+- writer-fact-packet-v02.json: future writer packets remove administrative approval headers/labels; exact SQL and table blocks retained. Earlier undispatched preparations are preserved.
+- reviews/batch01/accepted-v01.md: consolidated acceptance of four medium reader problems plus required M002, with fresh repair/confirmation scope.
+- repairs/batch01-v02/: fresh joint author repair, exact changed locations/hashes, complete reread/continuity and current rendering/native-applicability records.
+- reviews/batch01/v02/manifest.json: immutable current source and104inputs, current rendering receipts replacing stale geometry, unchanged exact native worksheets; preview4372. No old findings or author quality notes inside permitted mechanical inputs.
+- repairs/batch01-v02/structure-check-final.json: exact current gated build186pages, zero structural issues at00:18:26UTC; r03 ordinary author labels included.
+- writers/r03/: complete19-part reference delivery and34drawing study, new constraint source, native two-connection checks and ordinary author finishing; not independently reviewed.
+- writers/r13/: complete19-part/34drawing calibration, PostgreSQL18.6 schedules, exact served download, explicit browser transport limit. Root owner-qa/ completes missing ordinary rendered cases before first-return freeze.
+- writers/queries/reference-delivery.json: exact19-part public-output audit for one fresh three-article writing assignment; per-piece reference-file hashes recorded under r05/r06/r07.
+- reviews/batch01/completion.json: required coverage complete forr00/r01/r02 on exact currentv02, no open substantive defects. Final technical/editorial reports remain independent.
+- reviews/batch02/v01/manifest.json: six complete first-return drafts frozen for initial all4-perspective coverage,139permitted source/context/mechanical files, immutable4384preview. Author notes/runtime environments/stale affected screenshots and controls excluded.
+- dependency-copy-hygiene.json: reproducible copied package environments excluded from work/review records; active author environments untouched.
+- normal-build-delivery1.json: current11-article source passes normal build/all13rules, draft/reference routes excluded.
+- assignments/: exact public fresh-agent dispatch arguments and timestamps, without private reasoning or encrypted message content.
