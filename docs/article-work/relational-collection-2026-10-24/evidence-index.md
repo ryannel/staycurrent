@@ -134,3 +134,7 @@
 - Full second practitioner report: reviews/final-corpus/practitioner-v02.md, all58x5/current primary/evidence/497source-reference audit/corpus ownership, root complete836line reading; no findings.
 - Full second value report: reviews/final-corpus/value-v02.md plus v02-value-notes/58-by-5.md, read-ledger.md, cross-article-ownership.md and task-routes.md; all58x5 and section-loss coverage, no page merges; three accepted medium section reductions. Root read report/matrix/owners/routes and compared complete affected article pairs.
 - Consolidated later author commission: repairs/route-local-v03/accepted.md; complete pre-findings preparation receipt and665protected inputs, eight targets, no edit until allfour reports consolidated. Current4560/manifest remains immutable.
+
+- All8author completion: repairs/route-local-v03/repair-record.md and evidence/final-source-hashes.json;666protected0mismatch/0frozen drift/fullrereads/continuity/currentauthorrender.
+- Current normal build: normal-build-route-local-all8-v03.json; all58draftstructure/link0,50downloads byteequal,131preserved; rootordinarycurrentfirst2/next4/final2 snapshots retain exactscope/limits.
+- Final current175/657input manifests: reviews/repair-route-local/v03 and reviews/final-corpus/v03, immutable4566; current-source-scope mechanical supplement qualifies newpresentation/unchangednative/primaryclaims without qualitynotes.

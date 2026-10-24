@@ -1,0 +1,116 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import NameLookup from '../../components/relational-collection/r42/NameLookup.astro';
+---
+<p>A PostgreSQL row policy answers a question in an execution context. Change that context, and the same SQL may see different rows. A runtime login can be restricted to one shop while a function it calls executes as an owner, bypasses the policy and reads both shops.</p>
+<p>The boundary therefore includes more than table grants. It includes inherited roles, deliberate role switches, object ownership, row policies, function execution rights and the names privileged code resolves. Test the path the application actually takes, including its helpers.</p>
+<p>We continue the tenant-scoped catalogue from <a href="/learn/databases/relational/access-control/">Database access and least privilege</a>. Shop 10 has the Blue mug, P7 at 20.00. Harbour Tea, shop 20, has its own P7, the Copper mug at 18.00. Actual login sessions on a disposable PostgreSQL 18.6 instance will try both permitted work and deliberate escapes. No price change made for a test survives the drill.</p>
+
+<h2 id="inheritance-is-not-the-same-as-becoming-a-role">Inheritance is not the same as becoming a role</h2>
+<p>A role can hold privileges, own objects and belong to other roles. <code>LOGIN</code> permits it to establish a connection; <code>NOLOGIN</code> does not stop members from using its authority. The membership’s inheritance and role-switch options decide how they can do so.</p>
+<Sql label="Give runtime inherited command rights while reserving deliberate owner access" code={`CREATE ROLE shop_owner NOLOGIN;
+CREATE ROLE migration LOGIN NOINHERIT;
+CREATE ROLE catalogue NOLOGIN;
+CREATE ROLE runtime_10 LOGIN;
+CREATE ROLE runtime_20 LOGIN;
+
+GRANT shop_owner TO migration
+  WITH INHERIT FALSE, SET TRUE;
+GRANT catalogue TO runtime_10, runtime_20
+  WITH INHERIT TRUE, SET FALSE;`} />
+<p>The migration login cannot automatically use the owner’s rights here. It can deliberately <code>SET ROLE shop_owner</code>, and objects it creates in that context belong to the owner role. Runtime inherits the catalogue group’s grants while retaining <code>current_user = runtime_10</code> or <code>runtime_20</code>. It cannot switch to the shared catalogue role.</p>
+<p>That difference matters when a policy uses <code>current_user</code>. Inheriting a grant does not replace the effective user with the granting group. A permitted <code>SET ROLE</code> does change the effective user. Check indirect membership paths too: an intermediate group can provide authority the direct grant list does not reveal.</p>
+<p>The native tests establish three boundaries. Migration’s direct base-table read is refused before it assumes the owner. Runtime can use catalogue privileges but cannot assume catalogue, the other runtime login or shop_owner. Migration can assume shop_owner and acquire its ownership power. These are tested capabilities, rather than conclusions drawn from role names.</p>
+<p>Ownership remains powerful even if ordinary table privileges are revoked. An owner can redefine its object and restore grants. Keep runtime outside every owner membership path and outside the credentials or deployment mechanism that can create one. A role-creation or superuser attribute can undermine an otherwise careful object allowlist.</p>
+
+<h2 id="combine-command-rights-with-row-rights">Combine command rights with row rights</h2>
+<p>The catalogue task can read products, insert their named fields and update price. It cannot delete products, change keys or alter the schema. It needs schema lookup permission separately from table privileges:</p>
+<Sql label="Object and column scope for the catalogue task" code={`GRANT USAGE ON SCHEMA shop TO catalogue;
+GRANT SELECT ON shop.products TO catalogue;
+GRANT INSERT (shop_id, product_id, name, price), UPDATE (price)
+ON shop.products TO catalogue;`} />
+<p>Those grants alone expose all four product rows to runtime_10. The tenant key <code>(shop_id, product_id)</code> makes both P7 rows legitimate; it does not authorise the caller to see both. Enable row security and make the policy map the effective runtime identity to its shop.</p>
+<Sql label="The runtime policy’s row scope, abbreviated to its identity test" code={`-- Used in both USING and WITH CHECK:
+shop_id = CASE current_user
+  WHEN 'runtime_10' THEN 10
+  WHEN 'runtime_20' THEN 20
+END`} />
+<p><code>USING</code> restricts existing rows, while <code>WITH CHECK</code> restricts proposed inserted or changed rows. A policy does not grant the command itself. Both the SQL privilege and the policy must allow the operation. The unmatched identity produces no true comparison.</p>
+<p>With row security enabled, runtime_10 reads three products and runtime_20 reads one. An explicit shop 20 select through runtime_10 returns no rows; a shop 20 insert is refused. Its permitted shop 10 price update succeeds inside a transaction that the test rolls back. A successful statement returning zero rows is a different result from a privilege error, and both need application handling.</p>
+<p>Policy combinations deserve the same care as role combinations. Applicable permissive policies combine with OR; adding another permissive rule is not a way to tighten an existing one. Restrictive policies combine with AND, alongside an applicable permissive grant of row access. Inspect which policies apply to each execution role and command before treating an extra policy as an extra restriction.</p>
+
+<h2 id="know-who-can-bypass-the-policy">Know who can bypass the policy</h2>
+<p>Table owners normally bypass row security. Superusers and roles with <code>BYPASSRLS</code> bypass it too. <code>FORCE ROW LEVEL SECURITY</code> subjects an ordinary table owner to policies, but does not remove the owner’s authority to change the table or remove those policies.</p>
+<table><caption>Observed row counts in the four-product native fixture</caption><thead><tr><th scope="col">Execution identity</th><th scope="col">Row security enabled</th><th scope="col">After FORCE</th></tr></thead><tbody><tr><td>runtime_10</td><td>3</td><td>3</td></tr><tr><td>shop_owner, assumed by migration</td><td>4</td><td>0 under the fixture’s default-deny owner scope</td></tr><tr><td>Superuser control</td><td>4</td><td>4</td></tr><tr><td>Dedicated BYPASSRLS control</td><td>4</td><td>4</td></tr></tbody></table>
+<p>The forced owner has no applicable row policy in this fixture, so it sees none. That is a useful check against accidental owner reads, not containment of the owner. The experiment then has that same owner disable row security and read all four rows again. It restores enabled and forced security afterwards.</p>
+<p>Whole-table commands such as <code>TRUNCATE</code> are outside row-policy filtering. Do not grant them to a runtime task merely because a tenant policy exists. Likewise, a backup, copied dataset or privileged report has its own access path. The policy on ordinary runtime table queries does not automatically govern every copy.</p>
+<p>Acceptance as an administrator is therefore inadequate. An administrator applying <code>WHERE shop_id = 10</code> has tested a query condition. The actual runtime login attempting to request shop 20 tests whether the authority boundary survives a hostile request.</p>
+
+<h2 id="a-function-adds-another-execution-identity">A function adds another execution identity</h2>
+<p>A normal function runs with its caller’s authority. A <code>SECURITY DEFINER</code> function runs as its owner. This is useful for exposing one narrow operation without giving callers direct access to everything it needs. It also makes the function’s owner, arguments, body and execution grant part of the security boundary.</p>
+<p>The two unsafe-helper tests return to the drill’s earlier configuration: row security is enabled, but <code>FORCE</code> has not been applied. The table owner therefore has its normal policy bypass. Executing as that owner does not itself escape forced row security.</p>
+<p>In the first counterexample, a function owned by shop_owner accepts a shop ID and product ID, then reads that product from the real table. Runtime_10 cannot directly read the Copper mug, but calling this helper with shop 20 returns 18.00. Its owner bypasses the table policy, and its argument lets the caller choose the otherwise forbidden scope.</p>
+<p>Binding the argument safely as a value prevents SQL injection; it does not authorise shop 20. A valid integer supplied by an unauthorised caller is still an unauthorised shop. The helper must derive or check scope using an authority the caller cannot replace.</p>
+<p>PostgreSQL exposes two useful identities. <code>current_user</code> is the effective execution identity, which becomes the definer inside the function. <code>session_user</code> is the session identity and normally remains the authenticated login through that call. In the repaired native helper the observed pair is <code>runtime_10 / catalogue_code</code>.</p>
+<p>We deliberately use one authenticated login per shop in this example. A trusted backend selects that credential; request parameters cannot select another login. If one shared login serves every shop, <code>session_user</code> cannot distinguish those shops. Such a design needs a different trusted scope protocol and pool reset contract. A caller-settable <code>app.shop_id</code> is not an independent authority against arbitrary SQL under that same credential.</p>
+
+<h2 id="a-table-name-can-be-an-input-too">A table name can be an input too</h2>
+<p>A privileged function also needs to know which object it is reading. An unqualified name such as <code>products</code> is resolved through a search path. If an untrusted caller can create an object where the function searches, the caller can influence that lookup without changing a single character of the function body.</p>
+<p>The second counterexample keeps that enabled, unforced configuration and has the correct shop scope, derived from session_user, but reads unqualified <code>products</code>. The function sets <code>search_path = shop</code>. That appears specific, yet an existing temporary schema is searched first for relation names unless it is explicitly placed in the path.</p>
+<p>Runtime_10 creates its own temporary products relation with a forged P7 value of 999 and grants the unsafe function owner permission to read it. Calling the owner function now returns 999. The real Blue mug still costs 20.00. This is a wrong-object lookup, rather than a change to the stored catalogue.</p>
+<p>Step through the unqualified lookup, then switch to the qualified, limited helper. The original session, its temporary table and its attempted scope change remain the same.</p>
+<NameLookup />
+<p>Qualify important object names and fix the function’s search path to trusted schemas, explicitly placing <code>pg_temp</code> last if it is present. Keep untrusted object creation out of schemas that privileged code searches. A secure path also protects unqualified types, functions and operators; naming the table correctly is only one part of reviewing a larger routine.</p>
+<p>For this fixed helper, the table is explicitly <code>shop.products</code> and its search path is just <code>pg_catalog, pg_temp</code>. It needs no user-writable schema in that path. The product ID stays a typed value in static SQL. If a different routine genuinely needs dynamic identifiers, treat identifier quoting and value binding as separate jobs and still authorise the selected object.</p>
+
+<h2 id="give-the-helper-only-the-authority-it-needs">Give the helper only the authority it needs</h2>
+<p>The corrected function belongs to <code>catalogue_code</code>, a separate NOLOGIN role. It is not the table owner, has no bypass attribute and cannot be assumed by runtime. It receives schema lookup and SELECT, with a policy that derives its row scope from the original session identity:</p>
+<Sql label="A dedicated read authority with a caller-scoped policy" code={`CREATE ROLE catalogue_code NOLOGIN;
+GRANT USAGE ON SCHEMA shop TO catalogue_code;
+GRANT SELECT ON shop.products TO catalogue_code;
+
+CREATE POLICY code_products ON shop.products
+FOR SELECT TO catalogue_code
+USING (
+  shop_id = CASE session_user
+    WHEN 'runtime_10' THEN 10
+    WHEN 'runtime_20' THEN 20
+  END
+);`} />
+<p>The runtime policy uses current_user because ordinary runtime SQL executes as runtime. The helper policy uses session_user because the helper executes as catalogue_code. These are deliberate rules for different principals; they are not two generally interchangeable spellings of “the user”.</p>
+<Sql label="Publish the narrow helper and its execution grant together" code={`-- Trusted deployment, with authority to assign the function owner:
+BEGIN;
+CREATE FUNCTION api.catalogue_price(p_id text)
+RETURNS numeric
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT p.price
+  FROM shop.products AS p
+  WHERE p.product_id = p_id
+$$;
+ALTER FUNCTION api.catalogue_price(text) OWNER TO catalogue_code;
+REVOKE ALL ON FUNCTION api.catalogue_price(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION api.catalogue_price(text) TO catalogue;
+COMMIT;`} />
+<p>PostgreSQL normally grants new functions EXECUTE to PUBLIC. Revoking that default and granting the intended group in the same deployment transaction avoids exposing an intermediate public interface. Callers also need USAGE on the API schema. Runtime receives no CREATE there and cannot replace the function.</p>
+<p>Under an actual runtime_10 login, this helper returns 20.00 even with the forged temporary relation still present and <code>app.shop_id</code> set to 20. Runtime_20 gets its own 18.00. These prices are checked again after enabled and forced row security are restored. A runtime attempt to assume catalogue_code or replace the function is refused. The final catalogue retains all four original rows and prices.</p>
+<p>The function is intentionally a read helper. A privileged write routine would also need to enforce its complete business operation, validate values, preserve constraints and concurrency rules, and settle what callers may infer from errors. Reducing the owner’s table powers is useful defence even when the function is intended to expose a narrow interface.</p>
+
+<h2 id="keep-the-deployment-boundary-testable">Keep the deployment boundary testable</h2>
+<p>Inspect the stored function owner, security mode, configuration and execution grants after deployment. Test the actual runtime credentials, including successful calls and attempts outside their scope. A function definition copied into a review document is not evidence that the deployed owner and grants match it.</p>
+<table><caption>Acceptance cases that distinguish the boundaries</caption><thead><tr><th scope="col">Attempt</th><th scope="col">Observation in the owned run</th></tr></thead><tbody><tr><td>Direct runtime_10 request for shop 20</td><td>No row returned</td></tr><tr><td>Runtime_10 passes shop 20 to unsafe owner helper</td><td>Copper mug price 18.00 leaks through</td></tr><tr><td>Runtime_10 supplies a counterfeit temporary products table</td><td>Unsafe lookup returns 999</td></tr><tr><td>Same session calls the repaired helper</td><td>Real shop 10 price 20.00</td></tr><tr><td>Runtime assumes the code owner or changes its function</td><td>Refused</td></tr><tr><td>Owner disables forced row security</td><td>Owner can restore its access</td></tr></tbody></table>
+<p>Check new objects too. Default privileges belong to the role that creates an object; changing ownership later is not equivalent to creating it under that role’s defaults. An <code>ALTER DEFAULT PRIVILEGES</code> rule affects future objects, while existing functions still need their execution grants checked and corrected. Keep the creating role and explicit grants part of a repeatable deployment.</p>
+<p>Role revocation also needs the complete authority graph. Removing one direct grant does not remove the same authority inherited elsewhere or granted through PUBLIC. Credential rotation must account for existing pooled sessions, and a revoked query privilege cannot retract results already exported. Authentication, transport verification and credential storage remain separate from the SQL tests here.</p>
+<p><a href="/review/relational-collection/evidence/r42/access-drill.py/" download="access-drill.py">Download the access and routine drill</a> and run <code>python3 access-drill.py --bindir /path/to/postgresql/bin</code>. It uses Python’s standard library, creates a private PostgreSQL cluster, clears inherited connection settings and opens real sessions as each tested login. Each verifies the unique owned instance marker, user and database; the administrative connection also verifies the data and socket directories before setup.</p>
+<p>Checked on macOS with Python 3.14.5 and PostgreSQL 18.6. The local socket uses trust authentication under the controlled launcher, so this verifies role and SQL behaviour, not a production password, certificate, TLS or proxy configuration. The run closes all sessions, stops its server and removes the temporary files. The figure is an explanatory presentation of the checked lookup cases.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+<ul>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/role-membership.html">Role membership</a> and <a href="https://www.postgresql.org/docs/18/sql-set-role.html">SET ROLE</a>: inherited authority and deliberate effective-identity changes.</li>
+<li><a href="https://www.postgresql.org/docs/18/ddl-priv.html">Privileges</a> and <a href="https://www.postgresql.org/docs/18/ddl-rowsecurity.html">Row security policies</a>: ownership, PUBLIC, command versus row access, policy combinations and bypass.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-createfunction.html#SQL-CREATEFUNCTION-SECURITY">Writing SECURITY DEFINER functions safely</a>: secure lookup, ownership and execution grants.</li>
+<li><a href="https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-SEARCH-PATH">search_path</a> and <a href="https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-SESSION">Session information functions</a>: temporary relation lookup and current/session identities.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-alterdefaultprivileges.html">ALTER DEFAULT PRIVILEGES</a>: creating-role scope and the distinction between future defaults and existing ACLs.</li>
+<li><a href="/learn/databases/relational/constraints/">Constraints and tenant boundaries</a>: stored integrity independently of caller authority; <a href="/learn/databases/relational/application-sql/">SQL at the application boundary</a>: pool ownership and trusted request context.</li>
+</ul>

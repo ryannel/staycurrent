@@ -1,0 +1,60 @@
+An intelligent engineer learning relational databases, familiar with application requests and stored data. Each piece’s intended starting knowledge is listed below. The three fixed reference articles supply the writing and teaching standard. Plain British English.
+
+- r00 — Relational databases: An engineer familiar with an application request and stored data; no database vocabulary assumed.
+- r01 — Relations, keys and normalisation: Introduction: tables, IDs, order lines and agreed prices.
+- r02 — Values, missing data and equality: One row and a key; the introductory query.
+- r03 — Constraints and tenant boundaries: Keys, NULL and transactions from the introduction.
+- r04 — History, correction and deletion: Keys, references, agreed prices and typed time.
+- r05 — Joins and the meaning of a result row: Introductory JOIN, GROUP BY and NULL; keys and value semantics.
+- r06 — Aggregates, windows and ordered results: Correct joins and result grain.
+- r07 — Pagination and consistent exports: Ordered results and transaction snapshot basics.
+- r08 — Updates, upserts and bulk imports: Keys, constraints, transaction atomicity and the mug update.
+- r09 — SQL at the application boundary: Basic queries and transaction boundaries.
+- r10 — Indexes and access paths: Keys, result semantics and ordered queries.
+- r11 — Query execution and bad plans: Correct joins, aggregation and access paths.
+- r12 — Table partitioning and data lifecycle: Typed time, indexes and history requirements.
+- r13 — Transactions and isolation: Introduction’s purchase and last-mug race.
+- r14 — Locks, contention and deadlocks: Transaction snapshots and the class capacity rule.
+- r15 — Row versions, storage and cleanup: Transactions and index entries.
+- r16 — Retries when a commit reply is missing: Transactions, unique keys and application connection ownership.
+- r17 — Outboxes and database-backed jobs: Transactions, uncertain outcomes and lock/claim reasoning from RL91 before recoverable worker protocols.
+- r18 — Write-ahead logs and crash recovery: Atomic transactions, row versions and storage pages.
+- r19 — Backup, restore and reconciliation: Crash recovery, history and transaction boundaries.
+- r20 — Replicas, lag and read routing: Commit durability and application request identity.
+- r21 — Failover and fencing: Replication progress and commit durability.
+- r22 — Live schema changes and backfills: Constraints, application transactions and bulk changes.
+- r23 — Connections, overload and capacity: Application pools and basic transaction boundaries; deeper query, lock and version mechanisms are preparation for the capacity branch that uses them.
+- r24 — Diagnosing a database incident: An application request, connection/transaction ownership and basic transaction boundaries; detailed plans, lock protocols and capacity budgets are branch preparation.
+- r25 — Database access and least privilege: Schema constraints, application connection ownership and tenants.
+- r26 — Sharding and distributed SQL: Indexes, transactions, capacity and replication.
+- r27 — Transactions across partitions: Transactions, crash records, sharding and write authority.
+- r28 — Time, snapshots and distributed reads: Isolation, replicated progress and distributed commit.
+- r29 — Regional placement and survival: Replicas, authority, sharding and distributed commit.
+- r30 — Rebalancing and cluster change: Sharding, replicated authority and regional failure budgets.
+- r31 — PostgreSQL processes, pages and row versions: General row versions, indexes and WAL.
+- r32 — PostgreSQL vacuum and transaction age: PostgreSQL tuple layout and general cleanup.
+- r33 — PostgreSQL index methods and operators: General index mechanics, query plans and typed values.
+- r34 — Reading and repairing PostgreSQL plans: General execution plans and PostgreSQL storage/index methods.
+- r35 — PostgreSQL JSON and structured alternatives: Row meaning, values and PostgreSQL index contracts.
+- r36 — PostgreSQL WAL, checkpoints and durability: General crash recovery and PostgreSQL architecture.
+- r37 — Restoring PostgreSQL to a recovery target: General backup reasoning and PostgreSQL WAL.
+- r38 — PostgreSQL physical replicas and promotion: General replication, failover and PostgreSQL WAL.
+- r39 — PostgreSQL logical replication and change feeds: General replicas and PostgreSQL physical replication distinctions.
+- r40 — PostgreSQL schema changes under load: General schema-change protocol, PostgreSQL indexes and locking.
+- r41 — Operating and diagnosing PostgreSQL: General incident triage and a PostgreSQL application connection; prepare native plans or vacuum only for the selected investigation.
+- r42 — PostgreSQL roles, policies and privileged code: General least privilege and tenant boundaries (RL104), including application connection ownership. The needed secure deployment, SQL object names and session identity are introduced locally.
+- r43 — Upgrading and migrating PostgreSQL: Backups, logical replication, schema compatibility and authority fencing.
+- r44 — CockroachDB keys, ranges and replication: General sharding, replication and index mechanics.
+- r45 — CockroachDB transactions and retries: General distributed commit, request identity and CockroachDB ranges.
+- r46 — CockroachDB isolation and follower reads: General snapshots, distributed time and CockroachDB transactions.
+- r47 — CockroachDB query work and hot ranges: General plans, CockroachDB ranges and index contracts.
+- r48 — CockroachDB table locality and region survival: General regional placement, CockroachDB ranges and read contracts.
+- r49 — Operating and securing a CockroachDB cluster: For security: general least privilege and trusted application/tenant ownership (RL104); the needed secure deployment and SQL object/session context is introduced locally. For node health/removal: also CockroachDB ranges (RL123), general rebalancing and the topology’s survival budget (RL109).
+- r50 — CockroachDB backup and recovery: General recovery and fenced reconciliation, the class booking invariant and CockroachDB transactions.
+- r51 — CockroachDB schema jobs under load: General schema migration, constraints and CockroachDB architecture.
+- r52 — Upgrading a CockroachDB cluster: General cluster change, CockroachDB ranges, secure operations including the prepared node-health branch, and backups.
+- r53 — Moving a SQL application to CockroachDB: Application SQL, schema compatibility, request identity and CockroachDB transactions.
+- r54 — Where distributed PostgreSQL work runs: General sharding, distributed transactions and PostgreSQL architecture.
+- r55 — Full-text search in PostgreSQL: PostgreSQL operators/index methods and query result semantics.
+- r56 — Vector search in PostgreSQL: PostgreSQL indexes, plan measurement and filtered result semantics.
+- r57 — Types and extensions in PostgreSQL: Typed values, constraints and PostgreSQL operator/index contracts.
