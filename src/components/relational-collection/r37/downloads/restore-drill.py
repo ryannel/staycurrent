@@ -1,9 +1,12 @@
 import os, pathlib, subprocess, tempfile, shutil, json, time, hashlib
 pathlib.Path('evidence').mkdir(exist_ok=True)
 B=pathlib.Path('/opt/homebrew/opt/postgresql@18/bin')
-E={k:v for k,v in os.environ.items() if not k.startswith('PG')};E.update(PGCONNECT_TIMEOUT='5',PSQLRC='/dev/null')
-root=pathlib.Path(tempfile.mkdtemp(prefix='sc-r37-owned-'));src=root/'source';base=root/'base';cand=root/'candidate';bad=root/'missing-chain';archive=root/'archive';archive.mkdir(mode=0o700)
-sock=root/'socket';sock.mkdir(mode=0o700);result={'root':str(root),'scope':'single-host isolated base + archive recovery; no external effects'}
+inherited_pg_keys=sorted(k for k in os.environ if k.startswith('PG'))
+for k in inherited_pg_keys:os.environ.pop(k)
+assert not any(k.startswith('PG') for k in os.environ)
+E=dict(os.environ);E.update(PGCONNECT_TIMEOUT='5',PSQLRC='/dev/null')
+root=pathlib.Path(tempfile.mkdtemp(prefix='sc-b09v02-r37-',dir='/private/tmp'));src=root/'source';base=root/'base';cand=root/'candidate';bad=root/'missing-chain';archive=root/'archive';archive.mkdir(mode=0o700)
+sock=root/'socket';sock.mkdir(mode=0o700);result={'root':str(root),'scope':'single-host isolated base + archive recovery; no external effects','inherited_pg_keys_removed':inherited_pg_keys,'process_pg_environment_cleared':not any(k.startswith('PG') for k in os.environ),'endpoint_checks':[],'verifier_sha256':hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()}
 def run(args,check=True,timeout=45):
  r=subprocess.run([str(x) for x in args],env=E,text=True,capture_output=True,timeout=timeout)
  if check and r.returncode:raise RuntimeError(r.stdout+r.stderr)
@@ -14,6 +17,8 @@ def own(d,p):
  assert sql('SHOW data_directory',p)==str(d)
  assert sql('SHOW port',p)==str(p)
  assert sql('SELECT current_user',p)=='drill'
+ assert sql('SHOW listen_addresses',p)==''
+ result['endpoint_checks'].append({'data_directory':str(d),'port':p,'role':'drill','listen_addresses':''})
 def stop(d):run([B/'pg_ctl','-D',d,'-m','immediate','-w','stop'],False)
 def config(d,p,extra=''):
  with (d/'postgresql.conf').open('a') as f:f.write("\nlisten_addresses=''\nunix_socket_directories='"+str(sock)+"'\nport="+str(p)+"\narchive_mode=off\n"+extra)
@@ -49,7 +54,7 @@ CREATE FUNCTION book(k text,b text,c int,s text) RETURNS text LANGUAGE plpgsql A
  result['verify_backup']=run([B/'pg_verifybackup',base]).stdout.strip()
  result['base_manifest_sha256']=hashlib.sha256((base/'backup_manifest').read_bytes()).hexdigest()
  # The scenario clock labels are not represented as fabricated commit timestamps.
- result['mistake_xid']=sql("BEGIN;SELECT pg_current_xact_id();UPDATE sessions SET capacity=1,remaining=1 WHERE session_id='S503';COMMIT;").splitlines()[1]
+ result['mistake_xid']=sql("BEGIN;SELECT pg_current_xact_id();UPDATE sessions SET capacity=30 WHERE session_id='S503';COMMIT;").splitlines()[1]
  assert result['mistake_xid'].isdigit(),result['mistake_xid']
  result['valid_booking']=sql("SELECT book('booking-edda-B203','B203',3,'S503')")
  # Hold the fence while a separate request races it. Every admitted path takes the same gate lock.
@@ -66,7 +71,8 @@ CREATE FUNCTION book(k text,b text,c int,s text) RETURNS text LANGUAGE plpgsql A
  fence.stdin.close();fence.wait(timeout=8)
  rout,rerr=race.communicate(timeout=8);result['fence_race']={'returncode':race.returncode,'stderr':rerr.strip()};assert race.returncode and 'source fenced' in rerr
  result['accepted_source_requests']=sql('TABLE requests')
- result['source_state']=sql('TABLE sessions')
+ result['source_state']=sql('TABLE sessions');assert result['source_state']=='S503|30|2'
+ assert result['accepted_source_requests']=='booking-edda-B203|B203|3|S503'
  lastfile=sql('SELECT pg_walfile_name(pg_current_wal_lsn())');sql('SELECT pg_switch_wal()')
  for _ in range(200):
   if (archive/lastfile).exists():break
@@ -110,6 +116,9 @@ finally:
   if d.exists():stop(d)
  for p in root.glob('*.log'):pathlib.Path('evidence',p.name).write_text(p.read_text())
  result['cleanup']=all(not (d/'postmaster.pid').exists() for d in [src,cand,bad])
+ result['temporary_root_removed']=False
  pathlib.Path('evidence/results.json').write_text(json.dumps(result,indent=2)+'\n')
  if result['cleanup']:shutil.rmtree(root)
+ result['temporary_root_removed']=not root.exists()
+ pathlib.Path('evidence/results.json').write_text(json.dumps(result,indent=2)+'\n')
 print(json.dumps(result,indent=2))

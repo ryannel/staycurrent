@@ -1,0 +1,12 @@
+# Accepted batch10 repair · after all4 initial perspectives
+
+Frozenfirsts4516receivedall4completeindependentinitialperspectives. Practitioner/teaching nofindings; visualtwo medium andone low; editorialone low. Rootreadfullallreports. Addressreaderproblemscoherently, referenceslead; no prescribedreplacementvisual/wording.
+
+- B10-V41 medium (r41-visual1): at375px, long idle_in_transaction_session_timeout expandsfirstcolumnwhile scope/recovery prose becomes1–2words perline; recoveryliesoutsidetheinitialview. Comparisonofinterval/setting/recoveryrequireshorizontalandverticalreconnection. Makeeachbudget's relatedfactsreadableandusefultocompareonphone, preservingexactsemanticsanddesktopusability.
+- B10-V42 medium (r42-visual1): privilegedlookupcards pack “P7 · forged value999” and “Shop10 · Blue mug ·20.00” withoutactualfieldheadings. Reader must infer productidentity/tenantscope/returnedpricewhilelearningrelationlookup. Exposeactualrelevantstoredfields/identities/valuesandmeaningofresultinbothfive-stepbranches, preservingfalseobjectsandcorrectedhelper/securitydistinctions. No joinednameorfieldmaybefalselyrepresentedasstoredwhereitisnot.
+- B10-E42 low (editorial-1), folded: executionACLusedunexpandedtwiceindeploymentacceptance. Makeexecutiongrantcheckunderstandablefromthetermspreviouslytaught.
+- B10-V56 low (r56-visual1), selected: allninegeometrylabelsrenderabout10.91pxat375becauseSVGscales343/440. Improvereadabilityofcoordinates/stock/pointlabelsonthephonewithoutchangingtoydata/metric/filteroutcomesorclaimingsemanticembeddings; preservegeometryreasoningandallstates.
+- Optional coordinator40headinglow: “Install a rule before draining old debt” introducesmetaphoricaldebtwhereexistinguncheckedrowsandnew-writeenforcementaretheusefulskimsubject. Makethesection'sactualsubjecteasiertoidentify, withoutbanningmetaphororrewritingthesoundmigrationargument.
+- Optional coordinator56headinglow: “Choose the boundary before the budget” underspecifieseligibility/queryfilteringandapproximatesearcheffort. Makethesection'sdecisioneasiertoidentifyonskim; no generalheadingruleorbroaderargumentchange.
+
+Allunchangednative/querymechanicsmayreusequalifiedsource/data/environment/verifierreceipts. Changedfieldmeanings/labelsrequireappropriateprimarychecksandcanonicalfacts; changingnativeclaims/data/verifierinvalidatesevidenceandmustbereported. Newtext/figuresandplacementneedfreshrelevantconfirmation; finalcomplete/corpusremainseparate.
