@@ -148,3 +148,7 @@ Eight author-complete repair units36/37/39/40/41/42/43/56 and their frozen confi
 ## D065 · current eight-piece technical confirmation
 
 Fresh informed practitioner confirmation applies all five checks to each current36/37/39/43 and40/41/42/56 article on the exact147/129-input manifests at4548. Root read both full reports. No findings. The changed37 verifier/data/environment/results/download agree; all other native reuse is qualified, with no new native execution or browser-saving claim. Current teaching/editorial/visual confirmations and fresh complete/corpus coverage remain separate.
+
+## D066 · complete initial coverage and final CockroachDB repair batch
+
+All58 initial articles now have all four prescribed independent perspectives; root read the complete final visual report. The fresh44 supplement closes only the missing pre-prose combinations, retaining the other applicable initial checks. Accept49 teaching medium for the unprepared security-to-physical-health branch and51 visual medium for meaningful18px multiplication text at4.06:1 light contrast; fold51 low arrow orientation and selected44/48/51/52 local wording polish into one fresh five-piece repair. No other initial12 visual finding. See repairs/batches11-12-v02/accepted.md. Final complete/corpus reviews and outstanding informed confirmations remain required.

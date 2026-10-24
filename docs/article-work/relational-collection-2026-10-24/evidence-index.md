@@ -89,3 +89,12 @@
 - reviews/batch05–09/teaching-v01.md: fresh full initial25piece teaching checks, all7 each; no findings. Root read all5reports fully. Other required perspectives remain distinct.
 - reviews/batch08/visual-v01.md: full initial6piece visual checks, no findings.
 - writers/cockroach-operations/reference-delivery.json: all19 complete public reference chunks verified; separately reported34drawings and acknowledgement precede design. r49 firstreturn native secure client identities/RLS/decommission verified; empty licence key is an observation, not entitlement.
+
+## Complete initial coverage and current delivery
+
+- `reviews/initial-coverage-index.json`: all58 pieces have all four complete initial perspectives. Original reports control the findings; `reviews/batch12/visual-v01.md` supplies the last five, and `reviews/batch11/visual-r44-firstreading-supplement-v01.md` closes the exact missing isolated combinations.
+- `reviews/repair-batches07-08/v02/manifest.json` and `practitioner-confirmation-v02.md`: current23/24/26/32 frozen124-input version at4540; fresh informed technical confirmation passes.
+- `reviews/repair-batch09/v02/manifest.json` and `reviews/repair-batch10/v02/manifest.json`: current147/129-input versions at4548. Both corresponding `practitioner-confirmation-v02.md` reports pass all five checks per piece. Changed37 evidence is fresh and exact; unchanged native reuse remains qualified. No final/corpus credit.
+- `repairs/batches11-12-v02/accepted.md`: consolidated49 branch preparation and51 contrast, plus selected local polish; fresh five-piece repair dispatched after all initial perspectives.
+- `incremental-delivery.json`: user-authorised origin/main checkpoints95847ecb,460ea4c0,375b6a4a and successful deployment workflows. Earlier local-only checkpoints above have now been pushed. Draft collection remains gated from normal builds.
+- `preservation-current.json`: all131 baseline files unchanged. Required current teaching/editorial/visual confirmations and independent final/corpus coverage still pending; source completion is not review completion.
