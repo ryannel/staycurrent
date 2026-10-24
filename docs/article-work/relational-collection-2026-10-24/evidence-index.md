@@ -116,3 +116,5 @@
 - Source checkpointc4ef1974 and final-review checkpoint4de49201 both pushed, deployments40077201595/40077562340passed. Delivery tracking remains `incremental-delivery.json`; source remains draft-gated.
 
 - `reviews/final-corpus/editorial-v01.md`: independent complete58×7/58wholearticle/corpus consistency; root fully read report. Two accepted local medium defects08/42 and optional20low; no broad editorial failure. Complete current alternative-state coverage and19/34reference calibration explicit. Value now active; practitioner/teaching reports pending.
+
+- `reviews/final-corpus/practitioner-v01.md`: fresh independent all58×5 plus corpus ownership/depth, full report root-read. One accepted medium05/54result-combination bridge, no critical correctness finding. Explicit native/primary-source/identity qualifications retained. Fresh repair preparation record `repairs/final-local-v02/workspace.json`; no article edit until remaining reports consolidated.
