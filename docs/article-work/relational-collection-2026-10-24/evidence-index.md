@@ -118,3 +118,7 @@
 - `reviews/final-corpus/editorial-v01.md`: independent complete58×7/58wholearticle/corpus consistency; root fully read report. Two accepted local medium defects08/42 and optional20low; no broad editorial failure. Complete current alternative-state coverage and19/34reference calibration explicit. Value now active; practitioner/teaching reports pending.
 
 - `reviews/final-corpus/practitioner-v01.md`: fresh independent all58×5 plus corpus ownership/depth, full report root-read. One accepted medium05/54result-combination bridge, no critical correctness finding. Explicit native/primary-source/identity qualifications retained. Fresh repair preparation record `repairs/final-local-v02/workspace.json`; no article edit until remaining reports consolidated.
+
+- `reviews/final-corpus/teaching-v01.md`: fresh independent58×7/fullfinishedroutes/everyactualstyledfigure, nofindings, rootfullyread267line report. Specific accepted other-perspective local problems are retained rather than waived by broad teaching pass. Value report pending; no source edit yet.
+
+- Final local first4 author checkpoint: `normal-build-final-local-first4-v02.json`, `repairs/final-local-v02/root-rendered/observations.json`; current08/20/34/42 desktop/phone light/dark, no page overflow,42condition/alternative inspected. Unchanged controls/native qualified, no new execution claimed. Current05newSQL native blocked by host IPC limit; no unrelated IPC removed.

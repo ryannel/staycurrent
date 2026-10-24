@@ -1,0 +1,133 @@
+            
+Relational collection · Draft for review 
+H1: Live schema changes and backfills  Deep diveAbout 10 minutes AI-generated       
+A live schema change has to work for the callers that exist while it is happening. An application release does not replace every process at once. A worker may still run yesterday’s code, an import may arrive late, and a transaction may have begun before the deployment. Meanwhile, the table contains rows written under the old definition. 
+The safe route is a sequence of compatible states. First add what the new callers need without removing what the old callers use. Then move existing data while keeping new writes correct. Switch readers and writers when their preconditions hold. Finally remove the old representation after its last caller has gone. These stages are often called expand, migrate and contract. 
+We will change the shop’s order lines from a decimal unit_price to an integer unit_price_minor. In this explicitly fixed-scale variant, the integer counts hundredths of one unit: 20.00 becomes 2000. It is the same agreed purchase price, not a recalculation from today’s catalogue. The examples use PostgreSQL 18. The deployment reasoning applies more widely; each engine’s schema commands have their own operational constraints. 
+H2: One fact, two representations 
+The core line column is numeric(8,2) NOT NULL. Its finite values have exactly the scale this conversion needs. We require the stored prices to be finite; a system that has admitted special numeric values needs to deal with those before this migration. Multiplying by 100 gives an exact integer in this domain. A bigint comfortably holds its range. 
+The five existing order lines, with their intended new representation
+ | Order · line | Agreed unit price | Hundredths
+ | 101 · 1 | 4.50 | 450
+ | 101 · 2 | 35.00 | 3500
+ | 102 · 1 | 20.00 | 2000
+ | 103 · 1 | 20.00 | 2000
+ | 103 · 2 | 4.50 | 450 
+Order 103 still totals 29.00: one mug at 2000 hundredths and two packs of tea at 450 each give 2900. This example has no assigned currency and one fixed scale. A real money model must also settle currency, scale, rounding and range; naming a column “minor” does not settle those choices. 
+Renaming the existing column and changing its type in one deployment would make old SQL fail immediately, or make an old caller interpret 2000 as 2000.00. Even a fast schema command cannot make those callers understand a different meaning. Keep both columns during the transition: 
+ALTER TABLE order_items
+ADD COLUMN unit_price_minor bigint; 
+Existing rows initially have NULL in the new column. Old callers continue naming unit_price. This relies on explicit insert and select column lists. A positional INSERT INTO order_items VALUES (...) or a result unpacked from SELECT * can break on an apparently additive change, as SQL at the application boundary explains. 
+H2: Choose the write authority 
+Two representations of one fact need a rule for disagreement. During the first stage, the decimal remains authoritative. Every insert or update derives the integer from the decimal in the same row write. A new caller may calculate with hundredths, but until the authority switch it must supply the corresponding decimal too. 
+This is more precise than “dual write”. Two separate commands, one updating each column, can leave half a change if one fails. Even two assignments in one transaction are insufficient if an old worker still changes only the decimal. The rule must cover every writer allowed to touch the row. 
+For the PostgreSQL experiment, a temporary database trigger provides that bridge. A BEFORE row trigger can alter the row before it is stored: 
+CREATE FUNCTION fill_minor()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.unit_price_minor :=
+    (NEW.unit_price * 100)::bigint;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER fill_minor
+BEFORE INSERT OR UPDATE ON order_items
+FOR EACH ROW EXECUTE FUNCTION fill_minor(); 
+NEW is the row being written. The trigger changes that row and returns it. It runs on every update here, including one that only changes quantity, so touching an old unfilled line also fills its integer. The bridge does not issue a second independent update and cannot commit without the row change that caused it. 
+A caller that sends 20.00 and 7 gets 2000 stored, because the decimal wins. A caller that sends only 2100 while leaving the decimal at 20.00 gets 2000 too. That is deliberate: the new integer is not yet a writable authority. Document this contract before deploying a caller that expects otherwise. 
+An application bridge is another possible design, provided all writers have adopted it before it becomes a prerequisite. A database trigger also needs ownership: who can disable it, whether imports bypass it, and which other triggers interact with it. The experiment uses ordinary inserts and updates with the trigger enabled. Replication tools, privileged maintenance and alternate write paths need an explicit decision. 
+H3: Make new errors impossible 
+Once the bridge is installed, add a constraint that captures the transition’s promise: 
+ALTER TABLE order_items
+ADD CONSTRAINT price_pair
+CHECK (
+  unit_price_minor IS NOT NULL
+  AND unit_price_minor::numeric = unit_price * 100
+) NOT VALID; 
+For this PostgreSQL check, NOT VALID postpones the scan of existing rows. It does not turn off enforcement for rows subsequently inserted or updated. Old rows may still be missing the new value, but ordinary new writes must now leave a complete equivalent pair. The trigger fills the pair before the check tests it. 
+The explicit IS NOT NULL matters. Equality against a missing value is unknown, and a PostgreSQL check accepts unknown. An equality check by itself would leave precisely the hole this migration is meant to close. 
+Installing the bridge and its guard is a schema operation with locks. Arrange that expansion before starting the backfill, and treat a failed installation as “bridge unavailable”, not as a stage completed. The run below installs it on a disposable table; it does not establish a safe lock budget for your live table. 
+H2: Backfill from the row being written 
+A backfill gives the new representation to rows that predate it. The tempting implementation reads a page of prices into application memory, calculates integers and writes those saved results later. Between the read and write, a price can change. The backfill must not restore an obsolete representation. 
+Figure 1 uses a separate scratch edit of line (103, 1) from 20.00 to 21.00. It is not a change to the collection’s fixed purchase history. Run Saved copy, then Decimal bridge, and compare the final pair.  
+Figure 1 A row can change after the backfill reads it Write protocol
+ Saved copy
+ Decimal bridge  Backfill
+No value read yet Order 103 · line 1unit_price20.00unit_price_minorNULL
+New representation missing Old caller
+Writes decimal prices only  
+The scratch row starts at 20.00 with no minor-unit value. Step through a competing edit. 
+Play
+Back
+Next
+Reset1 / 4 
+All steps as text
+Both schedules start with 20.00 and NULL. The backfill reads 2000. An old caller then changes the decimal to 21.00. Without a bridge, copying the saved 2000 leaves 21.00 and 2000. With the decimal bridge, the caller’s write also stores 2100; a backfill restricted to missing values leaves that correct pair alone. 
+An illustrative scratch edit, separate from the fixed purchase history. The bridge derives the minor value from the decimal in the same row write. It does not make two independent writes atomic.    
+Saved copy ends with two present values that disagree. Counting missing values would call that row complete. Under the bridge, the competing decimal update stores 2100 atomically, and a missing-only backfill has no work left on that row. 
+The backfill itself should calculate from the target row in its update. This batch selects at most two missing lines, locks them and fills them: 
+WITH batch AS (
+  SELECT order_id, line_no
+  FROM order_items
+  WHERE unit_price_minor IS NULL
+  ORDER BY order_id, line_no
+  LIMIT 2
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE order_items AS i
+SET unit_price_minor = (i.unit_price * 100)::bigint
+FROM batch AS b
+WHERE i.order_id = b.order_id
+  AND i.line_no = b.line_no
+  AND i.unit_price_minor IS NULL
+RETURNING i.order_id, i.line_no, i.unit_price_minor; 
+Both parts of the line’s key participate in the match. The update derives the integer from i.unit_price, rather than from an old application copy. The repeated missing-value condition states the operation’s precondition at the write. Repeating the batch leaves completed pairs alone. 
+Each batch commits separately. A process stopped before commit leaves that batch’s rows eligible; one stopped after commit can safely repeat the search. A lost commit reply still needs the usual connection recovery, but this assignment is safe to repeat because it fills a deterministic representation rather than adding another amount. Retry the whole batch after a retryable transaction failure. 
+SKIP LOCKED lets one batch pass a row another transaction holds. It is useful for several backfill workers sharing a queue of missing rows, but it deliberately returns an incomplete view. An empty batch therefore means “nothing eligible was available to this batch”, not “the migration is complete”. Keep looking and finish with a separate acceptance check. 
+In the PostgreSQL 18.6 run, an editor held the mug line while two batches filled the other four. One missing row remained visible to an ordinary count. A separate backfill waiting on that row resumed after the editor committed; its missing-value condition no longer matched because the bridge had already stored 2100. It changed no row. That observation uses Read Committed, the trigger and this particular condition; waiting alone is not a general backfill protocol. 
+H2: A cursor is progress, not proof 
+A large table needs more care than repeatedly searching five rows. An indexed work predicate, bounded key ranges or a durable cursor can reduce repeated scanning. A cursor records how far a worker got. It cannot establish that no work later appeared behind it. 
+Figure 2 A late row behind the worker101 · 1Absent during scan101 · 2 → 103 · 2Visited and filledCursorPast 103 · 2
+After the scan, an old caller inserts (101, 1) at 4.50. Without the bridge it has NULL hundredths; the cursor will never revisit it. With the bridge it arrives as 4.50 / 450, already complete. 
+The experiment temporarily removes the existing tea line (101, 1) in a separate scratch fixture, fills the remaining rows and observes zero missing values. Reinserting that core line in the old format then creates one missing value when no bridge is present. The same operation with the bridge fills 450 immediately. A single zero count before the late write was true and still insufficient. 
+This is the convergence argument: all pre-existing missing rows are eventually visited, and every admitted new or changing row preserves the target property. The backfill drains old debt; the write protocol prevents new debt. A final complete check can then establish the property for the stored table. 
+If a transformation cannot share one authoritative row value, the protocol must change. Copying to a new table may need a captured change stream and a position proving every earlier change was applied. A calculation using other changing rows may need revision checks or coordination. The missing-only loop above is justified by this exact row-local conversion, not by the word “backfill”. 
+H2: Prove the switch is ready 
+Before readers rely on the integer, check both completeness and meaning across the whole intended scope: 
+SELECT order_id, line_no, unit_price, unit_price_minor
+FROM order_items
+WHERE unit_price_minor IS NULL
+   OR unit_price_minor::numeric
+      IS DISTINCT FROM unit_price * 100; 
+No returned rows is the desired result. The guard must remain active while this runs and afterwards; otherwise a writer can invalidate the result immediately. Check every partition or tenant in scope, not just the last batch. Do not run acceptance through a lagging replica or an access identity that hides rows. 
+Then validate the existing-row constraint: 
+ALTER TABLE order_items
+VALIDATE CONSTRAINT price_pair; 
+In the verified fixture, validation succeeded and PostgreSQL recorded the constraint as validated. With the bridge disabled for a separate test, a write of 7 hundredths against the mug price was refused by price_pair. The backfill is not the ongoing protection; the enforced write rule is. 
+A row check does not prove that the new application reads the unit correctly. Compare actual old and new receipts, reports and serialised values before switching traffic. Here order 103’s new total must be 2900 hundredths, displayed as 29.00. A reader that displays 2900.00 has passed every database equivalence check and still broken the receipt. 
+H2: Retire callers before columns 
+After acceptance, new readers can use unit_price_minor while writes still preserve both representations. This gives a useful rollback interval: an old reader still finds current decimal values. Observe the new path, including reports and exports, before making the old one impossible. 
+Compatibility depends on the deployed caller, not just the schema version
+ | State | Reads | Writes | Safe next step
+ | Expanded, not filled | Decimal | Decimal; bridge derives integer | Backfill and validate
+ | Filled and accepted | Either representation | Still decimal authority | Deploy integer readers
+ | Old callers drained | Integer | Transition deliberately to integer authority | Retire bridge and old column
+ | Contracted | Integer only | Integer only, required | Rollback needs compatible code or reverse migration 
+“Old callers drained” includes workers, scheduled imports, support scripts, prepared commands in long-lived sessions and transactions already in flight. Stop their admission, let owned work finish or cancel it, and prevent obsolete processes from reconnecting with write authority. A deployment dashboard saying “all web instances updated” does not establish that boundary. 
+The authority handover itself needs a compatible protocol. For this small experiment we pause line writes, drain their transactions, deploy integer-only writers and remove the decimal bridge and column within that controlled handover. The integer becomes NOT NULL. Readers can continue on the accepted integer path subject to the schema command’s locks. A larger service may need another compatibility release that maintains the decimal from the integer during the handover; it must define which side wins and prevent old decimal-only writers before reversing the bridge. 
+Do not leave both directions independently authoritative. An old caller changing the decimal and a new caller changing the integer cannot each win unconditionally. Choose the authority for each stage, test the mixed population that actually exists, and only then remove the previous stage’s protection. 
+Contracting discards the old interface and eventually its data representation. An old binary is no longer a rollback plan. Keep an explicit release boundary at which rollback changes from redeploying code to a tested reverse migration or forward repair. Retaining a backup does not make an incompatible caller work against today’s schema. 
+H2: Control the work under load 
+Logical compatibility and operational safety are separate requirements. A compatible add can still wait behind a long transaction. A correct backfill can consume the storage, log bandwidth, replica capacity or row locks needed by ordinary traffic. 
+Choose batch limits from observations of the real workload. Keep transactions bounded, record committed progress, and pause when request latency, lock waits, log growth or replica lag exceed the migration’s budget. A pause should leave a supported schema and caller population. “Half filled” is a legitimate temporary state while readers still use the decimal; it is not a legitimate state for integer-only readers. 
+Throttle the loop instead of assuming a small row count means cheap work. An update can create row versions, maintain indexes and generate log. A new index for finding remaining work has its own build cost. The two-row batch here is chosen so the example is visible, not as a production recommendation. 
+PostgreSQL schema changes under load develops locks, validation scans and index builds. CockroachDB schema jobs under load follows that engine’s asynchronous jobs. Neither engine can infer whether an old application still depends on a column it is asked to remove. 
+H2: Repeat the migration 
+Download the migration experiment and its shop data into one directory. Run python3 run-migration.py --bindir /path/to/postgresql/bin. It uses Python’s standard library, creates a private temporary PostgreSQL cluster, checks that it owns the data directory and socket, and removes the cluster afterwards. 
+The native run used PostgreSQL 18.6 and Python 3.14.5. It covers stale saved values, a late row below a cursor, an interrupted batch, a concurrent editor and waiting backfill, a skipped locked row, constraint validation and refusal, and a controlled final schema handover. Scratch branches reset the fixture; the canonical five lines finish at their original prices. These local functional checks establish neither live deployment completeness nor production throughput.       
+H2: Sources and further reading  
+PostgreSQL 18, Modifying Tables: adding a nullable column and the effects of removing one.
+PostgreSQL 18, CREATE TRIGGER and Trigger Functions: the bridge’s row timing and NEW value.
+PostgreSQL 18, ALTER TABLE: enforcement with NOT VALID, validation and schema locks.
+PostgreSQL 18, Transaction Isolation and SELECT: Read Committed rechecks and the incomplete view returned by SKIP LOCKED.
+PostgreSQL 18, Numeric Types and Constraints: the conversion’s numeric domain and unknown-valued checks.
+On this site, Updates, upserts and bulk imports: replayable writes and publication boundaries; Row versions, storage and cleanup: what backfill updates leave behind.        

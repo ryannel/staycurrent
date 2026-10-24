@@ -1,0 +1,107 @@
+            
+Relational collection · Draft for review 
+H1: PostgreSQL JSON and structured alternatives  Deep diveAbout 7 minutes AI-generated       
+JSONB lets one PostgreSQL column hold a structured value with named fields, arrays and nested objects. It is useful when related attributes form one document, especially when optional fields vary between kinds of record. It also makes the document one row value to validate, index and update. 
+Those boundaries matter more than whether the application receives JSON over HTTP. A JSON response can be assembled from ordinary columns and related rows. Storing that response as one document is a separate decision about identities, constraints and which changes must contend with each other. 
+We will use a declared optional catalogue-attributes variant: P7 and P9 have material ceramic; P3 has a brewing temperature of 80 degrees Celsius. The original product identities, names, stock and prices stay in their columns. P7’s starting price is 20.00, and order 103’s agreed unit price remains 20.00. These illustrative attributes do not replace either fact. 
+H2: Choose what changes together 
+A product’s optional brewing advice can belong to that product without needing a row identity of its own. An attributes jsonb column is a plausible home. Product ID, catalogue price and stock have stronger, stable roles in joins and rules; keeping them as typed columns makes those roles direct. 
+Order lines have a different meaning. Each has its own identity, quantity, agreed price and reference to a product. Embedding all lines inside an order document would not automatically enforce that every product exists or that line numbers are unique within the order. Related rows give those relationships and independently addressed changes a suitable place. 
+Choose a representation from the fact’s job
+ | Need | A suitable starting point
+ | A stable scalar used in arithmetic, identity or a common filter | A typed column with its rules
+ | Several independently identified items with references and updates | Related rows with keys and foreign keys
+ | An optional structured value owned and usually changed with one record | JSONB with an explicit shape contract
+ | A JSON API response assembled from those facts | Construct JSON at the query or application boundary 
+A separate product-attributes table is another option when those attributes have a different write or access boundary from stock. A generic key/value table is not automatically more relationally useful: putting every value into text moves typing and validation into another representation. Choose a separate relation because its rows have a useful meaning and enforceable rules. 
+H2: JSON or JSONB? 
+PostgreSQL’s json type retains the supplied JSON text, including spacing and object-key order. jsonb parses it into a structured representation suited to querying and indexing. JSONB does not preserve those textual details and retains only the last occurrence of a repeated object key. 
+If exact input bytes matter for a signature or archival record, a reserialised JSONB value cannot stand in for the original payload. Keep the original bytes under an explicit retention contract. For data the database will inspect and index, JSONB is usually the practical choice. 
+Both types establish JSON syntax, not the shop’s rules. A JSON string, number or array is valid JSON too. Declaring jsonb does not establish that the top level is an object, that material is text or that a brewing temperature is in the accepted range. Nor does it make values embedded as strings become numbers. 
+-- Optional variant of the catalogue schema:
+attributes jsonb NOT NULL DEFAULT '{}'::jsonb
+-- P7: {"material":"ceramic"}
+-- P3: {"brewing_c":80}
+-- P9: {"material":"ceramic"} 
+The default supplies an empty object when an insert omits the column. It does not rewrite an explicitly supplied SQL NULL, and it says nothing about why a particular key is absent. Decide that meaning as part of the field’s contract. 
+H2: Missing key, JSON null, SQL NULL 
+JSON adds a second kind of null beside SQL’s missing-value marker. An object can omit material, or include it with the JSON value null. The entire SQL column can also be NULL if the schema allows it. These states answer different questions. 
+attributes -> 'material' extracts JSONB. ->> extracts text. The existence operator ? asks whether a string is a top-level object key or array element; it does not search arbitrarily deep paths. 
+Observed extraction results from anonymous scratch documents
+ | Input | ? 'material' | -> 'material' | ->> 'material'
+ | {} | false | SQL NULL | SQL NULL
+ | {"material":null} | true | JSON null | SQL NULL
+ | {"material":"ceramic"} | true | JSON string | ceramic
+ | SQL NULL column | SQL NULL | SQL NULL | SQL NULL 
+Text extraction deliberately merges missing and JSON-null cases into SQL NULL. If presence matters, test it before relying on the extracted text. jsonb_typeof distinguishes a JSON null with the text 'null'; when its SQL argument is NULL, its answer is SQL NULL. 
+Containment preserves JSON types. attributes @> '{"brewing_c":80}'::jsonb asks for a numeric value. It does not match {"brewing_c":"80"}, whose value is text. Casting text extraction afterwards can make those representations look the same while accepting a shape the schema never intended. 
+H2: Make the shape a rule 
+For this variant, require an object. Material may be absent, but if supplied must be a JSON string. Brewing temperature may be absent, but if supplied must be a JSON number from 0 through 100. This permits the empty object and refuses JSON null for either optional value. 
+CHECK (jsonb_typeof(attributes) = 'object'),
+CHECK (
+  NOT (attributes ? 'material')
+  OR jsonb_typeof(attributes->'material') = 'string'
+),
+CHECK (
+  NOT (attributes ? 'brewing_c')
+  OR CASE
+    WHEN jsonb_typeof(attributes->'brewing_c') = 'number'
+    THEN (attributes->>'brewing_c')::numeric BETWEEN 0 AND 100
+    ELSE false
+  END
+) 
+Keep the column NOT NULL as well. PostgreSQL check constraints accept an unknown result, so a shape condition alone does not reject a missing SQL value. The CASE guards the numeric cast: the type test is part of deciding whether that conversion should be attempted. 
+The native worksheet accepted an empty object, a string material and numeric temperature 80. It rejected material null, material 7, temperature text "80", temperature 150 and a top-level array. Those counterexamples are part of testing the rule, rather than just demonstrating one valid insert. 
+This contract still allows unrecognised keys. If unknown keys are errors, explicitly restrict them too. If each product kind requires a different set of fields, the contract needs the kind and its rules. At some point a typed relation is easier to understand and evolve than a large conditional check. A JSONB column does not remove schema; it moves some of it into expressions and application agreements. 
+Use foreign keys for facts that refer to other authoritative rows. A JSON string containing a product code does not become a foreign key merely because the code is well formed. Constraints and tenant boundaries develops that enforcement and why a cross-row lookup inside a check is insufficient. 
+H2: Index the operation 
+A broad GIN index can support containment and key-existence questions across a JSONB document. A narrower jsonb_path_ops class supports containment and selected path operators, but not ?. An index on a text extraction is a third choice for a stable scalar equality or ordering question. 
+-- General containment and top-level key existence:
+CREATE INDEX catalogue_attrs
+ON catalogue USING gin (attributes);
+-- Narrower containment/path support; not key existence:
+CREATE INDEX catalogue_attrs_path
+ON catalogue USING gin (attributes jsonb_path_ops);
+-- One frequently queried scalar expression:
+CREATE INDEX catalogue_material
+ON catalogue ((attributes->>'material')); 
+These are candidates to compare, not an instruction to build all three. A whole-document GIN index stores information about many keys and values. An expression index concentrates on one question. Neither promises that every JSON predicate or arbitrary function over the document becomes indexable. 
+The native fixture contains 50,000 anonymous documents, with numeric brewing temperature and ceramic material in every hundredth one. With only the path-ops GIN index, containment found 500 matches through a bitmap index scan. Key existence still required a sequential scan, even when that route was explicitly discouraged for diagnosis. Replacing the index with default GIN made the same existence query use a bitmap route. 
+Observed eligible routes · PostgreSQL 18.6 · 500 matches each
+ | Question | Available candidate | Observed route
+ | Contains material ceramic | GIN path ops | Bitmap index and heap scan
+ | Has brewing key | GIN path ops only | Sequential scan
+ | Has brewing key | Default GIN | Bitmap index and heap scan
+ | Extracted material equals ceramic | B-tree on text expression | Bitmap index and heap scan 
+A JSON-path query can express more complex conditions. Index support depends on the clauses its class can extract; supported operator syntax is not a guarantee that every path predicate is a selective index search. Inspect Index Cond, rechecks and candidate heap work, as index methods and operators explains. 
+H2: One document, one row boundary 
+jsonb_set can change a path without application code reconstructing the entire object. That is a useful expression-level operation. PostgreSQL still updates the row and creates a replacement row version. Two writers changing unrelated paths in one document contend at that row, rather than acquiring independent locks on each key. 
+Figure 1 Two paths, one row to update Editor A
+Change left from 1 to 2Editor B
+Change right from 1 to 2 One stored row
+id: 1
+doc: {"left": 1, "right": 1}
+Both changes acquire a lock on this row. 
+After A commits, what does B send?
+ | B’s update | Final document
+ | Replace from its saved old document | {"left":1,"right":2}A’s change lost
+ | Apply jsonb_set to the current stored document | {"left":2,"right":2}Both changes retained 
+An anonymous scratch document, not product attributes. The recorded native check executes A before B to expose B’s stale input. It does not measure concurrent wait time. Different JSON paths do not create independent row locks.  
+The first final document lost A’s left-field change because B sent a document based on its earlier read. The database correctly stored the replacement it was given. The second used the stored column as the input to each update, preserving the earlier independent path change in this sequential native check. 
+UPDATE patch_example
+SET doc = jsonb_set(doc, '{right}', '2'::jsonb)
+WHERE id = 1; 
+At Read Committed, a concurrent updater waits for the row and applies its update to the appropriate current version after the conflicting writer commits, with the documented condition recheck. At stronger isolation a complete retry may be needed. A decision calculated from an earlier read still needs a correct concurrency protocol; path syntax alone does not protect every business rule. 
+A revision column can instead make a replacement conditional on the version the editor read. A zero-row update then reports that its basis has changed. Separate rows can give genuinely independent items separate lock boundaries. Choose from the application’s meaning and contention, rather than expecting JSON path operations to make one large document independently writable. 
+H2: Keep flexibility accountable 
+A small path change may still require processing and storing a substantial JSONB value, maintaining GIN entries and writing WAL. TOAST can move large values out of the main heap; it does not make a modified document or its indexes free. Keep document sizes bounded and measure updates as well as the attractive read plan. 
+When an optional attribute becomes central to joins, constraints or frequent numeric filters, promote it deliberately. A typed column or generated projection can expose a stable value and make its rule direct, but a conversion can fail on old malformed documents. Audit and repair the existing shapes before making the new representation authoritative. 
+During a live transition, decide which representation owns the value and how old and new writers agree. Two independently writable copies invite disagreement. Live schema changes and backfills handles the compatible write protocol and final equivalence check. 
+The useful JSONB boundary is one whose shape, absence rules, search operators and update ownership remain understandable. Flexible optional attributes can sit comfortably beside typed facts and related rows. The database need not choose one representation for every fact in the application.       
+H2: Sources and further reading  
+Checked against PostgreSQL 18 on 24 October 2026. Download the JSON-boundary worksheet and run psql -X -v ON_ERROR_STOP=1 -f json-boundaries.sql in a disposable database. Its complete temporary-table experiments ran on an owned PostgreSQL 18.6 instance. Missing/null results, rejected shapes, index routes and stale replacement outcomes are observed. The update drawing explains sequential stale input; no concurrent wait or throughput was measured. The diagnostic scan setting is reset. 
+JSON types: representation, document design, containment, existence and GIN classes.
+JSON functions and operators: extraction, null results, JSON paths and jsonb_set.
+Constraints and Conditional expressions: unknown checks, row-local rules and guarded conversion.
+Expression indexes and GIN indexes: targeted and document-wide access paths.
+Read Committed, TOAST and Generated columns: update versions, wide-value storage and deliberate projections.       

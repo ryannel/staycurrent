@@ -1,0 +1,80 @@
+            
+Relational collection · Draft for review 
+H1: Diagnosing a database incident  Deep diveAbout 8 minutes AI-generated       
+A slow request is an observation. “The database is slow” is a hypothesis about where its time went. The request may still be waiting for a connection, sitting behind another transaction, executing an expensive query or waiting for the application to read its answer. Each can produce the same timeout and call for a different intervention. 
+Diagnosis means finding evidence that separates those explanations, then changing one thing whose effect you can check. During an incident, the first aim is to reduce harm and preserve enough evidence to explain it. A complete account can follow once customers can use the service again. 
+We follow the shop’s request path, then reproduce one lock wait on PostgreSQL 18.6. The request timelines are invented comparisons. The lock states and cancellation results are observations from the downloadable disposable experiment; they are not an account of a production outage. 
+H2: Locate the time 
+Start with a concrete operation: which route, customer or shop scope, time interval and failure? “Checkout became slow at 10:15 UTC” is more useful than “latency rose”. Establish whether it affects every request or a subset, whether successful completions slowed or errors increased, and whether callers are retrying. Use one request trace to connect that symptom to the underlying work. 
+Record the wait to borrow a connection separately from the interval in which the connection is owned. Within that interval, identify statements and commit, and where possible server waits. A single application span called database may include acquisition, network transit, server execution and fetching rows. Its name does not prove all that time was server CPU. 
+The three requests below each take 1.5 seconds. Read the labelled intervals before deciding which deserves a query-plan investigation.  
+Figure 1 One symptom, three different waits 
+Illustrative timelines · every row totals 1,500 ms · widths share one scale · labels below each bar follow its intervals from left to right A · waiting to borrow
+Pool 1,200 msSQL 200 msOther 100 ms B · waiting on a transaction
+Other 100 msLock wait 1,200 msSQL 200 ms C · doing expensive work
+Other 100 msSQL execution 1,400 ms 
+All numbers are milliseconds. “Other” combines the remaining application and transport time only for this comparison. Pool time is outside the database session; a lock wait is inside it. SQL execution can itself include CPU and I/O waits.  
+A spends most of its time before SQL starts. B already has a session but cannot acquire a lock. C reaches execution promptly and spends its time there. An index change might help C; it will not release B’s blocker or return A’s borrowed connections. It may eventually reduce contention or ownership time, but first establish that causal link. 
+A trace can be incomplete. Missing pool spans do not prove acquisition was quick, and clock times from different machines need not line up perfectly. Prefer durations measured within one process for an interval, and use identities and message boundaries to connect processes. Record the uncertainty rather than assigning the unexplained time to the database. 
+H2: Keep a small incident record 
+Capture a common observation window: UTC times, affected operation, request rate, useful completions, latency percentiles, errors, queue depth, connection ownership and database resource use. Compare with a healthy window of the same operation. An average over the whole service can conceal one tenant or one hot product. 
+Keep a short timeline of changes too: deployments, traffic shifts, backfills, maintenance, configuration and failures. A deployment just before the symptom is a useful candidate cause, not proof. A report that runs every hour may be the competing demand that makes an otherwise harmless change visible. 
+Preserve a few representative query shapes, parameters with sensitive values removed, plans if already available, and activity snapshots. Counters need their reset time and interval; a lifetime total says little about the last five minutes. Avoid enabling vast logging or repeatedly collecting expensive diagnostics while the server is already overloaded. 
+Write down the current hypothesis and the observation that could disprove it. “Pool waiting rose because a transaction holds P7” predicts borrowed sessions waiting for that lock and a blocker that outlives their queries. If activity instead shows sessions idle outside transactions while application tasks retain them, investigate connection scope. 
+H2: Follow the lock to its owner 
+A blocked query is often the victim. In the experiment, one session opens a transaction and reads P7 with FOR UPDATE, keeping a row lock. It then sends no more commands. A second session tries a conditional stock update and waits. The fixture rewinds to P7 stock 1; it does not replay orders 101–103 or change their shared history. 
+-- Holder:
+BEGIN;
+SELECT stock FROM products WHERE product_id = 'P7' FOR UPDATE;
+-- Leave this transaction open.
+-- Waiter, on a different connection:
+BEGIN;
+UPDATE products SET stock = stock - 1
+WHERE product_id = 'P7' AND stock >= 1
+RETURNING stock; 
+The waiter appears in PostgreSQL’s activity view with state active and wait type Lock. The holder appears as idle in transaction. CPU need not be busy: the blocked query is waiting for a transaction to end. Reading the longest-running query alone would point at the waiter. 
+For a small targeted investigation, inspect the current sessions and their blockers together: 
+SELECT pid, application_name, state,
+       clock_timestamp() - xact_start AS transaction_age,
+       wait_event_type, wait_event,
+       pg_blocking_pids(pid) AS blockers
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND pid <> pg_backend_pid()
+ORDER BY xact_start NULLS LAST; 
+pid identifies a server session now; application_name helps connect it to an owner. The transaction age is distinct from the current statement’s age. For an idle session, the displayed query text is its last query, not a command currently executing. Follow each blocker as well: it can be waiting behind another session. Collect the snapshot at a modest rate and use the appropriate monitoring authority; visibility and signalling privileges are separate. 
+Do not turn the query into an automatic “kill every old transaction” rule. An old transaction may be a required operation, and the process ID can later be reused. Before a targeted intervention, recheck the session’s identity, age, current state, affected work and owner. Locks, contention and deadlocks explains the underlying protocol and the costs of changing it. 
+H2: Cancel is not the same as end 
+PostgreSQL’s pg_cancel_backend signals the current query. pg_terminate_backend ends the session. Neither name should substitute for deciding which work may be interrupted and how its application will recover. 
+The idle holder makes the distinction visible. The experiment sends it a cancellation signal, then checks whether the waiter is still blocked. It is. There was no running query to stop, and the holder’s transaction was still open.  
+Figure 2 What the cancellation actually changed  
+Holder owns P7’s lockHolder: idle in transaction. Waiter: active, waiting for Lock. 
+Cancel the idle holder’s queryThe signal is sent. The transaction remains open; the waiter remains blocked. 
+Cancel the waiting statementThe waiter receives an error and becomes idle in an aborted transaction. It still needs rollback before reuse. 
+End both transactions, then retryThe fixture rolls both back. A fresh conditional update commits P7 stock 0.  
+Observed on the disposable PostgreSQL 18.6 fixture. These are ordered states, not a time scale. Cancelling the waiter relieves that request; ending the holder’s transaction removes the original lock obstacle.  
+A successful signal return reports that the signal was sent, not that the desired recovery has finished. After cancelling a statement, observe its final result and transaction state. In this run the waiter needed ROLLBACK before its connection could be used normally. Ask the owning application to finish a known idle transaction where possible. If ending the session is necessary, account for discarded work, application errors, reconnects and retries. 
+Interrupting a transaction can be the right incident action. It is also a change to the workload. A thousand awakened waiters or reconnecting clients can all act together when a blocker disappears. Bound their admission and retries, then watch useful completion and the queue rather than treating “lock cleared” as the end of the incident. 
+H2: When the wait is before SQL 
+A full pool means all its connections are owned. Check whether those owners are executing, blocked, idle inside a transaction or held by application work outside SQL. Pool statistics and database activity describe different sides of that boundary; neither alone explains the queue. 
+If the database has spare capacity and the application spends time establishing connections, a startup or connection-creation problem may be responsible. If existing borrowers wait on a blocker, raising the pool creates more blocked sessions. If borrowers hold connections across external calls, shorten the borrow scope. If the database is saturated, additional sessions can increase contention. 
+Reduce optional traffic or its concurrency while collecting evidence. Give acquisition a bounded wait and refuse excess work in a way clients understand. A fleet-wide restart can make every process reconnect at once, erase useful state and replace one overloaded queue with another. Connections, overload and capacity develops the budgets and overload policy after this branch is established. 
+H2: When the query is doing too much 
+If work reaches execution promptly and dominates the delay, preserve the query shape, representative values, data distribution, plan and relevant resource evidence. Ask what changed: more executions, more rows per execution, a different plan, a colder working set or less available resource. A query that takes the same time but runs ten times as often is a different problem from one execution becoming ten times slower. 
+An estimated plan is a useful low-cost starting point. EXPLAIN ANALYZE actually executes the statement. On a busy service it can repeat the expensive operation you are trying to stop; for writes it performs the writes, and external effects or sequence consumption need not be undone merely by a later rollback. Choose a safe representative copy or an explicitly bounded diagnostic execution. 
+Compare rows processed with rows returned, estimates with actual counts, repeated loops, pages touched and spills. The detail belongs to Query execution and bad plans. Avoid declaring a sequential scan wrong just because an index exists. The query may need most of the table, or the index may not match its conditions. 
+For I/O or commit waits, distinguish read demand, log flushes, checkpoint writes and storage degradation. For retained-history growth, look for long snapshots and lagging cleanup before launching a large rewrite. A maintenance operation can compete for the very I/O and disk space the incident lacks. The evidence should choose the next deeper reading, rather than every incident triggering every tuning action. 
+H2: Change one thing with a stop condition 
+State the predicted effect before intervening. Pausing an optional export should reduce its resource demand and leave checkout more capacity. Cancelling a known lock waiter should end that statement. Rolling back the identified holder should remove its lock. None predicts that every other source of delay vanishes. 
+Choose a narrow scope and a short observation window. Record what changed, who owns the action, how to undo it and when to stop. Check useful completions, latency, errors, queues and the limiting resource together. A lower error count caused by admitting no requests is not service recovery; a higher completion rate with exploding queue age is not stability. 
+After the first improvement, restore traffic gradually. Look for delayed demand: retries, scheduled jobs, replica catch-up and clients that kept waiting. Keep the intervention until the cause is repaired or an explicit temporary operating limit is in place. Preserve the timeline and evidence for the follow-up change. 
+The lasting repair should address the causal branch: a connection scope, a transaction protocol, an access path, an admission policy or insufficient recovery capacity. Add a test or observable signal that distinguishes that cause next time. The aim is a service whose next slow request tells you where to begin. 
+H2: Repeat the lock investigation 
+Download the incident experiment. With Python 3 and PostgreSQL’s installed tools, run python3 incident.py --bindir /path/to/postgresql/bin. It creates a private temporary cluster, disables TCP listening, clears inherited PostgreSQL connection settings, checks the server’s data directory and role, and labels its two sessions before signalling them. It then stops the server and removes the temporary directory. 
+The script creates only the displayed P7 scratch stock row. Checked on macOS, Python 3.14.5 and PostgreSQL 18.6: the waiter was active with a Lock wait and the holder’s PID in its blockers; cancelling the idle holder left that dependency intact; cancelling the waiter stopped its statement and left an aborted transaction; rollback and a fresh attempt produced stock 0. Linux execution and production timings were not checked. These functional observations demonstrate why state and ownership matter before intervention.       
+H2: Sources and further reading   
+PostgreSQL 18, Monitoring statistics: activity states, waits, transaction ages and cumulative-statistics intervals; Session information functions: pg_blocking_pids and its cost. 
+PostgreSQL 18, Server signalling functions: cancelling a query, terminating a session and signal return values. 
+PostgreSQL 18, Using EXPLAIN: estimates, actual execution, instrumentation and cautions; Explicit locking: lock lifetime and conflicts. 
+Google SRE, Effective Troubleshooting: observations, hypotheses and controlled changes; Handling Overload: resource demand and bounded service under load. 
+Operating and diagnosing PostgreSQL and Operating and securing a CockroachDB cluster: the engine-specific operational tools.         

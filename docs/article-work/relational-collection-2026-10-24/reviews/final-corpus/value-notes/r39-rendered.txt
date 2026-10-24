@@ -1,0 +1,84 @@
+            
+Relational collection · Draft for review 
+H1: PostgreSQL logical replication and change feeds  Deep diveAbout 7 minutes AI-generated       
+PostgreSQL logical replication sends selected table changes to another database, where an apply worker locates rows by their replication identity. The destination has its own tables, indexes and physical layout. It follows a row stream rather than copying the publisher’s pages. 
+This makes a selective reporting copy or a move between compatible major versions possible. It also leaves work that a physical copy handled differently: creating schema, choosing row identity, following initial synchronisation, managing conflicts and preparing independent sequence state before a destination can write. 
+The examples use an isolated catalogue copy. P7 begins at the core price 20.00 and post-purchase stock 0. A scratch update to 25.00 tests replication; it is separate from the dated price-correction history and never changes order 103’s agreed unit price. Anonymous relations expose identity, schema and sequence failures without adding purchase history. 
+H2: Publish rows into an existing schema 
+A publication describes which tables and operations a database offers. A subscription connects a destination database to one or more publications. The publisher decodes WAL through the built-in pgoutput plugin; the subscriber maps those logical changes onto its local relations. 
+CREATE PUBLICATION catalogue
+FOR TABLE products, identity_case, feed_rows; 
+Create compatible destination tables first. Names and published columns must map correctly; the same physical file layout is unnecessary. Choose suitable destination indexes and keep any extra destination columns compatible with incoming rows. DDL is not carried by the row stream. 
+CREATE SUBSCRIPTION catalogue_copy
+CONNECTION 'host=/owned/socket port=55442 user=replicator dbname=postgres'
+PUBLICATION catalogue; 
+The paths and role above show the command shape, not production connection details. The publisher needs wal_level = logical, enough WAL senders and slots, and an appropriately permitted replication connection. Initial copying also needs read access to the published tables. The subscriber needs capacity for apply and table-synchronisation workers. Credentials, role ownership and supported plugin configuration belong to that setup. 
+By default, subscription setup copies existing rows, then catches each table up through changes that occurred during its copy. Tables can become visible independently during initial synchronisation. Do not treat the first table’s arrival as a transactionally complete copy of every related table. The native drill waited until all three relations reached their ready state before using its initial copy. 
+After synchronisation, publications within one subscription preserve the publisher’s transactional change order and consistency. Separate subscriptions are separate streams; they do not establish one global visibility boundary across all their tables. If an operation needs its related rows together, design the publication and subscription boundaries with that requirement in mind. 
+H2: Give updates an old-row identity 
+An insert carries a new row. An update or delete also needs to identify the old row at the destination. PostgreSQL calls the information used for that match the table’s replica identity. The default uses its primary key. 
+A table without a suitable identity can be published and can send inserts, yet fail when the application first updates or deletes a row. In the native identity_case(row_no, value) fixture, the initial row copied successfully. Its source UPDATE then failed because the table had no replica identity and published updates. Adding a primary key on row_no on both sides allowed the update to reach the subscriber. 
+Change Figure 1’s identity. Watch whether the failure occurs before a logical message can be applied.  
+Figure 1 · Which old row does the update mean? 
+Anonymous scratch table: try to change row 1’s value from before to after. 
+Replica identity Primary key: row_noNo identityFULL: entire old row  Publisher
+Attempted source update
+ | Row | row_no | value
+ | Before | 1 | before
+ | Requested | 1 | after
+UPDATE allowed Logical message
+Match the old row by its primary key.
+Old row match
+row_no = 1
+New row values
+value = after Subscriber
+Row after apply
+ | row_no | value
+ | 1 | after  
+The primary key identifies the old row. The subscriber does not need the publisher’s physical page address. 
+A conceptual comparison, rather than a protocol packet capture. In the native drill, the source UPDATE failed without identity and succeeded after a primary key was added on both sides. The FULL case is documented behaviour, not an additional native test. 
+Read the three cases as text
+The old source row has row_no 1 and value before; the requested new row has row_no 1 and value after. Default identity matches old row_no 1, then changes value to after. Without an identity, an UPDATE on a table publishing updates fails on the publisher before it can become a usable stream change. The subscriber keeps row_no 1 and value before. FULL matches old row_no 1 and value before, then changes value to after, with more old data to send and datatype/index restrictions to consider.    
+REPLICA IDENTITY USING INDEX can choose another eligible unique index; it must meet PostgreSQL’s requirements, including non-null identity columns and a non-partial, non-deferrable form. That is an explicit replication identity, not an arbitrary index the worker happened to find. 
+ALTER TABLE identity_case REPLICA IDENTITY FULL; 
+FULL uses the entire old row. It can be useful when no narrower identity is available, but sends more old information and can make matching expensive. Suitable subscriber indexes can help; unsupported equality/operator-class cases still matter for some datatypes. A stable primary key is usually a clearer boundary. The native drill used the primary-key repair; FULL is explained from the manual. 
+Replica identity is distinct from a request key. It identifies which database row an update means. It does not recognise that two checkout attempts represent the same logical purchase, and it is not a delivery identity for an external message. 
+H2: A selection is not a complete copy 
+Publications can select rows and columns as well as tables. A filtered catalogue or analytics projection can be useful, provided its meaning remains explicit. A subset of the orders without the necessary customers, lines or payments is not automatically a self-contained application database. 
+Row filters evaluate both old and new values for updates. A row entering the selected set can become an INSERT at the subscriber; leaving it can become a DELETE. An UPDATE on the source therefore does not always remain an UPDATE in the stream. Columns needed by an update/delete filter must be covered by replica identity. 
+Column lists must retain the identity columns when updates or deletes are published. An explicit list of every current column is also different from omitting the list: a later column is automatically included only in the latter case. Filters and column lists do not constrain TRUNCATE in the same row-by-row way. 
+Selection is not a complete security boundary. PostgreSQL’s documentation warns that a malicious subscriber can obtain unpublished columns, and another publication can expose overlapping data. Protect the source through its actual access design rather than trusting a publication’s projection to authorise arbitrary consumers. 
+Apply normally runs with session_replication_role = replica, so ordinary triggers and rules do not fire by default. Foreign-key checking is implemented with triggers and requires particular attention; do not assume application-side trigger behaviour is reproduced on the subscriber. Unique, not-null and other applicable constraints can still reject incoming data. Validate the resulting relationships and intentionally configured replication triggers. 
+H2: Keep schema and sequences ready 
+The native catalogue update reached the destination at 25.00. The next experiment added a note column on the publisher and wrote checked. The subscriber still had only product_id, price, stock. Apply stopped with a missing-replicated-column error; adding the compatible column on the subscriber allowed the original change to apply. 
+This is why an additive rollout often prepares the subscriber first, then changes the publisher and its writers. A publication is not a schema migration service. Type changes, removed columns, constraints, partition mappings and generated columns have their own compatibility rules. Test the actual publisher/subscriber versions and schema changes, especially across major versions. 
+Sequences are independent too. Replicating an identity-column value inserts that value; it does not advance the destination’s sequence. In the anonymous feed_rows fixture, source row 1 arrived while the subscriber sequence remained at last_value = 1, is_called = false. A local default insert tried to allocate 1 and failed with a duplicate key. 
+The native sequence counterexample
+ | Destination state | Attempt | Result
+ | Replicated row 1; sequence uncalled at 1 | Insert using its default | Duplicate row ID 1
+ | Closed source history contains rows 1 and 2; sequence explicitly aligned | First isolated destination insert | Row ID 3 
+Align sequences only after the old write history and all ID allocators are closed and the copied rows are accepted. Cached allocations, descending or cycling sequences and IDs reserved outside the database can complicate a simple maximum-plus-one rule. The fixture used one ordinary ascending sequence with no other allocator. Large objects, schema and other unreplicated state need their own plan; row counts do not cover them. 
+H2: Resolve apply failures without skipping history 
+A logical subscriber is an ordinary writable PostgreSQL database. Allowing local writes to replicated rows can overwrite an incoming value or create a conflict. Replication is not a general conflict-resolution policy. 
+The native test inserted local scratch row 2 on the subscriber, then let the publisher generate its own row 2. Apply reported insert_exists and could not advance that transaction. The controlled repair removed the known local scratch conflict; the original publisher row then arrived. No stream transaction was skipped. 
+Other failures can be less obvious. In PostgreSQL 18, an UPDATE or DELETE whose target row is missing is recorded as a conflict but skipped without stopping apply. A running worker and advancing position therefore do not prove that the destination contains the intended state. Check the conflict statistics and important row-level outcomes. 
+pg_stat_subscription shows subscription workers and their progress; pg_subscription_rel shows table-synchronisation state. pg_stat_subscription_stats and the subscriber log reveal apply failures and conflicts. On the publisher, inspect the sender and logical slot too. Diagnose missing schema, privileges, bad local data or missing WAL separately. 
+Skipping a conflicting transaction is an acceptance decision about every change in that transaction, including changes that caused no error. Advancing an origin or using an explicit skip can make the stream move while silently losing valid related effects. Preserve evidence, repair the known cause where appropriate, and compare the required rows before accepting the result. 
+H2: A slot is a retention responsibility 
+The logical slot remembers a consumer’s stream position and retains resources needed to decode from there. confirmed_flush_lsn tracks consumer acknowledgement; restart_lsn can be earlier because decoding still needs older WAL. The distance retained by a slot is not the same as its count of unapplied application rows. 
+A disabled subscriber does not automatically remove its slot. WAL and catalogue history can remain pinned while the consumer is absent. Monitor progress, retained bytes, WAL availability and configured retention or idle limits. If a slot becomes invalid, establish a supported resynchronisation route; reconnecting cannot recreate missing history. 
+Dropping a subscription normally contacts its publisher to drop the associated slot. If that source is unavailable, detaching the slot association may permit local removal, but it leaves a separate publisher cleanup obligation if the source still exists. The native drill dropped the subscription while its source remained reachable and verified that no slots remained, before stopping both owned instances. 
+Publisher failover needs its own slot plan. PostgreSQL supports synchronising appropriately configured logical failover slots to a physical standby, with explicit prerequisites and readiness checks. Promoting a physical copy alone does not establish that every logical consumer can resume. This drill did not execute slot failover. 
+H2: A change feed still needs an effect protocol 
+Logical decoding can feed another service instead of PostgreSQL’s built-in apply worker. An output plugin converts WAL into a chosen logical form, and the consumer decides how to store or act on it. A row mutation is still not automatically a business event: the reason for an update, its stable request identity and the intended external action may not be inferable from the final row. 
+A decoding client must also tolerate repetition. A slot can restart from an earlier persisted position after a crash and resend recent changes. A consumer that records its resume position before storing the effect can lose work; one that acts first and records position later can repeat the effect after a crash. 
+Where the effect and checkpoint share a transaction authority, commit them together and recognise repeated identities. An external provider action requires its own idempotency or reconciliation protocol. “The slot acknowledged the change” does not establish that an email arrived or a payment happened exactly once. Outboxes and database-backed jobs develops application intent and delivery separately. 
+The complete logical-replication drill exercises initial copying and the identity, schema, sequence and conflicting-write counterexamples on an owned PostgreSQL 18.6 pair. Its controlled final sequence repair stops the source first; it is not a full live migration. Upgrading and migrating PostgreSQL follows cutover, version compatibility and rollback boundaries.       
+H2: Sources and further reading  
+Checked on 24 October 2026 against PostgreSQL 18 primary documentation. Native evidence uses two owned local PostgreSQL 18.6 instances, private sockets, explicit ownership checks and cleanup. The identity drawing is conceptual. FULL identity, filtered streams, custom decoding consumers and logical-slot failover are documented mechanisms without native success claims here. 
+Logical replication, Publications and Subscriptions: scope, identity, initial copy and lifecycle.
+Architecture and Configuration: decoding/apply, initial synchronisation, triggers and worker capacity.
+Restrictions: schema, sequence, large-object and datatype responsibilities.
+Row filters, Column lists and Security: selection, identity requirements and access boundaries.
+Conflicts and Monitoring: stopped and skipped changes, observations and the consequences of skipping a transaction.
+Logical decoding concepts: retained resources, repeated messages and failover-slot prerequisites.       

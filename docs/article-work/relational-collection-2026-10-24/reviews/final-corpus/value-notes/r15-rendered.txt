@@ -1,0 +1,76 @@
+            
+Relational collection · Draft for review 
+H1: Row versions, storage and cleanup  Deep diveAbout 7 minutes AI-generated       
+An SQL update changes one logical row. The storage engine may keep several physical versions of that row at once. A report that took a snapshot before the update can still need the old value, even after the writer has committed and newer readers can see the replacement. 
+This is the storage cost of letting readers and writers work together. The engine must find room for new versions, decide which version each reader may see, and eventually reclaim the ones nobody needs. A table can therefore grow while its row count stays constant. Deleting half its rows does not necessarily halve its file. 
+The examples use the shop's blue mug, P7, whose core catalogue price is 20.00. In a separate scratch catalogue change, a writer changes it to 25.00. This is a storage experiment, independent of the collection's dated price-correction history. Order 103's agreed unit price remains 20.00. PostgreSQL 18 supplies the concrete storage layout; other engines can keep the same reader promise using different structures. 
+H2: One row, several versions 
+Suppose a report starts a read-only Repeatable Read transaction and reads P7 at 20.00. Its snapshot fixes which committed changes it can see. A writer then changes P7 to 25.00 and commits. A new query should see 25.00, while the report should continue seeing 20.00. 
+PostgreSQL gives the writer a new row version in the table's heap, the collection of pages holding its rows. It marks the earlier version as replaced by that transaction. A reader checks transaction information against its snapshot to decide which version is visible. The table still has one product with key P7; there are temporarily two physical representations of it. 
+Step through the change. Watch the report's answer when the writer commits, then watch what the first vacuum can reclaim.  
+Figure 1 Two readers, one product  
+Report R20.00Repeatable Read snapshot
+New query Q20.00Starts at this step 
+One heap page · illustrative layoutP720.00Current versionP725.00Uncommitted versionSpace available for reuse 
+R takes a snapshot while P7 costs 20.00. Both readers can see that version.  
+Play
+Back
+Next
+Reset1 / 6 
+All steps as text
+R takes a Repeatable Read snapshot of P7 at 20.00.
+A writer creates a 25.00 version but has not committed. R and another ordinary reader still get 20.00.
+The writer commits. R still gets 20.00; a query taking a new snapshot gets 25.00.
+Vacuum cannot reclaim 20.00 while R may need it.
+R finishes. Its snapshot no longer retains the old version.
+Cleanup makes the old version's space reusable. The page remains part of the file. 
+Chosen schedule, not a page capture. R is a read-only Repeatable Read transaction. Q takes a fresh snapshot each time. The model leaves out other rows, indexes and tuple headers.    
+The commit changed what new snapshots see. It did not change the report's earlier snapshot. Nor did it mean the old version could immediately disappear. Cleanup has to wait until no relevant transaction can still need it. 
+The chosen isolation level matters. In PostgreSQL's default Read Committed level, each statement takes a new snapshot. Two statements in one transaction can therefore see different committed prices. Repeatable Read makes the same-snapshot report in this example explicit. An idle connection outside a transaction does not retain that report snapshot. 
+A delete follows the same reasoning. It makes the row absent to snapshots that can see the deleting transaction, while earlier snapshots may still see the preceding version. A rollback leaves the writer's new versions invisible to other transactions; their storage still needs eventual cleanup. Logical disappearance and physical removal are different events. 
+H2: Pages and addresses 
+A heap is stored in fixed-size pages, normally 8 kB in PostgreSQL. Reading one row brings its page into memory, alongside whatever other rows share it. Each stored version occupies bytes for its values and a header carrying information the engine needs, plus a small line pointer that locates it within the page. 
+The hidden PostgreSQL column ctid reports a version's physical address as a page number and an item number. In the owned native check for this article, updating the scratch P7 changed its address from (0,1) to (0,2). The primary key stayed P7. The old report could still read the version at the earlier address. 
+SELECT product_id, price, ctid
+FROM products
+WHERE product_id = 'P7';
+-- The ctid is an observation of this version, not a product ID. 
+Use a primary key for a lasting reference. An update or a table rewrite can change ctid, and an address can later be reused for different data. It is useful for investigating a physical layout, not for naming a product in application URLs or another table. 
+Wide rows use more of each page, so fewer fit in one read. Very large values may be compressed or moved into separate storage; PostgreSQL calls that mechanism TOAST. A large description can then have storage beyond the main table's heap. To understand a table's footprint, count its indexes and any out-of-line values as well as its main file. The PostgreSQL architecture article follows those structures in more detail. 
+H2: Where old data waits 
+Keeping old values in the heap is PostgreSQL's design, rather than a definition of a relational database. InnoDB, MySQL's usual engine, can update its current record while retaining information in an undo log from which a reader reconstructs an earlier version. Its purge process discards obsolete undo history when it is no longer needed. 
+The same snapshot promise, with different storage
+ | Question | PostgreSQL | InnoDB
+ | Where does the earlier value wait? | An older version in the table heap | Undo history used to reconstruct it
+ | What can a long-lived snapshot retain? | Old heap versions and associated cleanup work | Undo history and associated purge work
+ | Who reclaims obsolete history? | Page pruning and vacuum | Purge 
+Both designs need a boundary beyond which old history can be discarded. If a report keeps that boundary back while the shop continually updates prices or stock, obsolete information accumulates somewhere. Moving the history out of the table changes where the space and read work appear; it does not make the history free. 
+Retained row versions are also not an audit trail. Cleanup is allowed to remove them. If the shop must explain which price was believed yesterday and when a correction was recorded, it needs an explicit history model and retention policy, as History, correction and deletion explains. 
+H2: Reusable space and smaller files 
+Once no snapshot can need an obsolete version, PostgreSQL can reclaim its space. Normal page access can prune eligible versions, and VACUUM carries out broader cleanup of table and index entries. Autovacuum schedules that maintenance in the background. 
+The usual result is room for future rows inside files the database already owns. That is often exactly what an actively changing table needs: a cycle of making versions, retaining them briefly, then reusing their space. The operating system's file-size counter need not fall. 
+The following native check makes that distinction visible. An anonymous scratch table held 2,000 rows with 1,600-byte uncompressed payloads. Deleting every other row left survivors scattered through the file. Vacuum was run with tail truncation disabled so the comparison isolates reuse from returning whole empty end pages. 
+One local PostgreSQL 18.6 run: heap bytes, excluding indexes
+ | State | Logical rows | Heap file
+ | Before deletion | 2,000 | 4,096,000 bytes
+ | After deletion and ordinary vacuum | 1,000 | 4,096,000 bytes
+ | After a compacting rewrite | 1,000 | 2,048,000 bytes 
+Vacuum made dead space reusable; it did not pack the 1,000 survivors together. VACUUM FULL wrote a new compact copy and replaced the old heap. That recovered file space in this run, but required extra working space and an exclusive lock that blocks ordinary reads and writes. These counts describe this fixture, not a forecast for a production table. 
+Ordinary vacuum can return entirely empty pages at the end of a heap when it can obtain the required lock. That limited case does not make it a general compactor. If a table will grow back into the gaps next week, paying to rewrite it today may buy little. If it carries a lasting excess that hurts scans or exhausts storage, a planned rewrite may be justified. 
+H2: What an update writes 
+Making a new version also affects indexes. An index entry locates a table version; it is another structure to maintain and eventually clean. PostgreSQL's heap-only tuple optimisation, or HOT update, can avoid making new ordinary index entries when the changed columns are not referenced by those indexes and the replacement version fits on the same heap page. Existing entries reach the version chain through the page's original item. Summarising indexes such as BRIN have separate rules. 
+Indexing the price can therefore change the cost of updating the price. Without a price index, a same-page replacement may be HOT. With an ordinary index that includes price, it cannot use that optimisation. Space on the page matters too: unchanged indexed values alone do not guarantee a HOT update. 
+A lower table fillfactor leaves some room during insertion for later replacements. It can improve the chance of a same-page update, at the cost of more pages for the initial data. It is a workload choice, not free capacity. An append-only table and one that constantly revises a small set of rows need different compromises. 
+Each logical change can consequently produce several physical writes: a new heap version, index changes where needed, and records in the write-ahead log. Later cleanup and file rewrites add more. This excess of physical work over the application change is write amplification. The index article connects it to the set of indexes a query earns; crash recovery follows the log's separate job. 
+H2: Recognising a cleanup problem 
+A growing file is evidence to investigate, not a diagnosis by itself. More live rows, wider values, more indexes, retained versions and reusable gaps can all enlarge the footprint. Start by separating those causes. A row count alone cannot tell them apart, and a dead-row estimate alone cannot tell how much space a rewrite would recover. 
+Then examine why cleanup is delayed. A report can retain a snapshot while waiting for its client to consume results. A transaction left open while a person thinks can retain one without doing useful work. Replication and other retention mechanisms can constrain cleanup too. Ending a report needs an application decision about correctness and completion, not simply a shorter server timeout chosen at random. 
+In the native P7 check, a vacuum while the old report was open left one live and one dead physical tuple according to pgstattuple. The report still read 20.00. After it ended and vacuum ran again, the dead count fell to zero and a fresh query read 25.00. That is the mechanism to look for: a specific retained history, the reader that needs it, and cleanup after its boundary advances. 
+For a busy PostgreSQL service, continue with vacuum and transaction age. Vacuum also maintains visibility information and protects against transaction-ID age problems; treating it only as a way to shrink a file misses jobs the database needs even when disk space looks comfortable.       
+H2: Sources and further reading  
+Checked against the PostgreSQL 18 and MySQL 8.4 manuals. The stepped drawing is a conceptual schedule. The reported tuple and byte counts were checked on an owned, disposable PostgreSQL 18.6 instance on this machine; the script retained with the article's evidence clears inherited connection settings and removes its private instance afterwards. No MySQL execution or performance measurement is claimed. 
+PostgreSQL, Introduction to concurrency control and Transaction isolation: row versions and snapshot boundaries.
+PostgreSQL, Database page layout, System columns and TOAST: pages, addresses and wide values.
+PostgreSQL, Heap-only tuples: the conditions for HOT and pruning.
+PostgreSQL, Routine vacuuming, VACUUM and pgstattuple: cleanup, file reuse, rewrite costs and physical counts.
+MySQL, InnoDB multi-versioning: undo history, consistent reads and purge.       

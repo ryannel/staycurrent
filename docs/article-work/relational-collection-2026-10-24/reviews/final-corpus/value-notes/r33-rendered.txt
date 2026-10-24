@@ -1,0 +1,77 @@
+            
+Relational collection · Draft for review 
+H1: PostgreSQL index methods and operators  Deep diveAbout 6 minutes AI-generated       
+An index on a column does not mean every question about that column has an indexed route. Comparing a whole array with another array, finding an element inside it and asking whether its elements overlap another set are different operations. An ordered copy of complete values cannot automatically answer all three. 
+PostgreSQL makes the distinction explicit. The access method chooses a family of storage and search structures. An operator class tells that method how a particular type’s values and operators fit the structure. Choosing an index therefore starts with the query’s operation, then asks which representation can avoid work. 
+The general index article established B-trees, composite keys and covering reads. Here we compare the alternatives, then inspect what a candidate-producing index actually saved. The native examples use anonymous generated test rows, separate from the shop’s orders and catalogue. 
+H2: What is being compared? 
+A B-tree places complete keys in an order. It is the usual starting point for equality, ordered ranges and queries that can stop early in that order. A hash index instead maps a value to a hash code and supports equality. It does not supply an ordered range or sort. B-tree equality support means that “equality query” alone is not sufficient reason to add a hash index. 
+Containment needs another representation. Suppose a row holds the array ARRAY['tea','gift']. The condition tags @> ARRAY['gift'] asks whether the left array contains the right array’s elements. A GIN index can extract individual elements and associate each with the rows containing it. 
+CREATE INDEX method_tags_gin
+ON method_rows USING gin (tags);
+SELECT row_no
+FROM method_rows
+WHERE tags @> ARRAY['gift']; 
+USING gin selects the method. PostgreSQL chooses its default array operator class, array_ops. It knows how to extract elements and how to answer supported array comparisons. Writing the predicate as an arbitrary function call with the same intended meaning does not guarantee the same planner match; use a supported operator or verify the transformed plan. 
+A small inverted index, independent of the native fixture
+ | Row | Stored tags
+ | A | tea, gift
+ | B | tea
+ | C | gift, ceramic 
+The element-to-row view GIN can search
+ | Element | Rows containing it
+ | ceramic | C
+ | gift | A, C
+ | tea | A, B 
+Finding gift starts at one element’s list, A and C, rather than comparing every complete array. Finding both tea and gift combines the relevant information and retains A. One row contributes to several lists, which is useful for reads and adds maintenance to writes. 
+H2: The method needs an operator class 
+The same method can offer several meanings for a type. PostgreSQL’s default jsonb_ops GIN class supports JSON containment, key-existence and selected JSON-path operators. jsonb_path_ops supports containment and the path operators, but not the key-existence operator ?. A smaller, more specific index is useful only if it serves the actual question. 
+CREATE INDEX catalogue_attributes_path
+ON catalogue USING gin (attributes jsonb_path_ops);
+-- Eligible operation: attributes @> '{"material":"ceramic"}'::jsonb
+-- The same index does not serve: attributes ? 'material' 
+This is a schema illustration, not a claim that the core products table already has those attributes. JSON and structured alternatives develops the representation and checks both predicates natively. 
+Text has related choices. In a non-C locale, text_pattern_ops can supply the character-by-character B-tree behaviour needed for a fixed prefix such as name LIKE 'Blue%'. It does not replace a language-aware default index for every ordinary inequality or requested sort. A leading wildcard such as '%mug%' needs a different search; the pg_trgm extension supplies operator classes for that kind of work. 
+An operator family groups compatible classes and can include comparisons across related types. The practical lesson is to retain the intended types and collation at the query boundary. Casting an indexed column or changing its collation can ask for an operation the stored ordering does not provide. An expression index may be justified when that expression is the intended query, but adding one should follow an explicit meaning. 
+H2: Overlap, distance and partitions of space 
+GiST and SP-GiST are frameworks for type-specific search strategies. GiST can organise summaries such as geometric bounding regions; SP-GiST supports partitioning structures such as tries and quadtrees. The method name alone does not tell you which operators, exactness or distance ordering a particular class supports. 
+A range overlap question uses &&, rather than comparing just the starts. A suitable GiST range class can search those overlaps. A nearest-neighbour query can sometimes use a class’s ordering operator, such as ORDER BY location <-> point '(0,0)' LIMIT 10 for supported point data. This is not a promise that every GiST class accelerates every distance function. 
+For room reservations, Types and extensions combines range semantics with an enforced overlap rule. For geometry, the coordinate system and distance units must be established before an index is meaningful. For embeddings, vector search owns approximate retrieval and its recall test. Sharing an index framework does not make these result contracts interchangeable. 
+H2: Summarise physical ranges 
+BRIN takes a different trade. It stores a summary for a range of adjacent heap pages. A min/max summary can prove that a range contains no possible match. When the query overlaps the summary, PostgreSQL reads the candidate pages and rechecks the rows. The summary does not promise that each candidate actually matches. 
+That is useful when values track their physical placement. A time-ordered append history can leave old times in old page ranges. If every range instead contains times from across the whole history, its minimum and maximum exclude very little. 
+In Figure 1, keep the requested values at 5 through 6 and switch the physical order. The values and answer stay the same. Watch the candidates that survive the summaries.  
+Figure 1 A summary rejects ranges, then the heap rejects rows 
+Physical order Increasing valuesMixed values
+Find values from 12345678910111213141516
+through 12345678910111213141516  
+Toy min/max summaries over four physical ranges, each holding four rows. A solid outline marks a candidate range; ✓ marks an actual row match. Real BRIN ranges contain pages, each with many tuples. The numbers here illustrate values and are not native page counts.    
+The ordered arrangement inspected four candidates for two matches; the mixed arrangement inspected all sixteen. BRIN did not become incorrect. Its summaries became less discriminating. Index size alone would miss this difference. 
+pages_per_range sets the granularity. Smaller ranges can reject more precisely while requiring more summaries. BRIN also needs newly added ranges to be summarised. Unsummarised ranges cannot safely be ruled out; background or explicit summarisation keeps that work current. Updates that broaden a summary or scatter replacement tuples can weaken an arrangement that began well ordered. 
+H2: Read candidates and rechecks 
+The runnable fixture creates 50,000 anonymous rows. Each has a timestamp one minute after the previous one, a 100-character payload and a tags array; every hundredth row has gift. A deterministic modulo permutation produces a second physical arrangement of exactly the same rows. 
+With only a B-tree on the complete tags array, PostgreSQL scanned the table for containment and discarded 49,500 rows. Adding GIN gave a bitmap route returning the 500 matching rows. The B-tree existed, but it did not supply an element-containment search. 
+Bitmap Heap Scan on method_rows (actual rows=500.00 loops=1)
+  Recheck Cond: (tags @> '{gift}'::text[])
+  Heap Blocks: exact=500
+  -> Bitmap Index Scan on method_tags_gin
+       Index Cond: (tags @> '{gift}'::text[]) 
+A Recheck Cond line identifies a condition available for heap rechecking; it does not establish that rows were rejected. This run reported exact heap blocks and no rows removed by index recheck. Bitmap memory pressure can instead turn detailed tuple locations into lossy page entries, requiring more rechecking even for an otherwise precise index. 
+For BRIN, candidate pages are intrinsic to the method. The fixture explicitly discouraged sequential scans to compare the two BRIN routes. Both returned the first ten timestamped rows: 
+Observed BRIN work · PostgreSQL 18.6 · four pages per summary
+ | Physical arrangement | Lossy heap blocks | Rows removed by index recheck | Rows returned
+ | Timestamp order | 4 | 170 | 10
+ | Deterministically mixed | 40 | 1,790 | 10 
+The mixed copy read ten times as many candidate heap pages for this interval. The selected interval is near the minimum value, so this comparison does not claim every query on the mixed copy reads every page. The BRIN indexes both occupied 24,576 bytes; equal index sizes concealed different heap work. These are fixture counts, not latency predictions. 
+H2: Pay for the useful search 
+Read savings still need to earn write costs. GIN can extract many keys from one changed document. Its fast-update mechanism can accumulate entries in a pending list and merge them later; this shifts work rather than eliminating it. Searches may consult the pending list, and a large cleanup can make write latency uneven. Observe that workload before changing the setting. 
+GiST splits and updates depend on its class and data distribution. BRIN’s small summaries can be cheap to maintain but may become less selective. Ordinary indexed values also affect the HOT opportunity described in processes, pages and row versions; BRIN’s summarising rule is a specific exception, not evidence that index maintenance is free. 
+Compare the complete route: operators the class supports, rows or pages it admits, required rechecks, the requested order and visibility checks. Then compare insert and update work with and without the candidate on representative data. Live builds, invalid indexes and safe removal are separate operational steps covered by schema changes under load. 
+A useful choice can be stated precisely: “This GIN class searches array elements for this containment operator”, or “This BRIN summary excludes most old physical ranges for this interval”. “There is an index on the column” leaves the essential question unanswered.       
+H2: Sources and further reading  
+Checked against PostgreSQL 18 on 24 October 2026. Download the index-method experiment and run it in a disposable database with psql -X -v ON_ERROR_STOP=1 -f index-methods.sql. The complete file ran on an owned PostgreSQL 18.6 instance; its temporary tables disappear with the connection. The BRIN comparison forces consideration of that route and resets the diagnostic setting. The drawings and tiny inverted index are illustrative. No production timings or write benchmark are claimed. 
+Index types and Operator classes and families: method capabilities and type-specific meaning.
+GIN indexes: posting lists, operator support, pending lists and maintenance.
+BRIN indexes: summaries, lossy candidates, range granularity and summarisation.
+GiST and SP-GiST: class-dependent operators and ordering support.
+Using EXPLAIN, JSON indexing and pg_trgm: rechecks and the narrower JSON and text classes.       

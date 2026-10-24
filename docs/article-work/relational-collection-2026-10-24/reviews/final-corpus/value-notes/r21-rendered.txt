@@ -1,0 +1,69 @@
+            
+Relational collection · Draft for review 
+H1: Failover and fencing  Deep diveAbout 7 minutes AI-generated       
+Failover transfers a database's write authority to another server. Promotion is only one part: it makes a standby able to write. A safe transfer also prevents the old authority from continuing, checks which history the candidate contains and resolves the work that history may be missing. 
+A server that does not answer may have stopped. It may also be alive behind a broken network path, still serving other clients. Promoting a second writer because the first is unreachable can create two independent histories. Each server can preserve its own transactions perfectly while the application loses a single account of what happened. 
+The examples use PostgreSQL physical primary and standby roles. The shop's purchase 103 is a separate local failover drill, beginning with P3 stock 12/P7 stock 1 and no 103. It does not continue the backup mistake or the paused-read demonstration as one incident. 
+H2: A timeout is a suspicion 
+A health check reports what one observer can reach. If a controller cannot contact the primary, that observation does not establish what an API worker with an existing connection can still do. Nor does it prove the primary has lost access to its data files. 
+Detection and authority need separate rules. Detection decides that the service needs action. Authority decides which server may commit accepted writes. Shorter health-check timeouts can detect some failures sooner, while also producing more suspicion during transient delay. They cannot by themselves prevent the old server from writing. 
+A planned role change has a useful advantage: the old primary can cooperate. The operator can stop admissions, finish or abort in-flight transactions, let the standby catch up to a verified boundary and then transfer. An unplanned failure may remove access to the only evidence of the old primary's most recent commits. The procedure must handle that uncertainty rather than assume it away. 
+H2: Fence the old authority 
+A fence is an enforced loss of write ability. Depending on the system, it can be a verified power-off, a storage-access revocation or another mechanism that prevents the former writer from changing the authoritative resource. Sending a stop request without knowing whether it took effect is not the same result. 
+Changing DNS or a load balancer tells future clients where to connect. It does not close every established database connection, stop a worker using an old address or prevent a supervisor restarting the old database. Routing is part of bringing traffic to the new authority; fencing is what stops the old one remaining an authority. 
+Compare those two operations in the drawing. First follow the route-only transfer, then choose the enforced fence and watch the existing client's last write.  
+Figure 1 Moving the route does not close an old connection Transfer protocol
+ Change route and promote
+ Enforce old-primary fence first New connectionsOld primary Old primary
+WriterA client already has this connectionCandidate
+Read-only standbyHas its own replayed history Existing client's writeNot attempted 
+There is one writer. A client already connected to it will not consult DNS again for every SQL command. 
+Play
+Back
+Next
+Reset1 / 5 
+Both protocols as text
+The controller suspects the old primary because it cannot reach it. Changing routing and promoting the candidate can leave both servers writable. An existing client can still write to the old primary, creating a second history. With an enforced fence, the old primary loses write ability before the candidate gains authority; the old connection cannot keep writing. Candidate history acceptance is a separate requirement in both cases. 
+Conceptual partition: the controller loses contact with the old primary while an existing client can still reach it. No network partition was injected in the native test; that test promotes an owned standby with its old primary deliberately alive.    
+The dangerous state has two writers, not merely a stale reader. Transactions can now consume the same last unit in two separate copies or record conflicting outcomes for one request. A uniqueness constraint within each database cannot arbitrate between those databases. 
+The owned PostgreSQL 18.6 counterexample promoted a physical standby while its old primary deliberately remained running. Both reported that they were outside recovery and accepted different anonymous scratch inserts. No network partition was simulated. The test establishes the narrow mechanism: PostgreSQL promotion alone did not stop the other instance. 
+Some systems coordinate leadership through a separate election or lease service. That authority needs its own failure rules, and the resource being written must enforce the result. An expired lease does not stop a paused process that later resumes unless a check at the relevant boundary rejects its stale authority. The same issue appears in database-backed jobs, where a worker can outlive its lease. 
+H2: Which history will take over? 
+Before accepting writes on a candidate, inspect its log history and progress. A received byte, a durable byte and a replayed change are different observations. Let it apply the usable committed log it has, and compare it with the required boundary when that boundary is known. Replicas, lag and read routing supplies those progress distinctions. 
+With asynchronous replication, the old primary can acknowledge purchase 103 while a disconnected candidate has none of it. Promoting that candidate does not recover missing log out of nowhere. Locally durable does not mean present on every possible failover target. 
+Synchronous replication can require a selected remote copy before acknowledging commit. To carry that guarantee into failover, the chosen candidate and procedure must preserve the promised history. Selecting an arbitrary other replica, weakening synchronous requirements during an outage or permitting another writer can invalidate the reasoning. Read the configured acknowledgement and candidate-selection policy together. 
+When the old primary is gone, the amount of missing history may be unknown. An earlier “zero lag” observation does not establish that no later commit occurred. If the business cannot tolerate that uncertainty, the architecture must prevent or account for it before the failure, through its commit and authority protocol. The failover operator cannot manufacture evidence afterwards. 
+H2: A missing acknowledged purchase 
+The proper native drill starts again from a fresh candidate cloned before 103; the unsafe scratch branch is discarded separately. The candidate is kept stopped while the primary commits Mina's complete purchase and its stable request identity, purchase-mina-103. The old primary's closed single-client history is exported, then that owned server is stopped and its private endpoint is verified unavailable. 
+This is an effective fence for this fixture: no supervisor exists to restart that process, no other writer is admitted and the test owns both endpoints. It is not proof that a production power controller, network isolation rule or cluster manager establishes the same result. 
+Keeping the candidate stopped matters. Pausing replay alone can still let WAL arrive, and promotion ends the pause. In this run, after startup and before promotion, the candidate's received and replayed positions were both 0/5000000, behind the old primary's post-purchase flushed position 0/500BC08. The fenced source could no longer supply that tail. The assertion concerns the actual available history, not a pause setting. 
+The candidate is then started and promoted. It contains zero rows for order 103. The old primary had acknowledged it, but its history never reached this candidate. Continuing without checking would give Mina a successful purchase that the new service cannot find. 
+The local drill's accepted purchase and candidate state
+ | Fact | Closed old-primary history | Candidate after promotion | Accepted result
+ | Order 103 | Pending, customer 1 | Absent | Pending, customer 1
+ | Its lines | P7 × 1 at 20.00; P3 × 2 at 4.50 | Absent | Same two lines
+ | P3 stock | 10 | 12 | 10
+ | P7 stock | 0 | 1 | 0 
+The drill chooses to preserve the known purchase. It applies the order, both lines, both stock effects and request identity together on the candidate. Repeating the reconciliation finds the recorded identity and leaves one order with stock P3 10/P7 0. There are no external payment or message effects in this fixture. 
+That choice is possible because the complete discarded tail is known and the candidate is still isolated from new purchases. A live candidate could already have sold its apparently available mug to someone else. Reconciling then becomes a business conflict, not a mechanical instruction to copy the missing row. Keep traffic closed until the acceptance decision is sound, or explicitly accept the consequence of opening sooner. 
+Resolve uncertain commits as well as acknowledged ones. An in-flight request may have committed on the old side even though the caller never heard success. Preserve identities and compare authoritative outcomes before replaying it. External charges, messages and jobs need their own evidence and compensation decisions, as restore and reconciliation develops. 
+H2: Promotion and traffic 
+Promotion ends the standby's recovery role and creates a new writable continuation. It is not an instruction to merge future changes from the former primary. PostgreSQL records the new continuation as a timeline; positions must be understood within their history. 
+The service also needs clients to reach the accepted new authority. Update routes and connection pools, discard broken or stale sessions and check that the application can carry out its essential transactions. A pool retaining a healthy connection to a former writer is an authority problem if that writer was never fenced, and an availability problem if it was. 
+Connection errors during the change are expected outcomes to handle, not proof a purchase rolled back. Retrying database acquisition can restore a connection. Retrying a logical purchase still requires its identity and outcome protocol. A route update cannot supply that missing knowledge. 
+Acceptance should therefore name observable results: exactly one permitted writer; a candidate history that meets the chosen loss policy; important related rows and invariants; resolved request outcomes; and a working application path. “Promotion command succeeded” establishes only part of those results. 
+H2: Bring the former primary back as a copy 
+After the switch, redundancy is reduced until another usable replica exists. The former primary must not simply restart with its old files as a writer. Preserve any evidence needed to inspect its discarded or divergent history before changing those files. 
+One rejoin method builds a fresh base backup from the new authority and starts the former host as a standby. PostgreSQL's pg_rewind can avoid copying every unchanged block when its prerequisites and required WAL are available. It makes one copy follow the chosen source; it does not merge the business transactions unique to both sides. 
+The local drill used the fresh-base method. After recording and reconciling its known 103 history, it replaced only the owned old data directory with a base backup of the new primary. The former primary then reported that it was in recovery and could read order 103. The new source remained the sole writer. No rewind execution is claimed. 
+A rejoined server also needs correct replication settings, credentials, routes and monitoring. Ensure it cannot accidentally start with the wrong role after a reboot or a controller failure. Only then does the transfer finish with a useful replacement copy rather than one fragile surviving primary. 
+H2: Practise the whole transfer 
+Test the detection-to-service route on owned disposable systems before depending on it. Include a case where the old writer remains alive, a candidate behind the acknowledged boundary, an uncertain request and a former-primary rejoin. Check the enforcement point, not merely the controller's belief about it. 
+Choose failure boundaries honestly. Two local processes demonstrate promotion and conflicting authority. They do not demonstrate independent disks, a regional partition or the reliability of a remote power fence. If the requirement is survival of a machine, rack or region, the placement and control path have to cross that boundary too. Regional placement and survival develops those choices. 
+For PostgreSQL's concrete commands and progress checks, continue with physical replicas and promotion. The main decision remains the same: before transferring accepted writes, establish who can still write and which history the service is choosing to keep.       
+H2: Sources and further reading  
+Checked against PostgreSQL 18 documentation. Native checks use PostgreSQL 18.6 on owned private local instances: a scratch-only dual-writer counterexample, then a separate stopped-candidate purchase, verified old-process stop, promotion, known-history reconciliation and fresh-base rejoin. All instances and temporary files were removed. No production fencing integration, network partition, regional survival, external-effect reconciliation or failover-time measurement is claimed. 
+PostgreSQL, Failover: old-primary exclusion, separate failure-detection software and restoring redundancy.
+PostgreSQL, Log-shipping standby servers: asynchronous loss windows, synchronous replication and standby roles.
+PostgreSQL, pg_ctl: promotion and stop modes; Timelines: distinct recovery continuations.
+PostgreSQL, pg_rewind and pg_basebackup: rejoin methods and their requirements.       

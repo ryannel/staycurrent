@@ -1,0 +1,87 @@
+            
+Relational collection · Draft for review 
+H1: Vector search in PostgreSQL  Deep diveAbout 8 minutes AI-generated       
+A nearest-neighbour query can return exactly the vectors you asked for and still give an unhelpful answer. It can also use an approximate index, return a full page of products and silently miss nearer eligible vectors. Those are different failures, with different tests. 
+We will first give the distance calculation a small, visible meaning. Then we will compare exact and approximate retrieval against the same filtered baseline. Only after those checks can we ask what an embedding model’s distances mean for a shopper. 
+H2: A distance is a rule over coordinates 
+The pgvector extension adds vector types, distance operators and nearest-neighbour index methods to PostgreSQL. This article’s native drill runs PostgreSQL 18.6 with pgvector 0.8.7. The extension must be available on the server before CREATE EXTENSION vector can enable it in a database; extension lifecycle covers that operational boundary. 
+For a transparent example, give the three shop products chosen two-dimensional coordinates. P3 is [1, 0], P7 [0, 1] and P9 [0.6, 0.8]. The query is [0, 1]. These are toy points, not generated embeddings. Neither axis represents a product property or a semantic judgement. 
+Euclidean, or L2, distance is the square root of the sum of squared coordinate differences. The native calculation gives P7 distance 0, P9 about 0.6325 and P3 about 1.4142. A vector’s dimensions describe the stored representation; its distance acquires application meaning only through how that representation was produced and evaluated. 
+CREATE EXTENSION vector;
+CREATE TABLE product_vectors (
+  shop_id integer NOT NULL,
+  product_id text NOT NULL,
+  stock integer NOT NULL,
+  embedding vector(2) NOT NULL,
+  PRIMARY KEY (shop_id, product_id)
+);
+SELECT product_id, embedding <-> '[0,1]'::vector AS distance
+FROM product_vectors
+WHERE shop_id = 10 AND stock > 0
+ORDER BY distance, product_id
+LIMIT 2; 
+The operator <-> computes L2 distance. With the agreed stock after order 103, P7 is excluded. The exact eligible order is P9, then P3. Choosing the nearest point globally and removing unavailable rows afterwards would describe a different set.  
+Figure 1 The closest point may be ineligible 
+Chosen two-dimensional coordinates · Euclidean distance · no embedding model or semantic axis   011Coordinate 1Coordinate 2  Query = P7 [0, 1]P7 stock: 0 P9 [0.6, 0.8] P3 [1, 0]  
+ Request: nearest one in-stock product
+ Stock filter inside retrieval
+ Limit first, stock filter outside
+Play
+Back
+Next
+Reset 
+The geometry and both queries, as text
+The query is [0,1]. P7 is at the same point, distance 0; P9 [0.6,0.8] is about 0.6325 away; P3 [1,0] is about 1.4142 away. P7 has no stock after order 103. Filtering eligibility inside the exact retrieval query makes P9 the nearest returned product. Taking one nearest product globally first chooses P7, then the outer stock filter removes it and returns no rows. The coordinates are chosen examples, not generated embeddings or evidence that a teapot answers a shopper’s request.    
+The drill verifies both forms. Limiting the global search to one returns P7 inside the subquery, then the outer stock filter removes it. The final result is empty even though eligible products exist. This mistake is possible with an entirely exact scan; approximate indexing introduces a separate candidate-selection problem. 
+H2: Define the exact answer before approximating it 
+Exact nearest-neighbour retrieval evaluates the chosen distance over the eligible rows and identifies the nearest ones. It can scan the table, or use a structured index to narrow a small eligible set before calculating and sorting distances. A selective shop filter may make that approach sufficient without any approximate vector index. 
+The answer depends on the metric. pgvector also provides cosine distance through <=> and negative inner product through <#>. The negative sign lets an ascending scan retrieve larger inner products first. Choose the operator expected by the representation and match its index operator class. An L2 index is not a generic accelerator for every notion of similarity. 
+For unit-length vectors, squared L2 distance is twice cosine distance, so those two orderings agree. That follows from the dot-product formula, not from a promise that all embeddings are normalised. Magnitude can matter with another representation. Record the preprocessing and metric rather than changing them to obtain a preferred-looking result. 
+Define the comparison precisely: query vector, metric, model/representation revision, eligibility predicate, data snapshot and requested count. Break or account for equal distances consistently. Recall at k compares the approximate result identities with the exact nearest identities under that same definition. If fewer than k eligible rows exist, use that smaller reference set rather than demanding impossible results. 
+Do not compare an approximate stock-filtered search with an unfiltered exact baseline, or run the two against changing membership and call the difference an index error. A fixed copy or one suitable transaction snapshot keeps the experiment about retrieval. Also verify the plan really is exact: an approximate index already present can change how the apparently unchanged SQL is executed. 
+H2: What an approximate index skips 
+HNSW builds a graph with several levels. Search follows connections towards promising neighbours rather than calculating every stored distance. Its m and ef_construction settings influence graph construction; hnsw.ef_search controls the search candidate-list budget. Graph quality and search effort are distinct decisions. An index can be built before rows arrive because this method does not need a separate clustering-training stage. 
+IVFFlat groups vectors into lists around centres learned from data during construction. A query searches selected nearby lists. The index’s lists count controls the partitioning; ivfflat.probes controls how many lists a query searches. More lists with very few probes can omit useful neighbours near another list’s boundary. Build it with representative existing data and test the list/probe choices together. 
+Both methods spend work selectively. A neighbour can be missed even if every distance calculated for a visited row is correct. Returning the visited candidates in strict distance order does not prove that an unvisited point was farther away. 
+-- Alternatives: choose and measure one, rather than building both by habit.
+CREATE INDEX product_vectors_hnsw
+ON product_vectors USING hnsw (embedding vector_l2_ops);
+CREATE INDEX product_vectors_ivf
+ON product_vectors USING ivfflat (embedding vector_l2_ops)
+WITH (lists = 100); 
+These are index-shape examples, not sensible parameters for a three-point catalogue. The query needs an ascending distance-operator ordering and a limit to expose the nearest-neighbour access path. Wrapping the distance in an unrelated expression or sorting a transformed similarity in the opposite direction can prevent that path. Check the actual plan before interpreting a result as evidence about the index. 
+H2: Filters spend the candidate budget 
+In an approximate vector scan, PostgreSQL can filter visited rows after the index supplies candidates. The SQL still describes the right eligible set, but the access method may stop searching before it has found enough eligible neighbours. A condition matching one percent of rows can discard most of a small initial candidate set. 
+The native drill separates this effect from the toy geometry. It constructs 30,000 anonymous eight-dimensional vectors from a documented deterministic hash recipe. Exactly 300 belong to the selected cohort. The query asks for the nearest 20 within that cohort. The vectors have no product or embedding meaning. 
+One Repeatable Read transaction holds an unchanged fixture for the exact baseline and all approximate comparisons. The baseline uses a sequential scan over eligible rows and a sort; no approximate index exists yet. The script then builds one approximate index at a time. For each approximate trial it disables sequential scans locally to expose that method, records its plan and removes the index before testing the other method. These are diagnostic access-path comparisons, not evidence that the normal planner would choose those paths.  
+Figure 2 Twenty returned rows can still miss half the exact neighbours 
+One observed PostgreSQL 18.6 / pgvector 0.8.7 run · 30,000 anonymous vectors · 300 eligible · exact filtered top 20 baseline 
+ Exact neighbour returned Other eligible row Unfilled slot HNSW · ef_search 40 · iteration off
+0 rows returned · 0/20 exact neighbours · recall 0%HNSW · ef_search 40 · strict iteration
+20 rows returned · 20/20 exact neighbours · recall 100%IVFFlat · 100 lists · 1 probe
+4 rows returned · 4/20 exact neighbours · recall 20%IVFFlat · 100 lists · 10 probes
+20 rows returned · 10/20 exact neighbours · recall 50% 
+Slots show counts, not rank order. The same eligibility predicate and unchanged snapshot are used throughout. Local enable_seqscan=off exposes each approximate path; this is a diagnostic comparison, not a natural planner choice or semantic-quality test.   
+In this run, HNSW with ef_search = 40 and iterative scanning off returned no eligible row. Enabling strict iterative scanning with the same initial budget and max_scan_tuples = 20000 returned 20 rows, all in the exact top 20. The index definition and fixture were unchanged between those queries. 
+IVFFlat used 100 lists. One probe returned four eligible rows, all exact neighbours. Ten probes filled the requested 20 slots, but only ten belonged to the exact top 20: recall was 50%. A full page therefore did not establish complete neighbour retrieval. The matched identities, returned count, settings and plans are retained with the drill. 
+pgvector’s iterative scans can continue searching when filtering leaves too few rows, up to their configured work limits. HNSW supports strict ordering; relaxed modes can trade ordering for retrieval behaviour and may need an outer sort of materialised candidates. Neither “strict” nor “20 rows returned” means perfect global recall. Re-sorting a candidate set cannot recover a neighbour that was never included. 
+The measured counts describe one construction and query. The input recipe is deterministic, but graph construction, clustering, data shape and execution environment can affect results across runs. The drill’s local build times and index sizes are recorded for reproduction; they are not a latency or capacity recommendation for real embedding dimensions. 
+H2: Choose the filtered set and search effort 
+For a small filtered set, compare exact retrieval using a B-tree on the eligibility key. It gives complete geometric recall without maintaining an approximate graph or clustered lists. For a larger set, vary approximate search effort and measure recall together with execution work and latency. 
+A partial vector index can isolate one stable, frequently used predicate; partitioning can isolate groups where the operational and planning costs are justified. Neither makes thousands of per-value objects free. A predicate on stock changes with orders, so its update cost belongs in the design. A shared index may spend its candidate budget on other tenants even when every returned row is correctly tenant-filtered. 
+Keep permission checks inside the database query as well. Over-fetching vectors and checking tenant access only after returning them to application code expands the data boundary and makes the filtered-baseline comparison misleading. Search quality and authorisation are separate conditions that must both hold. 
+Use representative filters and query families, including rare cohorts and no-match cases. Compare p50 and tail latency under meaningful concurrency, plus buffer work, memory and recall. Increasing a search budget can improve coverage while consuming more CPU and pages. A setting that wins one warm query can lose under concurrent demand. 
+H2: Keep the representation current 
+A database row can be current while its embedding represents an older description. Store enough provenance to recognise that difference: source identity and revision, representation/model revision, dimensions and preprocessing. If embedding work runs asynchronously, accept its result only when it still corresponds to the intended source revision. Otherwise an older job can overwrite a newer representation. 
+Changing a model while retaining the same dimension count does not establish that old and new coordinates share a meaningful space. Plan a transition with a separately identifiable representation, backfill and evaluation, then route queries to compatible document vectors. Track missing, failed and stale rows; nearest-neighbour recall over only the successfully embedded subset cannot reveal absent documents. 
+The lifecycle cost also belongs to the index choice. Inserts and updates maintain search structures; deletions and obsolete row versions need PostgreSQL cleanup. Measure bulk construction, ongoing writes, vacuum and any rebuild alongside reads. A graph that fits in construction memory on one host can behave differently once it does not. IVFFlat’s learned grouping also needs re-evaluation if the data distribution changes substantially. 
+H2: Test meaning separately from neighbour recall 
+The toy query’s exact nearest eligible product is a Teapot. That says nothing about whether the shopper wanted one. No model produced these coordinates, and no user judgement was measured. Similarly, 100% nearest-neighbour recall with real embeddings can reproduce an unsuitable representation perfectly. 
+Keep two evaluation sets. One contains exact vector neighbours for fixed queries, filters and snapshots; it tests the retrieval method. The other contains human-judged search tasks and acceptable results; it tests whether the representation and final ranking serve the task. When a useful result is missing, first ask whether it was absent from the eligible corpus, far away under the metric, skipped by approximate retrieval or discarded by final ranking. 
+A hybrid search can combine lexical candidates with vector candidates, but their raw scores are not automatically comparable. A fusion or reranking rule needs its own evaluation. Reranking can improve the ordering of candidates already found; it cannot rescue a relevant item omitted by every candidate source. 
+Download the disposable vector-retrieval drill. Run with Python 3, PostgreSQL 18 binaries supplied through --bindir and pgvector 0.8.7 already installed for that server. It verifies its owned private endpoint, records exact and approximate results, then stops and removes its instance. It calls no embedding service and installs no machine-wide software.       
+H2: Sources and further reading   
+pgvector 0.8.7 documentation — operators, query shapes, filters, iterative scans and index maintenance. 
+Malkov and Yashunin: Hierarchical Navigable Small World graphs — the graph search method. 
+pgvector HNSW implementation and settings and IVFFlat implementation and settings — the version used in the drill. 
+PostgreSQL 18: using EXPLAIN — plans, filtering and measured work.        

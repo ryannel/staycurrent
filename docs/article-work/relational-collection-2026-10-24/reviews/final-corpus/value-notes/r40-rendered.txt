@@ -1,0 +1,131 @@
+            
+Relational collection · Draft for review 
+H1: PostgreSQL schema changes under load  Deep diveAbout 10 minutes AI-generated       
+A PostgreSQL schema change has two costs: the work it performs once it starts, and the work it holds up while it waits to start. Adding a nullable column can avoid rewriting every row and still stop new readers behind a long transaction. Building an index concurrently keeps ordinary writes available and still consumes resources, waits for transactions and can leave an unusable index after failure. 
+The practical question is therefore more precise than whether a command is “online”. Which locks does this exact form need? Does it scan or rewrite existing data? What remains if it stops? What evidence makes the next application release safe? 
+We continue the conversion from decimal unit_price to integer unit_price_minor on the shop’s order lines. The integer counts hundredths in this single-unit, fixed-scale example: 20.00 becomes 2000. Live schema changes and backfills establishes the compatible caller stages and decimal-authoritative write bridge. Here we carry those stages through PostgreSQL’s locks, validation and index lifecycle. The downloadable drill checks the mechanisms on an owned PostgreSQL 18.6 instance. 
+H2: Fast work can have a long queue 
+A plain SELECT takes an AccessShareLock on its table. In an explicit transaction, PostgreSQL normally retains that lock until the transaction ends, even after the query has returned. Most ALTER TABLE forms request AccessExclusiveLock, which conflicts with every table-lock mode, including a reader’s. 
+Suppose an earlier report has read order_items and left its transaction open. The migration requests its exclusive lock and waits. A later reader requests another shared lock. That reader is compatible with the report, but it queues behind the earlier incompatible schema request. The migration has not changed a row, yet it has become an obstacle to new work. 
+Follow the dependency in Figure 1. At the third step, choose Keep waiting. Then return to Lock timeout and watch which session can proceed without ending the report.  
+Figure 1 A reader can wait behind a change that has not begun 
+Illustrative steps from the observed lock dependency · vertical position is order, not duration  
+Earlier report
+BEGIN; SELECT … 
+Schema session
+ALTER TABLE … 
+New reader
+SELECT count(*)   
+ DDL wait policy
+ Lock timeout
+ Keep waiting 
+Play
+Back
+Next
+Reset 
+The complete dependency, as text
+The report retains AccessShareLock until its transaction ends. ALTER TABLE requests AccessExclusiveLock and waits for the report. A later reader's AccessShareLock is compatible with the report, but queues behind the earlier incompatible DDL request. A lock timeout removes the DDL request; the reader can proceed while the report remains open. The schema session must roll back its failed transaction before reuse.    
+The native drill observed this exact chain through pg_blocking_pids: the report blocked the DDL session, which blocked the new reader. A three-second lock budget then expired with 55P03. The reader returned all five lines while the report’s transaction remained open. Three seconds is the drill’s chosen budget, not a safe limit for a live service. 
+Keep metadata changes in short transactions of their own. A command that obtains its lock quickly can still hold it while the migration process performs unrelated work before committing. Splitting a long transaction after the fact cannot give its earlier lock time back. 
+BEGIN;
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+ALTER TABLE order_items
+  ADD COLUMN unit_price_minor bigint;
+COMMIT; 
+lock_timeout limits each lock acquisition. statement_timeout limits the statement as a whole, including waiting. Choose their relationship from the operation’s budget, leaving room to return an error and roll back. A failed statement inside this transaction requires recovery before reuse; the drill rolls back and verifies that the column was not installed. Do not mark a migration stage complete merely because its command was submitted. 
+Before a retry, inspect the blockers and the stored schema. Retry with a bounded delay and admission limit; an immediate loop can repeatedly put the same exclusive request in front of ordinary traffic. Ending another session is a separate incident decision, developed in Operating and diagnosing PostgreSQL. 
+H2: Separate metadata, scans and rewrites 
+The lock mode and the amount of data work are separate properties. A scan reads existing rows to prove a rule. A rewrite creates replacement table storage, usually with associated index work. A metadata change can avoid both while still needing a strong lock. 
+Three different kinds of existing-row work in PostgreSQL 18
+ | Change | Existing-row work | Operational implication 
+ | Add a nullable ordinary column with no default | No table rewrite | Old rows read as NULL; still budget the schema lock 
+ | Add an ordinary column with a constant default | The missing value can be stored in metadata | Avoids a row-by-row fill at installation 
+ | Add a column with volatile clock_timestamp() default | Rewrite | Each existing row needs its evaluated value 
+ | Validate a previously installed check | Scan, without a table rewrite | Budget reads and the validation lock separately 
+ | Change a column’s type | Often a rewrite; exact types and conversion matter | Rehearse the exact definition and dependencies  
+The drill creates a separate 10,000-row rewrite_probe. Its relation file identifier stays the same when a constant-default column is added, then changes when a clock_timestamp() default is added. That is a functional storage observation on this fixture, not a measurement of how long your table’s change will take. 
+For the price conversion, a default cannot derive the integer from another column of the row. Adding a stored generated conversion would do different installation work. Keeping a nullable ordinary column and filling it in controlled batches lets us choose when that work happens. It also keeps the mixed old/new caller contract explicit. 
+Rehearse with the actual PostgreSQL major version, column types, constraints, indexes, partition layout and dependencies. Watch free space, WAL generation and replica catch-up as well as command time. A rewrite needs room for replacement storage while the old copy still exists. Combining several alterations takes the strongest required lock; combining a cheap change with a rewrite does not make the rewrite cheap. 
+H2: Enforce new writes before checking old rows 
+During this migration the decimal remains authoritative. Every admitted insert or update derives hundredths from the decimal in the same row. The prerequisite’s BEFORE trigger, fill_minor, supplies that bridge. The bounded expansion transaction in the drill installs the column, bridge and check together, then commits before any backfill starts. 
+ALTER TABLE order_items
+ADD CONSTRAINT price_pair CHECK (
+  unit_price_minor IS NOT NULL
+  AND unit_price_minor::numeric = unit_price * 100
+) NOT VALID; 
+This check has two jobs: require a value and require equivalence. Equality alone would permit an unknown result for NULL. NOT VALID leaves pre-existing rows unchecked while ordinary subsequent inserts and updates must satisfy the rule. It is therefore a way to separate installation from scanning, rather than permission for new writes to keep creating debt. 
+Use the exact decimal domain established by the migration: finite numeric(8,2) prices, with the integer representation in a bigint. A new representation is not an opportunity to recalculate agreed order prices from the current catalogue. Order 103’s mug remains 20.00 and its tea remains 4.50 throughout this drill. 
+The writer population is part of that rule. A privileged import that bypasses the bridge, a disabled trigger or another replication write path needs an explicit contract. The ordinary-write result here does not establish that every possible administrator command preserves it. Roles, policies and privileged code follows who can alter those protections. 
+H2: Finish the backfill with a complete check 
+Backfill small committed batches from the row being changed. The compound line key is (order_id, line_no); both parts must participate in the match. The bridge continues protecting writes while the batches run. 
+WITH batch AS (
+  SELECT order_id, line_no
+  FROM order_items
+  WHERE unit_price_minor IS NULL
+  ORDER BY order_id, line_no
+  LIMIT 2
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE order_items AS i
+SET unit_price_minor = (i.unit_price * 100)::bigint
+FROM batch AS b
+WHERE i.order_id = b.order_id
+  AND i.line_no = b.line_no
+  AND i.unit_price_minor IS NULL
+RETURNING i.order_id, i.line_no; 
+The two-row limit makes the example visible. It is not a production batch recommendation. Choose the batch’s work and pause interval against request latency, lock waits, WAL and replica budgets. A row count bounds neither the width of those rows nor every index and trigger they change. 
+SKIP LOCKED means a worker can pass a row another transaction holds. In the native fixture an editor holds line (103, 1). The first two batches fill four other lines; the third returns no rows. One missing line still exists. After the editor finishes, another batch fills it. “The last batch was empty” would have switched readers too early. 
+SELECT order_id, line_no, unit_price, unit_price_minor
+FROM order_items
+WHERE unit_price_minor IS NULL
+   OR unit_price_minor::numeric
+      IS DISTINCT FROM unit_price * 100; 
+No returned rows establishes both completeness and equivalence for the checked scope. Use an identity that sees every row, on the write authority rather than a lagging replica. Check all partitions and shops the deployment intends to switch. A durable cursor can help find remaining work; it does not replace this acceptance condition. 
+Now validate the check under its weaker ShareUpdateExclusiveLock: 
+ALTER TABLE order_items VALIDATE CONSTRAINT price_pair;
+ALTER TABLE order_items
+  ALTER COLUMN unit_price_minor SET NOT NULL; 
+Validation permits ordinary row writes but conflicts with some maintenance and schema operations, including another holder of that same lock mode. Schedule those competitors. In this case the validated check proves that the integer cannot be NULL, allowing SET NOT NULL to avoid another full-table null check; that command still needs its schema lock. The drill verifies the validated constraint, required column and unchanged table file. 
+The native counterexample temporarily disables the bridge inside a transaction and tries to store 7 hundredths against the mug’s 20.00. The check rejects it with 23514; the transaction is rolled back. Final acceptance retains all five original line prices, and the integer receipt for 103 totals 2900 hundredths, displayed as 29.00. Keep receipt and export comparisons alongside storage acceptance: a caller can interpret a perfectly equivalent integer in the wrong unit. 
+H2: A concurrent index is a process 
+An ordinary index build blocks table writes while it builds. CREATE INDEX CONCURRENTLY allows ordinary inserts, updates and deletes, doing extra scans and waiting instead. Run it as a top-level command: it cannot be wrapped in the transaction used for a short metadata change. 
+CREATE INDEX CONCURRENTLY order_items_product
+ON order_items (product_id); 
+This index serves a different access pattern from the line primary key, whose leading column is order_id. Whether it earns its write cost depends on the queries. Adding CONCURRENTLY changes installation behaviour; it does not make an unnecessary index useful. 
+Figure 2 Existence comes before readiness
+Registered, invalidThe name exists in the catalogue; queries cannot yet rely on it.
+Build and catch upTable scans and transaction waits establish a usable index.
+ValidThe build completes; verify its definition and query route.
+Conceptual lifecycle. A failure after registration can leave an invalid object rather than rolling the whole process back. Some intermediate invalid indexes already require write maintenance. 
+Observe the current phase rather than treating the command as one uninterrupted scan: 
+SELECT pid, relid::regclass, index_relid::regclass,
+       phase, lockers_total, lockers_done, current_locker_pid,
+       blocks_total, blocks_done
+FROM pg_stat_progress_create_index; 
+Block counts describe the current phase, not a reliable percentage of the whole command. Writer waits and old snapshots can dominate after scanning. The native drill holds an earlier writer on its anonymous index_probe, observes waiting for writers before build, and successfully reads the table from another connection. Releasing the writer lets the build finish. This demonstrates the wait and concurrent read, not production build throughput. 
+Extra read, CPU, temporary-space and WAL demand can still slow the service. Keep the command’s workload budget and its lock budget separate. Only one concurrent build runs on a given table at a time; partitioned parents need the documented per-partition build and attachment procedure rather than assuming the same command works unchanged. 
+H2: Accept the index that actually exists 
+A failed concurrent build needs inspection. In the drill, two anonymous rows deliberately share candidate value 1. A concurrent unique build fails with 23505 and leaves probe_unique invalid. Repeating the command with IF NOT EXISTS skips the existing name and leaves it invalid. Name existence is not completion. 
+SELECT indexrelid::regclass AS index_name,
+       indisvalid, indisready, indisunique,
+       pg_get_indexdef(indexrelid) AS definition
+FROM pg_index
+WHERE indrelid = 'order_items'::regclass; 
+indisvalid concerns query use and validity of the index’s promised property. indisready concerns whether writes maintain it. They answer different questions. A later-stage failed concurrent unique build can even continue rejecting duplicate writes while remaining unavailable to query plans; do not infer every failed index’s behaviour from the earlier-stage failure in this fixture. 
+First fix the cause: conflicting data, cancellation, a deadlock or insufficient resources. Then choose a documented recovery. Dropping the failed object and rebuilding is one route. REINDEX INDEX CONCURRENTLY can rebuild an invalid index too. The drill removes its deliberate duplicate, reindexes the failed index and verifies valid and ready state. It separately rebuilds and drops a healthy concurrent index. 
+For a live replacement, accept the intended definition, state and representative query plans before retiring the previous access path. Statistics may need refreshing after a large load or data transformation. A completed build does not prove the planner will choose it, or that the chosen plan saves work; Reading and repairing PostgreSQL plans supplies that comparison. 
+Index retirement has a boundary too. An index may enforce a primary or unique key, support a foreign-key workload or be needed by an infrequent report. A zero usage count since a recent reset does not prove redundancy. DROP INDEX CONCURRENTLY reduces interference with ordinary traffic, but has its own transaction and dependency restrictions. It cannot drop a constraint-backed index as if it were an independent optional access path. 
+H2: Leave every pause in a supported state 
+After backfill acceptance, integer readers may coexist with decimal readers while the decimal-authoritative bridge still keeps both current. Keep that rollback interval long enough to exercise real receipts, reports and workers. Contract only after obsolete writers and their in-flight transactions have been drained or fenced. 
+Removing the bridge and decimal column changes the write authority and the rollback plan. The general migration article’s controlled handover pauses line writes while integer-only writers take over. An alternative needs another compatible release that derives the decimal from the integer; allowing two independent authorities is not such a release. 
+For each command, record the starting state, intended property, lock and work budgets, observation query and recovery action. A timeout can leave an additive change unapplied. An interrupted batch can leave legitimate missing rows. A failed concurrent build can leave an invalid index. These are different supported pause states with different next steps. 
+Download the complete schema drill and run python3 schema-drill.py --bindir /path/to/postgresql/bin. It needs Python’s standard library and PostgreSQL’s installed tools. It creates a private temporary cluster, disables TCP, clears inherited PostgreSQL connection settings, verifies every session’s endpoint identity before mutation and removes the owned server and files afterwards. 
+Checked on macOS with PostgreSQL 18.6 and Python 3.14.5. The five prices are the fixed shop rows; rewrite and index-failure probes are separate anonymous fixtures. The figures explain chosen states, and the script records native outcomes. No production latency, live fleet completeness or deployment throughput is inferred from these local checks.       
+H2: Sources and further reading   
+PostgreSQL 18, Explicit locking and Client connection defaults: lock conflicts, lifetime and timeout scope. 
+Modifying tables and ALTER TABLE: defaults, rewrites, validation locks and the validated-check optimisation for required columns. 
+CREATE INDEX: concurrent builds, transaction waits, uniqueness failure, partitioned-table restrictions and the limits of IF NOT EXISTS. 
+Index progress reporting and pg_index: phases, counters and valid/ready state. 
+REINDEX and DROP INDEX: recovery, concurrent replacement and dependency restrictions. 
+Live schema changes and backfills: authority, convergence and caller handover; Vacuum and transaction age: retained versions and maintenance after a large backfill.         
