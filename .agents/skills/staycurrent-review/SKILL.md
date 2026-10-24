@@ -3,7 +3,7 @@ name: staycurrent-review
 description: Review articles and collections for technical accuracy, teaching, writing and usable illustrations; confirm repairs in proportion to what changed.
 ---
 
-Judge the reader's understanding and practical judgement against the commission. Use independent readers for the first full review; reviewers report problems without editing. The coordinator owns acceptance, repair scope and completion.
+Judge the reader's understanding and practical judgement against the commission. Use independent readers for the first full review; reviewers report problems without editing. The coordinator owns acceptance, repair scope and completion. Acceptance rests on the review's concrete examples and reasoning against the references; coverage establishes what was checked.
 
 ## Review once
 
