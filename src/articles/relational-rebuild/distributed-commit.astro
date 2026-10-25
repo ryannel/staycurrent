@@ -1,0 +1,115 @@
+---
+import CommitWalk from '../../components/relational-rebuild-distributed-commit/CommitWalk.astro';
+import Recovery from '../../components/relational-rebuild-distributed-commit/Recovery.astro';
+import '../../components/relational-rebuild-distributed-commit/figures.css';
+---
+
+<p>A transaction crossing partitions needs one outcome for work held by several owners. If it commits, every owner must honour the purchase. If it aborts, none may keep its part. <strong>Distributed atomic commit</strong> is the protocol that makes that outcome recoverable, including when the process coordinating it disappears.</p>
+
+<p>Replicas solve a different part of the problem. Three copies of the order shard can agree to store an order while three copies of the stock shard agree to leave stock alone. Both groups have agreed internally, but the purchase is incomplete. The transaction needs agreement about whether those groups’ work belongs to a committed purchase.</p>
+
+<p>Every drawing follows the shop placement from <a href="/learn/databases/relational/partitioning-and-sharding/">Sharding and distributed SQL</a>. Customer shard A holds Mina’s order work; product shard P holds shared stock. We first use a simple two-phase commit model, then give its decision state surviving replicas. The drawings are illustrative protocol schedules, not observations from a running database or a description of every distributed SQL engine.</p>
+
+<section aria-labelledby="two-owners">
+  <h2 id="two-owners">One purchase, two owners</h2>
+  <p>Return to just before purchase 103. The order and its lines do not yet exist. P7 has one blue mug and P3 has twelve packs of tea. Mina wants the mug at 20.00 and two packs at 4.50 each: a total of 29.00. A successful purchase creates pending order 103 with those two lines and reduces stock to P7 = 0 and P3 = 10. It records no payment.</p>
+  <p>Figure 1 separates the work by its owner. Follow either attempted order of local commits down the second row.</p>
+  <figure class="dc-figure" aria-labelledby="dc-owners-title">
+    <figcaption id="dc-owners-title"><span class="dc-number">Figure 1</span> The gap between two local commits</figcaption>
+    <div class="dc-panel">
+      <div class="dc-pair">
+        <div class="dc-owner"><strong>A · customer shard</strong><ul><li>Create pending order 103</li><li>Line 1: P7 × 1 at 20.00</li><li>Line 2: P3 × 2 at 4.50</li></ul><small>A₁ · A₂ · A₃ copy this work</small></div>
+        <div class="dc-owner"><strong>P · product shard</strong><ul><li>Guard both stock decrements</li><li>P7: 1 → 0</li><li>P3: 12 → 10</li></ul><small>P₁ · P₂ · P₃ copy this work</small></div>
+      </div>
+      <div class="dc-pair dc-gaps">
+        <div><b>A commits → contact with P lost</b><p>Order and lines retained.<br />Stock unchanged.</p></div>
+        <div><b>P commits → contact with A lost</b><p>Stock reduced.<br />No order or lines.</p></div>
+      </div>
+      <p class="dc-rule">The purchase needs: <b>both commit</b> or <b>both abort</b>.</p>
+    </div>
+    <p class="dc-caption">Two independent failure examples, each stopped between separate local commits. Replicas can preserve either incomplete result. A and P name data owners, each of which can itself have several replicas.</p>
+  </figure>
+  <p>Changing the order of the calls changes which incomplete result is possible. Retrying the second call may eventually finish it, but that leaves the application responsible for recovering a purchase that has already partly committed. It has not provided the database transaction’s all-or-nothing outcome.</p>
+  <p>Instead, A and P join one transaction as <strong>participants</strong>. A <strong>coordinator</strong> gathers their readiness and records the transaction’s decision. These are roles: the coordinator might run on a participant’s machine, and the participants are not necessarily separate SQL connections controlled by the application.</p>
+</section>
+
+<section aria-labelledby="prepare">
+  <h2 id="prepare">Preparing to commit</h2>
+  <p>A participant cannot promise to commit merely because its work looks valid now. P must still be able to supply the mug when the decision arrives. It must also survive a restart without forgetting what it promised.</p>
+  <p>In <strong>two-phase commit</strong>, the first phase asks participants to <strong>prepare</strong>. A participant checks whether it can finish its work, stores enough state durably to finish after a failure, and retains the protection needed to honour that promise. In a locking implementation, that includes keeping the relevant locks. Only then does it answer “prepared”.</p>
+  <p>Prepared means ready to obey a later commit or abort decision. It does not mean committed. Mina has no successful purchase yet, and other transactions must not treat its provisional order or stock changes as ordinary committed facts.</p>
+  <p>Step through Figure 2 with both participants ready. Watch the durable records under the arrows. Then change P’s vote to a refusal.</p>
+  <CommitWalk />
+  <p>A refusal prevents commit. P might find insufficient stock, fail a required check, or be unable to store its prepared state. The refusal option abstracts that failure; it does not add a second buyer or change the shop’s starting rows.</p>
+  <p>A participant that has not promised can abandon its work. Once it has answered “prepared”, it cannot take a timeout as permission to abort on its own. The coordinator may already have committed and told the other participant. Giving the mug away at that point would make A’s committed order impossible to honour.</p>
+</section>
+
+<section aria-labelledby="decision">
+  <h2 id="decision">Recording one decision</h2>
+  <p>The second phase chooses and delivers the outcome. In Figure 2, the coordinator can record COMMIT only after A and P have both prepared. If either refuses, it records ABORT. If a required reply does not arrive, it may choose abort while no final decision has been made; a missing reply never counts as a positive vote.</p>
+  <p>The durable decision comes before its notifications. Suppose the coordinator instead told A to commit, then crashed before recording that choice. Recovery could find no decision and tell P to abort. Recording first gives recovery the fact it needs to finish the same choice.</p>
+  <p>A learns COMMIT before P in the drawing. That is allowed: an undecided participant can still be waiting while another has finished. What is forbidden is an opposing outcome. After COMMIT is durably chosen, P must eventually honour COMMIT when it can recover and communicate; it cannot substitute ABORT because delivery was slow.</p>
+  <p>The model gives each transaction a fixed participant list, durable prepared records and a durable final decision. It assumes processes can stop and recover, messages can be delayed, lost or repeated, and storage preserves acknowledged durable state. Decision messages refer to the same transaction; repeated delivery completes that transaction rather than decrementing stock again. Record retention and recovery must preserve enough identity and outcome history to maintain that rule. These are protocol assumptions, not an application retry recipe.</p>
+</section>
+
+<section aria-labelledby="coordinator-loss">
+  <h2 id="coordinator-loss">When the coordinator disappears</h2>
+  <p>Stopping a coordinator does not erase a durable decision. It can make the evidence inaccessible. Recovery must distinguish those two facts before it tells any participant what to do.</p>
+  <h3 id="prepared-unknown">Prepared, with no known outcome</h3>
+  <p>Take classic two-phase commit with one coordinator’s durable log. Both participants have prepared; the coordinator disappears and neither participant has learnt a final outcome. A and P can still talk. They can confirm each other’s readiness, but readiness is not evidence of what the coordinator decided.</p>
+  <p>The coordinator could have recorded COMMIT after hearing both replies. It could instead have recorded ABORT after its deadline expired while a reply was still in transit. Neither history is ruled out by “we both prepared”. If no accessible process or durable record can establish the outcome, the prepared participants wait. This is the <strong>blocking</strong> case of classic two-phase commit.</p>
+  <p>Figure 3 starts there. Compare it with recovery when the decision has an authoritative replicated history, then with that history temporarily unavailable.</p>
+  <Recovery />
+  <h3 id="surviving-decision">A decision that outlives its coordinator</h3>
+  <p>In the replicated version of the model, three voters D1, D2 and D3 keep the transaction decision state. A final decision is established through their agreement protocol. The coordinating process can then disappear while the state it used survives. This is the same distinction between a process and authoritative history developed in <a href="/learn/databases/relational/partitioning-and-sharding/#replicated-history">Sharding and distributed SQL</a>.</p>
+  <p>In Figure 3’s middle case, COMMIT was established with durable copies on D1 and D2. D1 then fails. D2 and D3 can recover authority through the protocol, which preserves the agreed history, and a recovery process learns COMMIT. It delivers that existing decision to P. It does not take a new vote on whether Mina should get the mug.</p>
+  <p>The last case fails earlier, before either participant learns COMMIT, and makes only D3 reachable from the decision group. Its older copy contains no final decision. Reading that copy is not proof that COMMIT never happened. With no accessible witness to the decision and no quorum to recover authority, the participants must wait. Replicating the decision improves the failures it can survive; it does not make every network split available.</p>
+  <p>If recovery authoritatively establishes that no final decision was made, it can continue under the protocol’s rules, including choosing abort. That requires both recovering the relevant state and preventing an old coordinator from establishing a conflicting outcome. Merely appointing a replacement process supplies neither guarantee.</p>
+  <p>A replicated decision record is one way to explain recoverable coordination. It is not the only commit design. Consensus can also be integrated more directly into commit, as in Paxos Commit. The questions remain which evidence makes the outcome final, who can recover it, and which missing participants or quorums can stop progress.</p>
+</section>
+
+<section aria-labelledby="visibility">
+  <h2 id="visibility">Commit, visibility and cleanup</h2>
+  <p>The decision and the work of finishing it happen at different moments. A participant may still hold a provisional record after COMMIT has been chosen. A later operation encountering that record must respect its transaction’s outcome: it may wait, obtain the decision or help finish the work, according to the engine. It cannot simply ignore unresolved stock and sell the mug again.</p>
+  <p>Nor does atomic commit require every physical copy to change at the same instant. A system can establish commitment before it has installed every final row form or removed every provisional marker. The engine’s read and isolation machinery must make that delay safe for the reads it permits. CockroachDB, for example, separates commitment from asynchronous resolution of provisional writes; its native protocol is developed in <a href="/learn/databases/relational/cockroachdb/transactions/">CockroachDB transactions and retries</a>.</p>
+  <p>Atomic commit also does not give two separate reads a common snapshot. A report can read A before the purchase, see no order, then read P after it and see stock 0. Both answers can be correct when obtained; together they do not describe one committed shop state. <a href="/learn/databases/relational/distributed-reads/">Time, snapshots and distributed reads</a> establishes how related reads choose a safe common history.</p>
+  <p>Isolation remains necessary for competing purchases. Two transactions can each commit all their own writes and still violate a rule if their reads and decisions were allowed to race incorrectly. Here P must enforce the stock guard at the shared authority, and the complete purchase must use suitable isolation. <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> develops that reasoning.</p>
+</section>
+
+<section aria-labelledby="participants">
+  <h2 id="participants">What the transaction must coordinate</h2>
+  <p>A and P are the two data participants visible in our purchase. That is a useful first drawing, not a promise that this purchase always contacts only two groups. Constraints and indexes also have locations, and the transaction must include the work required to keep their rules true.</p>
+  <p>For example, the shop’s order number identifies an order globally. If A and B can independently accept 103, their local checks have not enforced that rule. An implementation using a separate globally enforced order-key index must coordinate its claim with the order and stock work. A foreign-key check may likewise need to protect a remotely owned customer, order or product reference against a conflicting change.</p>
+  <figure class="dc-figure" aria-labelledby="dc-scope-title">
+    <figcaption id="dc-scope-title"><span class="dc-number">Figure 4</span> Count the rule’s work</figcaption>
+    <div class="dc-panel dc-scope">
+      <div class="dc-boundary"><span>One transaction boundary</span><div class="dc-scope-main"><b>A<br /><small>Order + lines</small></b><span>↔</span><b>P<br /><small>Guarded stock</small></b></div><div class="dc-optional"><span>↕ if separately owned</span><b>Global order-key claim · index updates · reference protection</b></div></div>
+      <p class="dc-rule">Every required participant must be covered by the outcome.</p>
+    </div>
+    <p class="dc-caption">An ownership audit, not an asserted engine layout. The lower box shows possible additional work; an engine can place some of it with A or P, use other enforcement mechanisms, or restrict supported constraints.</p>
+  </figure>
+  <p>Check the actual mechanism and its scope. Adding a customer routing column or drawing order and lines together does not prove global uniqueness or reference integrity. A read-only check can also need concurrency protection even when it creates no row. Engines can optimise participants that need no second-phase work, so count the protocol’s required work rather than counting tables.</p>
+  <p>The commit walk also shows the waits. Prepare messages must reach the required owners; those owners must finish checks and retain their promises durably; their replies must reach the coordinator before it can choose commit. The decision must then become durable and reach whoever needs it. Replicated participant state and replicated decision state add their own agreement waits.</p>
+  <p>Some of those waits overlap. Others depend on an earlier answer. Co-locating coordinator and participant can remove network messages, and an engine can combine writes, pipeline work or use a faster commit path. “Two phases” is therefore not one fixed number of network round trips, and a drawing’s row spacing measures no elapsed time. Trace the actual dependent messages and durability waits to assess latency.</p>
+  <p>Co-location reduces coordination when it brings the complete rule’s work together. Keeping Mina’s order and its lines on A helps, but stock on P remains authoritative for every buyer. A copied catalogue value does not provide a second allowance to sell P7. During a recovery wait, prepared work can also retain locks or other protected state, holding up transactions that need the same resources. A slow decision can therefore affect more than its original caller.</p>
+</section>
+
+<section aria-labelledby="application">
+  <h2 id="application">Recovering the purchase at the application boundary</h2>
+  <p>Now let the database finish the distributed purchase and lose its reply to the application. The participants can all agree on COMMIT while the application still does not know whether it succeeded. Restarting a coordinator, finishing P’s work and recovering Mina’s request are separate jobs.</p>
+  <p>The caller retains the existing request identity, <code>purchase-103</code>, scoped to customer 1’s purchase operation, with the same canonical basket. Its durable terminal result belongs in the same transaction as the successful purchase. Re-entering the protected request protocol recovers accepted order 103 without buying again. An unresolved database transaction may still make that recovery wait; a caller’s timeout does not turn it into an abort.</p>
+  <p><a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a> develops the complete request protocol, including competing attempts, payload mismatches and retained results. <a href="/learn/databases/relational/cockroachdb/transactions/">CockroachDB transactions and retries</a> maps the reasoning to native transaction state and error handling. Its optimised commit paths should be understood through their own contract rather than assumed to be Figure 2’s message sequence.</p>
+  <p>External delivery has another boundary. Recording this purchase does not charge a card or send an email, and rolling it back cannot reverse an outside service. <a href="/learn/databases/relational/outboxes-and-jobs/">Outboxes and database-backed jobs</a> shows how to commit a durable intention with the purchase and recover the later delivery.</p>
+</section>
+
+<section aria-labelledby="sources">
+  <h2 id="sources">Sources and further reading</h2>
+  <p>Checked on 25 October 2026. The purchase, message schedules and replicated decision group are illustrative models. No cluster timings, fault injections or native transaction traces are reported.</p>
+  <ul>
+    <li>Jim Gray and Leslie Lamport, <a href="https://lamport.azurewebsites.net/video/consensus-on-transaction-commit.pdf">Consensus on Transaction Commit</a>, especially sections 2–3 and 6: atomic commit requirements, durable state, classic two-phase commit’s blocking case, and recovery. Sections 4–5 develop Paxos Commit.</li>
+    <li>Microsoft’s protocol documentation, <a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tpsod/e34079f0-22de-4c03-9cb8-84c2448a4613">Two-Phase Commit Protocol</a>: readiness votes, the common outcome and the boundary on unilateral abort.</li>
+    <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-prepare-transaction.html">PREPARE TRANSACTION</a>: a concrete prepared state that survives the session and keeps locks. This interface is intended for transaction managers, not ordinary application transaction code.</li>
+    <li>Google Cloud, <a href="https://cloud.google.com/spanner/docs/whitepapers/life-of-reads-and-writes">Life of Spanner Reads &amp; Writes</a>: replicated splits, cross-split commit, application of mutations and the waits on the path. <a href="https://cloud.google.com/spanner/docs/secondary-indexes">Secondary indexes</a> and <a href="https://cloud.google.com/spanner/docs/foreign-keys/overview">Foreign keys</a> give concrete examples of index and integrity work beyond base-row writes.</li>
+    <li>CockroachDB, <a href="https://www.cockroachlabs.com/docs/stable/architecture/transaction-layer">Transaction Layer</a>: an example of an optimised atomic commit protocol and cleanup of provisional writes after commitment.</li>
+  </ul>
+</section>
