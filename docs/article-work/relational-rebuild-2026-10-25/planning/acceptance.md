@@ -1,0 +1,7 @@
+# Planning acceptance
+
+Accepted the 59-owner collection map and opening-batch outlines after one independent practitioner and one teaching/value review of the complete provisional route. Both found the same medium gap: generic replica agreement lacked an owner before its consumers. The practitioner also suggested a low-cost CockroachDB slow-request route correction. No substantive opening-batch dependency defect or further justified cut/merge was found.
+
+Correction: distribution now establishes authoritative replicated history, acknowledgement guarantees and quorum availability, distinguishing partition agreement from cross-partition commit. Replicas retains copied-history progress/read routing; native CockroachDB architecture retains range/Raft/lease application. Distributed commit, placement and membership identify the foundation explicitly. The introduction child carrier and generic task route agree. The slow-request branch names native CockroachDB query-performance and cluster-health owners separately.
+
+The coordinator confirmed only these changed ownership statements and their consuming routes in context, with parent references and cycle/coverage checks. All unaffected first-map review coverage is retained. No second complete planning review, prose review or media review was run. The accepted-map folder preserves the integrated map and opening outlines. Later detailed outlines must respect these outcomes and boundaries.
