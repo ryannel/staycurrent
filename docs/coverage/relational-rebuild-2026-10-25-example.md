@@ -174,3 +174,7 @@ Keep the original three ternary offers and its absent `(S1, P7, South)` unchange
 Category IDs are 0 Catalogue (a synthetic root), 10 Teaware, 11 Mugs, 12 Blue mugs and 20 Gifts. Baseline edges are 0→10, 10→11, 11→12 and 0→20. No product membership or order facts are added.
 
 Independent variations move the Mugs subtree from Teaware to Gifts (replace 10→11 with 20→11), retain both parent edges for the multiple-parent alternative, or attempt the descendant-parent edge 12→10 that closes a cycle. Opposing concurrent Teaware/Gifts reparent attempts start from their initially separate branches; any outcome and protection depend on the complete stated protocol/isolation. These variations do not silently become the baseline.
+
+## Index history-query variation
+
+Reuse the exact generated report fixture for a customer-history query returning `order_id`, `placed_at` and `status`, filtered by one customer ID and a UTC lower time bound, ordered by `placed_at DESC, order_id DESC`, limited to 10. Compare common customer 1001 with rare customer 1002 and full history with paid-only history. No new fields, totals or rows are implied. Paid-only history can support a partial-index example; the generated pending population is broad, so do not call it a small slice. The 201/202 pagination projection remains an independent tie illustration if reused.
