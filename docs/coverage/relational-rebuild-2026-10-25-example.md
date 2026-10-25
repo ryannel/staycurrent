@@ -83,3 +83,15 @@ These scenarios start from the shared rows above. They are separate explorations
 These illustrations start independently from the shared rows unless stated otherwise. An additional order-103 line 3 for P7 distinguishes line identity from product identity. Customer 1's current name can be corrected from Mina Shah to Mina Patel. A later P7 catalogue price is 22.00; its agreed order-103 unit price remains 20.00, preserving the order total29.00 rather than repricing it to31.00.
 
 For higher-form examples the offers are (S1,P7,North), (S1,P3,South), (S2,P7,South); (S1,P7,South) is absent. P7 has independent tags gift/ceramic and suppliers S1/S2. A subtype example gives P3 origin Japan and P7 capacity300ml. A category hierarchy has Teaware→Mugs→Blue mugs; a multiple-parent alternative also places Mugs under Gifts.
+
+Values also uses independent calculation/comparison/clock illustrations: divide P7's20.00 into three shares without adding payments; compare written forms P7/p7 without creating another product; compare the Stockholm calendar day25October2026 with elapsed hours. The writer verifies the named-zone result and records the runtime; these are separate illustrations, not changes to order103's time or shop rows.
+
+## History scenarios
+
+For catalogue history, P7's22.00 price is initially recorded on21October2026at12:00UTC as effective from22October00:00UTC. On24October09:00UTC its effective time is corrected to21October00:00UTC. Earlier price20.00 applies before the relevant effective boundary. These recorded/effective times support separate questions about what applied and what the system knew. Order103 remains20October, agreed unit price20.00 and total29.00.
+
+A separate hypothetical later customer1 deletion request can include a generated invoice PDF and search copy as external dependants. No retention duration, policy decision or legal outcome is specified.
+
+## Catalogue import B17
+
+Independent immutable source rows have identity(batch_id,row_no):1=P7/Blue mug/22.00;2=newP11/Tea strainer/8.00;3=P3/Green tea,50g/-4.50(rejected);4=P9/Teapot/36.00. This feed owns catalogue name and price only. Existing stock and order-line agreed prices remain unchanged; new P11 starts stock0. Rows1and2 and their applied records commit; work stops before row4's chunk starts, leaving row3 rejected and row4 pending. This is a known pre-start interruption, not an uncertain commit outcome. A separate duplicate-P7 variant demonstrates conflicting destination product keys and is rejected before application.

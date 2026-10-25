@@ -1,0 +1,7 @@
+# Shared draft SQL/template correction
+
+Values and constraints independently measured inherited light SQL token contrast below4.5. Root added src/styles/relational-rebuild-code.css and imported it in neutral private drafts and main RelationalRebuild. Main article wrapper/import now matches the existing relational-design typography/SQL/table styling used in author previews. Published article layouts and global colour tokens were not changed.
+
+Current integrated introduction, modelling, query-results, values and constraints checked at1280×720 and375×812, in Light and Dark. All20 route/viewport/theme combinations had page width equal viewport and zero figures outside viewport. All31 current SQL blocks per matrix had minimum rendered token contrast4.846:1(light) and4.591:1(dark); modelling has no SQL blocks. Keywords, strings, constants and ordinary text were measured from computed rendered foreground/background colours. Phone screenshot inspected actual constraints SQL: long code scrolls within its labelled/focusable region, not the page. Existing prose/figure/SQL-model reviews were retained; no new full article reading. Sources/navigation structure unchanged.
+
+Constraints, values and aggregation authors independently confirmed the shared correction on their own finished pages and retained their unaffected model/SQL/control evidence. Root restored1280×720/System, zero running players, closed its owned tab and released lease. This is bounded shared-layout/colour confirmation, not another collection review.

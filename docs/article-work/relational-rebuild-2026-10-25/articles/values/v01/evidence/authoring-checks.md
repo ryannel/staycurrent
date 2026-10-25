@@ -1,0 +1,18 @@
+# Authoring checks · values
+
+First complete draft written directly from the supplied accepted scope and fixed references. No delegation or independent review performed. Coordinator owns integration, build/server and the first independent review after freeze.
+
+- Complete reference exposure: all19 bounded parts with END markers; finished reference drawings studied. See reference-exposure.md.
+- Authoring reread and continuity pass complete through prose, tables, captions, controls and the text alternative. See example-facts.md. No changed shared starting rows or unresolved dependencies.
+- All8 numbered figure captions are text, not document headings. The shared ArticleBody wrapper supplies contents; wrapper closes sources at the bottom.
+- SQL verification: PASS,36 observations,6 expected failures, all7 displayed blocks executed unchanged in owned PGlite0.5.8/PostgreSQL18.3 WASM. Full interactive model results compared against SQL and WHERE results. All instances closed.
+- Expected failure evidence covers scale overflow, negative price, known duplicate code, second NULL under NULLS NOT DISTINCT, measured zero under CHECK, missing weight under NOT NULL.
+- Primary claims checked against engine manuals/RFC; ICU alternatives remain documentation-based. See technical-sources.md.
+- First complete-source compilation: coordinator reported PASS with source stable during build. Final stable compilation requested after rendered checks; coordinator owns its result.
+- Rendered at1280×720 and375×720 in light and dark. All8 figures inspected; mobile panels stack, repeated clock readings stay readable, long predicate wraps, all labels remain inside panels. No page or figure horizontal overflow. Three compact data/comparison tables inspected at mobile; SQL horizontal overflow stays inside labelled focusable regions.
+- All5 filter options checked against visible predicate/result rows, including empty AND result. Next, Back, Reset, Play/Pause and Replay checked; automatic playback reached3/3 and stopped. Option changes retain current stage with updated SQL, rows and explanation. Text alternative contains all5 complete result sets.
+- Keyboard: select menu arrow/Return changes option; Return activates Next/Reset; Tab moves from Next to Reset; labelled SQL region focused and scrolled horizontally with ArrowRight (scrollLeft39.5). Sources confirmed closed by default, expanded then closed at absolute bottom. No screen-reader software run; semantic table/labels and live explanation inspected through accessibility state. Reduced-motion hold behaviour checked in supplied shared-player source, not simulated in the browser.
+- Shared syntax-colour correction supplied by coordinator was confirmed in current rendered values SQL: lowest contrast4.846354:1 light,4.590944:1 dark. Own figure text-token contrast≥6.05:1 light; semantic coloured rails≥3.76:1. See token-contrast.json for the original token calculation; rendered syntax uses the coordinator’s corrected mixtures rather than the original token alone.
+- Lease released with1280×720/System verified, player reset/stopped at1/3, sources closed and all owned preview/reference tabs closed. No user tabs changed or closed. No source change needed after rendered inspection.
+
+Normal authoring corrections before freeze: render no-row explanation for AND filter; avoid empty retained-ID list in text alternative; record locale from pg_database rather than obsolete lc_collate setting; preserve separate returned SQL fields with aliases. Failed verifier attempts were script/metadata checks, not article-engine discrepancies; final evidence records successful run.

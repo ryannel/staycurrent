@@ -1,0 +1,161 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Figures from '../../components/relational-rebuild-aggregation/Figures.astro';
+import { queries } from '../../components/relational-rebuild-aggregation/queries.mjs';
+---
+<p>An aggregate calculates one value from several rows. <code>SUM(quantity)</code> adds their quantities; <code>COUNT(*)</code> counts the rows. With <code>GROUP BY product_id</code>, each product gets its own calculation and one result row. A window function makes a related calculation while keeping each row: every order line can show its quantity alongside the total for its product.</p>
+<p>The choice starts with what one result row should mean. A product report needs one row per product. A list comparing each line with its product’s total still needs one row per order line. Both use the same quantities, but replacing lines with summaries and attaching summaries to lines answer different questions.</p>
+<p>Every example follows the shop from <a href="/learn/databases/relational/query-results/">Joins and the meaning of a result row</a>. Its five order lines contain three units of tea, three blue mugs and one teapot. Orders 101 and 102 are paid; 103 is pending. We will keep those five lines visible while changing which rows contribute to a calculation.</p>
+<p>The SQL uses PostgreSQL 18. The drawings explain the results, rather than the engine’s execution plan. <a href="/relational-rebuild/aggregation/shop-aggregates.sql">Download the data and queries</a> to reproduce them in a PostgreSQL session. The script creates temporary objects and rolls back its changes.</p>
+
+<section id="group-by">
+<h2>GROUP BY</h2>
+<p>Start with a report of ordered units for each product. An order line records a quantity, so counting lines is not enough: order 102 has one line for two mugs.</p>
+<p>For the examples, <code>line_facts</code> names the result of attaching each order’s date and status to its lines. The order key is unique, so this join keeps one row per order line:</p>
+<Sql label="The five order lines with their order’s date and status" code={queries.lineFacts} />
+<p>The download defines this query as a temporary view called <code>line_facts</code>. A view gives a query a name that another query can use like a table. It supplies the same five rows, without storing another copy of the facts.</p>
+<Sql label="Count order lines and ordered units per product" code={queries.grouped} />
+<p><code>GROUP BY product_id</code> puts lines with the same product ID together. Each group becomes one result row. Follow P3’s two lines in Figure 1: their quantities are 1 and 2, so the group has two lines and three units.</p>
+<Figures kind="group" number="1" title="Five lines become three product summaries" />
+<p>The grouping columns define the result’s grain. Change them to <code>product_id, status</code> and each product’s paid and pending lines form separate groups:</p>
+<Sql label="One result row per product and order status" code={queries.split} />
+<p>P3 now has a paid row for one unit and a pending row for two. P7 splits the same way, with two paid units and one pending. P9 has only a paid row. The report has five rows instead of three, even though its input has not changed. Adding a grouping column changes the question.</p>
+<h3>What belongs in a group row</h3>
+<p>A product summary can show the product ID because it is the same throughout the group. It can show a sum or count calculated from the group. It cannot simply show <code>order_id</code>: the P3 group contains orders 101 and 103, and neither is “the” order for that summary. PostgreSQL rejects that ungrouped column.</p>
+<p>Putting the column inside <code>MAX</code> makes a different, valid request, but does not select an entire row:</p>
+<Sql label="Independent maxima do not select a source row" code={queries.maxima} />
+<p>For P7, the largest quantity is 2, from order 102, while the largest order ID is 103, whose quantity is 1. The result <code>P7, 2, 103</code> combines two independent maxima. To select a particular source row, we need an ordering and a row-selection rule; ranking will supply those below.</p>
+<p>Names need similar care. Grouping only by a product’s name could combine distinct products that happen to share it. Use the product key. If the report needs the catalogue name too, join the completed product summary to <code>products</code> on that key. PostgreSQL also permits other columns from a table when its primary key is grouped, because that key determines them.</p>
+<p>Grouping supplies no promised display order. The final <code>ORDER BY product_id</code> makes the output dependable. It does not change which lines belong to a group.</p>
+</section>
+
+<section id="conditions">
+<h2>WHERE, HAVING and FILTER</h2>
+<p>The shop now wants to compare all ordered units with units on paid orders. “Paid” here means the order’s stored status, not a fresh calculation from its payments. There are three places a condition can act, and each changes a different population.</p>
+<p><code>WHERE status = 'paid'</code> removes pending lines before grouping. Every calculation then sees only the three paid lines. <code>HAVING SUM(quantity) &gt;= 3</code> instead keeps all five lines for grouping and rejects completed groups whose sum is too small. <code>FILTER</code> restricts the input to one aggregate, leaving other aggregates free to use the same rows.</p>
+<p>Switch the condition in Figure 2. Watch whether the pending lines disappear, the teapot’s group disappears, or two sums receive different inputs.</p>
+<Figures kind="population" number="2" title="A condition can act on lines, groups or one sum" />
+<Sql label="Keep only paid lines before making any sums" code={queries.where} />
+<p>This gives P3 1 unit, P7 2 and P9 1. There is no longer enough information in these groups to calculate the all-order totals of 3, 3 and 1.</p>
+<Sql label="Keep products whose complete group has at least three units" code={queries.having} />
+<p>This gives P3 and P7 with 3 units each. P9’s one-unit group was formed but fails the condition. <code>WHERE SUM(quantity) &gt;= 3</code> cannot express this at the same query level: <code>WHERE</code> decides which lines reach the sum.</p>
+<Sql label="Calculate all units and paid-order units side by side" code={queries.filter} />
+<p>Now P3 has all 3, paid 1; P7 has all 3, paid 2; P9 has all 1, paid 1. Put a condition in <code>WHERE</code> when it should restrict the whole report’s input. Put it in <code>FILTER</code> when only that calculation should use the smaller population. Use <code>HAVING</code> when the decision needs a completed group’s value.</p>
+</section>
+
+<section id="counts">
+<h2>Counts, NULLs and empty inputs</h2>
+<p>A count needs a unit as much as a sum does. These four calculations over the same five lines give three different answers:</p>
+<Sql label="Count rows, known quantities, distinct products and ordered units" code={queries.counts} />
+<div class="table-scroll" role="region" aria-label="What each count measures" tabindex="0"><table><caption>The five-line input</caption><thead><tr><th>Expression</th><th>Result</th><th>What it counts or adds</th></tr></thead><tbody><tr><td><code>COUNT(*)</code></td><td>5</td><td>Every input row</td></tr><tr><td><code>COUNT(quantity)</code></td><td>5</td><td>Rows with a non-null quantity</td></tr><tr><td><code>COUNT(DISTINCT product_id)</code></td><td>3</td><td>Different non-null product IDs</td></tr><tr><td><code>SUM(quantity)</code></td><td>7</td><td>Ordered units</td></tr></tbody></table></div>
+<p><code>quantity</code> cannot be null in the order-line schema, so its count equals the row count here. That equality can disappear after an outer join. Count customers’ orders, including Edda, who has none:</p>
+<Sql label="Distinguish an outer join’s preserved row from a matching order" code={queries.customerCounts} />
+<p>Mina has two joined rows and two orders. Tariq has one and one. Edda has one joined row but zero orders. Her preserved row has null order columns: <code>COUNT(*)</code> counts it, while <code>COUNT(o.order_id)</code> does not. The order’s non-null key is what makes the second count a count of matches.</p>
+<h3>A missing measurement is not a zero</h3>
+<p>For a separate measurement example, suppose the tea package weighs 65 grams, the teapot 820 grams, and the mug has not yet been measured. The mug’s weight is <code>NULL</code>. The temporary <code>product_weights</code> table holds these three product IDs and their nullable <code>package_weight_g</code> measurements.</p>
+<Sql label="Count known weights alongside their total and mean" code={queries.weights} />
+<p>The result is 3 products, 2 measured, 885 measured grams and a mean of 442.5 grams. <code>SUM</code> and <code>AVG</code> ignore the null weight. The mean divides by two known measurements, not three products. It does not estimate the missing mug’s weight.</p>
+<p>For the mug alone, the non-null count is zero and the sum is null. <code>COALESCE(SUM(package_weight_g), 0)</code> would display zero, but would turn “no known weight” into a number that looks measured. The still-due report could deliberately treat no recorded payments as zero paid; that reporting policy does not make an unknown measurement zero.</p>
+<p>The population matters for averages even without nulls. Across these order lines, <code>AVG(unit_price)</code> is 16.80: each line gets equal weight. The mean price per ordered unit is <code>SUM(quantity * unit_price) / SUM(quantity)</code>, or 108.50 / 7 = 15.50. The quantity-two lines must contribute twice to that second mean.</p>
+<h3>No rows, or one row containing NULL?</h3>
+<p>No order in the starting data is cancelled. Compare these queries:</p>
+<Sql label="A scalar aggregate over an empty input" code={queries.scalarEmpty} />
+<Sql label="An ordinary grouped query over the same empty input" code={queries.groupedEmpty} />
+<p>The first returns one row: <code>lines = 0, units = NULL</code>. Without grouping columns, the aggregate summarises the whole input even when it is empty. The second returns no rows: there is no product group to summarise. A final <code>HAVING</code> can reject a scalar aggregate’s one row too.</p>
+<p>If zero units is the intended meaning for an empty report, <code>COALESCE(SUM(quantity), 0)</code> supplies it. In the grouped query it cannot invent absent product rows. To show every product, including those without lines, start from <code>products</code> and attach the summaries with a left join.</p>
+</section>
+
+<section id="windows">
+<h2>Keeping each row with a window function</h2>
+<p>Suppose the shop wants to show how much each line contributes to its product’s ordered units. A grouped result has already lost the line’s identity. A window function keeps that identity and makes the other lines available for the calculation.</p>
+<Sql label="Attach a product’s ordered-unit total to every line" code={queries.window} />
+<p><code>OVER</code> makes this <code>SUM</code> a window calculation. <code>PARTITION BY product_id</code> divides the input into separate sets called partitions. With no ordering inside <code>OVER</code>, this sum uses the whole product partition for each line. Follow P3 in Figure 3: both lines receive 3, but keep their own quantities of 1 and 2.</p>
+<Figures kind="window" number="3" title="The total repeats; the five line identities remain" />
+<p>The percentage divides the current line’s quantity by that repeated total. Multiplying by <code>100.0</code> gives numeric division before rounding to one decimal place. With integer operands, <code>1 / 3</code> truncates to zero in PostgreSQL. The positive-quantity constraint and a non-empty partition keep this denominator above zero.</p>
+<p>Do not sum <code>product_units</code> down the displayed result to get a shop total. P3’s 3 appears twice and P7’s 3 appears twice. The repeated number is context for a line, not another independently ordered quantity.</p>
+<h3>Which rows the window sees</h3>
+<p>A window sees the input left by this query’s joins, filtering and grouping. Add <code>WHERE status = 'paid'</code> to the window query and its P3 partition contains only the one paid tea line, with a total of 1. The pending line cannot contribute after it has been removed.</p>
+<p>A window over product summaries sees products instead of lines:</p>
+<Sql label="Calculate a shop total over three product summaries" code={queries.summaryWindow} />
+<p>The common table expression produces three rows with units 3, 3 and 1. <code>SUM(units) OVER ()</code> has no partition columns, so all three rows share a partition and receive 7. There are still three rows. A window does not restore earlier rows, and putting it after a join that multiplied quantities does not repair that multiplication.</p>
+</section>
+
+<section id="ranking">
+<h2>Ranking and ties</h2>
+<p>The three product summaries can now become a ranking. Tea and mugs tie at three units; the teapot follows at one. A business rank should recognise that tie, while a numbered list still needs to choose which row comes first.</p>
+<Sql label="Compare row numbers, competition places and distinct-score places" code={queries.ranking} />
+<figure class="rank-figure"><figcaption><span>Figure 4</span> Two products share the highest score</figcaption><div class="table-scroll" role="region" aria-label="Ranking the product summaries" tabindex="0"><table><thead><tr><th>Product</th><th>Units</th><th><code>ROW_<wbr />NUMBER</code></th><th><code>RANK</code></th><th><code>DENSE_<wbr />RANK</code></th></tr></thead><tbody><tr><th>P3 · tea</th><td>3</td><td>1</td><td class="same-place">1</td><td class="same-place">1</td></tr><tr><th>P7 · mug</th><td>3</td><td>2</td><td class="same-place">1</td><td class="same-place">1</td></tr><tr><th>P9 · teapot</th><td>1</td><td>3</td><td>3</td><td>2</td></tr></tbody></table></div><p>Row numbers count rows; RANK leaves room for both products in first place; DENSE_RANK counts distinct scores. Product ID settles display order without breaking the score tie.</p></figure>
+<p><code>ROW_NUMBER</code> gives each row a different position. Its ordering includes product ID, making P3 first and P7 second deterministically. <code>RANK</code> gives both the same first place and then skips to third. <code>DENSE_RANK</code> also gives both first place but puts the next distinct score in second place.</p>
+<p>Rows equal on all of a window’s ordering expressions are <em>peers</em>. For these ranks, tea and mugs are peers because only <code>units DESC</code> defines equality. Adding product ID inside <code>RANK</code> would break that tie and give places 1, 2, 3. Keep a display tie-breaker in the final <code>ORDER BY</code> when it must not change the business rank.</p>
+<p>There are therefore two different orders in this query. An <code>ORDER BY</code> inside <code>OVER</code> determines the calculation. The final <code>ORDER BY</code> determines how the finished rows are displayed. Supply both when both matter.</p>
+</section>
+
+<section id="frames">
+<h2>Window frames</h2>
+<p>An ordered window can calculate a running total. But what does “up to this row” mean when several rows have the same ordering value?</p>
+<p>Return to one row per order line and add its recorded value, <code>quantity * unit_price</code>. Order 101’s two lines share <code>placed_at</code>, as do order 103’s. They are timestamp peers.</p>
+<Sql label="A cumulative sum ordered only by the order’s timestamp" code={queries.defaultFrame} />
+<p>The partition contains all five lines because there is no <code>PARTITION BY</code>. Its ordering is the timestamp. For a frame-sensitive function such as <code>SUM</code>, the <em>frame</em> chooses the rows within that partition which contribute at the current row. The default ordered frame reaches from the start through the last peer of the current row.</p>
+<p>Step through Figure 5. At the first line, watch the frame include the second line too. Then switch to the cumulative <code>ROWS</code> frame.</p>
+<Figures kind="frame" number="5" title="The current row and the rows that contribute" />
+<p>The default sum begins at 39.50, not 4.50: both lines of order 101 contribute immediately. It stays at 39.50 for the second line, reaches 79.50 at order 102, then jumps to 108.50 for both lines of order 103.</p>
+<p>To accumulate one line at a time, choose an order that identifies every line and state the frame explicitly:</p>
+<Sql label="Accumulate one line at a time in a complete order" code={queries.rowsFrame} />
+<p>The ordered key now includes <code>order_id, line_no</code>, so no two lines tie. <code>ROWS</code> measures positions in that order. The sums become 4.50, 39.50, 79.50, 99.50 and 108.50. A <code>ROWS</code> frame without a tie-breaker would leave the order of equal-timestamp lines unspecified; the final display order alone would not fix their running sums.</p>
+<p>If every line should receive the entire partition’s value, omit the window ordering as before, or state a frame from <code>UNBOUNDED PRECEDING</code> to <code>UNBOUNDED FOLLOWING</code>. Figure 5’s whole-partition setting gives 108.50 at every step. Adding an ordering to a whole-partition sum without considering its frame can accidentally turn it into a running sum.</p>
+<h3>Rows, values and peer groups</h3>
+<p>Bounded frames make the unit of distance explicit. At line 103/1, these three frames include different rows:</p>
+<div class="table-scroll" role="region" aria-label="Three different bounded frames at line 103/1" tabindex="0"><table><caption>Each frame ends at CURRENT ROW; timestamps increase</caption><thead><tr><th>Frame start and mode</th><th>Contributing lines</th><th>Sum</th></tr></thead><tbody><tr><td><code>ROWS 1 PRECEDING</code><br />Complete line order</td><td>102/1, 103/1</td><td>60.00</td></tr><tr><td><code>GROUPS 1 PRECEDING</code><br />Order by timestamp</td><td>102/1, 103/1, 103/2</td><td>69.00</td></tr><tr><td><code>RANGE INTERVAL '3 days' PRECEDING</code><br />Order by timestamp</td><td>103/1, 103/2</td><td>29.00</td></tr></tbody></table></div>
+<p><code>ROWS</code> counts individual row positions. <code>GROUPS</code> counts peer groups, so one preceding group means the preceding timestamp’s lines as well as all peers at the current timestamp. <code>RANGE</code> measures distance in the ordering value. Here the timestamp range begins three days before 20 October at 10:15 UTC, so order 102 on 14 October is outside it.</p>
+<p>A bounded <code>RANGE</code> with an offset in PostgreSQL needs one ordering expression. A date or timestamp order uses an interval offset; a numeric order uses a compatible numeric offset. A preceding-row count does not mean a calendar period: quiet days add no rows, and busy days can add many. Frames also stop at partition ends. The first line’s <code>ROWS BETWEEN 1 PRECEDING AND CURRENT ROW</code> contains only that line, because there is no previous one.</p>
+<h3>What LAST_VALUE calls “last”</h3>
+<p><code>LAST_VALUE(line_value)</code> reads the last row of the current frame. With the complete line order and the default frame, line 101/1 gets 4.50: it is the last row in its own frame. To get the partition’s final line value, 9.00, for every line, extend the frame to the end:</p>
+<Sql label="Compare the current frame’s last value with the partition’s last value" code={queries.lastValue} />
+<p>The function name does not choose the frame. An explicit whole-partition frame is what makes the second expression reach order 103’s final line.</p>
+</section>
+
+<section id="neighbours">
+<h2>Previous and next rows</h2>
+<p>Some comparisons need one neighbouring row rather than a total. At one row per order, <code>LAG</code> can attach the previous order’s timestamp:</p>
+<Sql label="Find each customer’s previous order" code={queries.lag} />
+<div class="order-history" role="img" aria-label="Mina’s history: order 101 on 12 October points forward to order 103 on 20 October; order 103’s previous order is 101. Tariq’s order 102 has no previous order."><p><b>Mina · customer 1</b><span>101 · 12 Oct <strong>→</strong> 103 · 20 Oct</span><small>Previous for 101: NULL · previous for 103: 12 Oct, 09:30 UTC</small></p><p><b>Tariq · customer 2</b><span>102 · 14 Oct</span><small>Previous: NULL · a separate partition</small></p></div>
+<p>Mina’s second order receives 12 October at 09:30 UTC. Her first has no previous row and receives null. Tariq’s order also receives null: partitioning by customer keeps Mina’s history out of his. <code>LEAD</code> makes the equivalent lookup forwards.</p>
+<p>The optional third argument of <code>LAG(value, 1, default)</code> applies when there is no previous row. It does not replace a null value stored in a previous row. If a nullable measurement is being compared, use <code>LAG</code> on a non-null row key as well when the report needs to distinguish “no previous observation” from “previous observation has no value”. PostgreSQL respects nulls rather than skipping them.</p>
+<p><code>LAG</code> and <code>LEAD</code> look for neighbouring rows in the partition’s order; they do not use the aggregate’s frame boundary. Even with a frame restricted to <code>CURRENT ROW</code>, Mina’s order 103 can still read order 101 through <code>LAG</code>. Choose a frame for a frame-sensitive calculation, and an offset for a neighbouring-row lookup.</p>
+</section>
+
+<section id="filter-result">
+<h2>Filtering a calculated result</h2>
+<p>To select rows by a window result, calculate it first and filter in an outer query. A <code>WHERE</code> at the same level runs too early to test that window result in PostgreSQL.</p>
+<Sql label="Calculate product positions before selecting the first two rows" code={queries.topRows} />
+<p><code>position &lt;= 2</code> returns exactly two rows here: P3 and P7. The product key resolves their tie for the numbered list. <code>place &lt;= 1</code> also returns both, but for a different reason: they share first place. <code>score_place &lt;= 2</code> returns all three products, because the teapot has the second distinct score. “Top two” needs that choice before it becomes SQL.</p>
+<p>Keeping the filter outside also preserves the ranking’s population. If a filter removed products before ranking, the places would describe only the remaining products. The same applies to a line’s percentage: calculate its comparison with the intended partition before removing lines merely to shorten the displayed result.</p>
+<p>A report is ready to trust when its row meaning, contributing population, ties and frame all match the question. Trace a line into its sum, check an absent match such as Edda, and inspect a tie such as P3 and P7. Those small cases expose errors a plausible total can hide. How much work the database does to produce the result, and how to continue through a changing result in pages, are separate questions.</p>
+</section>
+
+<h2>Sources and further reading</h2>
+<p>Checked against the PostgreSQL 18 documentation. SQL results were reproduced with PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. The drawings model the logical calculations over the invented shop rows; they do not show observed execution steps or performance.</p>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/queries-table-expressions.html#QUERIES-GROUP">GROUP BY and HAVING</a>: grouping columns, primary-key dependencies and group filtering.</li>
+<li><a href="https://www.postgresql.org/docs/18/functions-aggregate.html">Aggregate functions</a>: counts, non-null values, empty-input results and averages.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-expressions.html#SYNTAX-AGGREGATES">Aggregate expressions</a> and <a href="https://www.postgresql.org/docs/18/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS">window function calls</a>: FILTER and the precise frame definitions.</li>
+<li><a href="https://www.postgresql.org/docs/18/tutorial-window.html">Window functions tutorial</a>: partitions, available input rows and filtering through an outer query.</li>
+<li><a href="https://www.postgresql.org/docs/18/functions-window.html">Window functions reference</a>: ranking, peers, LAG, LEAD and frame-sensitive value functions.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-createview.html">CREATE VIEW</a> and <a href="https://www.postgresql.org/docs/18/functions-conditional.html">conditional expressions</a>: named query results and COALESCE.</li>
+<li><a href="https://www.postgresql.org/docs/18/queries-order.html">Sorting rows</a> and <a href="https://www.postgresql.org/docs/18/functions-math.html">mathematical operators</a>: display ordering and integer division.</li>
+</ul>
+<style>
+.rank-figure { margin:2rem -2rem; }
+.rank-figure figcaption { font:1.15rem/1.5 var(--font-serif); }
+.rank-figure figcaption span { font:.65rem var(--font-sans); color:var(--color-text-secondary); text-transform:uppercase; letter-spacing:.1em; margin-right:.5rem; }
+.rank-figure .table-scroll { margin:.8rem 0; }
+.rank-figure .same-place { background:color-mix(in srgb, var(--teal) 10%, var(--color-surface)); border-left:2px solid var(--teal); }
+.rank-figure p { font:.78rem/1.65 var(--font-sans); color:var(--color-text-secondary); }
+.order-history { font:.85rem/1.6 var(--font-sans); border:1px solid var(--color-rule-strong); padding:1rem; margin:1.5rem 0; }
+.order-history p { font:inherit; margin:0 0 1rem; padding-left:.75rem; border-left:3px solid var(--teal); }
+.order-history p:last-child { margin-bottom:0; }
+.order-history b,.order-history span,.order-history small { display:block; }
+.order-history small { color:var(--color-text-secondary); }
+.order-history strong { color:var(--teal); margin:0 .7rem; }
+@media(max-width:800px) { .rank-figure { margin:2rem 0; } }
+</style>

@@ -1,0 +1,9 @@
+# Native verification environment
+
+A disposable Linux PostgreSQL18.6 container has now been observed starting, accepting SQL and stopping/removing successfully. Exact image digest, launch command, version, data_directory, no-listener setting and probe result are in native-pg18-probe.json. This establishes a runtime for later operational examples; it does not replace or expand the earlier articles' PGlite evidence. Official image documentation: https://hub.docker.com/_/postgres .
+
+The installed Docker Desktop was initially stopped; the coordinator started it for owned disposable tests. A public image pull stalled in the personal credential helper, which was interrupted. The successful pull used an empty task-owned anonymous config at /private/tmp/staycurrent-rebuild-docker-public-config, explicit engine unix:///Users/ryannel/.docker/run/docker.sock and official postgres:18, pinned to digest sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6. No personal Docker credentials were read or changed.
+
+Future native fixtures must use their own uniquely named/labeled disposable containers, no existing/user data or default connection targets, explicit runtime clients and owned connection verification, bounded resources, no host port publication, and clean up on success/failure. For single-server tests use networking none and listen_addresses empty. Replication tests may use a task-owned internal Docker network with no published host ports. Keep executable scripts, chosen data, source hashes, actual results and limits with the article. Image provenance/actual minor version must be recorded; do not call WASM observations native or treat a conceptual schedule as an observed run.
+
+At collection completion remove task-owned containers/networks/volumes. Docker Desktop was started by this task; stop it only if no unrelated work is using it. Never prune the user's Docker installation.
