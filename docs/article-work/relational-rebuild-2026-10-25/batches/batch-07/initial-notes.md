@@ -1,0 +1,25 @@
+# Query execution — initial blind reader notes
+
+Version: articles/query-execution/v01, current preview at port 4606; manifest review-source.json matched all eight files. No plans, shared example facts, author explanation or previous verdict read before these notes. The browser DOM snapshot exposed the full body while locating controls; deliberate inspection nevertheless began with the figure sequence, and the body was then read once. This is not a claim that every body sentence was hidden during the illustration reading.
+
+## Illustrations first
+
+- Figure 1 teaches the intended change of grain concretely: three stored orders, two eligible orders, three matching line occurrences, two customer sums, and the requested descending result. At stage 3 both lines for 101 remain; stage 4 shows 4.50 + 35.00 = 39.50; stage 5 reverses the customer order. The work/result distinction is visible without the body. The caption clearly calls this one possible hand trace.
+- Figure 2 lets me explain the lookup repeated for an outer row, building from eligible orders and probing with all lines, and advancing ordered key groups until the eligible input is exhausted. The 103 lines are rejected by hashing but left unconsumed by the illustrated merge. Changing methods preserves the current step, so reset is useful when starting a method. It is a compact conceptual trace rather than a picture of a real hash bucket layout or index descent. Optional improvement: make the build table itself visible so the mechanism relies less on the changing explanatory sentence.
+- Figure 3 makes small per-loop row counts plus 20,158 repetitions salient and separates close full-year estimates from expensive repeated work. It states that displayed 3 is rounded. Figure 4 makes 2,000 lines versus four partial totals clear and says the four partials still need combining into two final groups.
+- The correlation table plus its immediately following calculation gives a reproducible 180 estimate versus 900 actual illustration, clearly separate from the measured fixture. The repair and parameter tables distinguish observed work, profiled times, repeated ordinary times and a common-customer regression.
+- No substantive contradiction in the inspected states. At 1280 × 720, clicking a below-fold Next through automation centres the control and clips the upper part of the drawing; a reader can position the roughly 740 px figure so its changing output and controls fit together. The phone stacking places changing output directly above the explanation and controls. I do not treat automation scroll position as a layout defect.
+
+## Body reading
+
+The article develops one report from meaning through access paths and joins to measured diagnosis, equivalence and workload testing. Terms are introduced before use (operator, pages, access path, outer/inner, cardinality, spill). The October/full-year switches are explicit. It does useful explanatory work with qualifications: cached page accesses are work; a small limit does not prove early stopping; a close estimate can still describe costly work; result equivalence precedes a speed comparison; profiled timing and ordinary timing can disagree.
+
+Headings use recognisable subjects, especially Join methods, Hash joins, Merge joins and How the planner estimates the work. Sentences are generally plain, connected and specific. The LATERAL query is printed twice in full, once to introduce it and once with EXPLAIN; this is optional economy, not a missing lesson. The baseline-to-direct repair is understandable because the original direct SQL has already been explained. The line-free-order HAVING condition is explained alongside the SQL rather than left as a mysterious guard.
+
+Provisional judgement: no medium or critical editorial/teaching finding from this reading. The bounded worker model, partition-pruning introduction and broad-versus-customer workload example belong in the argument and do not read as patches.
+
+## Calibration and rendered coverage so far
+
+Compared the bounded Indexes opening/scan, B-tree/range and planner-choice explanations and finished scan figure; Storage buffer-pool explanation and finished buffer-pool structure; Sequence diagrams scope/readability passages. The reference principle is visible mechanism followed by concrete interpretation and a bounded measurement, rather than a list of advice. Query execution meets that progression, though the hash-build drawing could be more spatially explicit.
+
+Inspected figure 1 stages 2–5; figure 2 nested initial/lookup, hash build/probes/rejection, merge initial/match/exhaustion/finish through actual controls; representative 375 × 812 light and dark renderings, no document overflow, readable wrapping of workload table. Reused assigned mechanical observations for exhaustive player states, keyboard/disclosures, timings and measured contrast. No database execution or independent technical-source audit in this reader assignment. Hidden browser screenshots show selected states, not a reliable animation timing trace.
