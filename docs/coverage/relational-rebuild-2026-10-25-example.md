@@ -178,3 +178,19 @@ Independent variations move the Mugs subtree from Teaware to Gifts (replace 10â†
 ## Index history-query variation
 
 Reuse the exact generated report fixture for a customer-history query returning `order_id`, `placed_at` and `status`, filtered by one customer ID and a UTC lower time bound, ordered by `placed_at DESC, order_id DESC`, limited to 10. Compare common customer 1001 with rare customer 1002 and full history with paid-only history. No new fields, totals or rows are implied. Paid-only history can support a partial-index example; the generated pending population is broad, so do not call it a small slice. The 201/202 pagination projection remains an independent tie illustration if reused.
+
+## Physical storage and durability variations
+
+An independent physical-storage replay updates `P7.price` from 20.00 to 22.00. It retains post-103 stock 10/0/4, pending order 103, no payment and agreed line total 29.00. A report explicitly establishes its snapshot before the update; a later query starts after commit. This variation supplies no business effective/recorded times, transaction IDs, native page addresses or measured counts. Pages and log positions are illustrative unless observed separately.
+
+A separate mistaken committed price 2.20 variation supports recovery choices; it is isolated from the successful 22.00 replay. Do not infer that PostgreSQL asynchronous commit can preserve a dependent database transaction while losing the earlier commit it depends on; external early effects remain a distinct risk.
+
+## Incident diagnosis variations
+
+Use Mina's customer-1 post-103 order-history read across independent illustrative branches, with no committed row changes. A pool-only branch has not borrowed a database connection. In the PostgreSQL lock-only branch, an ACCESS EXCLUSIVE lock on orders blocks ordinary history SELECTs and can occupy borrowed pool clients; ordinary row-update locks do not explain that ordinary-read wait. The resource-sharing branch may reuse the generated paid-order report without borrowing its benchmark timings as incident measurements. Storage counters/free-space trajectories are explicitly synthetic. No new IDs or business facts are added.
+
+## Recovery reconciliation variation
+
+A separate recovery branch starts from the post-103 shop state, commits the mistaken P7 price 2.20, then records the existing partial-payment variation: payment 504 for order 103, 10.00 by card. Order 103 remains pending with 19.00 due. Restoring before the price mistake also omits this valid later database payment; a hypothetical provider's already accepted 10.00 charge survives independently.
+
+The example provider contract uses stable operation identity `order-103-part-payment-1`, an immutable order/amount mapping and a queryable provider result. Reconcile a known accepted result into the restored database, preserving payment 504 and the identity mapping without charging again. An unknown provider outcome remains unresolved. These are illustrative contracts and recovery orderings, with no invented native times, LSNs or transaction IDs.
