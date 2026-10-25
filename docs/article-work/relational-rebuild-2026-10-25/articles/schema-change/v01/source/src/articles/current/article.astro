@@ -1,0 +1,114 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import MigrationFigure from '../../components/relational-rebuild-schema-change/MigrationFigure.astro';
+---
+<p>A live schema change moves a database and its callers through a period when different versions must work together. Adding a column is only one step. Existing rows need values, callers still running an older release need their fields, and writes arriving during the copy must leave the new representation correct.</p>
+<p>The shop will replace <code>products.price</code>, a decimal price, with <code>price_hundredths</code>, an integer holding the same amount in hundredths. P7’s 20.00 becomes 2000. This changes the representation, not its currency or the price agreed on an order line. Order 103 remains worth 29.00.</p>
+<p>We will follow the change through <em>expand, migrate and contract</em>: introduce a compatible form, move data and callers to it, then retire the old form. The difficult part is establishing when each move is safe. A completed backfill process cannot answer that on its own.</p>
+
+<h2 id="expand-migrate-contract">Expand, migrate and contract</h2>
+<p>A direct replacement couples the database deployment to every caller. Rename <code>price</code> immediately and an older query naming it fails. Change its meaning to hundredths under the same name and an older reader can display 2000 as though it meant 2000.00. A rolling deployment, which replaces application instances gradually, makes that overlap normal.</p>
+<p>Instead, add the new column while keeping the old one. Initially allow its value to be missing: older inserts know nothing about it, and old rows have not been converted. Then introduce a <strong>bridge caller</strong>: it reads the old price but writes both forms together. Once those writers are in place, a <strong>backfill</strong> supplies the new form for existing rows.</p>
+<p>Figure 1 follows P7 through the whole change. Watch the read field separately from the columns present in the database.</p>
+<MigrationFigure kind="rollout" />
+<p>During the backfill, some rows have both forms and others have only the old one. Keeping reads on <code>price</code> makes that an accepted intermediate state. Switching readers is a later decision, after all required rows have correct new values. Removing the old field is later again, after no remaining caller or promised return path needs it.</p>
+<p>The conversion itself needs a declared domain. Here a finite, non-negative <code>numeric(8,2)</code> price has at most two decimal places, so multiplying by 100 is exact and its maximum, 99,999,999 hundredths, fits a PostgreSQL integer. Keep that original range while returning to the decimal form remains possible. Validate input before conversion; silently rounding an extra fraction would be a different policy.</p>
+<p>Check stored exceptions too. PostgreSQL permits <code>NaN</code> in <code>numeric</code>, and the existing <code>price &gt;= 0</code> check does not exclude it. Audit for it and resolve any such rows under an agreed business rule before deploying this conversion. Giving an undefined price the value zero would invent a price.</p>
+
+<h2 id="caller-compatibility">Compatibility during a rolling deployment</h2>
+<p>A release name is too coarse a description of compatibility. Ask which fields a caller reads, which it writes, and what it assumes about existing values. The bridge caller can coexist with an old-only caller while both read <code>price</code>. It cannot establish that the new field stays current while the old-only caller can still change the source.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Caller compatibility during the migration">
+<table><caption>The same expanded schema, with different caller permissions</caption><thead><tr><th scope="col">Caller</th><th scope="col">Reads</th><th scope="col">Writes</th><th scope="col">When accepted</th></tr></thead><tbody>
+<tr><th scope="row">Old-only</th><td>price</td><td>price</td><td>Before the old write path closes.</td></tr>
+<tr><th scope="row">Bridge</th><td>price</td><td>Both, atomically</td><td>After expansion; throughout backfill and the return window.</td></tr>
+<tr><th scope="row">New reader</th><td>Hundredths</td><td>Both, atomically</td><td>After convergence; preserves the return window.</td></tr>
+<tr><th scope="row">New-only</th><td>Hundredths</td><td>Hundredths</td><td>After old dependencies retire and old-column requirements are prepared.</td></tr>
+</tbody></table></div>
+<p>“Both, atomically” means one transaction accepts or rejects the pair. Two independent writes leave a gap, and a crash between them can leave the forms disagreeing. For a price change, a bridge caller can use one statement:</p>
+<Sql label="Bridge update of P7" code={`UPDATE products
+SET price = 22.00,
+    price_hundredths = 2200
+WHERE product_id = 'P7';`} />
+<p>Both constants must come from the same validated amount. The insert path must also initialise both fields. A database trigger or another enforced conversion mechanism can implement a different bridge, but its complete write behaviour needs the same proof. The protocol here uses application callers and drains the old-only writers.</p>
+<h3 id="close-old-writes">Close the old write path</h3>
+<p>Suppose the backfill has already put 2000 beside P7’s 20.00. One surviving old-only worker can change <code>price</code> to 22.00 and leave 2000 untouched. The new field is non-null and wrong. A backfill that visits only missing fields will never repair it.</p>
+<p>Before starting this backfill, establish that every writer follows the bridge rule. Include background workers, imports, scheduled tasks, administrative tools and in-flight transactions, as well as web instances. Stop new old-only work, drain the old work already admitted, and prevent an automatic restart or rollback from bringing that write path back. “Every web instance is on the new release” establishes only part of this boundary.</p>
+<p>Until it is closed, new reads remain disabled. Afterwards, new inserts arrive with both forms and price updates preserve their agreement. That write rule is what allows the copy to make lasting progress.</p>
+
+<h2 id="backfill-races">Backfill without overwriting a newer value</h2>
+<p>A backfill worker reads P7 at 20.00 and calculates 2000. Before it writes, a bridge caller raises the price to 22.00 and commits 2200 beside it. The worker’s calculation is still correct for its earlier read. Storing it now would be wrong.</p>
+<p>Step through Figure 2 with the earlier-value assignment. Then keep the same ordering and change the backfill write.</p>
+<MigrationFigure kind="race" />
+<p>Assigning 2000 repeatedly has the same effect as assigning it once. That makes the assignment repeatable, but says nothing about whether 2000 still represents the current price. A safe backfill must connect the source it transforms to the row it changes.</p>
+<p>One way is to calculate from the row inside the protected database write. The following PostgreSQL statement repairs missing or unequal values for one product without using an earlier application copy:</p>
+<Sql label="Convert the stored price in the update" code={`UPDATE products
+SET price_hundredths = (price * 100)::integer
+WHERE product_id = 'P7'
+  AND price_hundredths IS DISTINCT FROM (price * 100)::integer
+RETURNING product_id, price, price_hundredths;`} />
+<p>Another way, useful when transformation happens outside the database, is a conditional write. The worker that read 20.00 attempts its 2000 only while the source still equals 20.00:</p>
+<Sql label="Condition an external conversion on its source" code={`UPDATE products
+SET price_hundredths = 2000
+WHERE product_id = 'P7'
+  AND price = 20.00
+  AND price_hundredths IS DISTINCT FROM 2000
+RETURNING product_id, price, price_hundredths;`} />
+<p>After the bridge commit, this affects zero rows and leaves 2200 intact. Re-read to distinguish an already-correct row from a changed or deleted one; retry changed work from its current source. Do not mark an unexamined zero-row result as completed. Equality is sufficient for this deterministic price conversion: if the source changes away and back, 2000 is correct again. A transformation whose meaning depends on a particular revision needs a revision guard instead.</p>
+<p>In PostgreSQL Read Committed, an update encountering a concurrently updated target can wait, then recheck its condition against the committed replacement. Other isolation levels can reject a conflict and require a transaction retry. The drawings specify a committed ordering rather than simulate those waits. <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> develops the concurrent rules.</p>
+<h3 id="bounded-batches">Commit and resume in bounded batches</h3>
+<p>On a large table, choose a bounded group of keys, transform them safely, commit, and record how to resume. A cursor is a saved key after which the next group begins. Its ordering must be explicit and stable. It records committed coverage of that scan, not the correctness of every value in the table.</p>
+<p>Commit changes and their checkpoint together where possible. If the checkpoint is saved separately, save it only after the batch commits: a crash in between may replay committed work, which the current-state transformation can safely recheck. Advancing it before commit can skip work that rolled back. Retain conflicted, rejected or deliberately skipped keys for reconciliation; a cursor must not make them disappear.</p>
+<p>Smaller transactions limit each batch’s lock duration and recovery work, while more commits add overhead. They also expose partial migration progress. Here old readers tolerate that because their source stays complete. <a href="/learn/databases/relational/updates-and-imports/">Updates, upserts and bulk imports</a> develops batch identity and progress records outside this live compatibility protocol.</p>
+
+<h2 id="late-rows">Rows arriving behind the cursor</h2>
+<p>Even an exact record of committed visits can miss a late row. Product IDs are text. In the explicit ordering used below, P11 sorts before P3; a cursor that has passed P3 will not discover a newly inserted P11 by continuing forwards.</p>
+<p>Figure 3 adds a tea strainer at 8.00 after P3’s batch commits. Keep the bridge insert first, then switch to the prohibited old-only insert.</p>
+<MigrationFigure kind="cursor" />
+<p>The bridge insert makes P11 ready at birth: 8.00 and 800 commit together. The backfill does not need to visit every row ever inserted; it needs every required row to reach the accepted relation. The old-only variant leaves a missing value behind the cursor, proving why the write boundary was necessary.</p>
+<p>A fresh reconciliation must cover the entire required population, including late rows and retained exceptions. A maximum cursor or a job marked “finished” describes the worker’s progress. Neither establishes what now exists outside its visited set.</p>
+
+<h2 id="convergence">Prove that the migration has converged</h2>
+<p><strong>Convergence</strong> means the data has reached the intended relation and ongoing writes keep it there. For this migration every product must have a new value, and that value must equal its source price multiplied by 100. Test those claims separately:</p>
+<Sql label="Check coverage and representation agreement" code={`SELECT
+  count(*) FILTER (
+    WHERE price_hundredths IS NULL
+  ) AS missing,
+  count(*) FILTER (
+    WHERE price_hundredths IS DISTINCT FROM (price * 100)::integer
+  ) AS different
+FROM products;`} />
+<p>The accepted result is <code>missing = 0</code> and <code>different = 0</code>. The second count includes missing values: <code>IS DISTINCT FROM</code> treats a null and a non-null result as different. An ordinary <code>&lt;&gt;</code> comparison would not count that missing case.</p>
+<p>Figure 2’s bad final row has zero missing values and one difference. Figure 3’s old-only arrival has one of each. Equal row counts would miss the bad value, and checking only non-nullness would miss the stale 2000. Inspect the failing keys and their sources, repair with the safe transformation, and rerun the checks.</p>
+<p>The query sees one database snapshot. It establishes the relation at that observation; the bridge rule makes the result useful beyond it. Once every row agrees, any permitted insert creates an agreeing row, any price update changes both forms together, and deletion removes the row. The guarded backfill cannot introduce a stale pair. If a writer can violate that rule, repeated zero counts cannot establish lasting convergence.</p>
+<p>For a larger migration, track work remaining and exceptions as well as worker progress. A migration that keeps retrying a hot key or omits an unsupported value has not converged. Define its required population, transformation and acceptance query before running it, so “complete” has a meaning independent of the job’s exit status.</p>
+
+<h2 id="switch-readers">Switch readers and preserve a return path</h2>
+<p>Enable new reads after the semantic checks pass and every database object those reads require is usable. Verify that the caller understands the new unit: 2200 hundredths must produce the same displayed 22.00. Compare equivalent application results as well as stored fields. Retain the bridge write rule while old readers remain an accepted return target.</p>
+<p>This return window permits switching reads back to <code>price</code>. It does not permit restoring an old-only writer. That would reopen the race even if both fields were correct at the moment of rollback. Keep a known bridge release as the return target, with its schema requirements and write behaviour recorded.</p>
+<p>Pause is a different decision. Before acceptance, a backfill can stop between committed batches while bridge callers continue serving old reads. Preserve its checkpoint and exceptions. After new reads begin, pausing optional migration work does not remove the obligation to keep both forms current. In either state, confirm what stopped: the launcher, a running batch, a database statement and an engine-managed schema job are separate things.</p>
+
+<h2 id="migration-headroom">Run the change within the available headroom</h2>
+<p>Application compatibility does not establish that the physical operation fits. Adding or validating objects can wait for locks; copying rows consumes processor time, storage work, log capacity and space. The old and new forms may coexist alongside temporary work and retained versions. Budget the peak, including foreground writes and cleanup, rather than only the final size.</p>
+<p>Choose batch and wait limits from the service’s available capacity. Observe useful request completions, errors and latency alongside migration rate, waits, free space and log or replica backlog. Define when to reduce or stop new batches. A higher backfill rate that makes purchases fail is not useful progress. After pausing, confirm the current operation’s terminal state and whether its transaction still holds resources.</p>
+<p><a href="/learn/databases/relational/slow-queries/">Diagnosing a database incident</a> connects those symptoms to a bounded intervention. The native mechanisms differ: <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a> covers lock modes, rewrites and index validity; <a href="/learn/databases/relational/cockroachdb/schema-changes/">CockroachDB schema jobs under load</a> covers job state and cleanup. Cancelling a CockroachDB statement can leave its schema job running, so a missing waiting client is especially poor evidence that the work stopped.</p>
+
+<h2 id="contract">Contract the old form</h2>
+<p>Contracting removes the compatibility you deliberately added. First retire every old read and dependency: application instances, workers, reports, views, exports and supported rollback releases. Confirm the new callers can insert and update under the schema that will exist during each remaining step.</p>
+<p>The old <code>price</code> column is still <code>NOT NULL</code>. Stopping its writes while it remains required would break new inserts. Either keep supplying it until the drop, or first change that requirement in a compatible schema step. Retire any cross-form checks or conversion triggers that would also prevent new-only writes. Preserve the new form’s non-negative, required-value and range rules as appropriate to the accepted contract.</p>
+<p>The return window ends when <code>price</code> stops being maintained, even if the column has not yet been dropped. A later return needs its data reconciled and its callers made compatible again. After removal, it needs a new expansion and migration. Deploying an older binary cannot reconstruct the missing representation.</p>
+<h3 id="related-changes">Constraints, indexes and replacement tables</h3>
+<p>The same distinction between future behaviour and existing state applies beyond columns. Enforcing a constraint on future writes does not prove that existing rows satisfy it. Check and repair that population, then accept the engine’s completed validation before relying on the stronger rule. Whether a particular engine separates those steps is part of its native procedure.</p>
+<p>For an index replacement, build the candidate and establish that it is valid and usable before enabling a caller that depends on it. Check representative results and query work. Retain the old index until the supported workload and dependencies no longer need it, including any uniqueness or reference role. An index name in the catalogue does not establish readiness: PostgreSQL can leave an invalid index after a failed concurrent build.</p>
+<p>A replacement table adds a larger copy boundary. Copying the initial rows leaves inserts, updates and deletes that happened during the copy to reconcile. The change-capture or dual-write protocol must order those changes against the copy so an older copied value cannot replace a newer one. Switch routing only at an established catch-up boundary with equivalent data and complete constraints and references. If a return is promised, keep the old table current too. <a href="/learn/databases/relational/partitioning/">Table partitioning and data lifecycle</a> supplies a reason to consider such a move; the live copy still needs this compatibility and acceptance protocol.</p>
+<p>The SQL examples were checked in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. The drawings are illustrative schedules. They establish no measured server concurrency, migration duration or production headroom.</p>
+
+<section aria-labelledby="sources">
+<h2 id="sources">Sources and further reading</h2>
+<ul>
+<li>Danilo Sato, <a href="https://martinfowler.com/bliki/ParallelChange.html">Parallel Change</a>: the expand, migrate and contract pattern for changing an interface while its consumers move.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction Isolation</a> and <a href="https://www.postgresql.org/docs/18/sql-update.html">UPDATE</a>: target-row conflicts, conditional writes and returned rows.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/datatype-numeric.html">Numeric Types</a> and <a href="https://www.postgresql.org/docs/18/functions-comparison.html">Comparison Functions and Operators</a>: exact decimal arithmetic, ranges, NaN and null-safe comparison.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-altertable.html">ALTER TABLE</a> and <a href="https://www.postgresql.org/docs/18/sql-createindex.html">CREATE INDEX</a>: required columns, constraint validation, locking and invalid concurrent-build remnants.</li>
+<li>CockroachDB, <a href="https://docs.cockroachlabs.com/docs/stable/online-schema-changes">Online Schema Changes</a>: background schema work, resource requirements and continuing jobs after statement cancellation.</li>
+</ul>
+</section>

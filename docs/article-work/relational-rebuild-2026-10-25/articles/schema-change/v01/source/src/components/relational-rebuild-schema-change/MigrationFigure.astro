@@ -1,0 +1,142 @@
+---
+interface Props { kind: 'rollout' | 'race' | 'cursor'; }
+const { kind } = Astro.props;
+const definitions = {
+  rollout: { n: 1, title: 'Keep an accepted route through the change', option: '', choices: [], stages: [
+    'Only price exists. Old callers read and write it.',
+    'Expand: add a nullable price_hundredths. Old callers still use price; new values may be missing.',
+    'Deploy bridge callers: read price, write both values in one transaction. Drain every old-only writer before continuing.',
+    'Backfill and reconcile while bridge writes preserve agreement. Readers still use price.',
+    'Switch reads to price_hundredths. Keep writing both forms while a return to bridge readers is promised.',
+    'Contract after old dependencies and return targets retire. Prepare old-column requirements, then stop maintaining and remove price.'
+  ]},
+  race: { n: 2, title: 'A repeated write can still be stale', option: 'Backfill write', choices: [['stale','Assign the earlier 2000'],['guard','Require the earlier price'],['current','Convert the current price']], stages: [
+    'P7 starts at 20.00, with no new value. A backfill worker is about to read it.',
+    'The worker reads 20.00 and calculates 2000. This local copy does not protect the database row.',
+    'A bridge caller commits 22.00 and 2200 together. The worker still remembers 2000.',
+    'The worker now attempts its write. Compare each rule against the row that the bridge caller committed.'
+  ]},
+  cursor: { n: 3, title: 'A last key does not account for every row', option: 'Late insert', choices: [['bridge','Bridge writes 8.00 and 800'],['old','Old-only writer leaves NULL']], stages: [
+    'The backfill visits P3 and commits its new value 450. Its durable cursor is P3.',
+    'P11 arrives after that commit. In the stated text order P11 sorts before P3, behind the cursor.',
+    'The remaining scan visits P7 and P9, then ends at P9. It never visits P11.',
+    'Reconcile the whole required population. The insert rule determines whether the late row is ready.'
+  ]}
+};
+const d = definitions[kind];
+---
+<figure class="migration-figure" data-migration={kind} aria-labelledby={`migration-${kind}-title`}>
+  <figcaption id={`migration-${kind}-title`}><span>Figure {d.n}</span> {d.title}</figcaption>
+  <div class="mf-panel">
+    {d.option && <label class="mf-option">{d.option}<select aria-label={d.option}>{d.choices.map(([value,label]) => <option value={value}>{label}</option>)}</select></label>}
+    <p class="mf-model">Illustrative {kind === 'rollout' ? 'deployment states' : kind === 'race' ? 'ordering of committed changes' : 'text-key scan, P11 < P3 < P7 < P9'}</p>
+    {kind === 'rollout' && <>
+      <ol class="mf-route" aria-label="Migration phases">{['Old','Expand','Bridge','Backfill','New reads','Contract'].map((label,i)=><li data-phase={i}>{label}</li>)}</ol>
+      <div class="mf-dual">
+        <div class="mf-box"><span>products · P7</span><dl><dt>price</dt><dd data-old data-live>20.00</dd><dt>price_hundredths</dt><dd data-new data-live>absent</dd></dl></div>
+        <div class="mf-box"><span>Accepted callers</span><dl><dt>Read from</dt><dd data-read data-live>price</dd><dt>Write to</dt><dd data-write data-live>price</dd></dl></div>
+      </div>
+      <p class="mf-verdict" data-verdict data-live>Keep the old column for the callers using it.</p>
+    </>}
+    {kind === 'race' && <>
+      <div class="mf-dual">
+        <div class="mf-box"><span>Backfill worker · local memory</span><p class="mf-value" data-memory data-live>Nothing read</p><p data-action data-live>Waiting to read P7</p></div>
+        <div class="mf-box"><span>Database · committed P7</span><dl><dt>price</dt><dd data-old data-live>20.00</dd><dt>price_hundredths</dt><dd data-new data-live>NULL</dd></dl></div>
+      </div>
+      <p class="mf-flow" data-flow data-live>Worker → read → database</p>
+      <p class="mf-verdict" data-verdict data-live>Missing: 1 · disagrees with price: 1</p>
+    </>}
+    {kind === 'cursor' && <>
+      <p class="mf-cursor" data-cursor data-live>Committed cursor: P3</p>
+      <div class="mf-table"><table><caption>products in text-key order · committed values</caption><thead><tr><th scope="col">Key</th><th scope="col">price</th><th scope="col">Hundredths</th><th scope="col">Scan</th></tr></thead><tbody>
+        <tr data-row="P11" hidden><th scope="row">P11</th><td>8.00</td><td data-late data-live>800</td><td>Behind cursor</td></tr>
+        <tr><th scope="row">P3</th><td>4.50</td><td>450</td><td>Visited</td></tr>
+        <tr><th scope="row">P7</th><td>20.00</td><td data-p7 data-live>NULL</td><td data-s7 data-live>Not yet</td></tr>
+        <tr><th scope="row">P9</th><td>35.00</td><td data-p9 data-live>NULL</td><td data-s9 data-live>Not yet</td></tr>
+      </tbody></table></div>
+      <p class="mf-verdict" data-verdict data-live>The cursor describes committed visits.</p>
+    </>}
+    <p data-explanation data-live aria-live="polite">{d.stages[0]}</p>
+    <div class="mf-controls" role="group" aria-label={`Figure ${d.n} controls`}><button type="button" data-play>Play</button><button type="button" data-back aria-disabled="true">Back</button><button type="button" data-next>Next</button><button type="button" data-reset>Reset</button><span data-step>1 / {d.stages.length}</span><div data-hold aria-hidden="true"><span></span></div></div>
+  </div>
+  <p class="mf-caption">{kind === 'rollout' ? 'The data and caller rules change separately. A new column can exist long before its values are safe to read. The final state deliberately ends the return window.' : kind === 'race' ? 'Each option reuses the same ordering: worker read, bridge commit, worker write. No lock wait, elapsed time or concurrent-server execution is measured by this drawing.' : 'P11 is an independent migration arrival: Tea strainer, stock 0. The old-only option deliberately violates the chosen protocol; it shows why draining those writers is a precondition.'}</p>
+  <details><summary>All stages, as text</summary><ol>{d.stages.map(text=><li>{text}</li>)}</ol>{kind === 'race' && <p>The unguarded assignment ends at 22.00/2000. The source-price guard affects zero rows and leaves 22.00/2200; re-read and retry. Deriving from the current protected row also leaves 22.00/2200.</p>}{kind === 'cursor' && <p>A bridge insert leaves all four rows complete and equal to price × 100. An old-only insert leaves P11 missing; reaching P9 does not repair or even visit it.</p>}</details>
+</figure>
+<script>
+  import { stepper } from '../figures/stepper.mjs';
+  for (const root of document.querySelectorAll<HTMLElement>('[data-migration]')) {
+    const kind = root.dataset.migration;
+    const select = root.querySelector('select');
+    const set = (selector: string, text: string) => { const element = root.querySelector(selector); if (element) element.textContent = text; };
+    const rollout = [
+      ['20.00','absent','price','price','Keep the old column for the callers using it.','Only price exists. Old callers read and write it.'],
+      ['20.00','NULL','price','price','New reads are not yet allowed.','Expand: add a nullable price_hundredths. Old callers continue using price.'],
+      ['20.00','NULL','price','both, atomically','Drain old-only writers and in-flight work.','Bridge callers initialise both forms on insert and change both together. Existing rows can still be missing the new value.'],
+      ['20.00','2000','price','both, atomically','Reconcile coverage and price × 100 equality.','Backfill old rows while bridge callers preserve agreement. Keep reads on price until acceptance.'],
+      ['20.00','2000','price_hundredths','both, atomically','Return to bridge reads remains possible.','New readers use 2000 with its hundredths unit. Both fields remain current during the return window.'],
+      ['removed','2000','price_hundredths','price_hundredths','Returning now requires a new migration.','Retire old reads and return targets, prepare column requirements, then stop legacy writes and remove price.']
+    ];
+    const player = stepper(root, { steps: () => kind === 'rollout' ? 6 : 4, draw: (step: number) => {
+      const option = select?.value;
+      if (kind === 'rollout') {
+        const state = rollout[step];
+        ['[data-old]','[data-new]','[data-read]','[data-write]','[data-verdict]','[data-explanation]'].forEach((selector,i)=>set(selector,state[i]));
+        root.querySelectorAll<HTMLElement>('[data-phase]').forEach((el,i)=> { el.classList.toggle('mf-active',i===step); if(i===step) el.setAttribute('aria-current','step'); else el.removeAttribute('aria-current'); });
+      } else if (kind === 'race') {
+        set('[data-memory]',step === 0 ? 'Nothing read' : '20.00 → 2000');
+        set('[data-old]',step < 2 ? '20.00' : '22.00');
+        set('[data-new]',step < 2 ? 'NULL' : step === 3 && option === 'stale' ? '2000' : '2200');
+        const actions = ['Waiting to read P7','Calculated, but not written','Still holding the earlier 2000',option === 'stale' ? 'SET price_hundredths = 2000' : option === 'guard' ? 'WHERE price = 20.00 → 0 rows' : 'Convert the protected current price'];
+        set('[data-action]',actions[step]);
+        set('[data-flow]',step < 2 ? 'Worker → read → database' : step === 2 ? 'Bridge → commit 22.00 and 2200 → database' : option === 'stale' ? 'Worker → stale overwrite → database' : option === 'guard' ? 'Worker → guard fails → re-read before retry' : 'Worker → derive from protected row → 2200');
+        set('[data-verdict]',step < 2 ? 'Missing: 1 · disagrees with price: 1' : step === 3 && option === 'stale' ? 'Missing: 0 · disagrees with price: 1' : 'Missing: 0 · disagrees with price: 0');
+        const notes = ['P7 starts at 20.00 with no new value.','The worker reads 20.00. Its remembered value is not a lock.','The bridge caller commits 22.00 and 2200. Its newer value must survive the backfill.',option === 'stale' ? 'The worker stores 2000 over 2200. Repeating this assignment remains repeatable and wrong.' : option === 'guard' ? 'The source no longer equals 20.00. Zero affected rows leaves 2200 intact; account for the row by re-reading, rather than treating zero as success.' : 'The current 22.00 implies 2200, which is already stored. The conditional update leaves it alone; it never copies the remembered 2000.'];
+        set('[data-explanation]',notes[step]);
+      } else {
+        const late = root.querySelector<HTMLElement>('[data-row="P11"]'); if(late) late.hidden = step === 0;
+        set('[data-late]',option === 'old' ? 'NULL' : '800');
+        set('[data-p7]',step < 2 ? 'NULL' : '2000'); set('[data-p9]',step < 2 ? 'NULL' : '3500');
+        set('[data-s7]',step < 2 ? 'Not yet' : 'Visited'); set('[data-s9]',step < 2 ? 'Not yet' : 'Visited');
+        set('[data-cursor]',step < 2 ? 'Committed cursor: P3' : 'Committed cursor: P9 · scan finished');
+        set('[data-verdict]',step < 3 ? 'The cursor describes committed visits.' : option === 'old' ? 'Whole-table check: P11 missing · do not switch reads' : 'Whole-table check: 0 missing · 0 disagreements');
+        const notes = ['P3 is committed at 4.50/450. P7 and P9 still await the backfill.','P11 is inserted behind P3 in this text ordering. ' + (option === 'old' ? 'The prohibited old-only writer leaves its new field NULL.' : 'The bridge caller writes 8.00 and 800 together.'),'P7 and P9 are converted. The scan reaches its last key without ever visiting P11.',option === 'old' ? 'Reconciliation finds P11 even though the scan finished. Close the old write path and repair the row before acceptance.' : 'P11 needed no visit: the bridge initialised it correctly. The scan plus the preserved write rule can converge.'];
+        set('[data-explanation]',notes[step]);
+      }
+    }});
+    select?.addEventListener('change',()=>player.render());
+  }
+</script>
+<style>
+  .migration-figure { margin:2.4rem 0; font: .88rem/1.55 var(--font-sans); }
+  figcaption { margin-bottom:.7rem; font:1.15rem/1.4 var(--font-serif); }
+  figcaption > span { font:.68rem var(--font-sans); text-transform:uppercase; letter-spacing:.1em; margin-right:.7rem; color:var(--color-text-secondary); }
+  .mf-panel { border:1px solid var(--color-rule-strong); background:var(--color-surface-alt); padding:1.1rem; }
+  .mf-option { display:flex; align-items:center; gap:.7rem; flex-wrap:wrap; margin-bottom:1rem; }
+  select,button { color:var(--color-text); background:var(--color-surface); border:1px solid var(--color-text-secondary); border-radius:4px; font:inherit; padding:.5rem .7rem; }
+  select { max-width:100%; }
+  button { cursor:pointer; min-height:42px; }
+  button[aria-disabled="true"] { color:var(--color-text-secondary); border-style:dashed; }
+  select:focus-visible,button:focus-visible,summary:focus-visible { outline:2px solid var(--color-accent); outline-offset:3px; }
+  .mf-model { color:var(--color-text-secondary); margin:0 0 1rem; font-size:.78rem; }
+  .mf-route { list-style:none; display:grid; grid-template-columns:repeat(3,1fr); gap:.4rem; padding:0; margin:0 0 1rem; }
+  .mf-route li { padding:.4rem; text-align:center; border:1px solid var(--color-text-secondary); border-radius:3px; }
+  .mf-route li.mf-active { border:2px solid var(--color-accent); padding:calc(.4rem - 1px); font-weight:700; background:var(--color-surface); }
+  .mf-dual { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; }
+  .mf-box { border:1px solid var(--color-text-secondary); padding:.9rem; min-width:0; background:var(--color-surface); }
+  .mf-box > span { display:block; color:var(--color-text-secondary); font-size:.78rem; margin-bottom:.7rem; }
+  .mf-box dl { display:grid; gap:.4rem; margin:0; }
+  dt { font: .75rem/1.5 var(--font-mono); overflow-wrap:anywhere; } dd { margin:0 0 .4rem; font-size:1.14rem; }
+  .mf-box p { margin:0 0 .5rem; overflow-wrap:anywhere; } .mf-value { font-size:1.4rem; }
+  .mf-flow,.mf-cursor { padding:.7rem; border:1px solid var(--color-text-secondary); overflow-wrap:anywhere; }
+  .mf-verdict { margin:1rem 0; font-weight:600; }
+  [data-explanation] { border-left:3px solid var(--color-accent); padding:.55rem .8rem; margin:1rem 0; min-height:4.6em; }
+  .mf-controls { display:flex; align-items:center; flex-wrap:wrap; gap:.45rem; border-top:1px solid var(--color-rule-strong); padding-top:.8rem; }
+  [data-step] { margin-left:auto; font-variant-numeric:tabular-nums; }
+  [data-hold] { flex-basis:100%; height:3px; background:var(--color-rule); } [data-hold] span { display:block; height:100%; width:0; background:var(--color-accent); }
+  .mf-caption { color:var(--color-text-secondary); margin:.7rem 0; font-size:.8rem; }
+  details { margin-top:.6rem; } summary { cursor:pointer; color:var(--color-accent); text-decoration:underline; } details ol { padding-left:1.4rem; }
+  .mf-table { width:100%; } .mf-table table { display:table; width:100%; border-collapse:collapse; font-size:.8rem; margin:0; } caption { text-align:left; color:var(--color-text-secondary); font-size:.75rem; margin-bottom:.5rem; }
+  th,td { padding:.55rem .4rem; border-bottom:1px solid var(--color-rule-strong); text-align:left; } [data-row="P11"] { outline:2px solid var(--color-accent); outline-offset:-2px; }
+  @media(max-width:550px) { .mf-panel { padding:.8rem; } .mf-dual { grid-template-columns:1fr; } .mf-route { font-size:.75rem; } .mf-box dl { grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); column-gap:1rem; align-items:baseline; } dd { font-size:.95rem; overflow-wrap:anywhere; } th,td { font-size:.78rem; padding:.5rem .2rem; } }
+  @media(prefers-reduced-motion:reduce) { [data-hold] span { transition:none !important; } }
+</style>
