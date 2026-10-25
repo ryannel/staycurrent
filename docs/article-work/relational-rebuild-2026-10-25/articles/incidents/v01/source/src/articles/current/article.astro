@@ -1,0 +1,170 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import RequestTime from '../../components/relational-rebuild-incidents/RequestTime.astro';
+import LockChain from '../../components/relational-rebuild-incidents/LockChain.astro';
+import Space from '../../components/relational-rebuild-incidents/Space.astro';
+import Recovery from '../../components/relational-rebuild-incidents/Recovery.astro';
+import '../../components/relational-rebuild-incidents/incidents.css';
+const history = `SELECT order_id, placed_at, status
+FROM orders
+WHERE customer_id = 1
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;`;
+---
+
+<p>A slow application request does not tell you that its SQL needs a faster plan. It may be waiting to borrow a connection, waiting for a lock after reaching the database, or competing for a processor or storage with other work. Each can leave the same spinning page in front of the customer. A useful diagnosis connects that symptom to the work or dependency holding it up.</p>
+
+<p>We will follow Mina asking the shop for her order history. Order 103 already exists, pending, with its two lines worth 29.00 and no payment. Her ordinary history read changes nothing. Separate branches introduce a pool queue, a PostgreSQL table lock and shared resource pressure; they are alternatives, not one accumulating incident. The drawings and their timings are illustrative.</p>
+
+<p>The aim is to choose one action whose effect you can predict and check. Native evidence and intervention commands belong to <a href="/learn/databases/relational/postgresql/operations/">Operating and diagnosing PostgreSQL</a>; the same reasoning needs the appropriate evidence on another engine.</p>
+
+<section aria-labelledby="start-request">
+<h2 id="start-request">Start with the request</h2>
+
+<p>Mina should receive her newest orders. The small starting records return 103, pending, followed by 101, paid. The query asks for the order explicitly:</p>
+<Sql code={history} label="Mina’s order-history read" />
+
+<p>Suppose the page now takes a second where comparable requests previously completed promptly. Begin with the request’s boundaries: when it arrived, when it asked for a connection, when that connection was acquired, when the statement was sent and when the result was consumed. Figure 1 separates those intervals. Watch how much of the request happens before any SQL can be sent.</p>
+<RequestTime />
+
+<p>The 600 ms acquisition wait accounts for most of this invented request. Making its statement instantaneous would still leave at least those 600 ms. Conversely, a trace that wraps the whole connection call in a span named “database” can make a pool queue look like slow execution. Record what each interval actually includes.</p>
+
+<p>The request’s total already contains its statement’s time. Adding both would count the statement twice. The same applies inside the database: a statement’s elapsed time can contain lock waits, storage waits and result delivery. A long elapsed time is a place to investigate, not a processor-use measurement.</p>
+
+<h3 id="comparable-work">Compare the same work before and after</h3>
+<p>Establish the incident window and the affected work. Are all history requests slow, only one customer’s, or every endpoint using the same pool? Count arrivals, successful useful completions and errors as well as latency. An average for successful requests can improve while more callers time out or are refused.</p>
+
+<p>Keep a small evidence window spanning the onset: request traces with parameters handled appropriately, pool measurements, database activity and wait samples, resource trends and the times of releases, migrations and report starts. Compare equivalent inputs and traffic. Mina’s ten-row history lookup and a year-long report are different work even when they read the same tables.</p>
+
+<p>A release just before the slowdown is a candidate explanation. It becomes stronger when it accounts for a changed query rate, a longer transaction or the actual blocking operation. Timing alone does not tell you which. A missing database reply also establishes only what the caller heard; in a writing request it would not establish whether a commit happened.</p>
+</section>
+
+<section aria-labelledby="pool-delay">
+<h2 id="pool-delay">Waiting for a connection</h2>
+
+<p>A connection pool lends a limited set of database conversations to application work. A caller waiting to borrow one has not sent its statement on that connection. Correlate its acquisition interval with the number of borrowed clients, available clients and queued callers in that same pool. A quiet database cannot show a statement the application has not sent.</p>
+
+<p>Then follow the borrowers. A client can stay occupied while its query executes, waits for a database lock, delivers a large result or waits for application code to finish a transaction. Code can also forget to return it. A full pool establishes where the later callers wait; it does not yet explain why the earlier borrowers remain there. Check each application instance’s pool rather than assuming one total describes them all.</p>
+
+<p>Figure 2 starts with a separate session holding a table lock. Step through until the two later callers arrive, then follow their dependency back to that session. Notice which callers have actually reached the database.</p>
+<LockChain />
+
+<p>The first three callers borrowed clients and reached PostgreSQL. The two later callers did neither. Both groups can report slow history requests, but only the first group has a current database statement to inspect. A request identifier, connection identity and statement interval let you connect those observations without inventing five database waiters.</p>
+
+<p>Increasing this pool’s limit would let more history statements reach the same lock. It would not release H. Under resource pressure it could instead admit more competing work. First explain what keeps clients occupied; <a href="/learn/databases/relational/connections-and-capacity/">Connections, overload and capacity</a> develops the limits, queue budgets and overload behaviour after that diagnosis.</p>
+</section>
+
+<section aria-labelledby="database-waits">
+<h2 id="database-waits">Waiting inside the database</h2>
+
+<p>Once a request has a connection and an outstanding statement, match that statement to its database session and sample what it is waiting for. A session described as active need not be using a processor. In PostgreSQL, activity state and wait information answer different questions: a query can be active while blocked.</p>
+
+<p>The lock branch uses an <code>ACCESS EXCLUSIVE</code> lock on <code>orders</code>. Mina’s ordinary <code>SELECT</code> needs a conflicting table lock, so it waits. An ordinary row-update lock would not explain this read waiting: PostgreSQL’s ordinary snapshot reads do not wait for those row locks. The kind of lock and the requested operation have to fit the explanation.</p>
+
+<p>H’s lock statement has finished, but its transaction is still open. That is why looking only for a long-running current statement can miss the cause. Follow the blocked statement to its blocker, then inspect that transaction’s lifetime, owner and remaining work. If the blocker also waits, follow the next edge. A chain ending at an idle holder has no cycle; it need not be a deadlock and can outlast a deadlock detector’s checking interval.</p>
+
+<p>Figure 2’s queued caller leaving does not affect the three lock waiters. Cancelling one of those database waiters would end that selected statement, but would still leave H holding the lock. The useful intervention depends on who can release the resource, not simply which waiting request looks oldest.</p>
+
+<p>For an actual incident, retain the statement identity, requested resource, blocking relationship and transaction state together. One sample can catch a brief wait that explains little of a long request; repeated samples and the request’s interval make the case stronger. <a href="/learn/databases/relational/locks-and-deadlocks/">Locks, contention and deadlocks</a> develops repairs to the protected interval, lock scope and acquisition order. Native monitoring and selected cancellation remain with the operations article.</p>
+</section>
+
+<section aria-labelledby="expensive-execution">
+<h2 id="expensive-execution">When execution is expensive</h2>
+
+<p>If acquisition is prompt and the statement spends its time doing work rather than waiting for the identified lock, investigate that work. The shop’s paid-order report adds agreed line values for paid orders in October and groups them by customer. Its two-row teaching result, Tariq 40.00 and Mina 39.50, says little about the work of finding those totals in a large history.</p>
+
+<p><a href="/learn/databases/relational/query-execution/">Query execution and performance</a> follows that report through scans, joins, repeated line lookups, grouping and sorting. Here the incident question comes first: did its work grow, did the same work start happening more often, or did it begin overlapping with foreground requests?</p>
+
+<div class="incident-table" role="region" tabindex="0" aria-label="Evidence for growing execution work">
+<table>
+<caption>Follow the change within the incident window</caption>
+<thead><tr><th scope="col">Possible change</th><th scope="col">Evidence to compare</th><th scope="col">What it would explain</th></tr></thead>
+<tbody>
+<tr><th scope="row">More input</th><td>Parameters and rows examined per execution</td><td>A wider reporting range does more work even with the same plan.</td></tr>
+<tr><th scope="row">More repetition</th><td>Call counts and overlapping executions</td><td>An acceptable report can consume a shared resource when run repeatedly.</td></tr>
+<tr><th scope="row">A changed route</th><td>Plans for comparable inputs, including repeated inner work</td><td>Each invocation now performs more searches or carries more rows onwards.</td></tr>
+<tr><th scope="row">Temporary work</th><td>Spill evidence and temporary reads or writes</td><td>A sort or hash operation has added storage work.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Use changes in cumulative counters over the window, checking their reset times and coverage. A statement with the largest lifetime total may have been cheap throughout this incident. A single slow sample can be unusual, and a quick isolated execution does not reproduce the traffic competing with Mina.</p>
+
+<p>Connect statement work to resource use in the same period: processor demand, storage activity, temporary work and memory pressure. Absence of a recorded wait does not by itself prove processor saturation. A measured plan can locate the work, but collecting one with <code>EXPLAIN ANALYZE</code> runs the statement again. An overloaded service may not have room for that experiment. Preserve existing evidence and use a suitable copy or a bounded diagnostic run.</p>
+
+<p>Pausing an optional reporting schedule is a testable containment when the evidence points there. Predict that new report executions stop, resource demand falls and history completions improve. Already running reports require their own decision; switching off their scheduler does not cancel them. Plan analysis and testing a lasting SQL or index repair belong to the execution article.</p>
+</section>
+
+<section aria-labelledby="storage-pressure">
+<h2 id="storage-pressure">Storage delay and running out of space</h2>
+
+<p>Storage pressure has two different forms. A statement can wait too long for a read, a temporary write or a durable log flush while plenty of space remains. A volume can also run out of space while its latency still looks acceptable. Measure latency and available space separately.</p>
+
+<p>For delay, match the affected operation’s waits with storage activity and latency during the incident. Database page visits include cached work; a page reported as read by PostgreSQL can still come from the operating system’s cache. A full buffer pool is normal cache use, not proof that the drive is saturated. <a href="/learn/databases/relational/storage-and-durability/">Storage and durability</a> follows those boundaries.</p>
+
+<p>Other work can share the same device: reports reading pages or spilling, background page writes, and log writes needed by transactions. Find which operation and which storage location account for the change. More demand on a shared volume can delay a small history read whose own plan has barely changed.</p>
+
+<p>For space, examine the relevant volumes, quotas and growth trends, then identify what is growing: data, indexes, temporary files, retained row versions, recovery logs or unrelated files. Figure 3 shows an invented trajectory. Compare the remaining space with the proposed repair’s peak requirement, not just with zero.</p>
+<Space />
+
+<p>At minute ten, “four GiB left” sounds less urgent than “the six-GiB repair no longer fits”. The estimate must also leave room for ongoing writes and cleanup. Extrapolating the recent slope gives a warning horizon, not a promise: a new report or retained log can change it abruptly.</p>
+
+<p>Deleting rows need not return their file space to the operating system. Rebuilding a table can require another copy and take an excluding lock; on PostgreSQL, <code>VACUUM FULL</code> does both. A near-full volume is therefore a poor place to start an unbudgeted rewrite. Do not remove database or recovery-log files by hand. Use the operations, <a href="/learn/databases/relational/postgresql/row-versions/">vacuum</a> and <a href="/learn/databases/relational/postgresql/recovery/">WAL</a> procedures to establish safe relief. A full WAL volume can shut PostgreSQL down, so preserving recovery headroom is part of containment.</p>
+</section>
+
+<section aria-labelledby="bounded-intervention">
+<h2 id="bounded-intervention">Choose a bounded intervention</h2>
+
+<p>Turn the explanation into one action with a predicted effect, a scope and a stopping condition. For Figure 2, the evidence identifies H as a lock-only transaction with no business changes to preserve. Its owner can end it with rollback. The scope is that transaction; the first predicted effect is release of the table lock, followed by the readers finishing and clients returning.</p>
+
+<p>Choose an observation period long enough to see those stages, bounded by the service’s remaining deadline and risk. If H has ended but the expected lock waits remain, check the current blockers. If the lock waits disappear but the queue keeps growing, follow the remaining execution or result-consumption delay. Do not broaden the action merely because the first graph has not returned to normal.</p>
+
+<p>For the report branch, the bounded action might be to stop new optional report runs and observe the foreground workload while existing work finishes. Record when it took effect and what actually stopped. If the supported resource demand falls without history recovery, the report was not the whole explanation. Keep the evidence and revise the hypothesis.</p>
+
+<h3 id="cancellation-recovery">Cancellation and recovery still do work</h3>
+
+<p>A caller giving up, a statement being cancelled and a session ending are different events. An application deadline does not prove a cancellation reached the database. A cancellation request does not prove the statement has already stopped. Confirm its terminal result and the transaction’s state before reusing the client; a failed transaction must be ended cleanly.</p>
+
+<p>Ending a session discards its connection and aborts unfinished transaction work. It can therefore affect more than the statement currently visible. Recovery costs depend on the engine and the work: InnoDB can spend substantial time undoing a large transaction, while PostgreSQL hides aborted row versions and reclaims their space later. Neither promises that every resource becomes available the instant a cancellation is requested.</p>
+
+<p>A lost connection during commit leaves a separate uncertainty. The transaction might already have committed. Preserve its request identity and reconcile through the operation’s recovery protocol; do not turn a missing reply into a new purchase. <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a> develops that distinction.</p>
+
+<p>A restart has a wider scope again. It interrupts other sessions, can trigger crash recovery, loses the database’s warm cache and may bring a rush of reconnecting clients and retries. A restart that removes today’s holder can still leave tomorrow’s workload producing the same queue. Estimate that recovery work before using it as relief.</p>
+</section>
+
+<section aria-labelledby="live-change">
+<h2 id="live-change">When a live change triggered the incident</h2>
+
+<p>A schema operation may explain the table exclusion in the lock branch. A backfill, which gradually writes existing rows into a new form, may instead explain increased execution, page writing or log growth. Correlate the particular change’s state with the waits or resource demand; “a migration is running” does not identify which mechanism is delaying Mina.</p>
+
+<p>Pausing the migration launcher does not establish that its current database operation ended. Reverting the application release does not undo committed backfill work or prove that older callers still accept the current schema and values. Contain the demonstrated pressure, preserve the change’s state, and check which callers and database operations remain active.</p>
+
+<p><a href="/learn/databases/relational/schema-changes/">Live schema changes and backfills</a> develops the compatible sequence of schema, data and caller states, including when a change can safely pause or return. During the incident, that compatibility is a condition on the proposed intervention, not something a healthier latency graph can establish.</p>
+</section>
+
+<section aria-labelledby="verify-recovery">
+<h2 id="verify-recovery">Verify that useful service recovered</h2>
+
+<p>The lock release is only the first predicted change. Figure 4 follows it back to Mina. Read each arrow as a check still to make.</p>
+<Recovery />
+
+<p>Observe useful completions, errors, latency and queue drainage under the relevant arrivals. Check requests already queued as well as newly arriving ones. A quiet database after refusing every caller is not a recovered history service. Nor does one successful probe establish that the original request mix is healthy.</p>
+
+<p>Restore paused reporting gradually within the available headroom and watch whether the cause returns. If foreground service degrades again, retain the bound while the lasting repair is tested. Record the incident window, supported cause, intervention, predicted effects and observed recovery so that the next owner can reproduce the reasoning.</p>
+
+<p>The lasting work follows what you found: shorter protected intervals or a different lock protocol, less query work, explicit admission budgets, storage relief or a compatible change procedure. The diagnosis is complete enough to act when it explains both where Mina waited and what had to change for her request to finish.</p>
+</section>
+
+<section aria-labelledby="sources">
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 25 October 2026. Request durations, pool occupancy, schedules and space trends are illustrative models, not production measurements. The history SQL was checked in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. PostgreSQL lock and intervention details follow its version-18 documentation.</p>
+<ul>
+<li><a href="https://node-postgres.com/apis/pool">node-postgres: Pool</a>, for borrowed clients, waiting callers and the requirement to release clients. Other pool implementations expose their own boundaries and measurements.</li>
+<li><a href="https://www.postgresql.org/docs/18/monitoring-stats.html">PostgreSQL: The cumulative statistics system</a>, for activity state, wait events, counter scope and delayed statistics.</li>
+<li><a href="https://www.postgresql.org/docs/18/explicit-locking.html">PostgreSQL: Explicit locking</a>, for table-lock conflicts, ordinary reads, row locks and lock lifetime.</li>
+<li><a href="https://www.postgresql.org/docs/18/pgstatstatements.html">PostgreSQL: pg_stat_statements</a> and <a href="https://www.postgresql.org/docs/18/using-explain.html">Using EXPLAIN</a>, for per-statement work and measured plans.</li>
+<li><a href="https://www.postgresql.org/docs/18/diskusage.html">PostgreSQL: Monitoring disk usage</a> and <a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">Routine vacuuming</a>, for space exhaustion, reuse and the cost of a rewrite.</li>
+<li><a href="https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-SIGNAL">PostgreSQL: Server signalling functions</a>, for the distinction between requesting cancellation, terminating a session and confirming completion.</li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-recovery.html">MySQL 8.4: InnoDB recovery</a>, for unfinished transactions and rollback work after a restart.</li>
+</ul>
+</section>

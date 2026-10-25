@@ -194,3 +194,9 @@ Use Mina's customer-1 post-103 order-history read across independent illustrativ
 A separate recovery branch starts from the post-103 shop state, commits the mistaken P7 price 2.20, then records the existing partial-payment variation: payment 504 for order 103, 10.00 by card. Order 103 remains pending with 19.00 due. Restoring before the price mistake also omits this valid later database payment; a hypothetical provider's already accepted 10.00 charge survives independently.
 
 The example provider contract uses stable operation identity `order-103-part-payment-1`, an immutable order/amount mapping and a queryable provider result. Reconcile a known accepted result into the restored database, preserving payment 504 and the identity mapping without charging again. An unknown provider outcome remains unresolved. These are illustrative contracts and recovery orderings, with no invented native times, LSNs or transaction IDs.
+
+## Replica read-routing variation
+
+Reuse the independent P7 price20.00→22.00 replay with one primary and read replicas A/B sharing one identified history. U/C denote symbolic change/commit positions, not native LSNs or measured times. A can have C received and durable before replay, then expose22.00 to a new snapshot. B can remain before C, so routing a later read from A to B can show20.00 again. All core stock/order/payment/line facts remain unchanged.
+
+An illustrative required-history token C permits a bounded wait followed by primary fallback or an explicit unavailable result. Qualification is checked on the exact read target before establishing the new snapshot; token semantics and available native controls depend on the engine. Topology/history changes invalidate unqualified position comparisons. Write-authority transfer remains the failover owner's responsibility.
