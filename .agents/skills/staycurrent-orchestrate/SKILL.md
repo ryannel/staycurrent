@@ -23,6 +23,6 @@ Review the assembled collection once for coverage, ownership, duplication, prere
 
 Designate one preview/build owner. Identify the version and relevant source/dependencies so the rendering and evidence match; a small repair can use a changed-file record against the existing baseline. Keep findings, decisions and verification links with the work, referencing unchanged records instead of copying complete evidence packets. Preserve original reports and material limits without generating pass-by-pass paperwork.
 
-Handoffs contain only the context needed for the assigned judgement. First editorial readers receive no author notes, plans or earlier verdicts. Mechanical evidence carries provenance and applicable observations, not prior quality approvals. Start ready work as slots free up; do not commission reviews to occupy capacity.
+Handoffs contain only context and delivery instructions for the current assignment. First editorial readers receive no author notes, plans or earlier verdicts. Mechanical evidence carries provenance and applicable observations, not prior quality approvals. Start ready work as slots free up; do not commission reviews to occupy capacity.
 
 Return the collection, article links, completion state and meaningful limits. Keep drafts distinct from available reading. Once publication is authorised, integrate normal routes, navigation and downloads, run appropriate site checks, and commit/push at relevant delivery points.

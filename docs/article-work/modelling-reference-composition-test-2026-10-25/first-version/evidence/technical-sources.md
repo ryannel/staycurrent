@@ -1,0 +1,17 @@
+# Technical source checks
+
+Checked 25 October 2026 using external primary documentation and authored teaching material. The manuscript gives reader-facing links in Sources and further reading. Models are explicitly illustrative; no claimed SQL execution, performance result or runnable download needs an engine run.
+
+- Silberschatz, Korth and Sudarshan, Database System Concepts 7e, chapter 6, https://www.db-book.com/slides-dir/PDF-dir/ch6.pdf : entity/relationship meaning, attributes of relationships, minimum/maximum participation (slides/pages around 26–28), non-binary relationships, subtype overlap and completeness (49–55). Supports the structural choices; shop-specific rows are original illustrative facts.
+- Same authors, chapter 7, https://www.db-book.com/slides-dir/PDF-dir/ch7.pdf : dependency as a rule over legal instances (10), key minimality (12), keyed lossless decomposition and dependency preservation (15–22), 3NF/BCNF (19–28), independent multivalued facts and higher normal forms. The manuscript deliberately leaves closure, algorithms and exact overlapping-key treatment to the planned child.
+- Jianhua Chen, LSU, https://www.csc.lsu.edu/~jianhua/fd_slide2_09.pdf : page 12 explicitly defines non-key attributes using all candidate keys, and 2NF as full dependence on each candidate key. Supports why merely adding a surrogate does not remove the composite-key partial dependency.
+- UC Berkeley CS 186, https://cs186berkeley.net/notes/note13/ : minimal candidate keys and superkeys; lossless versus dependency-preserving decomposition. The shop's two order/customer splits instantiate the distinction without reproducing its algorithm lesson.
+- PostgreSQL 18 Constraints, https://www.postgresql.org/docs/18/ddl-constraints.html : composite uniqueness and primary keys, required references, referencing-side direction, self-references, many-to-many association tables. Its example order-product key differs intentionally from this commission's order-line occurrence key. No statement is made that a foreign key guarantees every parent has a child or that a self-reference prevents cycles.
+- PostgreSQL 18 Designing JSON Documents, https://www.postgresql.org/docs/18/datatype-json.html#JSON-DOC-DESIGN : coexistence of relational tables and JSON, predictable structure and coherent document boundaries. Generic JSON validity is distinguished from shop relationship rules.
+- Ronald Fagin (1977), https://research.ibm.com/publications/multivalued-dependencies-and-a-new-normal-form-for-relational-databases : original fourth-normal-form treatment. Used only to support the MVD/4NF connection; the article's independent tag/supplier example is original.
+
+A Microsoft beginner normalisation page was consulted during source discovery but not relied on or cited: its treatment does not supply the all-candidate-key precision needed here. Search results from general tutorials were not used as technical authority.
+
+## Focused model arithmetic
+
+Ran a local Node calculation against the delivered facts.mjs arrays (no database). It confirmed: order 101 = 39.50; order 103 = 29.00; 101's payments = 39.50; line-payment expansion = four rows and erroneous 79.00; the unoffered S1/P7/South triple is absent from offers while all projected pairs exist; independent tag/supplier sets make four rows; the unsafe line-number split adds exactly two invented associations. Successful output was returned in the authoring session.
