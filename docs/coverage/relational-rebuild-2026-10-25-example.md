@@ -210,3 +210,9 @@ Use a separate monthly-partitioned copy of the exact generated 2026 order worklo
 The comparison retains globally meaningful order_id and explicitly distinguishes it from the different uniqueness/reference contract enforced by (order_id, placed_at). Actual retirement must account for incoming references, related lines and retained recovery copies; dropping the model partition does not establish that all related records or copies disappeared.
 
 An isolated key_demo may attempt order_id 103 at 2026-11-01 00:00 UTC to contrast composite-key acceptance with same-pair rejection and ID-only reference refusal. A separate route_demo may reuse 103 at that exact month boundary and beyond supplied ranges, with rollback/owned schema only. Neither demonstration adds an order to the core shop or generated report copy.
+
+## Live representation-migration variation
+
+Independently migrate products.price numeric(8,2) into integer price_hundredths, preserving its existing currency meaning through exact price×100 conversion. Initial P3/P7/P9 values 4.50/20.00/35.00 correspond to 450/2000/3500. Bridge callers read price and atomically write both representations; the chosen protocol drains old-only writers and their in-flight transactions before backfill.
+
+A separate stale-worker race changes P7 price 20.00→22.00 and requires the new representation 2200 to survive an attempted stale 2000 write. A separate late migration arrival may reuse P11 Tea strainer at 8.00/800, initial stock 0, explicitly independently of import B17. Core orders, agreed prices and other stock facts are unchanged. Convergence, writer compatibility and return boundaries must be established by the complete stated protocol, not a cursor reaching the end or a one-time zero-null count.
