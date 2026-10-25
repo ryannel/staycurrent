@@ -5,9 +5,11 @@ description: Plan one article from its topic and brief as a heading outline, wit
 
 Plan this article's contribution to the commission: take an intelligent newcomer to expert practitioner in the commissioned subject, in the least reader time and effort. A child does not set its own specialist target.
 
+Before outlining, study the three fixed references using [staycurrent-write's reference-reading procedure](../staycurrent-write/SKILL.md). Let their teaching shape what this article develops, its explanatory sequence and the placement of deeper child articles.
+
 Start with practitioners' decisions, failure cases and practical judgement, checking consequential points against primary sources and standard texts. Record these intended outcomes in the brief. Then read existing articles and surrounding plans for material and neighbouring coverage; they do not set scope. Let subject depth determine length and form; keep a subject as a section when that serves the reader better than another page.
 
-Return `topic`, `title`, `brief` and a recursive singular `heading` list. Under the heading introducing a child, place `nested_article` with only its `topic`, `title` and `brief`; commission that child's headings separately. Titles/headings are reader-facing; instructions and outcomes belong in briefs. Hard-to-picture ideas need a named example, figure or table in their brief for teaching review. Use the collection's [example record](../staycurrent-continuity/SKILL.md), proposing missing extensions; the root proposes the record. The writer polishes final wording.
+Return `topic`, `title`, `brief` and a recursive singular `heading` list. Under the heading introducing a child, place `nested_article` with only its `topic`, `title` and `brief`; commission that child's headings separately. Titles/headings are reader-facing; instructions and outcomes belong in briefs. Prefer established, searchable industry terms in titles and headings where they fit naturally. Hard-to-picture ideas need a named example, figure or table in their brief for teaching review. Use the collection's [example record](../staycurrent-continuity/SKILL.md), proposing missing extensions; the root proposes the record. The writer polishes final wording.
 
 ```yaml
 topic: Relational indexes

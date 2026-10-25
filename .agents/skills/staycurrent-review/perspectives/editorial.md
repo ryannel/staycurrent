@@ -4,7 +4,7 @@
 
 ## Checks
 
-1. **Titles and headings.** Follow the references in how they name articles and sections. Judge the actual wording in its section against reference examples. Resolve doubtful wording in context; being able to infer its subject does not establish that it is well written.
+1. **Titles and headings.** Follow the references in how they name articles and sections. Judge the actual wording in its section against reference examples. Prefer established, searchable industry terms where they fit naturally. Resolve doubtful wording in context; being able to infer its subject does not establish that it is well written.
 2. **Plain sentences.** Plain, precise, connected prose; no compressed, decorative or writerly wording needing decoding.
 3. **Terms.** Explain at first use and use consistently.
 4. **Openings.** Give enough context to understand the question or claim and why it matters.
