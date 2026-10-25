@@ -1,0 +1,13 @@
+# Blind reader notes — schema-change v01
+
+Recorded before plans, example facts, author notes or verdicts. Read the finished Figure 1–3 labels, captions and all step outcomes first; then read the whole article. Source read and live rendering agree. Audience: intelligent application engineers with the stated prerequisites.
+
+The visual sequence teaches a coherent protocol. Figure 1 keeps the stored fields separate from accepted read/write behaviour; Figure 2 lets me hold the ordering fixed while comparing stale assignment, source guard and current-row conversion; Figure 3 visibly inserts P11 above P3 and distinguishes a completed scan from a missing value. I can explain why non-nullness and a job's exit status are insufficient before reading the body. The counters (0 missing / 1 disagreement after the stale overwrite) are particularly useful evidence.
+
+The prose supplies the difficult boundaries where they matter: old-only workers must drain before this backfill, zero-row guarded writes need re-reading, and rollback means a bridge release rather than a writer that restores the race. The numeric domain/NaN qualification is an early detour but changes whether the shown conversion is valid and earns its place. Later contraction explains the otherwise easy-to-miss old NOT NULL insert failure. The connected example makes these qualifications feel like one argument.
+
+Titles and headings use recognisable terms and specific tasks ("Backfill without overwriting a newer value", "Rows arriving behind the cursor"). The plain sentences "Its remembered value is not a lock" and "A maximum cursor or a job marked 'finished' describes the worker's progress" carry precise lessons without requiring decoding. I found no substantive editorial/teaching problem in the first reading.
+
+Reference calibration: compared the prose's reveal–draw–explain pattern with Indexes' Sequential scan/B-tree/range scan passages, Storage's Pages/Row versions passages and Sequences' basic messages/activation/asynchronous development. Inspected Storage's rendered Figure 3: the schema-change figures are simpler state displays, but their repeated P7 values, separate worker/database panels and labelled changed condition make their central relationships equally followable for this subject. No measured concurrency or duration is inferred: the captions explicitly identify illustrative committed orderings.
+
+Current rendering so far: 1280×720/System (dark appearance), all three figures sampled including final alternate outcomes; no clipped figure text or contradictory labels. Further phone/light/control checks and intended-outcome coverage remain to do. No technical execution has been reproduced for this reader review.

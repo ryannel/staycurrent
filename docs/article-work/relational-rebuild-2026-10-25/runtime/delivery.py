@@ -23,7 +23,8 @@ if mode=='build':
  after=sources();(r/'latest-build.log').write_bytes(p.stdout)
  result={'exit_code':p.returncode,'source_unchanged_during_build':before==after,'source_files':after}
  (r/'latest-build.json').write_text(json.dumps(result,indent=2)+'\n')
- print(p.stdout.decode(errors='replace')[-6500:]);print(json.dumps({'key':key,'exit_code':p.returncode,'source_unchanged_during_build':before==after}))
+ if p.returncode:print(p.stdout.decode(errors='replace')[-6500:])
+ print(json.dumps({'key':key,'exit_code':p.returncode,'source_unchanged_during_build':before==after}))
  sys.exit(p.returncode)
 elif mode=='freeze':
  built=json.loads((r/'latest-build.json').read_text());assert built['exit_code']==0 and built['source_unchanged_during_build'];assert sources()==built['source_files'],'source changed after compilation'

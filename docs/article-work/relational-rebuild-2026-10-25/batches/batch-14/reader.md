@@ -1,0 +1,21 @@
+# Reader review — batch 14
+
+**Version:** schema-change v01, fixed batch-14 review-source.json. Current article, metadata and MigrationFigure SHA-256 values match the manifest. **Scope:** first independent blind editorial/teaching reading, then intended-outcome and ownership check, with actual rendered judgement at 4606. Initial notes were saved in initial-notes.md before consulting the plan, example facts, receipts or any verdict. No older manuscript or other review was read.
+
+**Findings:** no critical or medium finding; no optional polish is needed for acceptance.
+
+The article fulfils its promise. Figure 1 separates columns present from permitted caller behaviour. Figure 2 holds the committed ordering fixed while comparing stale assignment, a source guard and current-row conversion; its zero-missing/one-disagreement final state makes the insufficiency of non-nullness visible. Figure 3 inserts P11 above the saved P3 cursor, then shows why a completed scan may still leave a required row missing. These form a teachable visual argument before the body is needed.
+
+The prose develops the awkward boundaries rather than merely listing precautions. “Close the old write path” gives the concrete 22.00/2000 counterexample before requiring all writers and admitted work to drain. The guarded-write paragraph accounts for a zero-row result and distinguishes source equality from a revision guard. The convergence section connects one observed snapshot to the continuing bridge rule. The return section keeps a bridge release as the rollback target, and contraction explains why the old NOT NULL column can still break new inserts. These passages supply the practical judgement promised by the brief.
+
+The actual title and headings use recognisable terms and precise tasks: “Backfill without overwriting a newer value” and “Rows arriving behind the cursor” name the problem the next explanation solves. Sentences such as “Its remembered value is not a lock” are plain and consequential. The early numeric-domain/NaN qualification prevents an invalid conversion; it does not read as editorial bookkeeping. The later constraints/index/table generalisation gives a useful answer at this level without taking over native engine procedures.
+
+Reference calibration used bounded passages and finished renderings: Sequences' lifelines/messages and activation/asynchronous development, Indexes' scan/B-tree/range passages and range-scan drawing, and Storage's pages/row-version passages and Figure 3. The article follows their concrete example → directed observation → explained conclusion pattern. Its simpler state panels suit this protocol; the worker/database separation and repeated values do the explanatory work, rather than relying on decorative arrows.
+
+**Rendered coverage:** inspected every phase of Figure 1; Figure 2's shared ordering and all three final outcomes; Figure 3's bridge progression and old-only failure. Current samples included 1280×720 dark/System, desktop light rollout, 375×812 light late-row table/selector/verdict, and dark current-row outcome. Text, NULL markers, labels and controls were legible, with no clipped content in those samples. Keyboard Enter advanced Next and retained focus; endpoint Next retained focus while disabled. Play exposed Pause and progressed; Pause, Reset, selector changes and the expanded text alternative agreed with the displayed data.
+
+After the blind notes, retained v01 browser-results.json and contrast-results.json for the broader mechanical matrix. Relevant figure, stepper, global/figure/article CSS and theme source hashes still match v01 build.json. Recorded text/accent contrast ratios exceed the required thresholds in both themes. The current visual samples supplement those receipts.
+
+**Limits:** this is a reader/rendered review, not a fresh SQL execution or independent primary-source technical audit. No server concurrency, production duration or headroom is inferred from the illustrative schedules. I did not repeat the full phone/theme/state matrix or use assistive technology. Root owns integrated build and HTTP evidence.
+
+**Cleanup:** restored 1280×720 and System, then cleared the viewport override; reset/stopped inspected players, restored default selectors, closed owned tabs and released the main/reference theme lease.

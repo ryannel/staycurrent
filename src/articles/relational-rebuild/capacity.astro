@@ -1,0 +1,173 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import CapacityFigure from '../../components/relational-rebuild-capacity/CapacityFigure.astro';
+---
+
+<p>A connection lets an application send work to a database. It does not give that work a processor, memory or a share of the storage. A server can accept a hundred connections and still do less useful work with a hundred queries running together than with ten.</p>
+
+<p><strong>Capacity</strong> is the workload a system can serve while meeting its requirements: correct results, acceptable delay and enough room to keep operating through the conditions it must survive. Counting connections is part of planning that capacity. Counting what occupies them, what waits outside them and what resource the work needs is the rest.</p>
+
+<p>The shop’s application serves Mina’s order history and also runs reports. Mina wants her recent orders; a report sums paid-order line values across many customers. Both use connections to the same database, but they need different amounts of work. Every rate, deadline and capacity limit below is an illustrative assumption. The drawings show the consequences of those assumptions, not measured limits of the shop or PostgreSQL.</p>
+
+<h2 id="connections-and-work">Connections and work in progress</h2>
+
+<p>A <strong>connection pool</strong> keeps connections open for reuse. A request borrows one, sends its statements and releases it when the driver has finished using it. An <strong>idle connection</strong> is open but available to borrow. An <strong>occupied connection</strong> is borrowed by a request, whether the database is executing its statement, waiting for a lock, or waiting for the application to send its next statement.</p>
+
+<p>Mina’s history request asks for customer 1’s ten newest orders since the start of October. In the small shop state, it returns pending order 103 followed by paid order 101. It changes no row.</p>
+
+<Sql label="The history read used throughout the article" code={`SELECT order_id, placed_at, status
+FROM orders
+WHERE customer_id = 1
+  AND placed_at >= timestamptz '2026-10-01 00:00:00+00'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;`} />
+
+<p>Figure 1 follows that request through a pool with two connections. A later lock holder uses an additional session outside this pool. Step to the table-lock wait, and compare the occupied-connection count with the executing-statement count.</p>
+
+<CapacityFigure kind="journey" number="1" title="Where Mina waits" />
+
+<p>At first Mina has no connection, so her wait belongs to the application queue. Later she occupies a connection while her statement waits in the database. The same symptom, a slow history page, consumes different resources at those two boundaries. Opening another connection could let another request reach the database; it would not release the lock.</p>
+
+<p>The lock in this drawing is an <code>ACCESS EXCLUSIVE</code> table lock on <code>orders</code>, which can block an ordinary PostgreSQL <code>SELECT</code>. An ordinary row-update lock does not explain this read waiting. <a href="/learn/databases/relational/slow-queries/">Diagnosing a database incident</a> distinguishes those causes, and <a href="/learn/databases/relational/locks-and-deadlocks/">Locks, contention and deadlocks</a> develops the locking protocols. Here the consequence is that a waiting request still takes up a borrowed client.</p>
+
+<p>Keep these populations separate in measurements. Count open pool connections, occupied clients, callers awaiting checkout, and database statements executing or waiting. A database activity view cannot see requests still in an application queue. Conversely, a request timing out in the application does not prove that its database work has ended. <a href="/learn/databases/relational/application-sql/">SQL at the application boundary</a> handles that individual connection’s cleanup and safe reuse.</p>
+
+<h2 id="throughput-latency-concurrency">Throughput, latency and concurrency</h2>
+
+<p><strong>Throughput</strong> counts completions per unit of time. <strong>Latency</strong> measures elapsed time for one request. <strong>Concurrency</strong> counts work present at once. They are related, but a rate such as 100 requests a second does not tell you how many connections are occupied unless you also know how long each request holds one.</p>
+
+<p>Suppose a stable workload completes 100 requests a second, each borrowing one connection once. With a mean borrow-to-release time of 40 ms, it occupies four connections on average. Now suppose another stable workload sustains the same completed rate, but holds each connection for a mean 200 ms. Its mean occupancy is twenty.</p>
+
+<CapacityFigure kind="occupancy" number="2" title="The same completed rate, five times the occupancy" />
+
+<p>This is <strong>Little’s Law</strong>: mean work in a boundary equals the rate through that boundary multiplied by mean time inside it, often written <code>L = λW</code>. For the borrowed-connection boundary, time starts at checkout and ends at release. It includes database waits and any application delay while holding the connection. Waiting to borrow is outside it.</p>
+
+<p>Use the same boundary for all three quantities. If instead you count requests from arrival until reply, include the application queue in both the population and the elapsed time. Use mean times, not a 99th percentile substituted into the formula. If requests borrow several times, count borrow episodes and their rate for connection occupancy, or account for each request’s total connection time explicitly.</p>
+
+<p>The twenty is an average, not a recommended pool maximum. It leaves burst variation and tail latency unanswered. More importantly, the second calculation <em>assumes</em> the system sustains 100 completions a second. It does not establish that a capped pool or the database can do so. If demand keeps arriving faster than work finishes, the queue grows; dividing an arrival rate by a hoped-for latency does not make that state stable.</p>
+
+<h2 id="limiting-resource">Find the resource that limits useful work</h2>
+
+<p>A history lookup can touch a few index and table pages and return a small result. The paid-order report may scan many rows, join order lines, aggregate and sort. Calling each one “a query” conceals the difference. A change in their mix can exhaust capacity while the request count stays the same.</p>
+
+<div class="table-scroll" tabindex="0" role="region" aria-label="Resources shared by history requests and reports"><table>
+  <caption>What extra simultaneous work competes for</caption>
+  <thead><tr><th scope="col">Resource</th><th scope="col">What uses it</th><th scope="col">What more concurrency can cost</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Processor time</th><td>Testing rows, joining, aggregating and sorting</td><td>More requests share the same execution time; completions need not rise with their count.</td></tr>
+    <tr><th scope="row">Memory</th><td>Cached pages, connections, sorts and hash tables</td><td>More simultaneous operators can cause spills or memory exhaustion.</td></tr>
+    <tr><th scope="row">Storage</th><td>Page reads, temporary files, log flushes and background writes</td><td>Reads and writes wait longer when their shared storage is busy.</td></tr>
+    <tr><th scope="row">Contended data</th><td>Transactions needing the same lock or hot record</td><td>More callers join a wait without making the holder finish sooner.</td></tr>
+  </tbody>
+</table></div>
+
+<p>Memory is especially easy to undercount. PostgreSQL’s <code>work_mem</code> is a budget for a sort or similar query operation, not one allowance for the whole server. Several operations and sessions can use allowances together, and hash operations have a multiplier. Multiplying connection count by <code>work_mem</code> is therefore not a complete server memory budget.</p>
+
+<p>To choose an execution limit, vary admitted concurrency on a representative workload and compare useful completions, latency and resource use. At low concurrency, adding work may keep otherwise idle resources busy. Eventually another request mostly waits or adds interference. Choose a limit within the region that meets the service requirement, with room for variation. The highest throughput point alone may already have unacceptable tail latency.</p>
+
+<p>A lower limit controls the work competing now. Reducing the work each request needs can move the limit later: a suitable history index, a better report plan or a shorter contended transaction may help. <a href="/learn/databases/relational/query-execution/">How a query runs</a> and <a href="/learn/databases/relational/indexes/">Indexes</a> explain those changes. Neither the processor count nor the database connection ceiling supplies a universal pool-size formula.</p>
+
+<h2 id="pool-budget">Budget connection pools across the application</h2>
+
+<p>A pool maximum is local to the process that owns it. The database receives connections from every application instance, job worker, migration tool and operational session. Ten pools of twelve can ask for 120 connections even if each application instance usually borrows only a few.</p>
+
+<p>Suppose the server has a 100-connection ceiling. The shop allocates ten slots to background workers and ten to operational access and tools, leaving eighty for application pools. Each application instance has a maximum of twelve. Figure 3 adds the instances up; switch to the rollout in which old and new instances overlap.</p>
+
+<CapacityFigure kind="budget" number="3" title="One database budget, several application instances" />
+
+<p>Six instances can ask for 72 application connections. Add ten worker slots and ten operational slots and the budget reaches 92. Keeping four old instances alive during that rollout raises the total to 140. A pool that opens connections lazily might not hit the limit immediately, but it has not made that worst case affordable.</p>
+
+<p>Either bound overlap, reduce each pool’s maximum, or allocate a shared application ceiling before allowing that deployment shape. Count each distinct pool, including separate read and write pools that reach the same server. Recalculate for autoscaling and for failover that directs several clients to a smaller set of servers. More application instances can provide more application capacity while leaving the database budget unchanged.</p>
+
+<p>The ten operational slots are a planning allowance, not a guarantee that arbitrary users can open them. PostgreSQL has reserved-connection settings and privileges for that purpose; the effective ordinary connection allowance depends on the configuration. Its <code>max_connections</code> also affects resource allocation. Raising it is a configuration change with a cost, not evidence that more active queries will meet the latency target. <a href="/learn/databases/relational/postgresql/operations/">Operating and diagnosing PostgreSQL</a> covers native controls.</p>
+
+<p>The connection ceiling and execution limit answer different questions. The first says how many sessions may exist. The second says how much work may compete at once. A service could budget 72 application connections while admitting far fewer simultaneous database operations. Enforce the active-work budget across all instances, or divide it into allocations whose sum stays within it. Independent per-instance gates that all assume they own the full budget do not do that.</p>
+
+<h3 id="poolers">A pooler adds another boundary</h3>
+
+<p>A connection pooler sits between applications and the server. For example, PgBouncer’s transaction mode lends a server connection for one transaction and returns it afterwards. Many client connections can share fewer server connections because clients that are between transactions do not each retain one.</p>
+
+<p>The extra boundary has its own waiting: application checkout, then perhaps a wait inside the pooler for a server connection, then execution or waiting in the database. Bound and measure all three. Moving a queue into a pooler does not make it disappear, and a hundred client connections sharing ten server connections still have only ten server connections for simultaneous transactions.</p>
+
+<p>Choose a pooling mode against the driver and application’s state requirements. Session pooling retains a server connection for the client session; transaction pooling can move the next transaction to another one. Session-level locks, temporary-table lifetimes and session settings can therefore change meaning. Prepared-statement support depends on the protocol, pooler version and configuration; PgBouncer’s feature map distinguishes protocol-level prepared plans from SQL <code>PREPARE</code>. Check the exact combination before adopting it.</p>
+
+<h2 id="bound-waiting">Bound waiting and reject excess work</h2>
+
+<p><strong>Admission control</strong> decides whether work may begin consuming a protected resource. Put the decision before borrowing a connection when that is where work can wait cheaply. Give admitted work a concurrency bound, waiting work a finite queue and a maximum wait, and excess work an explicit outcome.</p>
+
+<p>Figure 4 gives seven simultaneous requests two execution places. Every request takes exactly 100 ms once started, an invented constant chosen to make the queue visible. The bounded policy allows two more requests to wait, for at most 120 ms. All have a 300 ms end-to-end deadline. Step through it, then compare the unlimited queue that keeps expired work.</p>
+
+<CapacityFigure kind="overload" number="4" title="A queue absorbs a burst, not unlimited demand" />
+
+<p>The bounded policy completes four requests by 200 ms and refuses three immediately. The unlimited policy eventually completes seven, but request 7 finishes too late. Counting only database completions would hide that wasted work. In a less tidy workload, a few slow requests can keep the whole queue waiting; a length limit alone cannot bound time.</p>
+
+<p>Choose both bounds from the service’s delay budget. For this model, a queued request waits 100 ms and then uses 100 ms of execution, leaving 100 ms of the deadline for the rest of the request path. Those constants do not guarantee a real 300 ms response. Real execution varies, so enforce queue expiry and a remaining deadline as well as testing the limits. When a request leaves a queue, check again whether there is time left for useful work.</p>
+
+<p>An overload response can tell an interactive caller to try later with backoff. An optional report can be deferred into a bounded, durable job system if the product promises a later result. A reduced response is another choice only when its meaning is acceptable: a clearly labelled cached history, for example, if the product permits stale history. Returning a false payment success or quietly omitting required orders is not a capacity policy. <a href="/learn/databases/relational/outboxes-and-jobs/">Outboxes and background jobs</a> covers durable deferred work.</p>
+
+<h3 id="work-classes">Keep work classes within the shared budget</h3>
+
+<p>Separate the interactive history path from optional reports at admission. Limit report concurrency, give interactive work an allocation, and cap a noisy caller’s share. Decide whether unused allocations may be borrowed and how long already-running borrowed work can delay higher-priority requests. A report already using storage does not instantly stop because Mina arrives.</p>
+
+<p>Separate pools can keep report callers from taking every history pool slot. They do not reserve processors, memory or storage. The two classes still need a common resource budget and a test with both running together. A report may need a much smaller concurrency allowance than a history read; giving each twenty slots treats unequal work as equal.</p>
+
+<h3 id="deadlines-retries">Deadlines, cancellation and retries</h3>
+
+<p>A request’s remaining time shrinks while it waits. If a 300 ms deadline has already spent 100 ms in queues, the next stage cannot receive a fresh 300 ms allowance. Carry the remaining deadline through checkout, statements and any retry. PostgreSQL’s <code>statement_timeout</code> starts at the server’s statement boundary; it does not include an earlier application-pool wait.</p>
+
+<p>Remove expired requests from queues. For running work, request cancellation and retain its execution allowance until the work has actually ended and the connection has been cleaned up or discarded. Releasing an admission token as soon as the caller gives up can admit replacement work while the old query still consumes resources.</p>
+
+<p>Retries are additional offered work. Let one layer own them, cap attempts and total elapsed time, use backoff with jitter, and limit aggregate retry traffic. In a simple example, 100 original requests a second plus one extra attempt for every original is 200 attempts a second before any further retries. An overload refusal should not trigger an immediate new attempt. Safe retry identity and the meaning of a missing commit reply belong to <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a>; spare capacity does not make a write safe to repeat.</p>
+
+<h2 id="recovery-headroom">Leave capacity for recovery</h2>
+
+<p><strong>Headroom</strong> is capacity deliberately left available for variation or other work the service must perform. That includes background cleanup, checkpoints, backups, repairs and warming a cold cache. Free storage must also accommodate growth, retained logs, temporary files and any extra copy a planned operation needs. A percentage of idle processors cannot substitute for free disk space.</p>
+
+<p>Recovery also has a rate. Suppose a separate queue contains 600 units of background work that are still needed, and 80 more arrive each second. If the system can complete 100 of these equal-cost units a second, only twenty completions a second reduce the old backlog.</p>
+
+<div class="table-scroll" tabindex="0" role="region" aria-label="Illustrative backlog recovery"><table>
+  <caption>A 600-unit backlog while 80 new units/s keep arriving; assumed fixed rates</caption>
+  <thead><tr><th scope="col">Completion capacity</th><th scope="col">Available to drain backlog</th><th scope="col">Ideal drain time</th></tr></thead>
+  <tbody><tr><td>100 units/s</td><td>100 − 80 = 20 units/s</td><td>600 ÷ 20 = 30 s</td></tr><tr><td>80 units/s</td><td>80 − 80 = 0</td><td>Backlog does not shrink</td></tr><tr><td>100 units/s, new arrivals paused</td><td>100 units/s</td><td>600 ÷ 100 = 6 s</td></tr></tbody>
+</table></div>
+
+<p>Thirty seconds is arithmetic under fixed rates, not a recovery guarantee. If work gets more expensive, a retry wave arrives, or recovery itself consumes the limiting resource, the spare twenty can vanish. Gradually restore paused reports and connection establishment after an outage, measuring whether queues drain. Releasing all deferred work at once spends the very headroom needed to recover.</p>
+
+<p>Test the reduced-capacity state the service promises to survive. If losing a node redirects the same demand onto the survivors, the normal-state limit may no longer be safe. Data movement and replica catch-up also use resources while redundancy is reduced. <a href="/learn/databases/relational/rebalancing/">Rebalancing and cluster change</a> budgets those operations; a surviving copy is not automatically spare capacity for them.</p>
+
+<h2 id="test-capacity">Test the workload and the overload policy</h2>
+
+<p>A useful capacity test answers a service question: what history demand can be served within the chosen latency target while the required reports and upkeep also run? Use an isolated environment with representative hardware, settings, data size, customer skew, result sizes and request mix. The shop’s two-row Mina result checks query meaning; it cannot establish production capacity.</p>
+
+<p>Start below the intended demand, increase offered load in steps and hold each long enough to see whether queues stabilise. Compare admission limits as well as pool sizes. Then exercise bursts, slow statements, a blocked statement, a cold start and the reduced-capacity recovery state. Keep the arrival pattern and data comparable when changing one limit, so a different workload does not masquerade as an improvement.</p>
+
+<div class="table-scroll" tabindex="0" role="region" aria-label="Capacity test observations"><table>
+  <caption>Keep the demand and its outcomes in the same record</caption>
+  <thead><tr><th scope="col">Measure</th><th scope="col">What it establishes</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Offered originals and retry attempts</th><td>How much work callers wanted, including attempts that never reached the database.</td></tr>
+    <tr><th scope="row">Admitted, refused and expired requests</th><td>What the overload policy did with that demand.</td></tr>
+    <tr><th scope="row">Useful completions and errors</th><td>How many correct results arrived within their required time.</td></tr>
+    <tr><th scope="row">Queue wait, connection hold, total latency</th><td>Where time went; include tail percentiles and separate successes from refusals.</td></tr>
+    <tr><th scope="row">Active work and resource use</th><td>Which limit constrained work and whether another resource ran out first.</td></tr>
+    <tr><th scope="row">Backlog after the burst</th><td>Whether the service recovered while new traffic continued.</td></tr>
+  </tbody>
+</table></div>
+
+<p>Be careful with a generator that sends a fixed number of requests, waits for their replies and only then sends more. When replies slow down, this <strong>closed workload</strong> automatically offers less traffic. It can measure what those clients experience, but it can hide the growing demand of callers who continue arriving independently. Use an arrival schedule for that question and report how far the generator falls behind it. Otherwise the generator becomes the admission limit without appearing in the service’s results.</p>
+
+<p>PostgreSQL’s <code>pgbench</code>, for example, offers a scheduled rate mode and reports schedule lag; scheduled requests skipped under a latency limit are counted separately. A database-only test still omits the application’s queues, pool checkout and response path. Use it to isolate database work, then exercise the complete request path to validate the service policy.</p>
+
+<p>Keep the workload, limits and operating conditions with the result. A defensible capacity claim names the request mix and latency requirement, shows the refusal and recovery behaviour, and states the conditions under which it was tested. Repeat the affected test when a release, data growth, resource change or new report changes those conditions. The budget remains useful because it describes the work the service can accept and what happens to the rest.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>The figures and rate calculations are illustrative models. The history query’s two-row result was checked in PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly; no server capacity, concurrency or timing was measured for this article.</p>
+<ul>
+  <li>John D. C. Little, <a href="https://doi.org/10.1287/opre.9.3.383">A Proof for the Queuing Formula: L = λW</a> (1961): the stable mean relationship and its assumptions.</li>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/runtime-config-connection.html">Connections and Authentication</a>, <a href="https://www.postgresql.org/docs/18/runtime-config-resource.html">Resource Consumption</a> and <a href="https://www.postgresql.org/docs/18/runtime-config-client.html">Client Connection Defaults</a>: connection reservations, resource allocation, memory per operation and timeout boundaries.</li>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit Locking</a>: why ACCESS EXCLUSIVE blocks an ordinary read, and row locks do not.</li>
+  <li>PgBouncer, <a href="https://www.pgbouncer.org/features.html">Features and pooling-mode compatibility</a>: session and transaction pooling, session state and prepared statements.</li>
+  <li>Google SRE, <a href="https://sre.google/sre-book/handling-overload/">Handling Overload</a> and <a href="https://sre.google/sre-book/addressing-cascading-failures/">Addressing Cascading Failures</a>: resource costs, bounded queues, load shedding, deadlines and recovery under load.</li>
+  <li>Amazon Builders’ Library, <a href="https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/">Timeouts, retries, and backoff with jitter</a>: retry amplification, attempt limits and spreading recovery traffic.</li>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/pgbench.html">pgbench</a>: scheduled arrival rates, schedule lag and skipped transactions.</li>
+</ul>
