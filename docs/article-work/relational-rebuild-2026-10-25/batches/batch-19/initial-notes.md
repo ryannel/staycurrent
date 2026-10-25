@@ -1,0 +1,9 @@
+# Initial blind reader notes — distributed-commit v01
+
+Saved before plans, example-facts, author evidence or verdicts. Read the rendered figure labels/captions and operated the commit/refusal walk and three recovery cases before the intentional body reading; the full accessibility inventory incidentally exposed body text during setup. Main preview :4606; owned article tab; confirmed 1280 × 720.
+
+Figures alone: Figure 1 shows why independent local commits leave either an order without decrements or decrements without an order, despite replicas. Figure 2 lets me distinguish working → prepared → final, and outcome chosen → outcome learnt. Both positive and refusal paths leave the actual shop end state explicit. Figure 3 makes inaccessible authority the central recovery question: participant communication is insufficient; a recovered decision quorum preserves COMMIT; an older reachable copy does not disprove it. Figure 4 expands participant scope to the rule's work, without asserting a universal engine layout.
+
+Body: clear running example and economical sequence. The mug is useful causality, especially the explanation that prepared P cannot give it away after a timer expires. The two compatible histories (COMMIT vs deadline ABORT) explain classic blocking rather than merely naming it. The common-snapshot example makes the boundary of atomic commit concrete. Request recovery and external work are brief handoffs, not duplicate tutorials. Headings are plain and subject-specific. No provisional substantive reader finding.
+
+Possible thing to examine in rendered completion: the commit diagram is tall at desktop and controls sit below its message rows; assess phone behaviour rather than assuming tall means broken. Native text disclosures are useful complete alternatives. No browser/runtime claim beyond observed illustrative states.
