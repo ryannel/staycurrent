@@ -1,0 +1,90 @@
+---
+import Transfer from '../../components/relational-rebuild-failover/Transfer.astro';
+import Sql from '../../components/explainers/querying/Sql.astro';
+---
+<p><strong>Failover</strong> transfers service to a surviving database copy when the current primary is unavailable. For writes, it has two separate obligations: the former primary must no longer be able to act as a writer, and the replacement must hold the history the service promises to retain. A server answering a health check proves neither.</p>
+<p>Follow the shop’s separate price experiment from <a href="/learn/databases/relational/replicas-and-read-routing/">Replicas, lag and read routing</a>. The primary changes P7’s catalogue price from 20.00 to 22.00 and confirms the commit. Replica A has the change and commit durably stored, but has not replayed them. Replica B is still before the change. Then the primary becomes unreachable.</p>
+<p>We will first separate a broken link from a stopped writer, then choose which surviving history to use. H names the original history, U the price change and C its commit. The drawings are conceptual schedules, with symbolic positions. Order 103 stays pending, with no payment and an agreed line total of 29.00; changing the catalogue does not reprice it.</p>
+
+<section aria-labelledby="missing-heartbeat"><h2 id="missing-heartbeat">A missing heartbeat does not stop a writer</h2>
+<p>A <strong>heartbeat</strong> is a repeated message used to check that another part is reachable. When it stops arriving, the primary might have failed. The link might also have failed while the primary continues serving callers on its side.</p>
+<p>Figure 1 gives an existing application pool a connection to the primary. The monitor and replica A lose contact with it. Step through with a confirmed fence, then choose <em>Move address only</em> and compare the last step.</p>
+<Transfer kind="fence" />
+<p>In the second path, new callers reach A, but an old connection still reaches the primary. Both databases can commit work. This is <strong>split brain</strong>: two competing write histories for what the application treats as one database. Each copy can enforce its own keys and checks while the service as a whole has no single answer about accepted work.</p>
+<p>Promoting A is not a way to discover whether the primary stopped. It creates the second writer if the first is still active. Waiting longer for a heartbeat can reduce false alarms, but the elapsed wait does not enforce exclusion.</p></section>
+
+<section aria-labelledby="fencing"><h2 id="fencing">Fence the former primary</h2>
+<p><strong>Fencing</strong> prevents the former writer from continuing authoritative work. The replacement must not accept writes until the authority protocol establishes that exclusion. Sending a shutdown request is only an attempt; the handover needs evidence that the required stop or isolation has taken effect.</p>
+<p>In Figure 1, an independent power-control path confirms that the old machine is off, and restart controls prevent it returning as a primary. A controlled switchover can instead confirm a clean shutdown and keep every supervisor from starting it again as a writer. When the machine cannot be trusted to respond, use a tested fencing mechanism that does not depend on that machine cooperating.</p>
+<table><caption>What each intervention excludes</caption><thead><tr><th>Intervention</th><th>What still needs establishing</th></tr></thead><tbody>
+<tr><td>Change DNS or a service address</td><td>Existing connections, cached addresses and direct workers may still reach the old primary.</td></tr>
+<tr><td>Request shutdown</td><td>The stop must finish, and automatic or manual restart must not restore old authority.</td></tr>
+<tr><td>Cut power through an independent controller</td><td>Confirm the correct target is off and cannot restart as a writer.</td></tr>
+<tr><td>Remove access to a required resource</td><td>Every relevant write path must require that resource; local data on a separate disk may still be writable.</td></tr>
+</tbody></table>
+<p>A network fence can work only if it closes the complete set of relevant paths, including already established connections and local workers. Moving one address is useful routing work after the transfer; Figure 1 shows the path it leaves open.</p>
+<h3 id="leases">Leases and fencing tokens</h3>
+<p>A leader lease grants authority for a bounded interval, renewed through a coordination service. The old primary must stop committing before a successor can use that authority. A paused or overloaded process may not run its demotion code in time. Lease timing, clock assumptions and an enforced stop therefore belong to one tested protocol. Patroni’s <a href="https://patroni.readthedocs.io/en/latest/watchdog.html">watchdog design</a> illustrates why a separate reset mechanism may be needed when ordinary demotion fails.</p>
+<p>A <strong>fencing token</strong> carries a generation of authority to the resource receiving an operation. Suppose a hypothetical receiver durably remembers generation 8 for one resource. After accepting 8, it rejects a delayed request carrying 7, with the comparison and operation enforced together. Merely adding “8” to a request does nothing if the receiver ignores it. A token checked by one file service also does not stop an old database from committing to its own disk.</p>
+<p>Agreement about the leader, enforcement at each affected resource and preservation of committed history must fit together. <a href="/learn/databases/relational/partitioning-and-sharding/">Sharding and distributed SQL</a> develops replica agreement; <a href="/learn/databases/relational/outboxes-and-jobs/">Outboxes and database-backed jobs</a> applies receiver enforcement to workers.</p></section>
+
+<section aria-labelledby="promotion-history"><h2 id="promotion-history">Choose the history to promote</h2>
+<p>Return to C, the acknowledged price edit. A still reads 20.00, but its durable log contains U and C. Once A replays that complete usable chain, a new snapshot can include 22.00. B also reads 20.00, but lacks the records needed to recover the edit. Equal query results hide different recovery possibilities.</p>
+<p>Figure 2 keeps those records fixed. Choose each candidate and watch the boundary between the original confirmed history and the history made available for writes.</p>
+<Transfer kind="history" />
+<p>A can retain this particular commit. That alone does not prove it contains <em>every</em> acknowledged commit from a real primary. Compare candidate progress within compatible histories, establish that the required records survive and can be recovered, and relate them to the actual acknowledgement policy. A larger number on a different branch is not evidence that it contains C.</p>
+<h3 id="loss-boundary">State the loss boundary</h3>
+<p>If the price transaction waited for C to be durable on A, and A’s promised storage survives, A has the required copy. If it waited only for the primary’s local flush, no particular replica was promised to have C when success returned. Synchronous replication must name the required copies and progress, and promotion must respect that choice.</p>
+<p>Suppose A is now unavailable too. B’s reachability does not inherit A’s durability guarantee. Preserving the confirmed price edit requires obtaining its missing history from a usable surviving source, waiting for a qualifying copy, or keeping writes unavailable. An emergency promotion of B without C explicitly accepts omission of that edit.</p>
+<p>In this small schedule the loss is known: C is absent. In an incident, incomplete evidence may leave only a possible loss boundary. Record that uncertainty rather than turning the last lag sample into a promise. A recent small backlog can become stale while the primary continues writing. A majority that elects a controller also need not hold the database’s latest commits. Safe automatic promotion needs a protocol linking candidate eligibility to the commit promise.</p></section>
+
+<section aria-labelledby="handover"><h2 id="handover">Promotion is part of a handover</h2>
+<p>The checks can be prepared in parallel, but the replacement must pass the authority and history gates before serving writes. The concrete transfer has this order:</p>
+<ol>
+<li><strong>Exclude the former writer.</strong> Confirm the fence or completed demotion, including restart exclusion. Stop competing promotion attempts through the same authority protocol.</li>
+<li><strong>Establish usable history.</strong> Identify the candidate, its branch and recoverable progress. Obtain and apply the required records, or declare the loss being accepted.</li>
+<li><strong>Promote under the authority protocol.</strong> Verify that this exact server has the intended role and recovered facts before admitting ordinary callers.</li>
+<li><strong>Move callers and workers.</strong> Replace stale pooled connections, revalidate their target and account for requests already in flight. Enable external dispatch only with its outstanding work understood.</li>
+</ol>
+<p>A promotion command changes a database role. It does not drain application pools, recover a missing commit or decide which external work already happened. A request that lost its commit reply remains uncertain across the transfer. Recover its outcome under its original identity using <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a>; do not label it aborted merely because its connection failed.</p>
+<p>Check business facts alongside role and history evidence. This query checks P7’s current catalogue price separately from order 103’s agreement:</p>
+<Sql label="Check the promoted catalogue and retained order agreement" code={`SELECT p.price AS catalogue_price, o.status,
+       (SELECT sum(quantity * unit_price)
+        FROM order_items WHERE order_id = o.order_id) AS line_total
+FROM products p CROSS JOIN orders o
+WHERE p.product_id = 'P7' AND o.order_id = 103;
+-- A after C: 22.00 | pending | 29.00
+-- B without C: 20.00 | pending | 29.00`} />
+<p>These results were checked on constructed states in PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly. They check the query and example arithmetic. They do not demonstrate replication, power fencing or a live failover. A production readiness check also needs the actual server identity, authority, history and replication evidence.</p></section>
+
+<section aria-labelledby="divergence"><h2 id="divergence">Account for missing and divergent work</h2>
+<p>Promoting B without C chooses a new branch from an earlier prefix of H. Once new commits arrive on B, restarting the old primary cannot join the two histories by continuing log replay.</p>
+<figure class="branches"><figcaption><span>Figure 3</span> Two branches after the same prefix</figcaption>
+<div class="prefix">Common committed prefix<br/><strong>P7 20.00 · order 103 retained</strong></div><div class="fork" aria-hidden="true">↙　　　　　　　　　↘</div>
+<div class="branch-pair"><div><b>Former primary · H</b><p>U → C: price 22.00</p><small>Confirmed, but omitted from B</small></div><div><b>Promoted B · new branch</b><p>New authoritative commits →</p><small>C absent · begins at 20.00</small></div></div>
+<div class="return">Preserve old evidence → reconcile accepted operations → rebuild old copy to follow B</div>
+<p class="caption">Continuation of Figure 2’s B path. New commits are symbolic; no additional shop operation or measured position is implied. Rejoin replaces the former copy’s divergent state; it does not merge the branches.</p></figure>
+<p>The common prefix remains in both copies. C belongs only to the former history; subsequent authoritative work belongs to the chosen new branch. Any extra work the old primary accepted before it was fenced must be accounted for too. Keep the former data and logs, plus independent request and external-effect evidence, before a rewind or fresh copy destroys that history.</p>
+<p>Separate confirmed operations omitted by the cut, requests with uncertain outcomes and work already present on the new authority. Determine each operation’s identity, meaning, dependencies and accepted disposition. An omitted confirmed price edit is evidence to resolve, not permission to overwrite whatever catalogue decision the new authority has since made.</p>
+<p>Reconcile accepted business operations against current constraints and record their outcome under the original identity. Blindly replaying SQL can repeat a stock decrement or apply a change to different data. Physical recovery logs are not a business-operation merge format. <a href="/learn/databases/relational/backup-and-restore/">Backup, restore and reconciliation</a> develops this accounting, including payments already accepted by a provider whose history the database transfer does not rewind.</p></section>
+
+<section aria-labelledby="return"><h2 id="return">Return the former primary as a replica</h2>
+<p>A machine coming back proves that it can run again. Keep it fenced from authoritative service while preserving evidence and making its data follow the chosen writer. A supported rewind may reuse unchanged data; otherwise create a fresh copy. Neither method recovers omitted business operations automatically.</p>
+<p>Configure the returning server as a replica before starting it for normal use. Verify its role, the history it follows and catch-up, then verify routing and the protection required by the service’s commit policy. A reachable replica is not yet evidence that redundancy has been restored. <a href="/learn/databases/relational/postgresql/replication/">PostgreSQL physical replicas and promotion</a> owns the native promotion, rewind prerequisites and return procedure.</p></section>
+
+<section aria-labelledby="rehearsal"><h2 id="rehearsal">Practise the whole transfer</h2>
+<p>A planned <strong>switchover</strong> can stop admission, drain in-flight writes, establish the final source boundary and wait for the replacement to copy it before transferring authority. Failover must make decisions with missing evidence. Both need writer exclusion and a verified destination.</p>
+<p>Rehearse a broken link while the old primary remains reachable to a caller, an unavailable required replica and a returning former primary. A drill that only stops the server cannot expose Figure 1’s open connection. Include old pools, workers and uncertain replies, then restore the intended redundancy.</p>
+<p>Keep evidence of which commits were retained or omitted, whether the former writer was actually excluded, how callers recovered, and how long useful service and full protection took to return. Those observations let you judge the next transfer against the service’s recovery objectives. A fast promotion is one event inside that recovery.</p></section>
+
+<section aria-labelledby="sources"><h2 id="sources">Sources and further reading</h2><ul>
+<li><a href="https://www.postgresql.org/docs/18/warm-standby-failover.html">PostgreSQL 18: Failover</a>: former-primary exclusion, promotion and rebuilding standby protection.</li>
+<li><a href="https://www.postgresql.org/docs/18/warm-standby.html">PostgreSQL 18: Log-shipping standby servers</a>: usable WAL, asynchronous and synchronous replication.</li>
+<li><a href="https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/fencing.html">Pacemaker: Fencing</a>: enforced isolation, independent fencing paths and split brain.</li>
+<li><a href="https://patroni.readthedocs.io/en/latest/watchdog.html">Patroni: Watchdog support</a> and <a href="https://patroni.readthedocs.io/en/latest/replication_modes.html">Replication modes</a>: demotion failure and promotion eligibility tied to durability.</li>
+<li><a href="https://storage.googleapis.com/gweb-research2023-media/pubtools/4444.pdf">Mike Burrows: The Chubby lock service</a>, sections 2.1 and 2.4: generations and recipient enforcement against delayed operations.</li>
+<li><a href="https://www.postgresql.org/docs/18/app-pgrewind.html">PostgreSQL 18: pg_rewind</a>: divergent histories, destructive synchronisation and recovery configuration.</li>
+</ul></section>
+<style>
+.branches{font-family:var(--font-sans);font-size:.9rem;margin:2rem 0}.branches figcaption{font-size:1.15rem;margin-bottom:.7rem}.branches figcaption span{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;margin-right:.6rem;color:var(--color-text-secondary)}.prefix{border:1px solid var(--color-rule-strong);padding:1rem;text-align:center;background:var(--color-surface-alt)}.fork{text-align:center;line-height:2.4;font-size:1.4rem}.branch-pair{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.branch-pair>div{padding:1rem;border:1px solid var(--color-rule-strong);border-top:3px solid var(--color-accent-strong)}.branch-pair p{font-family:var(--font-mono);font-size:.85rem;margin:.8rem 0}.branch-pair small{font-size:.8rem}.return{padding:1rem;border-bottom:1px solid var(--color-rule-strong);text-align:center;line-height:1.6}.caption{font-size:.8rem;line-height:1.6;color:var(--color-text-secondary)}@media(max-width:450px){.branch-pair{gap:.5rem}.branch-pair>div{padding:.6rem}.branch-pair b{font-size:.8rem}.branch-pair p{font-size:.75rem}}
+</style>
