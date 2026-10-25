@@ -51,5 +51,10 @@ elif mode=='integrate':
      target=(repo/'src/article-downloads'/f.relative_to(dest/'source/public')) if folder=='public' else repo/f.relative_to(dest/'source')
      target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(f,target)
  registry=a/'collection.json';x=json.loads(registry.read_text());entry=next(e for e in x['entries'] if e['key']==key);entry['status']='draft';registry.write_text(json.dumps(x,indent=2)+'\n')
+ statusfile=repo/'docs/article-work/relational-rebuild-2026-10-25/status.json'
+ if statusfile.exists():
+  status=json.loads(statusfile.read_text());status['available_drafts']=sum(e['status'] in ['draft','reviewed'] for e in x['entries']);status['reviewed_drafts']=sum(e['status']=='reviewed' for e in x['entries'])
+  status['articles'].setdefault(key,{}).update(state='first stable version frozen/integrated; independent review pending',writer_state='complete')
+  statusfile.write_text(json.dumps(status,indent=2)+'\n')
  print('Integrated unchanged first-version source:',key)
 else:raise SystemExit('use build, freeze or integrate with article role')
