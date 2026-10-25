@@ -1,0 +1,126 @@
+---
+import Figures from '../../components/relational-rebuild-distribution/Figures.astro';
+import Sql from '../../components/explainers/querying/Sql.astro';
+---
+<p><strong>Sharding</strong> divides a database’s data into portions that can be owned and processed on different machines. One machine can handle Mina’s orders while another handles Tariq’s. A <strong>replica</strong> is another copy of a portion. Each shard can have replicas, so dividing the work and keeping surviving copies are separate decisions.</p>
+<p>The useful boundary comes from the requests. Keeping an order with its lines makes an order lookup local. Keeping a customer’s orders together also helps their history page. But Mina and Tariq buy the same products: putting their orders on separate machines does not give each machine a different last blue mug.</p>
+<p>This article follows an invented distribution of the collection’s shop. First we place customer work and shared product stock, then trace a catalogue-price change through three voting replicas. Finally we return to purchase 103 and ask what agreement within each shard leaves to a transaction spanning them. The drawings are models, not traces from a running cluster.</p>
+
+<section aria-labelledby="replicas-and-shards">
+<h2 id="replicas-and-shards">Replicas and shards</h2>
+<p>A shard owns a part of the data. Its boundary might be a range of customer identifiers, a set of hash values, or a portion of an engine’s ordered storage keys. Here we start with three customer shards, A, B and C, and a separate product shard P. The customer shards hold related customer, order, line and payment records. P holds the products shared by all customers.</p>
+<p>Figure 1 gives each shard three copies. Read across A’s row, then down machine 1’s column.</p>
+<Figures kind="topology" />
+<p>A’s three cells are replicas of the same portion; they do not contain three disjoint thirds of A. Machine 1 holds copies of A, B, C and P. A machine is a place where work happens; a shard is a unit of data ownership. A real cluster usually has many more shards than machines, so ownership can be spread or moved in smaller pieces.</p>
+<p>Our small placement repeats every shard on every machine. It makes the distinction visible but saves no storage per machine. In a larger layout, placing different replica groups on different subsets of machines can spread stored data as well as active work. Replication still multiplies the bytes and copied write work for each portion.</p>
+<p>A local table partition is a different boundary. Twelve monthly partitions inside one PostgreSQL instance can help exclude months or retire old data without adding another machine’s capacity. <a href="/learn/databases/relational/partitioning/">Table partitioning and data lifecycle</a> develops that choice. Here the question is who owns work across machines.</p>
+<p>A SQL connection’s destination need not own every row it requests. An entry node can locate the relevant owners and send work to them. A distributed SQL database provides routing, query execution and transaction machinery behind its SQL interface. With application-managed shards, more of those responsibilities may belong to the application. Similar SQL alone does not establish which cross-shard constraints or transactions a particular system supports.</p>
+</section>
+
+<section aria-labelledby="shard-key">
+<h2 id="shard-key">Choosing a shard key</h2>
+<p>A <strong>shard key</strong>, also called a distribution key, supplies the information used to choose a row’s owner. Start with work the application repeatedly does together. An order page needs the order and its lines; a payment decision may need that order’s lines and recorded payments. Grouping them by <code>order_id</code> can keep that work together.</p>
+<p>Mina’s history page asks for several orders. Grouping by <code>customer_id</code> can keep all her order work together as well. In our model customer 1 selects A, customer 2 selects B and customer 3 selects C. These assignments are illustrative, not a hash function or a claim that each customer needs a separate shard.</p>
+<p>Step through Mina’s history in Figure 2. Then select the shop-wide report and finally the purchase.</p>
+<Figures kind="routing" />
+<p>The history request names customer 1, so routing can exclude B and C before doing order work. An index on A still matters: selecting the right shard does not find the matching rows inside it. The report names no customer and must ask all three customer owners. The purchase names Mina, but also needs the shared stock on P. The drawing counts those data owners; separate constraint or index work can add participants.</p>
+<h3 id="colocation">Co-location and constraint scope</h3>
+<p><strong>Co-location</strong> means placing related data where its work can run together. A customer column on each table is only the beginning. Corresponding key values need compatible shard boundaries and placement, and the execution system needs enough routing information to use them. Independently hashing orders and lines by unrelated identifiers will not keep them together merely because they share an order number.</p>
+<p>Adding a routing column must also preserve what the keys mean. The shop’s <code>order_id</code> identifies one order globally. A local unique check on A and another on B can each accept 103. Changing the key to <code>(customer_id, order_id)</code> distinguishes <code>(1, 103)</code> from <code>(2, 103)</code>; it does not enforce uniqueness of 103 alone. Those pairs are a counterexample, not two valid shop orders.</p>
+<p>Choose an actual enforcement mechanism for the original rule, or deliberately change the identity contract and every dependent reference. A globally enforced index may require remote work. A separate order authority must govern the relationship between identity and detail rows. An ID generator can reduce collisions, but does not by itself reject an explicit duplicate. The chosen engine’s constraint scope matters as much as where the rows fit.</p>
+<p>The same applies to references. A line routed under customer 1 must refer to the intended order, and carrying a customer column does not prove that relationship. Constraints or a complete write protocol must keep that association valid, including through imports, corrections and any movement between groups.</p>
+<p>Product stock remains shared. Copies of product names or catalogue prices can make a read join cheaper, under a declared freshness contract. They do not give every customer shard an independent allowance to sell P7. To call the purchase local, count every fact its rule must inspect or change, including constraints, indexes and shared stock.</p>
+</section>
+
+<section aria-labelledby="range-hash">
+<h2 id="range-hash">Range and hash distribution</h2>
+<p><strong>Range distribution</strong> keeps adjoining key values together. A query naming a range can identify the pieces that overlap it. <strong>Hash distribution</strong> first maps a key to a hash value and assigns that value to a bucket or hash range. Equal keys still choose the same group, while neighbouring original keys need not.</p>
+<p>Figure 3 asks for customers 3 through 6 in two layouts of the same twelve identifiers. Follow the underlined values.</p>
+<Figures kind="keys" />
+<p>The ordered layout keeps the four customers in two adjoining ranges. The illustrated hash layout spreads them across all three buckets. An equality request can still compute one hash destination; an interval over the original identifiers usually cannot exclude hash buckets this way. Range locality belongs to the key that is actually distributed, not to any timestamp or identifier present somewhere in the row.</p>
+<p>Neither method guarantees balanced work. With a growing timestamp or sequence as the leading range key, new writes can concentrate at the high end. Hashing many distinct values can spread them, but a frequent value remains frequent. In the collection’s separate generated fixture, customer 1001 has exactly 84,000 of 120,000 generated orders. Hashing <code>customer_id</code> keeps that entire 70% in one customer group.</p>
+<p>Unequal stored size is <strong>data skew</strong>. Unequal request or write load is <strong>load skew</strong>. An old customer can own many quiet rows; a small product row can receive most purchase attempts. The generated count demonstrates the first kind, not a measured traffic distribution.</p>
+<p>Splitting one customer’s history by order can spread its storage and independent work, at the cost of sending that customer’s history query to several owners. Splitting requests for one stock row does not remove the need to arbitrate the same stock. A design that allocates separate inventory allowances is a change to the business protocol and must prevent the allowances exceeding available stock. Extra machines alone do not make that rule disappear.</p>
+</section>
+
+<section aria-labelledby="queries-across-shards">
+<h2 id="queries-across-shards">Queries across shards</h2>
+<p>A request with a known shard key can go directly to the relevant owner. A request without it may need to <strong>fan out</strong>: ask several owners, then combine their results. Figure 2’s paid-order report computes a partial line value on each customer shard. A contributes Mina’s 39.50, B contributes Tariq’s 40.00 and C contributes no group. The entry point sorts the combined result. Pending order 103 is excluded; these are agreed line values, not payments received.</p>
+<p>The report does not need current catalogue prices, because agreed prices belong to the lines. A query asking for current product names would need those product records too. If their owner is remote, execution must fetch needed records, move rows for the join, or use a suitable maintained copy. Inspect where filtering, joining and aggregation happen: reducing rows before sending them can save network work.</p>
+<p>A secondary index or lookup directory can help a request that knows order 103 but lacks its customer key. The directory maps the order to its owner. That lookup has a location of its own, and writes and movement must keep it correct. Alternatively, an engine may fan out local index searches. “There is an index” does not tell you which routing path it supplies.</p>
+<p>Parallel requests can shorten elapsed time while increasing total work. A report waiting for every required owner also waits for the slowest one, and a failed participant can prevent a complete answer. More shards can mean more messages, partial results and combining work. A distributed plan should show the data and bytes moved as well as the rows returned. Fewer seconds and less work are different claims.</p>
+</section>
+
+<section aria-labelledby="replicated-history">
+<h2 id="replicated-history">One authoritative replicated history</h2>
+<p>Dividing ownership leaves another question: how do copies of one shard agree what happened? Return to the separate catalogue experiment in which P7’s price changes from 20.00 to 22.00. Its stock stays at the post-purchase value 0; order 103 stays pending, with no payment and agreed lines totalling 29.00.</p>
+<Sql label="The separate catalogue-price change" code={`UPDATE products
+SET price = 22.00
+WHERE product_id = 'P7';`} />
+<p>For this explanation, P has three <strong>voting replicas</strong>, R1, R2 and R3, with R1 already elected leader. They are three copies of the same product owner. R1 orders proposed commands in a replicated log. The copies apply agreed commands in that order. A <strong>consensus protocol</strong> supplies the rules for keeping one authoritative history as messages are delayed and leaders fail.</p>
+<p>Figure 4 models Raft, one such protocol. Watch the durable log cells separately from the applied prices and the client’s reply.</p>
+<Figures kind="raft" />
+<p>At the reply, R1 reads 22.00, R2 still reads 20.00 from its applied state and R3 has not received U. The operation did not wait for every follower. A durable command can be waiting for application, just as a durable copied commit can be waiting for replay in <a href="/learn/databases/relational/replicas-and-read-routing/">Replicas, lag and read routing</a>. The acknowledgement here promises agreement under this model’s protocol; it does not authorise an arbitrary follower to serve a current read.</p>
+<h3 id="acknowledgement">What the acknowledgement promises</h3>
+<p>The model assumes fixed membership, non-malicious replicas that can stop and recover, and storage that preserves acknowledged durable state. Its successful reply follows durable agreement by a majority and application at the leader. Losing one of three copies does not undo that agreement. Losing the surviving durable histories, storage dishonouring flushes, or restoring an earlier cluster falls outside that failure promise.</p>
+<p>The majority count is not the whole safety argument. Raft restricts elections using candidates’ logs and preserves the committed prefix across leaders. Terms distinguish leadership periods, and log-matching rules reject incompatible histories. Figure 4 deliberately uses a new entry from the current leader’s term: an entry from an older term cannot be declared committed merely by counting the copies that now contain it.</p>
+<p>A proposal whose reply never arrives may or may not have become committed. Resolve an uncertain application outcome using the request protocol developed in <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a>. Consensus does not make a client’s missing reply reveal the outcome.</p>
+</section>
+
+<section aria-labelledby="losing-quorum">
+<h2 id="losing-quorum">Losing a quorum</h2>
+<p>A <strong>quorum</strong> is the set of voters whose participation a protocol requires. In this fixed three-voter Raft group, a majority is two. Change Figure 5 from all three connected to R1 isolated. The configured group has not changed just because the network has.</p>
+<Figures kind="quorum" />
+<p>R2 and R3 can form a majority and establish a suitable leader; R1 alone cannot agree new writes. If R1 was the former leader, continuing to run does not give it permission to confirm them. The sides cannot each redefine the group as only the machines they can reach. Election and log rules keep the majority side on the agreed history.</p>
+<p>Two reachable voters provide the possibility of progress, not an immediate completion deadline. An election, sufficiently reliable communication, functioning storage and available resources still matter. With only one voter available, the safe result may be a wait or an unavailable response even while its local data is intact.</p>
+<p>Reads have a contract too. A reachable copy cannot infer current authority from its own older state. A current read needs the protocol’s leadership and freshness proof; a permitted historical read needs evidence that the chosen history is safe to serve. Read-only does not automatically mean available during every split.</p>
+<p>Placement determines which failures remove a majority and which network trips a successful write must wait for. Three voters in one building have different survival properties from voters across independent locations. <a href="/learn/databases/relational/regional-placement/">Regional placement and survival</a> develops that design from latency and failure requirements.</p>
+</section>
+
+<section aria-labelledby="distributed-transactions">
+<h2 id="distributed-transactions">Transactions across partitions</h2>
+<p>Go back to before purchase 103. Mina’s customer shard must create her pending order and its two lines. The product shard must reduce P7 from 1 to 0 and P3 from 12 to 10, checking availability at the authority for those rows. Each participant can keep its own replicated history. That does not yet say whether the purchase commits at both.</p>
+<Figures kind="purchase" />
+<p>If the application commits A first, then loses contact with P, it may have an accepted order without its stock changes. Reversing the calls permits the opposite failure. Copying each local result three times only makes the separate outcomes more durable.</p>
+<p><strong>Distributed atomic commit</strong> gives the participating owners one recoverable commit-or-abort outcome. After a failure, recovery must preserve that outcome even when not every participant has learnt it yet. A participant can have durable provisional work without being free to call it committed. Some failures therefore require waiting for the missing decision or evidence rather than guessing.</p>
+<p>This is separate from isolation: concurrent purchases must still preserve the stock rule. It is also separate from an external card charge. Purchase 103 records no payment, and a database rollback does not reverse an outside service. <a href="/learn/databases/relational/distributed-transactions/">Transactions across partitions</a> follows the atomic decision and recovery protocol; this article has identified why two replicated participants need it.</p>
+</section>
+
+<section aria-labelledby="distributed-reads">
+<h2 id="distributed-reads">Reading across partitions</h2>
+<p>Even with an atomic purchase, two reads made at different points need not describe one committed shop state. A report first checks A and sees no order 103. The purchase then commits. The report next checks P and sees stock 0. Both reads can be correct and current when made.</p>
+<p>Figure 7 places those answers on either side of the purchase. Switch to a common snapshot before it, then after it.</p>
+<Figures kind="reads" />
+<p>There is no committed state with the successful purchase’s stock decrement but none of its order work. The separate reads manufactured that combination by straddling the change. Replicating each owner correctly does not choose a common observation for the report.</p>
+<p>A distributed snapshot needs a compatible history across every participating owner, plus a way to know each can safely serve it. A timestamp written on the request is not that proof by itself. <a href="/learn/databases/relational/distributed-reads/">Time, snapshots and distributed reads</a> develops the clocks, timestamps and safe-read machinery. The report’s fan-out cost and its snapshot contract remain two separate questions.</p>
+</section>
+
+<section aria-labelledby="cluster-change">
+<h2 id="cluster-change">Growing and changing the cluster</h2>
+<p>An empty machine adds potential capacity. It relieves a bottleneck only after useful data or work reaches it. Moving a replica requires transferring a usable copy and catching it up with changes made during the transfer. Moving a leader can shift active work; moving stored replicas can change storage and survival. They are different changes.</p>
+<p>Ownership and voting membership must change without creating two authorities or discarding agreed history. A half-caught-up copy is not ready merely because its process is running. Copying and replay consume network, storage and processor capacity alongside foreground requests.</p>
+<p>Leave headroom for both planned movement and recovery from an unplanned loss. A cluster with a voter unavailable has already spent part of its survival margin; that missing redundancy is not spare capacity to consume casually during maintenance. <a href="/learn/databases/relational/rebalancing/">Rebalancing and cluster change</a> follows the safe transitions and the resource budget.</p>
+</section>
+
+<section aria-labelledby="deciding">
+<h2 id="deciding">Deciding what to distribute</h2>
+<p>Start with a named limit. A history page reading too many rows may need an access path. Expensive read traffic may fit qualified read replicas. Storage or independent write work beyond one machine’s capacity may justify sharding. Contention on the same P7 stock row survives all three choices.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Questions for a proposed distribution"><table><caption>Test the proposed boundary against the actual work</caption><thead><tr><th>Question</th><th>Evidence to look for</th></tr></thead><tbody>
+<tr><td>What becomes local?</td><td>Representative requests with their routing keys, tables, joins and indexes.</td></tr>
+<tr><td>Which rule crosses owners?</td><td>Every fact needed by a purchase, uniqueness check or reference.</td></tr>
+<tr><td>What remains concentrated?</td><td>Bytes, requests and writes by key, including the busiest values.</td></tr>
+<tr><td>What must a reply survive?</td><td>The durable acknowledgement, voter placement and unavailable cases.</td></tr>
+<tr><td>What does growth cost?</td><td>Foreground capacity alongside copied history, movement and recovery.</td></tr>
+</tbody></table></div>
+<p>Compare equivalent results and failure promises before comparing latency. Exercise a key-directed request, a broad report and a transaction crossing the proposed boundary. Include a hot key and a slow or unavailable participant. A distributed plan running one part on each machine may be faster, but it has not necessarily reduced the work.</p>
+<p>The shop’s layout makes one consequence visible: customer histories can be local while purchases still coordinate over shared stock. If that trade fits the actual bottleneck, <a href="/learn/databases/relational/postgresql/sharding/">Distributing PostgreSQL work</a> and <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">Inside CockroachDB</a> take the judgement into concrete mechanisms. Choose the boundary before expecting more machines to improve it.</p>
+</section>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 25 October 2026. Placements, message order and read schedules are illustrative. The SQL and generated-order arithmetic were checked in an owned PGlite 0.5.8 instance, a WebAssembly build of PostgreSQL 18.3. No cluster timings, failover runs or distributed SQL execution are claimed.</p>
+<ul>
+<li>Ongaro and Ousterhout, <a href="https://raft.github.io/raft.pdf">In Search of an Understandable Consensus Algorithm</a>, especially sections 5.3–5.4: replicated logs, commitment and election safety, including the older-term counting restriction.</li>
+<li>etcd, <a href="https://etcd.io/docs/v3.6/faq/">Frequently asked questions</a> and <a href="https://etcd.io/docs/v3.6/learning/api_guarantees/">API guarantees</a>: quorum availability, durable operations and read consistency. etcd is a key-value store; its documented contracts support the replica explanation, not a general SQL API promise.</li>
+<li>Citus, <a href="https://docs.citusdata.com/en/stable/sharding/data_modeling.html">Choosing a distribution column</a>: compatible co-location, skew and the work caused by distributing related tables differently.</li>
+<li>CockroachDB, <a href="https://www.cockroachlabs.com/docs/stable/architecture/distribution-layer">Distribution layer</a>, <a href="https://www.cockroachlabs.com/docs/stable/architecture/replication-layer">Replication layer</a> and <a href="https://www.cockroachlabs.com/docs/stable/architecture/transaction-layer">Transaction layer</a>: examples of routing, replicated ownership and a separate distributed commit layer. The article’s small model does not prescribe CockroachDB’s native layout or read protocol.</li>
+</ul>
