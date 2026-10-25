@@ -1,0 +1,29 @@
+# Technical sources and verification
+
+Primary PostgreSQL18 manuals checked on25October2026. Claims are paraphrased. Shared concepts are taught through local labelled models; no model value is an observed production rate.
+
+- https://www.postgresql.org/docs/18/transaction-iso.html — Repeatable Read ordinary snapshot begins at first snapshot-taking statement; post-commit new reader versus retained earlier reader.
+- https://www.postgresql.org/docs/18/storage-hot.html — non-HOT price index choice; HOT route/redirect and ordinary page-access pruning context. First full HOT explanation remains with parent.
+- https://www.postgresql.org/docs/18/storage-fsm.html — free-space map advertises available page capacity.
+- https://www.postgresql.org/docs/18/storage-vm.html — all-visible/all-frozen proofs, bits conservative, set by vacuum/cleared by changes, and heap-avoidance/freeze-skipping purposes.
+- https://www.postgresql.org/docs/18/monitoring-stats.html — n_live/dead_tup estimates, last-run counters, backend_xid/backend_xmin and replication feedback; statistics lag/caching and pg_stat_clear_snapshot; monitoring privilege limits.
+- https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-DBSIZE — main-fork versus indexes/TOAST/auxiliary totals; cancelling current query is not ending the owning transaction.
+- https://www.postgresql.org/docs/18/view-pg-prepared-xacts.html and https://www.postgresql.org/docs/18/sql-prepare-transaction.html — detached two-phase outcomes, fields and vacuum/age retention; resolution belongs to transaction authority.
+- https://www.postgresql.org/docs/18/view-pg-replication-slots.html — row xmin/catalog_xmin boundaries versus restart_lsn WAL retention, consumer inactivity.
+- https://www.postgresql.org/docs/18/runtime-config-replication.html — standby feedback trade; retained rows versus consumer read/replay policy; no slot deletion protocol commissioned here.
+- https://www.postgresql.org/docs/18/sql-vacuum.html — index cleanup may be skipped in AUTO; local model selects a pass that performs it. FREEZE, ordinary/full distinction, spare replacement storage, ACCESS EXCLUSIVE and tail TRUNCATE false, outside transaction block.
+- https://www.postgresql.org/docs/18/pgstattuple.html — tuple versus free bytes, B-tree density, work/privileges, non-instantaneous measurements under concurrency.
+- https://www.postgresql.org/docs/18/catalog-pg-class.html and https://www.postgresql.org/docs/18/catalog-pg-database.html — conservative relfrozenxid/relminmxid and database minimum boundaries, relation kinds/TOAST/catalogue scope.
+- https://www.postgresql.org/docs/18/transaction-id.html — cluster-wide finite XID allocation; xid8 does not change stored xid metadata obligation. Read-only work need not allocate; no statement=XID inference.
+- https://www.postgresql.org/docs/18/runtime-config-vacuum.html and https://www.postgresql.org/docs/18/sql-createtable.html#SQL-CREATETABLE-STORAGE-PARAMETERS — effective table overrides, separate trigger/freezing settings, default base50/factor0.2/cap100m, forced work despite disabled routine autovacuum, cost delay/resource competition. Settings are version18-specific.
+- https://www.postgresql.org/docs/18/progress-reporting.html#VACUUM-PROGRESS-REPORTING — phases, repeats, heap scan is not job percentage; FULL uses progress_cluster. No long-running progress sample claimed.
+- https://www.postgresql.org/docs/18/routine-vacuuming.html — maintenance context, separate MultiXact obligation/remedies, no direct slot retention of MXIDs, freeze flags preserve original xmin, temporary-table and partitioned-parent exceptions, documented emergency plain-VACUUM repair.
+- https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/access/transam/varsup.c — XID half-space, force/warn/stop ordering, refusal of new assigned-XID work and database-wide repair hint. Release18 branch is source context, not a measured emergency.
+
+## Executed SQL
+
+All6 displayed reader Sql blocks execute in owned in-memory PGlite0.5.8/PostgreSQL18.3/WASM. verify-sql.mjs extracts directly from article source and closes the instance in finally. sql-results.json retains actual runtime, original article hash, queries, fields/rows and arithmetic. Catalogues for slots/prepared transactions/progress exist, but have no active distributed consumers or long maintenance run in this instance; this is SQL validity/ordinary result-shape evidence, not native operational evidence. No download promised.
+
+Native operational behaviour was checked separately by root with verify-native.py, its source hash bound in native-execution.json. Root created and removed only the named network-none/no-port disposable fixture. Both sessions guarded database/user/cluster/version180006/data path/listener before DDL; exec bound inspected container ID, exact task/article labels and pinned Config.Image. Exact runtime: PostgreSQL18.6 (Debian18.6-1.pgdg13+2), aarch64 Linux,64-bit, official postgres image digest sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6.
+
+Three-product fixture plus local products_price index, autovacuum disabled only on that fixture table, initial ordinary FREEZE. Held Repeatable Read report: pgstattuple dead_tuple_count1, map f|f, no backend_xid but non-null backend_xmin, report20.00/new22.00; vacuum report explicitly1dead not yet removable. After report COMMIT: next vacuum removes1, dead_tuple_count0, map t|f, heap1page. Deliberate FREEZE then map t|t and relation XID/MXID age0|0. Transcript and exact results in native-results.json; execution/cleanup provenance in native-execution.json/native-fixture.json. Cleanup ROLLBACK with no transaction emitted harmless warnings; all assertions passed. Root confirms container removed/credentials deleted. No throughput, worker scheduling, standby/slot/prepared transaction fixture, large-file compaction, or wraparound emergency observed.

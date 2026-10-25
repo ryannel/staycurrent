@@ -1,0 +1,163 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Retention from '../../components/relational-rebuild-pg-vacuum/Retention.astro';
+import Space from '../../components/relational-rebuild-pg-vacuum/Space.astro';
+import Age from '../../components/relational-rebuild-pg-vacuum/Age.astro';
+import '../../components/relational-rebuild-pg-vacuum/vacuum.css';
+---
+<p>PostgreSQL’s <code>VACUUM</code> makes obsolete row-version space reusable, maintains visibility information and keeps old transaction identifiers safe to interpret. A completed run does not mean every old tuple was removable, every page was frozen or the table file became smaller. Those are different maintenance outcomes.</p>
+<p>Return to the blue mug, P7. A report establishes a snapshot at price 20.00, then another transaction raises the catalogue price to 22.00 and commits. <a href="/learn/databases/relational/postgresql/architecture/">Inside PostgreSQL</a> followed the two versions through the heap and indexes. Here we follow what prevents their cleanup, what vacuum can change, and why even a table that never changes still needs maintenance.</p>
+<p>This is the collection’s independent price replay. Order 103 remains pending, with no payment and agreed line prices totalling 29.00. The figures are labelled models; their page layouts, schedules and age values are illustrative.</p>
+
+<section aria-labelledby="retained">
+<h2 id="retained">Why the old price must stay</h2>
+<p>The report runs its first ordinary query inside a read-only Repeatable Read transaction before the price changes. That establishes its snapshot; merely sending <code>BEGIN</code> would not. After the writer commits, a new reader sees 22.00, while the report still sees 20.00.</p>
+<p>Neither commit nor vacuum may remove the tuple that supplies the report’s answer. Step through Figure 1 until vacuum has run. Then finish the report, and compare the branch in which another earlier snapshot remains.</p>
+<Retention />
+<p>In a separate disposable PostgreSQL 18.6 server, a three-product copy with that price index showed the same distinction. With the report’s snapshot retained, <code>VACUUM (VERBOSE, INDEX_CLEANUP ON)</code> reported one dead tuple not yet removable; the report still read 20.00 and a new reader read 22.00. After the report committed, the next vacuum removed one tuple and reported zero dead tuples not yet removable. The heap still occupied one page. This checks the two-session behaviour, not a production maintenance rate.</p>
+<p>The earlier tuple passes through three states: still required, eligible for removal, then reclaimed. Ending the last relevant snapshot moves it into the second state. Cleanup must still happen to reach the third. Page pruning can reclaim obsolete tuple bytes during ordinary page access; vacuum also carries out work across the table and its indexes. The figure chooses a later vacuum to show that transition.</p>
+<p>A <strong>retention horizon</strong> limits how far cleanup can advance: PostgreSQL must preserve history that a participant may still need. The engine uses conservative boundaries, rather than asking whether a particular report will actually select P7. A report can therefore hold cleanup back even if its next query never reads that product. Several participants can retain history; releasing one is insufficient while another still needs it.</p>
+</section>
+
+<section aria-labelledby="vacuum">
+<h2 id="vacuum">What vacuum changes</h2>
+<p>Once the old version is removable, vacuum can clear its obsolete index entries and reclaim its heap space. The price index in Figure 1 forces a non-HOT update, making both entries visible in the drawing. In a HOT chain, page pruning can instead remove old tuple bytes while preserving the original index route through a redirect. The parent article explains that route; neither case makes vacuum optional.</p>
+<p>Two small maps describe different properties of the resulting page:</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Free space and visibility maps"><table><caption>One page, two different questions</caption><thead><tr><th scope="col">Map</th><th scope="col">What it records</th><th scope="col">What uses it</th></tr></thead><tbody><tr><th scope="row">Free space map</th><td>Available space within heap pages.</td><td>Later inserts and updates can find a page with room.</td></tr><tr><th scope="row">Visibility map</th><td>An all-visible bit and an all-frozen bit for each heap page.</td><td>Index-only scans can avoid heap visibility checks on all-visible pages; vacuum can skip work already proved unnecessary.</td></tr></tbody></table></div>
+<p>Vacuum sets the all-visible bit only when the page qualifies. A clear bit means there is no such proof, rather than proving that a row is invisible. A change to another row on the same page can clear it. Thus a covering index can still need heap fetches after an update, even when the query never asks for the changed row. <a href="https://www.postgresql.org/docs/18/storage-vm.html">PostgreSQL’s visibility-map documentation</a> defines those guarantees.</p>
+<p><code>ANALYZE</code> does another job: it samples data to refresh the planner’s statistics. Ordinary vacuum updates some table-level estimates, but does not replace that distribution information. <code>VACUUM (ANALYZE)</code> requests both kinds of maintenance. Refreshing estimates does not erase retained versions, and reclaiming a tuple does not by itself repair a poor query plan.</p>
+</section>
+
+<section aria-labelledby="horizons">
+<h2 id="horizons">Find what holds cleanup back</h2>
+<p>A growing dead-tuple estimate suggests work to investigate. It does not tell you whether vacuum has not reached the table, cannot acquire a needed lock, lacks capacity, or has finished while retaining versions. Start with the table, then inspect what can retain history.</p>
+<Sql label="Inspect maintenance estimates and separate heap, index and total sizes" code={`SELECT relname, n_live_tup, n_dead_tup,
+       last_vacuum, last_autovacuum,
+       last_analyze, last_autoanalyze
+FROM pg_stat_user_tables
+WHERE relid = 'public.products'::regclass;
+
+SELECT pg_relation_size('public.products') AS heap_bytes,
+       pg_indexes_size('public.products') AS index_bytes,
+       pg_total_relation_size('public.products') AS total_bytes;`} />
+<p><code>n_live_tup</code> and <code>n_dead_tup</code> are estimates; a last-run timestamp establishes neither useful reclamation nor a healthy age. The total size includes indexes, TOAST and auxiliary storage, whereas the first size is just the heap’s main fork. Read cumulative statistics in fresh short transactions: they lag activity, and values can be cached during a transaction. Clear the statistics snapshot with <code>pg_stat_clear_snapshot()</code> when deliberately sampling again inside one.</p>
+<p>For sessions, inspect both transaction IDs (XIDs) and snapshot horizons. Order by their age, rather than treating the oldest connection or longest elapsed query as the answer.</p>
+<Sql label="Find sessions with transaction or snapshot age" code={`SELECT pid, datname, application_name, state,
+       xact_start, query_start,
+       age(backend_xid) AS xid_age,
+       age(backend_xmin) AS xmin_age,
+       wait_event_type, wait_event
+FROM pg_stat_activity
+WHERE backend_xid IS NOT NULL OR backend_xmin IS NOT NULL
+ORDER BY GREATEST(age(backend_xid), age(backend_xmin))
+         DESC NULLS LAST;`} />
+<p><code>backend_xid</code> is the session’s assigned transaction ID; <code>backend_xmin</code> is its current xmin horizon. A read-only report can retain a snapshot without having an assigned XID. An idle session outside a transaction is different from <code>idle in transaction</code>. Conversely, a transaction’s elapsed time alone does not establish the history it retains: interpret the IDs, state and commands together. Visibility into other sessions requires suitable monitoring privileges.</p>
+<p>Then check participants that are easy to miss:</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Other retention participants"><table><caption>Retention need not belong to an ordinary active query</caption><thead><tr><th scope="col">Evidence</th><th scope="col">What it can mean</th></tr></thead><tbody><tr><th scope="row"><code>pg_prepared_xacts</code></th><td>A prepared two-phase transaction remains unfinished after its session has detached. Its transaction manager must resolve the outcome; cancelling a query cannot finish it.</td></tr><tr><th scope="row"><code>pg_replication_slots.xmin</code></th><td>A slot retains row history even when its consumer is inactive.</td></tr><tr><th scope="row"><code>catalog_xmin</code> on a slot</th><td>A separate boundary retains system-catalogue tuples needed by logical decoding.</td></tr><tr><th scope="row"><code>pg_stat_replication.backend_xmin</code></th><td>Standby feedback can hold the primary’s cleanup horizon back to protect standby reads.</td></tr></tbody></table></div>
+<details class="sql-setup"><summary>Queries for prepared transactions, slots and standby feedback</summary><Sql label="Inspect other retention horizons" code={`SELECT gid, database, owner, prepared,
+       age(transaction) AS xid_age
+FROM pg_prepared_xacts
+ORDER BY age(transaction) DESC;
+
+SELECT slot_name, slot_type, active,
+       age(xmin) AS xmin_age,
+       age(catalog_xmin) AS catalog_xmin_age,
+       restart_lsn
+FROM pg_replication_slots;
+
+SELECT pid, application_name, state,
+       age(backend_xmin) AS feedback_xmin_age
+FROM pg_stat_replication;`} /></details>
+<p>A slot’s retained WAL position, <code>restart_lsn</code>, is a different obligation from its row and catalogue horizons. A large WAL backlog does not prove retained heap tuples, and a null slot xmin does not prove the slot costs no WAL space. Choose a slot or standby policy with the replication owner; dropping a slot or removing feedback can sacrifice the consumer’s ability to continue or finish its read. <a href="/learn/databases/relational/postgresql/replication/">PostgreSQL physical replicas and promotion</a> and <a href="/learn/databases/relational/postgresql/logical-replication/">PostgreSQL logical replication and change feeds</a> own those choices.</p>
+<p>For an ordinary abandoned transaction, first establish who owns it and what ending it would undo. Cancelling its current statement may leave its transaction open. Have the client commit or roll back as appropriate, or deliberately end the session under the incident’s recovery plan. Then sample the horizons again and check the next vacuum’s result. More worker time cannot make an unsafe removal safe.</p>
+</section>
+
+<section aria-labelledby="space">
+<h2 id="space">Reusable space, bloat and file size</h2>
+<p>Suppose retention has ended and vacuum reclaims the old tuples, but the file stays large. That can be the expected result. Figure 2 spreads live data across every page so that freeing most tuple space cannot remove a page.</p>
+<Space />
+<p>The freed bytes may be useful capacity for tomorrow’s writes. Keeping them avoids allocating more storage. They can also leave a lasting cost: a sequential scan still visits six pages, and those pages occupy cache and storage. <strong>Bloat</strong> is excess physical space relative to the useful data and layout the workload needs, rather than a synonym for either dead tuples or any free byte. Deliberately reserved fillfactor space is part of that layout.</p>
+<p>Measure the object that costs you. Track heap and index sizes separately, alongside live data and the workload’s buffer or scan cost. Where available, the <a href="https://www.postgresql.org/docs/18/pgstattuple.html"><code>pgstattuple</code> extension</a> distinguishes tuple bytes and free space, while <code>pgstatindex</code> reports B-tree page density. These scans cost work and need privileges; concurrent changes mean their results are not one instantaneous database snapshot. A dead-tuple estimate divided by live rows is not a reliable bloat percentage.</p>
+<p>Ordinary vacuum can truncate completely empty pages at the heap file’s end, under suitable conditions. It cannot remove the internal gaps in Figure 2. Tail truncation needs a brief <code>ACCESS EXCLUSIVE</code> lock; <code>TRUNCATE false</code> disables that part when its locking cost is unsuitable. Most of ordinary vacuum permits normal reads and writes, though its I/O and conflicting maintenance locks still matter.</p>
+<p><code>VACUUM FULL</code> rewrites the table into a new compact file, rebuilds its indexes, needs spare space for the replacement and holds an <code>ACCESS EXCLUSIVE</code> lock that blocks reads and writes. It is a costly compaction choice, not the routine response to high dead-tuple counts or transaction-age alarms. A sparse index may need its own rebuild even when the heap is healthy. <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a> develops the lock, capacity and rollout decisions for rewrites and index maintenance.</p>
+</section>
+
+<section aria-labelledby="freezing">
+<h2 id="freezing">Transaction ID age and freezing</h2>
+<p>A table can have no dead tuples and still need vacuum. PostgreSQL uses finite 32-bit transaction IDs, or <strong>XIDs</strong>, in tuple visibility metadata. Their ordering is circular: roughly half the space is interpreted as the past, and half as the future. An ordinary committed insertion ID cannot safely age through that boundary indefinitely. The wider <code>xid8</code> type used by some SQL functions does not remove this obligation in stored tuples.</p>
+<p><strong>Freezing</strong> marks an eligible old insertion as permanently in the past for visibility purposes. In current PostgreSQL it preserves the tuple’s original <code>xmin</code> value and sets metadata flags, so looking for <code>xmin = 2</code> is not a valid freezing check. No business value needs to change. Follow the unchanged price in Figure 3 while other work consumes XIDs.</p>
+<Age />
+<p><code>pg_class.relfrozenxid</code> records a lower bound: this table contains no unfrozen insertion XID older than that boundary. It is not the insertion ID of its oldest business row. <code>age(relfrozenxid)</code> measures how far the boundary trails current XID allocation. The database’s <code>datfrozenxid</code> reflects the oldest per-table boundary, so one neglected table can keep database age high. Include TOAST tables and system catalogues when finding it.</p>
+<Sql label="Inspect table and database transaction and MultiXact ages" code={`SELECT c.oid::regclass AS relation,
+       age(c.relfrozenxid) AS xid_age,
+       mxid_age(c.relminmxid) AS multixact_age
+FROM pg_class AS c
+WHERE c.relkind IN ('r', 'm', 't')
+ORDER BY age(c.relfrozenxid) DESC;
+
+SELECT datname, age(datfrozenxid) AS xid_age,
+       mxid_age(datminmxid) AS multixact_age
+FROM pg_database
+ORDER BY age(datfrozenxid) DESC;`} />
+<p>The first query examines stored tables, materialised views and TOAST relations in the current database, including catalogues. Reorder it by <code>mxid_age(c.relminmxid)</code> when investigating MultiXact age. Connect to the database identified by the second query to locate its responsible relations; vacuuming one table elsewhere cannot repair its boundary.</p>
+<h3 id="multixact">MultiXact age</h3>
+<p>Several transactions can lock the same row compatibly. PostgreSQL can represent those lockers with a <strong>MultiXact</strong> identifier and associated membership information. That finite identifier space needs separate maintenance. <code>mxid_age(relminmxid)</code> and <code>mxid_age(datminmxid)</code> measure that obligation; healthy XID age does not establish healthy MultiXact age. Compare it with the MultiXact freeze settings and investigate old lockers. Replication slots do not directly hold back MultiXact cleanup, so dropping a stale slot is not the corresponding remedy.</p>
+<h3 id="urgent">When transaction age becomes urgent</h3>
+<p>Routine vacuum freezes eligible tuples opportunistically. An aggressive vacuum must visit all-visible pages that are not yet all-frozen to advance age, while all-frozen pages can be skipped. PostgreSQL 18 can also scan some all-visible pages eagerly before that aggressive pass. Consequently a recent space-cleanup run need not have advanced the table’s frozen boundary.</p>
+<p>Age settings reserve successive margins for this work. <code>vacuum_freeze_min_age</code> controls ordinary freeze eligibility; <code>vacuum_freeze_table_age</code> makes a run use the aggressive strategy; <code>autovacuum_freeze_max_age</code> forces age-driven vacuum even when routine autovacuum is disabled. MultiXacts have corresponding settings. Nearer danger, the failsafe prioritises age progress over optional work and cost delay. Protective restrictions eventually prevent new XID-consuming work rather than allowing identifiers to become ambiguous. A forced autovacuum is a maintenance trigger, not evidence that the wraparound boundary has already been reached.</p>
+<p>Allow enough headroom for the oldest work to finish. If an illustrative age margin is 50 million XIDs and the cluster consumes 10,000 XIDs a second, it lasts about 5,000 seconds, or 83 minutes, before allowing for bursts. Count allocation across the cluster, including relevant subtransaction use; one SQL statement is not one XID, and read-only work need not allocate one.</p>
+<p>When age is urgent, identify the oldest relevant relations and retained transactions, resolve the retaining cause, and run targeted ordinary vacuum with an authorised maintenance connection. Keep checking age progress and server warnings. <code>VACUUM (FREEZE)</code> aggressively requests freezing but cannot override a retained horizon; applying it indiscriminately can add avoidable work. Compaction is a different task. If protective restrictions have already begun, follow the server’s specific warning and documented recovery procedure. That repair uses plain <code>VACUUM</code> in the identified database, with authority to process the responsible catalogues as well as user tables. Avoid <code>FULL</code> and <code>FREEZE</code> in that emergency repair; they add work or consume identifiers. Raising limits postpones the same unresolved cause.</p>
+</section>
+
+<section aria-labelledby="autovacuum">
+<h2 id="autovacuum">Keeping autovacuum ahead of the workload</h2>
+<p>Autovacuum first decides that a table needs work, then needs an available worker and enough time to do it. PostgreSQL 18’s update/delete trigger combines a base threshold and a fraction of estimated table rows, capped by <code>autovacuum_vacuum_max_threshold</code> unless that cap is disabled. The default base is 50, scale factor 0.2 and cap 100 million.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Illustrative autovacuum eligibility arithmetic"><table><caption>A separate million-row workload, changing 1,000 tuples each second</caption><thead><tr><th scope="col">Assumed settings</th><th scope="col">Update/delete threshold</th><th scope="col">Time to reach it from zero</th></tr></thead><tbody><tr><th scope="row">Base 50; scale 0.2</th><td>50 + 0.2 × 1,000,000 = 200,050</td><td>About 200 seconds</td></tr><tr><th scope="row">Base 50; scale 0.01</th><td>50 + 0.01 × 1,000,000 = 10,050</td><td>About 10 seconds</td></tr></tbody></table></div>
+<p>These are eligibility calculations, not predicted start times or measured vacuum intervals. A lower per-table scale factor can ask for work sooner. It cannot release the report in Figure 1, overcome a lock, guarantee a free worker or supply storage bandwidth. If removable work arrives faster than maintenance can process it, an earlier trigger alone cannot keep the backlog bounded.</p>
+<p>Insert-driven vacuum matters too: a table receiving only new rows can need visibility-map and freezing work. Its insert threshold uses inserted tuples since the last vacuum and the table’s unfrozen fraction, rather than the update/delete count. Age-driven work is another independent reason to run. Analyse has its own change thresholds. Check the effective table overrides as well as global settings before attributing a run to one trigger.</p>
+<details class="sql-setup"><summary>Inspect table overrides and global vacuum settings</summary><Sql label="Inspect vacuum configuration without changing it" code={`SELECT oid::regclass AS relation, reloptions
+FROM pg_class
+WHERE oid = 'public.products'::regclass;
+
+SELECT name, setting, unit, source
+FROM pg_settings
+WHERE name LIKE 'autovacuum%'
+   OR name LIKE 'vacuum%'
+ORDER BY name;`} /></details>
+<p>Use the table’s change rate, time between useful cleanups and maintenance duration to choose a table-specific trigger. If eligible work waits, investigate worker availability and locks. If a running worker cannot keep up, inspect waits, I/O, cost delay and index work before adjusting resources. More workers can process different tables, but also compete with application work and one another. Keep the repair proportionate to the table causing the debt.</p>
+<h3 id="progress">Read the work that is happening</h3>
+<Sql label="Read vacuum phases and waits in the current database" code={`SELECT p.pid, p.relid::regclass AS relation, p.phase,
+       p.heap_blks_total, p.heap_blks_scanned,
+       p.heap_blks_vacuumed, p.index_vacuum_count,
+       a.wait_event_type, a.wait_event
+FROM pg_stat_progress_vacuum AS p
+LEFT JOIN pg_stat_activity AS a USING (pid)
+WHERE p.datid = (SELECT oid FROM pg_database
+                 WHERE datname = current_database());`} />
+<p>A finished heap scan is not a finished vacuum. Index cleanup, further heap work and finalisation may remain, and a run can cycle between phases. <code>heap_blks_scanned / heap_blks_total</code> describes heap-scan progress, not a percentage of the whole job. <code>VACUUM FULL</code> reports through <code>pg_stat_progress_cluster</code> instead.</p>
+<p>Combine the phase and wait evidence with vacuum reports. <code>VACUUM (VERBOSE) public.products;</code>, run outside a transaction block with suitable authority, reports removed and remaining tuples and age information. Autovacuum logging, controlled by <code>log_autovacuum_min_duration</code>, supplies reports for automatic runs. Read what was retained and what boundaries advanced, rather than accepting a recent timestamp as success.</p>
+<p>There are two routine exceptions to automatic coverage. Autovacuum cannot maintain another session’s temporary table, so its owning session must vacuum and analyse it. A partitioned parent has no heap to vacuum, and changes to partitions do not automatically refresh the parent’s aggregate planner statistics: arrange manual <code>ANALYZE</code> of the parent. The stored partitions receive their own ordinary vacuum work.</p>
+</section>
+
+<section aria-labelledby="actions">
+<h2 id="actions">Choosing and checking a maintenance action</h2>
+<p>Choose the acceptance condition before changing anything. For P7, the first question was whether the earlier snapshot still required 20.00. After that requirement ended, the next question was whether cleanup reclaimed its bytes. Neither answer established the separate transaction-age condition.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Maintenance causes, actions and acceptance conditions"><table><caption>Match the action to the unfinished obligation</caption><thead><tr><th scope="col">Evidence</th><th scope="col">Targeted action</th><th scope="col">Check afterwards</th></tr></thead><tbody><tr><th scope="row">Old versions still retained</th><td>Resolve the responsible transaction, prepared outcome or replication retention with its owner.</td><td>The relevant horizon advances; subsequent cleanup can remove eligible versions.</td></tr><tr><th scope="row">Removable work accumulating</th><td>Let ordinary vacuum catch up; repair its trigger, lock or capacity problem.</td><td>Useful reclamation keeps pace with changes over repeated samples.</td></tr><tr><th scope="row">XID or MultiXact age rising dangerously</th><td>Resolve the matching old work; prioritise vacuum that advances the responsible boundaries.</td><td>Both relation and database ages improve, with renewed completion margin.</td></tr><tr><th scope="row">Planner distribution estimates stale</th><td>Run appropriate <code>ANALYZE</code>.</td><td>Relevant estimates and measured plan work improve.</td></tr><tr><th scope="row">Persistent costly heap or index sparsity</th><td>Plan justified compaction or index rebuilding with lock and spare-space budgets.</td><td>The intended object shrinks or its workload cost improves, without immediate regrowth from an unresolved cause.</td></tr></tbody></table></div>
+<p>Keep the scope of that check tied to the repair. A smaller file cannot prove safe transaction age, and lower age cannot prove a faster report. If the request is still slow after maintenance meets its own condition, <a href="/learn/databases/relational/postgresql/operations/">Operating and diagnosing PostgreSQL</a> follows the wider request through pool, waits and execution evidence.</p>
+</section>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against PostgreSQL 18 documentation. The figures and threshold arithmetic are illustrative models. The diagnostic SQL blocks were checked on PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly. The separate two-session check used native PostgreSQL 18.6 on Linux in a disposable container. No production throughput, scheduler timing or wraparound emergency was measured.</p>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">Routine vacuuming</a>: reclamation, freezing, MultiXacts, autovacuum, temporary tables and partitioned parents.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-vacuum.html">VACUUM</a>: ordinary and full vacuum, freezing, index cleanup, truncation, locking and command restrictions.</li>
+<li><a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a> and <a href="https://www.postgresql.org/docs/18/storage-hot.html">Heap-only tuples</a>: snapshot establishment and page pruning.</li>
+<li><a href="https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-DBSIZE">Database object sizes</a>: main-fork, index and total size functions.</li>
+<li><a href="https://www.postgresql.org/docs/18/storage-fsm.html">Free space map</a> and <a href="https://www.postgresql.org/docs/18/storage-vm.html">Visibility map</a>: reusable space and the two visibility proofs.</li>
+<li><a href="https://www.postgresql.org/docs/18/monitoring-stats.html">Cumulative statistics</a>: estimates, snapshot caching, session IDs, replication feedback and maintenance history; <a href="https://www.postgresql.org/docs/18/progress-reporting.html#VACUUM-PROGRESS-REPORTING">vacuum progress reporting</a>: phases and counters.</li>
+<li><a href="https://www.postgresql.org/docs/18/view-pg-prepared-xacts.html">pg_prepared_xacts</a> and <a href="https://www.postgresql.org/docs/18/sql-prepare-transaction.html">PREPARE TRANSACTION</a>: detached transactions and retained maintenance obligations.</li>
+<li><a href="https://www.postgresql.org/docs/18/view-pg-replication-slots.html">pg_replication_slots</a> and <a href="https://www.postgresql.org/docs/18/runtime-config-replication.html">replication settings</a>: row/catalogue horizons, WAL positions and standby feedback.</li>
+<li><a href="https://www.postgresql.org/docs/18/catalog-pg-class.html">pg_class</a>, <a href="https://www.postgresql.org/docs/18/catalog-pg-database.html">pg_database</a> and <a href="https://www.postgresql.org/docs/18/transaction-id.html">transaction identifiers</a>: stored boundaries, age and cluster-wide allocation.</li>
+<li><a href="https://www.postgresql.org/docs/18/runtime-config-vacuum.html">Vacuum settings</a> and <a href="https://www.postgresql.org/docs/18/sql-createtable.html#SQL-CREATETABLE-STORAGE-PARAMETERS">table storage parameters</a>: triggers, per-table overrides, resource delay and age margins.</li>
+<li><a href="https://www.postgresql.org/docs/18/pgstattuple.html">pgstattuple</a>: physical tuple/free-space and B-tree density measurements, their cost and concurrent-change limits.</li>
+</ul>
