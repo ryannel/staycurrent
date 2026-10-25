@@ -1,0 +1,194 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Player from '../../components/relational-rebuild-outboxes-jobs/Player.astro';
+const schema = `CREATE TABLE outbox (
+  work_id text PRIMARY KEY,
+  kind text NOT NULL,
+  payload jsonb NOT NULL,
+  state text NOT NULL DEFAULT 'ready'
+    CHECK (state IN ('ready', 'running', 'done', 'failed', 'cancelled')),
+  available_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  claim_generation bigint NOT NULL DEFAULT 0,
+  claimed_by text,
+  lease_until timestamptz,
+  completed_at timestamptz,
+  CHECK ((state = 'running') =
+         (claimed_by IS NOT NULL AND lease_until IS NOT NULL))
+);`;
+const intention = `INSERT INTO outbox (work_id, kind, payload)
+VALUES (
+  'order-103-ack',
+  'order_received',
+  '{"order_id":103,"customer_id":1,"total":"29.00",
+    "message":"Order received; payment still pending"}'
+);`;
+const claim = `BEGIN;
+WITH candidates AS (
+  SELECT work_id
+  FROM outbox
+  WHERE state IN ('ready', 'running')
+    AND available_at <= clock_timestamp()
+    AND (lease_until IS NULL OR lease_until <= clock_timestamp())
+  ORDER BY available_at, work_id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 10
+)
+UPDATE outbox AS j
+SET state = 'running',
+    claimed_by = $1,
+    claim_generation = j.claim_generation + 1,
+    lease_until = clock_timestamp() + interval '1 minute'
+FROM candidates AS c
+WHERE j.work_id = c.work_id
+RETURNING j.work_id, j.kind, j.payload,
+          j.claim_generation, j.lease_until;
+COMMIT;`;
+const finish = `BEGIN;
+-- Acquire the row before sampling time for the decision below.
+SELECT work_id FROM outbox WHERE work_id = $1 FOR UPDATE;
+
+UPDATE outbox
+SET state = 'done', completed_at = clock_timestamp(),
+    claimed_by = NULL, lease_until = NULL
+WHERE work_id = $1 AND state = 'running'
+  AND claimed_by = $2 AND claim_generation = $3
+  AND lease_until > clock_timestamp()
+RETURNING work_id;
+COMMIT;`;
+---
+
+<p>A <strong>transactional outbox</strong> is a table of messages to deliver, written in the same database transaction as the change that calls for them. A shop can store an order and its acknowledgement intention together, then let a background worker deliver the acknowledgement. If the application stops after the commit, the intention is still there for another worker to find.</p>
+<p>That closes one gap and leaves another. The receiver can accept a message before the worker records that acceptance. If the worker stops between the two, recovery sends the message again. An outbox makes the work durable; safe repetition depends on the receiver as well.</p>
+<p>Every example follows Mina’s order 103: one blue mug at 20.00 and two green teas at 4.50, total 29.00. The order is pending and has no payment. The new work, <code>order-103-ack</code>, says that the shop received the order. It does not say that Mina has paid.</p>
+<p>We will first follow that acknowledgement across the database boundary, then give several workers a way to claim and recover it. The SQL uses PostgreSQL. The failure paths and clock times in the drawings are illustrations; they are not recordings of a running mail service.</p>
+
+<h2 id="commit-and-send">The gap between a commit and a send</h2>
+<p>Suppose the purchase handler calls an email provider as part of placing the order. There are two possible orders for its work, and each leaves a failure between two steps. Follow both paths in Figure 1.</p>
+<figure class="oj-figure wide" aria-label="Neither order makes the two systems atomic">
+  <figcaption><span>Figure 1</span> Neither order makes the two systems atomic</figcaption>
+  <div class="oj-static"><div class="oj-lanes">
+    <div><p class="oj-label">Send before committing</p><div class="oj-node"><b>Provider accepts acknowledgement</b><span>“Order 103 received”</span></div><div class="oj-arrow">↓ then</div><div class="oj-stop"><b>Database transaction rolls back</b></div><div class="oj-arrow">↓ result</div><div class="oj-node"><b>An acknowledgement for no order</b><span>Rollback cannot recall the accepted message.</span></div></div>
+    <div><p class="oj-label">Commit before sending</p><div class="oj-node"><b>Database commits order 103</b><span>Pending · total 29.00</span></div><div class="oj-arrow">↓ then</div><div class="oj-stop"><b>Application stops before the call</b></div><div class="oj-arrow">↓ result</div><div class="oj-node"><b>An order with no acknowledgement</b><span>No durable record says that delivery remains.</span></div></div>
+  </div></div>
+  <p class="oj-caption">Two possible executions of a direct send. A database transaction controls the database writes; an ordinary remote call does not join that transaction.</p>
+</figure>
+<p>Calling the provider between <code>BEGIN</code> and <code>COMMIT</code> does not enlarge the database transaction to include email. The provider may accept the message and the next SQL statement may fail. The database can roll back its rows, but it cannot undo the provider’s action.</p>
+<p>Sending after the commit avoids announcing a rolled-back order. It leaves the other path: the order exists, but the application stops before sending. A retry of the purchase request must recover its existing result rather than create another order. <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a> develops that request protocol. The acknowledgement needs its own durable record of unfinished work.</p>
+
+<h2 id="transactional-outbox">The transactional outbox</h2>
+<p>Instead of calling the provider, the purchase transaction inserts a row into <code>outbox</code>. It commits that row with the order, its lines and the stock decrements. A separate process, the <strong>relay</strong>, later reads committed work and makes the external call.</p>
+<p>Figure 2 draws the transaction boundary around the two records that must agree. The external call sits beyond it.</p>
+<figure class="oj-figure wide" aria-label="Commit the intention with the order">
+  <figcaption><span>Figure 2</span> Commit the intention with the order</figcaption>
+  <div class="oj-static">
+    <div class="oj-transaction"><p class="oj-label">One shop database transaction</p><div class="oj-lanes"><div class="oj-node"><b>Order 103 + lines + stock</b><span>Pending · 29.00 · no payment</span></div><div class="oj-node"><b>Outbox: order-103-ack</b><span>Order received · 29.00 · ready</span></div></div><p>COMMIT keeps both; ROLLBACK keeps neither.</p></div>
+    <div class="oj-arrow">↓ after the commit, on a worker’s poll</div><div class="oj-node"><b>Relay reads the committed intention</b><span>It can resume after the purchase handler has gone.</span></div><div class="oj-arrow">↓ external call with the same ID and payload</div><div class="oj-node"><b>Receiver accepts order-103-ack</b><span>This acceptance is outside the shop transaction.</span></div>
+  </div>
+  <p class="oj-caption">This is a replay of the purchase before order 103 exists. Success leaves P3 stock 10, P7 stock 0 and P9 stock 4, with one acknowledgement intention. The diagram does not add a payment or change the order to paid.</p>
+</figure>
+<p>If the transaction aborts, there is no committed outbox row to deliver. If it commits, the relay can find the intention even if the API never receives the commit reply. This assumes the order and intention have the durability the application requires; a table whose rows disappear after a crash cannot hold the promise.</p>
+<p>An outbox describes <em>messages to deliver</em>. A <strong>database-backed job</strong> describes <em>work to execute</em>, such as generating an invoice or sending a notification. The same notification row can serve both roles. Neither name says that a worker has run, or that its external effect happened once.</p>
+<details class="sql-setup"><summary>A small outbox table for the examples</summary><Sql label="Create the example outbox table" code={schema} /><p>This is the core of the protocol. A service would also retain attempt counts, failure details, receiver results and any business deadline. Application permissions must prevent arbitrary changes to the work identity and payload.</p></details>
+<p>The purchase transaction inserts the following row before its existing <code>COMMIT</code>. An insertion failure aborts the purchase too; it must not be caught and ignored while the order is committed.</p>
+<Sql label="Add the acknowledgement intention inside the purchase transaction" code={intention} />
+
+<h3 id="work-identity">Give the work a stable identity</h3>
+<p>The purchase request token, <code>purchase-103</code>, identifies the caller’s logical purchase. The resulting order number is <code>103</code>. The work ID <code>order-103-ack</code> identifies this one acknowledgement. A worker may claim that work several times without making it a new acknowledgement.</p>
+<p>Keep the ID and intended payload fixed through those attempts. If the total is reconstructed from mutable catalogue prices a day later, the “same” work could say 31.00 instead of 29.00. Here the row captures the agreed total and the meaning of the message when the order is created. A real notification also needs a deliberate policy for recipient details and template version: capture what must remain historical, and identify what should be resolved at delivery time.</p>
+<p>The primary key rejects a second row with the same work ID. It does not check that an existing row has the same payload. If recovering a repeated purchase encounters the existing acknowledgement, recover and compare the stored intention through the request protocol; do not silently accept a changed payload with <code>ON CONFLICT DO NOTHING</code>.</p>
+
+<h2 id="repeated-delivery">Why delivery can repeat</h2>
+<p>The relay has three jobs: read unfinished work, make the call, and record the result. A crash can fall between any two. In Figure 3, start with <em>After acceptance</em> and step to the end. Watch the receiver’s count beside the shop’s completion record.</p>
+<Player kind="delivery" number={3} />
+<p>The shop’s row still looks unfinished after the receiver accepts. Recovery has to try again, because it would look unfinished after a crash before the call too. A missing reply has the same problem: it supplies no proof that the receiver did nothing.</p>
+<p>Marking the row done before making the call reverses the risk. A crash between the mark and the call leaves finished work that was never delivered. Recording completion afterwards preserves recovery, but leaves the duplicate window shown in the figure.</p>
+<p>This is why “exactly once” needs a named boundary. The outbox transaction can create one durable intention. The relay can attempt delivery repeatedly. Neither fact proves one external business effect. Nor does a row by itself promise eventual success: a running recovery process, a usable receiver and a policy for failures must keep moving it forwards.</p>
+
+<h2 id="deduplication">Make repeated delivery safe</h2>
+<p>Switch Figure 3’s receiver to <em>Deduplicates ID and payload</em>. In this example contract, the receiver atomically records the work ID, checks the payload, performs its effect and saves the result. A repeat with the same ID and payload returns that result. A repeat with a different payload is rejected.</p>
+<p>The decision belongs where the effect happens. If the receiving service changes its own database, it can insert a processed-message record and make the domain change in one transaction there. A unique key on the message ID selects the first application; a duplicate recovers the prior result. If it then sends another remote message, that next boundary needs its own recovery protocol.</p>
+<p>For an external API, use the API’s documented idempotency contract, including key scope, concurrent requests, failures and retention. Stripe’s <a href="https://docs.stripe.com/api/idempotent_requests">API v1 contract</a>, for example, compares parameters and may prune keys once they are at least 24 hours old. Reusing a pruned key starts a new request. That is a useful concrete contract to inspect, not a guarantee supplied by every provider.</p>
+<p>An ordinary email send is not assumed to provide such deduplication. A local <code>sent</code> flag cannot make it do so: the flag is the very write that can be missing after acceptance. Where the receiver offers no suitable protection, choose explicitly between possible duplicates, possible omission and reconciliation using other outcome evidence. Changing the retry ID does not resolve uncertainty.</p>
+<h3 id="acceptance-boundary">Know where the guarantee ends</h3>
+<p>A provider’s acceptance means what its contract says. It may mean “queued for sending”, not “arrived in Mina’s inbox”. A broker’s acknowledgement means the broker accepted the message under its durability rules, not that a consumer completed the business work. Track those milestones separately when the service promise depends on them.</p>
+<p>Keep deduplication evidence for at least as long as a delivery may be retried or deliberately redriven. If a week-old failed job is replayed after its receiver has forgotten the ID, the old protection has ended. Reconcile the unknown outcome or obtain a service-specific recovery path before repeating an effect that must not happen twice. Deleting a finished row and recreating it under a new ID also discards that connection to the earlier outcome.</p>
+
+<h2 id="claiming">Claiming work with several workers</h2>
+<p>A single relay can be replaced after failure, and several can share a queue. They need a way to decide who will work on each row. A plain <code>SELECT</code> followed later by an <code>UPDATE</code> leaves a race: A and B can both read “ready” before either records a claim.</p>
+<p>A <strong>claim</strong> records temporary authority to work on a row. A <strong>lease</strong> gives that authority a deadline, so a lost worker cannot hold the row forever. Each successful claim increments a <strong>generation</strong>, making the new authority distinguishable from every earlier claim of this work.</p>
+<p>The PostgreSQL statement below locks a bounded set of eligible rows and records their claims before releasing those locks. <code>$1</code> is the worker ID. Keep this transaction short and commit it before doing any external work.</p>
+<Sql label="Claim up to ten eligible jobs in PostgreSQL" code={claim} />
+<p><code>FOR UPDATE</code> holds each selected row against a competing claimant. <code>SKIP LOCKED</code> lets another worker pass rows it cannot immediately lock. The update changes the selected rows while the locks are still held. Only start work after the claim commit succeeds; if that commit’s result is uncertain, recover authority from the stored row before proceeding.</p>
+<figure class="oj-figure wide" aria-label="Skip a locked job rather than wait behind it">
+  <figcaption><span>Figure 4</span> Skip a locked job rather than wait behind it</figcaption>
+  <div class="oj-static">
+    <div class="oj-row"><div><b>First eligible row</b><br/><code>order-103-ack</code><br/>A’s claim transaction holds its row lock.</div><div><b>B’s poll</b><br/>↷ skips the locked row.<br/>It can try later eligible rows.</div></div>
+    <div class="oj-row"><div><b>A commits</b><br/>Row lock released.<br/>Stored lease is still unexpired.</div><div><b>B’s next poll</b><br/>The eligibility condition excludes the row.<br/>The lease now governs the claim.</div></div>
+    <div class="oj-row"><div><b>Only unfinished row is locked</b><br/>A has not committed yet.</div><div class="oj-result">B can return zero rows.<br/>The queue is not necessarily empty.</div></div>
+  </div>
+  <p class="oj-caption">A conceptual two-worker schedule. Skipping is a choice to make progress elsewhere; it is not a complete report of unfinished work. The row lock and the stored lease protect different parts of the process.</p>
+</figure>
+<p>The lock ends at commit, before the remote call begins. Holding it across that call would keep a database transaction and connection open throughout an unpredictable wait. It would still leave a duplicate window if the call succeeded and the transaction rolled back.</p>
+<p><code>ORDER BY</code> chooses a polling preference, not a completion order. A worker can skip the first row, another can take longer, and a row repeatedly locked by other work can be delayed. Neither fairness nor strict business order follows from this query. General lock scope, waits and deadlocks belong in <a href="/learn/databases/relational/locks-and-deadlocks/">Locks, contention and deadlocks</a>.</p>
+
+<h2 id="lost-worker">Recovering a lost worker</h2>
+<p>The lease is a recovery rule, not proof that a process is alive. Figure 5 gives A generation 7 at 10:16 UTC on 20 October. A pauses, its lease expires at 10:17, and B takes generation 8. Follow what happens when A resumes.</p>
+<Player kind="lease" number={5} />
+<p>A completion update must name the current claim, as well as the work. The following transaction first acquires the row lock; its next statement samples the database clock after that possible wait. <code>$1</code> is the work ID, <code>$2</code> the worker ID and <code>$3</code> the generation returned by claiming.</p>
+<Sql label="Finish only the current unexpired claim" code={finish} />
+<p>Require one returned row. Zero means that this worker cannot record completion: its claim may have expired, another generation may have replaced it, or the job may already be terminal. Stop using that claim and inspect the durable state. A successful external call does not entitle an old worker to overwrite the new owner.</p>
+<p>Renewal uses the same lock-then-guard protocol, setting <code>lease_until</code> to a new deadline only while the current claim remains unexpired. Retry scheduling and failure recording also use the owner and generation guard. Otherwise an old worker’s late error could put B’s active job back into the ready queue.</p>
+<h3 id="expiry">Expiry does not stop the old worker</h3>
+<p>A can pause between checking its lease and making a call. Its network request can remain in flight while B reclaims the row. Even a worker that checks perfectly cannot recall that request once sent. The guard in the shop database protects the job record; receiver deduplication protects a repeated acknowledgement.</p>
+<p>The SQL uses the database’s wall clock, <code>clock_timestamp()</code>, for eligibility and deadlines. Worker clocks do not decide claims. PostgreSQL’s <code>now()</code> stays at transaction start, which is unsuitable for a transaction that has waited before checking expiry. Keep statements and transactions bounded, and account for wall-clock adjustments: a clock jump can shorten a lease or delay recovery. No timing choice makes external safety dependably follow from prompt expiry.</p>
+<p>Longer leases give a slow worker more room but delay recovery after loss. Shorter leases recover sooner but increase overlapping attempts when healthy work runs late. Heartbeats extend a healthy claim, subject to the same guard. They reduce unnecessary takeovers; a missed heartbeat cannot tell a dead process from a paused one.</p>
+
+<h3 id="fencing">Fencing stale work</h3>
+<p>Some jobs modify an external resource whose owner can change. Such a receiver may support <strong>fencing</strong>: it remembers the highest authority generation it has accepted and rejects lower generations. Figure 6 adds that explicit contract to an example resource.</p>
+<figure class="oj-figure wide" aria-label="The receiver must enforce a fence">
+  <figcaption><span>Figure 6</span> The receiver must enforce a fence</figcaption>
+  <div class="oj-static">
+    <p class="oj-label">One protected resource · receiver stores highest generation</p>
+    <div class="oj-row"><div><b>B → receiver</b><br/>generation <b>8</b></div><div class="oj-node"><b>Accept; highest becomes 8</b><span>Compare and effect are one atomic decision.</span></div></div>
+    <div class="oj-row"><div><b>A → receiver, delayed</b><br/>generation <b>7</b></div><div class="oj-stop"><b>Reject: 7 is below 8</b><br/>A’s stale operation does not run.</div></div>
+    <div class="oj-row"><div><b>B → receiver, repeated</b><br/>generation <b>8</b> again</div><div><b>The fence alone does not reject equality.</b><br/>Use work identity to deduplicate a repeated effect.</div></div>
+  </div>
+  <p class="oj-caption">A separate, bounded receiver model. With no receiver check, the delayed generation-7 operation can run after generation 8. The acknowledgement provider is not assumed to offer fencing.</p>
+</figure>
+<p>The token order must belong to the protected resource. This article’s per-job generations 7 and 8 can fence successive claims of this one job if the resource is exclusive to it. They cannot order unrelated jobs touching the same resource: another job might also have generation 7. Allocate authority in the resource’s own scope and preserve that order through recovery.</p>
+<p>The receiver must check the token and perform the operation atomically. Checking a fence in the shop and then calling a provider leaves another gap. A lower generation can also arrive before the higher one has reached the receiver; a fence rejects it only after the receiver has learnt the higher authority. Fencing prevents that later stale operation, while deduplication prevents repeating one intention. They answer different questions.</p>
+
+<h2 id="business-order">When the order of work matters</h2>
+<p>Independent acknowledgements can often finish in either order. Changes to one order may need more care. An “order received” event records something that happened. A “dispatch this order” command asks for an action whose validity can change before a worker runs it. A cancellation does not erase the earlier event, but it may make the dispatch command invalid.</p>
+<p>If changes for one order must be applied in sequence, assign a per-order sequence under that order’s transaction protocol and carry it to the receiver. Then choose the rule there. A history consumer that needs every event may hold sequence 3 until sequence 2 arrives. A projection of current state may accept a newer version and reject older ones. Those are different business promises.</p>
+<p>A timestamp, an increasing message ID or the claim query’s <code>ORDER BY</code> does not implement either rule. Several workers can overtake each other after claiming. Define the unit of ordering, serialise or gate delivery for it where needed, and have the receiver detect gaps or stale versions. Keep the stable work ID as well: a sequence establishes position; the work ID identifies a repeat.</p>
+
+<h2 id="retry-and-retire">Retrying and retiring work</h2>
+<p>A failed attempt needs an outcome decision. A temporary provider failure can be scheduled later through <code>available_at</code>. An invalid payload needs diagnosis. A timed-out call may already have succeeded, so it needs safe repetition or reconciliation. None becomes a known non-effect merely because the worker labels the attempt “failed”.</p>
+<p>Use bounded backoff with jitter for retryable failures, and coordinate it with any retries in the provider’s client library. Otherwise many recovered workers can hammer the same failing receiver, or layers of retries can multiply the calls. Cap attempts or elapsed retry time according to the service promise, then retain exhausted work in a failed state with enough evidence for a deliberate redrive.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Four different meanings of stopping work"><table><caption>Four different meanings of stopping work</caption><thead><tr><th>Decision</th><th>What it means</th><th>What it cannot prove</th></tr></thead><tbody>
+  <tr><td>Lease expires</td><td>Another worker may claim the row.</td><td>The old process or remote call stopped.</td></tr>
+  <tr><td>Business deadline passes</td><td>The job may no longer be useful or permitted.</td><td>An earlier accepted action was undone.</td></tr>
+  <tr><td>Cancel the job</td><td>Cooperating workers should stop future execution.</td><td>An in-flight call was recalled.</td></tr>
+  <tr><td>Delete the row</td><td>Remove local work and outcome evidence.</td><td>The receiver forgot or reversed the effect.</td></tr>
+</tbody></table></div>
+<p>Cancellation and deadlines need a worker protocol too: coordinate their database changes with claims, recheck validity at the point the business requires, and define what to do about in-flight work. A receiver-enforced deadline or cancellation contract may be necessary when a late action is unacceptable. A compensating action, when available, is new work with its own identity and failure cases.</p>
+<h3 id="observable-recovery">Keep recovery observable</h3>
+<p>A queue with a hundred unfinished rows might be healthy; a queue with one three-day-old acknowledgement might be broken. Track the age of the oldest eligible work, time from creation to completion, expired and repeated claims, and failures by reason. Keep receiver references and uncertain outcomes so an operator can distinguish “never attempted” from “possibly accepted”.</p>
+<p>A redrive should preserve the work ID and fixed payload when it continues the same intention, and record who restarted it and why. Check the receiver’s deduplication horizon first. A corrected intention may need a new identity and an explicit relationship to the failed one; merely changing the payload behind the old ID breaks the recovery contract.</p>
+<p>Bound poll frequency, batch size and worker concurrency so recovery does not overwhelm the database or receiver. Index the eligible subset as the table grows, and clean up completed work only under a policy that preserves the outcome evidence still needed. A broker may earn its place through fan-out, delivery features or throughput. The handover from the shop database to that broker still has the same commit-and-send gap.</p>
+<p>A row-change stream can transport committed outbox rows without this polling query. It does not decide which application intention a row means, how the consumer deduplicates it, or whether the final action succeeded. Native stream setup and its recovery obligations belong in <a href="/learn/databases/relational/postgresql/logical-replication/">PostgreSQL logical replication and change feeds</a>.</p>
+
+<h2 id="checking-examples">Checking the examples</h2>
+<p>The SQL and retained checks use owned disposable databases. The purchase-and-outbox transaction, rollback counterexample and ordinary claim updates were checked in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. Separate native PostgreSQL 18.6 sessions check competing claims, skipped locks, expiry and stale completion. The drawings’ fixed UTC times, receiver deduplication and fencing are models of stated contracts, not observations of those services.</p>
+<p>The <a href="/relational-rebuild/outboxes-jobs/outbox-experiment.sql">SQL experiment</a> creates its own temporary tables and checks the purchase boundary and claim guards in one session. It does not simulate concurrent clients or call an external provider. Run it with <code>psql -v ON_ERROR_STOP=1 -f outbox-experiment.sql</code> on a disposable PostgreSQL database.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<ul>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-select.html#SQL-FOR-UPDATE-SHARE">SELECT: locking clauses</a>, <a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit locking</a> and <a href="https://www.postgresql.org/docs/18/sql-update.html">UPDATE</a>: queue claiming, skipped rows, lock lifetime and guarded writes.</li>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/functions-datetime.html#FUNCTIONS-DATETIME-CURRENT">Current date/time</a>: transaction, statement and wall-clock sampling.</li>
+  <li>AWS Prescriptive Guidance, <a href="https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html">Transactional outbox pattern</a>: the database/message boundary and duplicate delivery. The examples here state their own ordering and receiver contracts.</li>
+  <li>Stripe, <a href="https://docs.stripe.com/api/idempotent_requests">Idempotent requests</a>: API v1’s saved results, parameter comparison and key retention. This is an example contract, not the shop’s provider.</li>
+  <li>Mike Burrows, Google, <a href="https://research.google/pubs/the-chubby-lock-service-for-loosely-coupled-distributed-systems/">The Chubby lock service for loosely-coupled distributed systems</a>, section 2.1: rejecting lower acquisition counts at the protected server.</li>
+  <li>Amazon Builders’ Library, <a href="https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/">Timeouts, retries, and backoff with jitter</a>: unknown effects, retry amplification and spreading retries.</li>
+</ul>
