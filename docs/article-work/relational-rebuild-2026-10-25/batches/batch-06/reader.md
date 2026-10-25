@@ -1,0 +1,35 @@
+# Access control v01 — independent reader review
+
+Reviewed 25 October 2026 for the assigned application-engineer audience, using `staycurrent-review` editorial, teaching and visual perspectives. This was a first blind reading, with illustrations/labels/controls before substantive body reading. `initial-notes.md` was saved before consulting the article plan, neighbour ownership and example facts. No earlier bodies, reviews, verdicts or author quality explanations were used. All six live author-source hashes still match `review-source.json`.
+
+## Finding
+
+**Low, optional editorial correction — Figure 1 caption, “Three identities in one lookup”** (`src/articles/relational-rebuild/access-control.astro`, line 16). The three panels name a person’s request, an application check and a database connection. Those are stages in a lookup, not three identified principals. The body carefully distinguishes the person’s sign-in from the service’s database identity, so a caption promising three identities sends the reader looking for a third identity that is never labelled. Make the caption describe the distinction or route actually drawn, without implying that each panel introduces another identity. This does not invalidate the useful teaching in the panels.
+
+No substantive editorial, teaching or rendered-figure problem found in the assigned scope. No repair or second review round performed.
+
+## Judgement and coverage
+
+The explanation progresses coherently from person/service authority to task-derived grants, row scope, trusted context, reuse, integrity and verification. The unfamiliar part receives the most help: Figures 2 and 3 let the reader compare the same rows or connection under one changed setting. In Figure 2, Rowan’s stored row remains visible while its result membership changes. In Figure 3, request 20 with old context 10 visibly returns Mina, Tariq and Edda; absent context returns no rows, and explicit context 20 returns Rowan. The captions mark these as models. Figure 4 uses the actual `(20, 4)` customer and proposed `(10, 4)` association to distinguish access from integrity without requiring the reader to imagine a new example.
+
+The prose can sit alongside the bounded reference passages consulted. “4 is a value, not new SQL to execute” connects parameter binding directly to the unauthorised lookup. “A support login that cannot change a row can still disclose it” develops the practical consequence of read authority. The qualification about transaction-local settings restoring an older session value belongs beside the pooling explanation because it changes the reader’s safe setup decision. These are connected explanations, rather than a string of warnings. Headings generally name a recognisable subject or the practical question being answered; “Ownership and indirect privileges” gives the technical name at the point it becomes useful.
+
+Reference calibration used Sequence diagrams’ booking/waiting/outbox/order and trust-boundary explanations; Indexes’ scan/index/range, selectivity and composite-index explanations; Storage’s opening/pages, row versions, dirty pages/WAL, flush and asynchronous-commit development. Current rendered figures inspected were Sequence Figure 13, Indexes Figure 7 and Storage Figure 10. Their stable entities and visible comparisons are the appropriate standard here. Access-control Figures 2/3 show the central relationships directly; the shorter, text-led Figures 1/4 give bounded comparisons with concrete IDs. This was the assigned bounded calibration, not a new full review or complete rereading of the reference articles.
+
+After the blind notes, the frozen plan, neighbour briefs and example facts confirmed that transferable authority design and verification are this article’s promise. Native roles, policy syntax, inheritance/bypass and privileged-code procedures belong to PostgreSQL access control; secure CockroachDB implementation belongs to its operations article; composite-reference construction belongs to Constraints. The article makes those handoffs after giving the needed high-level answer. It distinguishes an application’s person/customer checks from tenant membership and does not imply that a freely set session context becomes an independent security identity.
+
+## Actual rendered checks and retained evidence
+
+Opened the current main preview at `127.0.0.1:4606/review/relational-rebuild/access-control/` in owned background IAB tabs. Read the complete finished article, four figures, two tables, labels and captions. The closed text-alternative disclosures were identified but not separately expanded. Stepped Figure 2 through all four stages and both boundary settings, and Figure 3 through all five stages and both lifetime settings. Play visibly became Pause; automatic progression occurred on each player; Pause stopped playback. Back, Next and Reset changed the expected states. End steps displayed disabled Next. Replayed/reset as needed for inspection; no article content was changed.
+
+Inspected 1280×720 in System/dark and explicit light, and verified the article’s actual DOM viewport was 375×812 for phone checks in light/dark. Figure 3’s request/context/result boxes stack on phones. Figure 2 keeps its source-row status, result summary, current explanation and controls readable; full upper source content can be off screen while using the controls, but the result/explanation needed for the comparison remains adjacent. Static figures stack legibly. No page-width overflow was observed at either width. Desktop and phone screenshots were visually inspected rather than inferred from source.
+
+Retained the assigned mechanical receipt for keyboard endpoint/focus checks and broader authored control/theme coverage, rather than repeating those checks. Retained sampled contrast evidence from the matching v01 `evidence/contrast.json`: lowest sampled text 6.61:1, control/graphic outline 4.11:1. These samples support legibility but do not establish a complete contrast audit or the quality judgement above.
+
+## Limits and handback
+
+The IAB was hidden; screenshots may update at a low frame rate. Playback was checked through rendered DOM states before/after elapsed time and actual Pause interaction, not judged as continuous smooth animation or used as an exact timing measurement. No live production connection pool, sign-in service or native SQL fixture was executed by this reader. This review does not independently validate the author’s native execution claims or replace the technical review. Native implementation procedures are outside this article’s promised scope.
+
+The viewport capability initially resized the reference tab while the article retained 1280×720. That non-phone screenshot was excluded from phone evidence; after closing the reference tab, actual article dimensions were checked at 375×812 before phone inspection.
+
+Both players were paused/reset, selectors restored to Tenant policy / Transaction only, theme restored to System, and final article dimensions verified at 1280×720. Both owned tabs were closed and the temporary viewport override reset. Viewport/theme lease released to the coordinator.

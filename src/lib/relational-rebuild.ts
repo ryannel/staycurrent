@@ -166,5 +166,6 @@ export function splitRelationalRebuildSources(html: string): { body: string; hea
     sources = sources.slice(0, ending.index);
   }
   const sourceHeading = /\bid\s*=/.test(heading[0]) ? heading[0] : heading[0].replace('<h2', '<h2 id="sources-and-further-reading"');
-  return { body, heading: sourceHeading, sources, id };
+  const headingId = sourceHeading.match(/\bid\s*=\s*["']([^"']+)["']/i)?.[1];
+  return { body, heading: sourceHeading, sources, id: id === headingId ? undefined : id };
 }

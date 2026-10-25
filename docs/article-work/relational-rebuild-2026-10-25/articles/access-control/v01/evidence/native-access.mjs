@@ -1,0 +1,67 @@
+import pg from '/private/tmp/staycurrent-rebuild-client-runtime-20261025/node_modules/pg/lib/index.js';
+import { readFile, writeFile } from 'node:fs/promises';
+import { randomBytes, createHash } from 'node:crypto';
+import assert from 'node:assert/strict';
+const config = JSON.parse(await readFile('/private/tmp/staycurrent-rebuild-access-control-native-20261025/connection.json','utf8'));
+assert.equal(config.host,'127.0.0.1'); assert.equal(config.port,59572);
+assert.equal(config.database,'sc_access_control'); assert.equal(config.user,'sc_access_control_writer');
+const admin = new pg.Client(config), clients = [], tests = [];
+const schema='access_article';
+const connect = async name => { const password=randomBytes(24).toString('hex'); await admin.query(`CREATE ROLE ${name} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`); const c=new pg.Client({...config,user:name,password}); await c.connect(); clients.push(c); assert.deepEqual((await c.query('SELECT current_user, session_user')).rows,[{current_user:name,session_user:name}]); return c; };
+const check = async (name,fn) => { const actual=await fn(); tests.push({name,actual}); };
+const denied = async (c,sql,code='42501') => { try { await c.query(sql); throw Error('Unexpected success'); } catch(e) { assert.equal(e.code,code); return {sqlstate:e.code}; } };
+const ids = async c => (await c.query(`SELECT customer_id FROM ${schema}.customers ORDER BY customer_id`)).rows.map(r=>r.customer_id);
+const context = async (c,value,local=true) => c.query("SELECT set_config('app.tenant_id',$1,$2)",[String(value),local]);
+let identity;
+try {
+ await admin.connect();
+ identity=(await admin.query("SELECT version(), current_user, current_database(), current_setting('cluster_name') cluster, current_setting('data_directory') data_directory")).rows[0];
+ assert.match(identity.version,/PostgreSQL 18\.6/); assert.equal(identity.current_user,'sc_access_control_writer'); assert.equal(identity.current_database,'sc_access_control'); assert.equal(identity.cluster,'staycurrent-access-control-20261025'); assert.equal(identity.data_directory,'/var/lib/postgresql/18/docker');
+ const runtime=await connect('shop_runtime'), support=await connect('shop_support'), migrate=await connect('shop_migrate');
+ await admin.query(`CREATE SCHEMA ${schema} AUTHORIZATION shop_migrate; SET ROLE shop_migrate;
+ CREATE TABLE ${schema}.customers (tenant_id integer NOT NULL, customer_id integer PRIMARY KEY, name text NOT NULL, UNIQUE(tenant_id,customer_id));
+ INSERT INTO ${schema}.customers VALUES (10,1,'Mina Shah'),(10,2,'Tariq Aziz'),(10,3,'Edda Berg'),(20,4,'Rowan Vale');
+ CREATE TABLE ${schema}.orders (tenant_id integer NOT NULL,order_id integer PRIMARY KEY,customer_id integer NOT NULL,placed_at timestamptz NOT NULL,status text NOT NULL, FOREIGN KEY(tenant_id,customer_id) REFERENCES ${schema}.customers(tenant_id,customer_id));
+ INSERT INTO ${schema}.orders VALUES (10,101,1,'2026-10-12 09:30+00','paid'),(10,102,2,'2026-10-14 16:05+00','paid'),(10,103,1,'2026-10-20 10:15+00','pending');
+ GRANT USAGE ON SCHEMA ${schema} TO shop_runtime,shop_support;
+ GRANT SELECT ON ${schema}.customers TO shop_runtime;
+ GRANT SELECT (tenant_id,customer_id,name) ON ${schema}.customers TO shop_support;
+ GRANT SELECT ON ${schema}.orders TO shop_runtime;
+ GRANT INSERT(tenant_id,order_id,customer_id,placed_at,status),UPDATE(tenant_id,status) ON ${schema}.orders TO shop_runtime;
+ GRANT SELECT(tenant_id,order_id,customer_id,status) ON ${schema}.orders TO shop_support; RESET ROLE;`);
+ await check('without row policy, forgotten tenant condition exposes Rowan',async()=>{const a=await ids(runtime);assert.deepEqual(a,[1,2,3,4]);return a;});
+ await admin.query(`SET ROLE shop_migrate; ALTER TABLE ${schema}.customers ENABLE ROW LEVEL SECURITY; ALTER TABLE ${schema}.orders ENABLE ROW LEVEL SECURITY;
+ CREATE POLICY tenant ON ${schema}.customers TO shop_runtime,shop_support USING(tenant_id = nullif(current_setting('app.tenant_id',true),'')::integer);
+ CREATE POLICY tenant ON ${schema}.orders TO shop_runtime,shop_support USING(tenant_id = nullif(current_setting('app.tenant_id',true),'')::integer) WITH CHECK(tenant_id = nullif(current_setting('app.tenant_id',true),'')::integer); RESET ROLE;`);
+ await check('missing context returns no customer rows',async()=>{const a=await ids(runtime);assert.deepEqual(a,[]);return a;});
+ await runtime.query('BEGIN'); await context(runtime,10);
+ await check('runtime tenant10 reads own customers without query filter',async()=>{const a=await ids(runtime);assert.deepEqual(a,[1,2,3]);return a;});
+ await check('tenant10 lookup for Rowan is hidden',async()=>{const a=(await runtime.query(`SELECT name FROM ${schema}.customers WHERE customer_id=$1`,[4])).rows;assert.deepEqual(a,[]);return a;});
+ await check('tenant10 permitted order update works',async()=>{const a=await runtime.query(`UPDATE ${schema}.orders SET status='pending' WHERE order_id=103 RETURNING order_id,status`);assert.equal(a.rowCount,1);return a.rows;});
+ await runtime.query('SAVEPOINT forbidden');
+ await check('runtime cannot alter schema',()=>denied(runtime,`ALTER TABLE ${schema}.customers ADD COLUMN unwanted text`)); await runtime.query('ROLLBACK TO forbidden');
+ await check('runtime cannot become migration identity',()=>denied(runtime,'SET ROLE shop_migrate')); await runtime.query('ROLLBACK TO forbidden');
+ await check('runtime has no delete grant option',async()=>{const a=(await runtime.query(`SELECT has_table_privilege(current_user,'${schema}.orders','DELETE WITH GRANT OPTION') allowed`)).rows[0];assert.equal(a.allowed,false);return a;});
+ await check('tenant move rejected by new-row policy',()=>denied(runtime,`UPDATE ${schema}.orders SET tenant_id=20 WHERE order_id=103`)); await runtime.query('ROLLBACK TO forbidden');
+ await check('foreign-tenant insert rejected before existing key conflict',()=>denied(runtime,`INSERT INTO ${schema}.orders VALUES(20,103,1,'2026-10-20 10:15+00','pending')`)); await runtime.query('ROLLBACK TO forbidden');
+ await check('hidden-row update affects zero rows',async()=>{const a=await runtime.query(`UPDATE ${schema}.orders SET status='cancelled' WHERE tenant_id=20`); assert.equal(a.rowCount,0);return {rowCount:a.rowCount};});
+ await runtime.query('ROLLBACK');
+ await check('same connection after transaction has no tenant rows',async()=>{const a=await ids(runtime);assert.deepEqual(a,[]);return a;});
+ await runtime.query('BEGIN'); await context(runtime,20);
+ await check('runtime can forge custom tenant context: policy trusts service',async()=>{const a=await ids(runtime);assert.deepEqual(a,[4]);return a;}); await runtime.query('ROLLBACK');
+ await context(runtime,20,false);
+ await check('session setting retained on next transaction',async()=>{await runtime.query('BEGIN');const a=await ids(runtime);assert.deepEqual(a,[4]);await runtime.query('ROLLBACK');return a;}); await context(runtime,'',false);
+ await support.query('BEGIN'); await context(support,10);
+ await check('support permitted columns tenant10',async()=>{const a=await ids(support);assert.deepEqual(a,[1,2,3]);return a;});
+ await support.query('SAVEPOINT forbidden');
+ await check('support cannot update order status',()=>denied(support,`UPDATE ${schema}.orders SET status='cancelled' WHERE order_id=103`)); await support.query('ROLLBACK TO forbidden');
+ await check('support cannot read ungranted placed_at',()=>denied(support,`SELECT placed_at FROM ${schema}.orders`)); await support.query('ROLLBACK TO forbidden'); await support.query('ROLLBACK');
+ await check('owner is a misleading policy test',async()=>{const a=await ids(migrate);assert.deepEqual(a,[1,2,3,4]);return a;});
+ await check('all order rows unchanged',async()=>{const a=(await admin.query(`SELECT tenant_id,order_id,customer_id,status FROM ${schema}.orders ORDER BY order_id`)).rows; assert.deepEqual(a,[{tenant_id:10,order_id:101,customer_id:1,status:'paid'},{tenant_id:10,order_id:102,customer_id:2,status:'paid'},{tenant_id:10,order_id:103,customer_id:1,status:'pending'}]);return a;});
+} finally {
+ for(const c of clients) {try {await c.query('ROLLBACK');await c.end();}catch{}}
+ try {await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE; DROP ROLE IF EXISTS shop_runtime,shop_support,shop_migrate`);} finally {await admin.end();}
+}
+const source=await readFile(new URL('./native-access.mjs',import.meta.url));
+await writeFile(new URL('./native-results.json',import.meta.url),JSON.stringify({identity,verifier_sha256:createHash('sha256').update(source).digest('hex'),tests,cleanup:'schema and three logins removed; clients closed',limits:'Narrow customers/orders projection; no production deployment, application authentication or CockroachDB executed.'},null,2)+'\n');
+console.log(JSON.stringify({passed:tests.length,cleanup:true}));

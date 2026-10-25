@@ -21,5 +21,5 @@ Read all bounded reference text parts separately with scripts/read-writing-refer
 Return output/plan.yaml in the breakdown schema with concise reader-understanding briefs. Add contextual child stubs only for distinct deeper outcomes; propose changed/new ownership centrally rather than silently adding pages. Leave prose and visual design to the fresh reference-led writer. Return concise output/notes.md for reference exposure, sources, example decisions and unresolved boundaries. Plain British English. No article writing, implementation, delegation, reviews, builds, servers, commits or publication. Root integrates this outline; the eventual article review checks its delivered understanding without a separate per-node planning review.
 '''
 (w/'input/assignment.txt').write_text(assignment);(r/'assignments'/f'{key}-plan.txt').write_text(assignment)
-p=r/'status.json';s=json.loads(p.read_text());s['articles'][key]={'state':'detailed planning'};p.write_text(json.dumps(s,indent=2)+'\n')
+p=r/'status.json';s=json.loads(p.read_text());s['articles'][key]={'state':'planner input prepared; not dispatched'};p.write_text(json.dumps(s,indent=2)+'\n')
 print(str(w))

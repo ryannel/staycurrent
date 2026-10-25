@@ -1,0 +1,124 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Boundary from '../../components/relational-rebuild-access-control/Boundary.astro';
+import Context from '../../components/relational-rebuild-access-control/Context.astro';
+import '../../components/relational-rebuild-access-control/access.css';
+---
+<p>A database connection has an identity and a set of things it may do. It might read customers, insert orders or change the schema. <em>Least privilege</em> means giving that identity the authority its work requires, so that a mistake in one task has less power to damage another.</p>
+<p>The difficult part is deciding whose work the database is authorising. A shop’s service may handle thousands of people through one database login. The database can recognise that service without knowing which person made a request, or whether that person may read the requested customer.</p>
+<p>Every example here follows the same shop. Tenant 10 has Mina Shah, Tariq Aziz and Edda Berg, customers 1, 2 and 3. Tenant 20 has customer 4, Rowan Vale. A <em>tenant</em> is an organisation’s share of the application’s data. The rows share tables, but a request authorised for tenant 10 must not expose Rowan. Customer IDs are globally unique; knowing the number 4 is enough to name Rowan’s row, but gives nobody a right to read it.</p>
+
+<section id="identity">
+<h2>Who the database sees</h2>
+<p>Authentication establishes an identity. Authorisation decides what that identity may do. Signing in to the shop establishes the person; signing in to the database establishes the service’s database identity. Those are separate checks.</p>
+<p>Figure 1 follows a customer lookup. Read the two checks in the middle before following the database connection on the right.</p>
+<figure class="access-figure" aria-labelledby="identity-caption">
+ <figcaption id="identity-caption"><span class="figure-number">Figure 1</span> The person’s request and the service’s login</figcaption>
+ <div class="access-scene identity-route">
+  <div><b>1 · Person’s request</b><span>Signed-in person</span><span>Asks for tenant 10, customer 1</span><span>These requested IDs are input.</span></div>
+  <div><b>2 · Application check</b><span>Verify the sign-in.</span><span>Check the person may select tenant 10 and read this customer.</span><span>Reject a request for unauthorised tenant 20 here.</span></div>
+  <div><b>3 · Database connection</b><span>Login: <code>shop_runtime</code></span><span>Operation: read customers</span><span>Tenant context: 10, supplied by the service after its check</span></div>
+  <div class="route-arrow">Request → checked application authority → SQL and context → database authorisation → result</div>
+ </div>
+ <p class="access-caption">The database authenticates <code>shop_runtime</code>. A shared login does not independently authenticate the person. The application must establish which tenant and which customer that person may access before it sends the lookup.</p>
+</figure>
+<p>The service can put tenant 10 in a query condition, or pass it as context that a database policy uses. Either way, the tenant value has to come from an authorised choice. Copying a tenant ID from a URL into the connection does not establish that right.</p>
+<p>Tenant isolation is only one boundary. Two people within tenant 10 may have different rights to Mina’s details. A policy that allows every tenant-10 row does not decide that question. The application needs whatever customer, staff or relationship checks its task requires as well.</p>
+</section>
+
+<section id="privileges">
+<h2>Privileges follow the work</h2>
+<p>Start with an operation, then identify its objects, actions, columns and row scope. “The application needs database access” is too broad to turn into a useful grant. “Checkout reads product price and stock, then creates an order and its lines” gives each privilege a reason.</p>
+<p>The shop uses three logical identities. <code>shop_runtime</code> handles authorised application requests. <code>shop_migrate</code> changes the schema. <code>shop_support</code> reads selected details for a tenant it is authorised to support. They are task names, not customers.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Authority derived from three shop tasks">
+<table><caption>One proposed division of authority</caption><thead><tr><th>Task and identity</th><th>Required work</th><th>Boundary to preserve</th></tr></thead><tbody>
+<tr><td>Purchase<br/><code>shop_runtime</code></td><td>Read the relevant customer, products and stock. Insert the order and order lines. Update product stock.</td><td>Only authorised customer and tenant work. This purchase creates no payment and needs no schema change or deletion.</td></tr>
+<tr><td>Schema migration<br/><code>shop_migrate</code></td><td>Create or alter the objects named by the migration; perform its required data changes.</td><td>Credentials and authority held by the deployment task, outside the running service.</td></tr>
+<tr><td>Support lookup<br/><code>shop_support</code></td><td>Read tenant/customer IDs and customer names; read tenant, order and customer IDs and order status.</td><td>Authorised tenant only. No payment changes, order changes or schema changes. Other columns need a separate reason.</td></tr>
+</tbody></table></div>
+<p>This is a sufficient starting design for these tasks, not the union of everything a shop might eventually do. If another application operation records a payment, derive that operation’s authority separately. Giving checkout every payment privilege “for later” defeats the exercise.</p>
+<p><code>SELECT</code>, <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> permit different work. Read access does not imply update access, and an insert grant does not imply deletion. A column grant can narrow an update to stock rather than catalogue price. A real stock update also reads columns in its calculation and condition, so verify the complete statement rather than granting its leading SQL verb alone.</p>
+<p>A support login that cannot change a row can still disclose it. Limit its selected columns and tenant scope to the lookup, and limit how long the authority lasts. An export of every customer name is a powerful operation even when it makes no database changes.</p>
+<h3>Ownership and indirect privileges</h3>
+<p>Effective authority can arrive along several paths. A direct grant is one; membership in a group with broader grants is another. Privileges available to everyone, object ownership, and callable views or routines can add more. Revoking the direct table grant removes only one path.</p>
+<p>Ownership matters because an owner can normally change the object and its access rules. Giving the running service ownership of its tables makes a narrow list of ordinary grants misleading: the service may be able to change the boundary itself. Keep it unable to become the migration identity or grant itself broader access.</p>
+<p>A restricted database interface can be useful. Support might be allowed to call one lookup routine or read one view rather than access the base tables. That interface must enforce its promised tenant and column scope, and the caller must have no alternative path around it. Privileged routines require particular care because they can run with another identity’s authority. <a href="/learn/databases/relational/postgresql/access-control/">PostgreSQL roles, policies and privileged code</a> follows ownership, membership and those execution rules in detail.</p>
+</section>
+
+<section id="rows">
+<h2>Table access is not tenant access</h2>
+<p>Suppose <code>shop_runtime</code> can read the customers table. The application ordinarily supplies a tenant condition. One lookup accidentally leaves it out:</p>
+<Sql label="A customer lookup with no tenant condition" code={`SELECT customer_id, name
+FROM customers
+WHERE customer_id = $1;`} />
+<p>With parameter 4, this asks for Rowan. The parameter preserves the structure of the SQL: 4 is a value, not new SQL to execute. It says nothing about whether this request may read customer 4. Parameterised queries and access checks solve different problems.</p>
+<p>Figure 2 drops the customer condition as well, to make every row visible in the comparison. Step through with <strong>Tenant policy</strong>, then select <strong>Table grant only</strong> and compare Rowan’s row at the end.</p>
+<Boundary />
+<p>A table grant permits an action on an object. With no row restriction, it does not distinguish the tenants stored there. An application check can reject tenant 20 before SQL runs, but each query still needs the correct scope. A database-enforced row boundary can catch an omitted condition on the protected table, even when the application query is wrong.</p>
+<p>Row-level security is one way to enforce that boundary. A policy supplies a rule for the rows a connection may read or change, in addition to its ordinary privileges. A restricted view or routine is another possible interface. Choose the interface with its bypass paths in view: keeping a filtered view while also granting unrestricted access to its base table does not enforce the filter.</p>
+</section>
+
+<section id="context">
+<h2>What a row boundary trusts</h2>
+<p>The illustrated rule compares each row’s <code>tenant_id</code> with the current request’s tenant context. It can make that comparison only because somebody supplied the context. In this design, that somebody is the service.</p>
+<p>If <code>shop_runtime</code> can freely set the context to 20, the policy will then permit tenant-20 rows. It still protects against a forgotten query condition when context is correct. It does not protect tenant 20 from a service that chooses 20 incorrectly, or from someone who obtains the same unrestricted context-setting authority.</p>
+<p>A stronger boundary needs an identity or assertion the caller cannot freely forge, validated by the enforcing layer. Separate tenant credentials are one possible design; a tightly controlled interface that validates the caller’s authority is another. Both introduce identity and credential management work. Moving a tenant value into a session variable alone does not create that stronger boundary.</p>
+<p>A pool adds another question: how long does the context live? The next request may borrow the same database connection. Figure 3 follows two requests through it. Step to <strong>Reuse without setup</strong>, then compare the two context lifetimes.</p>
+<Context />
+<p>The safe setup path acquires a connection, begins the transaction, establishes the authorised context, performs the data work on that same connection, then commits or rolls back before returning it. A query that runs before setup is already outside that path. <a href="/learn/databases/relational/application-sql/">SQL at the application boundary</a> explains how to keep one request’s connection and transaction together.</p>
+<p>Transaction-scoped context reduces the chance of leaving one request’s value for the next. In PostgreSQL, a local setting ends with the transaction and restores any prior session setting. Therefore the model assumes there is no old tenant value underneath it. Keep the connection’s baseline empty; setting a local value over a stale session value merely postpones the leak. Choose missing-context behaviour deliberately: reject the operation or match no rows, rather than silently choosing a tenant.</p>
+<p>Writes need two checks. Which existing rows may the operation target? Which tenant may its new or changed row claim? A request scoped to tenant 10 must not move an order into tenant 20 by updating <code>tenant_id</code>. It must not insert a tenant-20 order either. A read filter alone does not establish those write rules. PostgreSQL’s policy expressions for existing and proposed rows, and the identities that bypass them, belong in the native implementation article.</p>
+</section>
+
+<section id="integrity">
+<h2>Access and integrity answer different questions</h2>
+<p>Rowan is a valid customer. Reading Rowan’s valid row from a tenant-10 request is an access failure. A foreign key cannot decide that the reader is unauthorised.</p>
+<figure class="access-figure" aria-labelledby="integrity-caption">
+ <figcaption id="integrity-caption"><span class="figure-number">Figure 4</span> A valid row, an invalid association</figcaption>
+ <div class="access-scene access-contrast">
+  <div><b>Read customer 4 as tenant 10</b><code>customers: (20, 4, Rowan Vale)</code><p>The row is valid. The request has no right to read it.</p><strong>Access boundary must hide or reject it.</strong></div>
+  <div><b>Associate a tenant-10 order with customer 4</b><code>(tenant_id, customer_id) = (10, 4)</code><p>Customer 4 belongs to tenant 20. No customer has the pair (10, 4).</p><strong>A composite reference must reject it.</strong></div>
+ </div>
+ <p class="access-caption">An authorised tenant-10 writer can still propose an invalid association. Conversely, perfectly consistent data can still be disclosed to the wrong reader.</p>
+</figure>
+<p>Both rules are needed. The order’s tenant can pass an access policy while its customer belongs to another tenant. A composite reference from the order’s tenant and customer ID to the customer’s corresponding pair protects that association. <a href="/learn/databases/relational/constraints/">Constraints and data integrity</a> builds and tests the reference; it does not replace the access decision here.</p>
+</section>
+
+<section id="tests">
+<h2>Test the identity that will do the work</h2>
+<p>A query run as an administrator can prove that rows exist, but it cannot establish what the runtime login may do. The same applies to testing a row policy as a table owner that bypasses it. Open connections using the deployed runtime and support identities, check the effective identity, and run the real statements through them.</p>
+<p>For each task, pair an allowed operation with a forbidden one. Include rows that make the distinction visible: an empty tenant-20 table would conceal the missing boundary that Rowan exposes.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Allow and deny tests for shop identities">
+<table><caption>Tests derived from the shop’s requirements</caption><thead><tr><th>Exercise</th><th>Required evidence</th></tr></thead><tbody>
+<tr><td>Legitimate tenant-10 lookup</td><td>The runtime returns the permitted tenant-10 customer details.</td></tr>
+<tr><td>Customer 4; omitted tenant condition</td><td>Rowan is hidden or the request is rejected, according to the chosen interface.</td></tr>
+<tr><td>Forged tenant 20 in a tenant-10 request</td><td>The application rejects the selection. Also test the database directly: a caller-controlled context may expose Rowan, revealing what the policy trusts.</td></tr>
+<tr><td>Missing context; reused connection</td><td>No inherited tenant access. Exercise both commit and rollback, then borrow the connection for a different tenant.</td></tr>
+<tr><td>Tenant-changing update; wrong-tenant insert</td><td>No forbidden row version is stored. Check the error or affected-row count and read the data afterwards with a verification identity.</td></tr>
+<tr><td>Support write; ungranted column</td><td>The support connection cannot change order status or read a column outside its lookup.</td></tr>
+<tr><td>Runtime schema change; migration identity</td><td>The runtime cannot alter the protected objects or assume the migration identity.</td></tr>
+</tbody></table></div>
+<p>An empty result is evidence only for the statement you ran. An update may return no rows because it matched none, because the interface hid them, or because it made a change without returning row data. Record its affected-row count and check stored values. For a forbidden write, a successful test establishes that the forbidden change did not happen.</p>
+<p>A disposable native PostgreSQL 18.6 run checked the narrower customer/order example used here through separate <code>shop_runtime</code> and <code>shop_support</code> login connections. With tenant context 10, the policy returned customers 1–3 and hid customer 4. Support could read its granted columns but could not update order status or read the ungranted order timestamp. The runtime could not alter the customer table or become <code>shop_migrate</code>; tenant-changing writes failed. All three original orders were unchanged afterwards.</p>
+<p>The counterexamples mattered as much. Before enabling the row policy, the runtime read all four customers. Setting its freely changeable context to 20 exposed Rowan. A retained session value survived into another transaction. The table owner read all four rows despite the policy. These observations verify those PostgreSQL mechanisms in this fixture; they do not verify the shop’s sign-in checks or a production pool. Figures 2 and 3 are explanatory models, not captured server traces.</p>
+</section>
+
+<section id="changes">
+<h2>Keep privileges correct as the schema changes</h2>
+<p>A migration changes the access design as well as the schema. A new table needs an explicit decision about its readers and writers. A new column may become readable through an existing table-wide grant. A new routine may expose work that its callers could not perform directly.</p>
+<p>Review the authority that will exist after the migration, including group memberships and default privileges for newly created objects. Then rerun the affected allow-and-deny tests as the runtime and support identities. A migration that succeeds as its owner has answered a different question.</p>
+<p>Temporary support access needs an end as well as a beginning. Remove it when the task finishes, close or invalidate connections as the database’s rules require, and verify that the former access path no longer works. Keeping the task, its grant and its test together makes the next review a concrete comparison.</p>
+<p>Take the three task requirements and their forbidden cases to <a href="/learn/databases/relational/postgresql/access-control/">PostgreSQL roles, policies and privileged code</a> for native roles and row policies, or <a href="/learn/databases/relational/cockroachdb/operations/">Operating and securing a CockroachDB cluster</a> for its secure identities and privilege checks. The syntax changes; the question remains what this connection may do, on whose behalf, and what evidence establishes the boundary.</p>
+</section>
+
+<section id="sources-and-further-reading">
+<h2>Sources and further reading</h2>
+<ul>
+<li>OWASP, <a href="https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html">Authorization Cheat Sheet</a>: derive authority from tasks, check each request and test forbidden access.</li>
+<li>OWASP, <a href="https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html">SQL Injection Prevention Cheat Sheet</a>: parameters preserve SQL structure; least privilege limits database authority.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-priv.html">Privileges</a> and <a href="https://www.postgresql.org/docs/18/role-membership.html">Role Membership</a>: object and column grants, ownership, inherited privileges and assuming another role.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-rowsecurity.html">Row Security Policies</a> and <a href="https://www.postgresql.org/docs/18/sql-createpolicy.html">CREATE POLICY</a>: existing and proposed rows, default denial, owner and privileged-role bypasses.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-set.html">SET</a>: transaction-local context and restoration of session settings.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-createfunction.html">CREATE FUNCTION</a> and <a href="https://www.postgresql.org/docs/18/sql-alterdefaultprivileges.html">ALTER DEFAULT PRIVILEGES</a>: privileged routines and the access decisions inherited by new objects.</li>
+</ul>
+</section>

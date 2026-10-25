@@ -1,0 +1,7 @@
+# Access-control acceptance
+
+Both independent first reports found no substantive article problem. One accepted optional caption correction now names the person's request and the service's login, matching the depicted route and the surrounding explanation. Coordinator checked the caption with all three panels and adjacent paragraphs; the served caption is current. `changed-source.json` identifies the single text difference from frozen v01. No figure mechanism, model, claim, SQL or control changed, so earlier applicable checks remain retained.
+
+The practitioner found an evidence limit: the recorded hidden-order UPDATE targets tenant20, but no tenant20order was seeded. Its zero rows do not prove protection of an existing hidden order. Do not credit that check with this conclusion. The existing Rowan-customer read, new-tenant UPDATE/INSERT probes and independently checked documentation support the actual public claims; no article repair or additional execution is required. The recorded permitted UPDATE is a rolled-back assignment of the existing status, not a purchase.
+
+The shared preview sources relocation initially duplicated its section/heading anchor. The helper now omits the redundant disclosure ID when identical; all15pages pass the13rules, the served source anchor is unique and sources stay closed by default (`template-fix.json`). First author source remains frozen independently of the one-caption correction. No new complete reading or collection review was run. Registry marks all15available articles reviewed; publication remains unauthorised.

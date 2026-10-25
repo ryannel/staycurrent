@@ -152,3 +152,25 @@ A separate outbox replay atomically creates stable work identity `order-103-ack`
 An independent access scenario uses logical identities `shop_runtime`, `shop_migrate` and `shop_support`. Runtime serves authorised tenant requests; migration authority is held separately and changes the schema; support performs a tenant-scoped read of selected customer/order details, with no payment-changing or schema-changing task. These names identify tasks, not existing customers or staff people.
 
 Tenant 10 has the starting shop rows; tenant 20 has customer 4, Rowan Vale. A request authorised for tenant 10 tries selecting tenant 20 or customer 4. No new rows are added. Tenant scope alone does not establish which people may read other people's details within one tenant. Native grants and policy implementation remain with their implementation owners.
+
+## Query execution workload
+
+The initial report sums agreed order-line values for paid orders in the half-open UTC October 2026 range, grouped by customer and ordered by descending value then customer ID. Core rows produce Tariq 40.00 and Mina 39.50; pending order 103 is excluded and Edda has no result row. This is paid-order line value, not payments received.
+
+A separate generated reporting fixture may add historical orders and lines, preserving core rows. The writer must agree exact non-conflicting IDs, counts, seed and skew before reporting observations. Uneven customer frequencies or related date/status distributions may support the explanation; they are not mandatory scenarios. Generated history is a workload model, not a reconstruction of stock. No timing, plan or improvement is established before execution on an owned fixture. Native counter-by-counter interpretation remains with its implementation article.
+
+## Generated report fixture
+
+The generated query fixture uses customers 1001–2000 and orders 100001–220000, with three lines per generated order and no generated payments. For n = 0…119999, day offset is `(37n + 20261025) mod 365` and status selector is `(53n + 20261025) mod 100`. Customer is 1001 when `n mod 10 < 7`, otherwise `1002 + (17n + 20261025) mod 999`. October is day offsets 273…303; paid requires selector < 90 there or < 10 elsewhere. Each generated order has P3/P7/P9 quantity 1 at 4.50/20.00/35.00. Core stock stays at the post-103 values 10/0/4. The native workload has 120003 orders and 360005 lines; observations/settings stay with query-execution evidence, separate from the small teaching rows.
+
+## Formal normalisation variations
+
+A separate `buyer_advice(customer_id, tea_style, advisor_id)` scenario declares `advisor_id → tea_style` and `(customer_id, tea_style) → advisor_id`. Advisers A1, Iris Lin, and A2, Oren Moss, both advise green tea; advisers are not customers. Begin with a valid assignment before demonstrating how separate adviser/style and customer/adviser relations can admit two green-tea advisers for customer 1. No core orders change. Candidate keys and preservation follow the declared dependencies, not apparent uniqueness in sample rows.
+
+Keep the original three ternary offers and its absent `(S1, P7, South)` unchanged. A separately labelled pairwise-approval policy defines eligible offers exactly by supplier/product, supplier/region and product/region approvals. Its closure contains those original three tuples plus `(S1, P7, South)`. This is an independent policy variation for the declared join dependency; no new starting offer is silently added.
+
+## Hierarchy variations
+
+Category IDs are 0 Catalogue (a synthetic root), 10 Teaware, 11 Mugs, 12 Blue mugs and 20 Gifts. Baseline edges are 0→10, 10→11, 11→12 and 0→20. No product membership or order facts are added.
+
+Independent variations move the Mugs subtree from Teaware to Gifts (replace 10→11 with 20→11), retain both parent edges for the multiple-parent alternative, or attempt the descendant-parent edge 12→10 that closes a cycle. Opposing concurrent Teaware/Gifts reparent attempts start from their initially separate branches; any outcome and protection depend on the complete stated protocol/isolation. These variations do not silently become the baseline.
