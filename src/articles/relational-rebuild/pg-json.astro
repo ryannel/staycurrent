@@ -1,0 +1,208 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import JsonFigures from '../../components/relational-rebuild-pg-json/JsonFigures.astro';
+---
+
+<p>PostgreSQL can store a JSON document beside ordinary typed columns and query its members without sending the whole document to the application. That is useful for a product’s variable descriptive details: tea can have an origin, while a mug has a capacity. It also leaves a decision. Which details form one document, which deserve their own columns, and which are relationships to other rows?</p>
+
+<p>The choice affects more than how an API response looks. A JSON number and a JSON string can produce the same extracted text. A valid document can omit a required field. An index that searches for a contained fragment cannot supply numeric capacity order. And changing one member still updates the row that holds the document.</p>
+
+<p>Every example follows the collection’s tea shop. P3 is green tea from Japan; P7 is a blue mug with a capacity of 300 ml. Their product identities, catalogue prices, stock and order lines already have explicit types and rules. We will try alternative homes for the specialised details, then follow one JSON field through reading, validation, indexing and updates. The small figures are worked models. SQL results were checked in PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly; no server timings or concurrent executions are implied.</p>
+
+<section id="documents">
+  <h2>What belongs in a JSON document</h2>
+  <p>A document groups facts whose structure and changes belong together. A catalogue editor may read and replace a product description as one piece, with different fields for different products. JSONB can hold that variable structure. It does not make the contents free of a schema: readers still expect particular names, types and meanings.</p>
+
+  <p>Figure 1 keeps P3 and P7 visible while changing only the home of their specialised details. Read the identity above the two alternatives, then the independent tag memberships below them.</p>
+  <JsonFigures kind="boundary" />
+
+  <p>Both alternatives can give each product at most one detail row by making <code>product_id</code> its primary key and a foreign key to <code>products</code>. The JSON object does not need to repeat that identity inside itself. The reference still names the same P7 that order lines name.</p>
+
+  <p>Typed columns make a stable field’s type visible to every query. A <code>capacity_ml numeric NOT NULL CHECK (capacity_ml &gt; 0)</code> column states a positive-capacity contract directly. A specialised <code>teaware_details</code> row keeps that field away from tea-only attributes. Neither its foreign key nor its primary key requires every teaware product to have a detail row; subtype completeness needs a separate rule.</p>
+
+  <p>P7’s gift and ceramic memberships have a different shape. They can be added separately, made unique as pairs and referenced through ordinary keys. Keep related rows when those independent relationships matter. An array of tag names inside a document does not give each membership its own row identity or an ordinary foreign key to the tag table. <a href="/learn/databases/relational/modelling/">Relational data modelling</a> develops that judgement, including the cost of a generic attribute table.</p>
+
+  <h3>Arrays and composite values</h3>
+  <p>JSON is not the only way to store a value with parts. PostgreSQL’s <code>text[]</code> keeps a sequence of text values with one element type. A composite type names its fields and their SQL types. For a stable amount-and-unit value, this is possible:</p>
+  <Sql label="A typed composite value for a measurement" code={`CREATE TYPE measurement AS (
+  amount numeric,
+  unit text
+);
+SELECT ROW(300, 'ml')::measurement;`} />
+  <p>The composite definition supplies types, not <code>NOT NULL</code>, positive amounts or permitted units. Those need constraints, for example on the containing table or an appropriate domain. Likewise, declaring <code>text[2]</code> does not enforce an array length of two in PostgreSQL. Choose arrays for homogeneous sequences and composites for stable named parts; neither automatically supplies the identity, references or independent update boundary of related rows. <a href="/learn/databases/relational/values/">Values, missing data and equality</a> explains when the parts need separate meanings.</p>
+</section>
+
+<section id="json-jsonb">
+  <h2>JSON and JSONB</h2>
+  <p><code>json</code> stores the input JSON text, preserving whitespace, object-key order and duplicate keys. <code>jsonb</code> converts it into a representation that can be processed without reparsing that text and supports native indexes. It discards that formatting and object-key order; if a key repeats, the last value survives.</p>
+  <Sql label="Duplicate object keys after conversion to JSONB" code={`SELECT '{ "capacity_ml": 300, "capacity_ml": 330 }'::jsonb;
+-- {"capacity_ml": 330}`} />
+  <p>Prefer JSONB for documents you will query. Retain the original incoming body separately when its exact representation matters, such as signature verification or an audit of what arrived. Even <code>json</code> stores decoded database text, rather than every byte and header of a network message. Reject duplicate keys before JSONB conversion if their presence is an error: after conversion, they are gone.</p>
+  <p>Both JSON types validate JSON syntax. Neither requires an object: <code>300</code>, <code>"large"</code>, <code>[]</code> and <code>null</code> are valid JSON values. JSONB also has representation limits, including PostgreSQL’s numeric range and rejection of the zero Unicode character. A successful conversion establishes neither an application document shape nor a valid capacity.</p>
+  <p>For the next examples, the proposed detail table has an explicit product reference and requires an object. It permits different members for different products:</p>
+  <Sql label="Proposed JSONB product detail table and the two example documents" code={`CREATE TABLE product_documents (
+  product_id text PRIMARY KEY REFERENCES products,
+  details jsonb NOT NULL,
+  CHECK (jsonb_typeof(details) = 'object')
+);
+INSERT INTO product_documents VALUES
+  ('P3', '{"origin":"Japan"}'),
+  ('P7', '{"capacity_ml":300}');`} />
+</section>
+
+<section id="extraction">
+  <h2>Reading values and missing fields</h2>
+  <p><code>details -&gt; 'capacity_ml'</code> extracts a member as JSONB. <code>details -&gt;&gt; 'capacity_ml'</code> extracts its text. For numeric 300, both displays can look like <code>300</code>, but the text no longer says whether it came from a number or a string.</p>
+  <p>Start Figure 2 with numeric 300 and step to the two extractions. Then choose the string “300”. Finally compare JSON null with an absent field. The last stage applies a hypothetical stricter contract that we will declare below.</p>
+  <JsonFigures kind="extract" />
+  <p>JSON null is a value inside JSON. SQL <code>NULL</code> marks absent SQL information. A JSON-preserving extraction retains the former; text extraction turns it into SQL <code>NULL</code>. A missing member, an unsuitable structure and a SQL-null document also give SQL <code>NULL</code> through these extraction operators. The same text result can therefore hide several different inputs.</p>
+  <Sql label="Keep presence, JSON type and extracted text separate" code={`SELECT details ? 'capacity_ml' AS has_member,
+       jsonb_typeof(details -> 'capacity_ml') AS json_type,
+       details ->> 'capacity_ml' AS capacity_text
+FROM product_documents
+WHERE product_id = 'P7';
+-- true | number | 300`} />
+  <p>Use <code>?</code> here only after establishing that <code>details</code> is an object: it tests top-level keys or string array elements. <code>jsonb_typeof</code> returns the text <code>'null'</code> for JSON null, but SQL <code>NULL</code> for an absent extraction. For deeper paths, <code>{"#> '{dimensions,capacity_ml}'"}</code> preserves JSON and <code>#&gt;&gt;</code> extracts text.</p>
+  <p>Extraction is also a comparison choice. Under <code>COLLATE "C"</code>, text <code>'1000'</code> sorts before <code>'300'</code>. That cannot answer “Which capacity is larger?” Cast a validated numeric member to <code>numeric</code> before comparing or ordering it. Casting alone is insufficient validation: both numeric 300 and string “300” can become numeric 300, while string “large” causes a conversion error.</p>
+</section>
+
+<section id="validation">
+  <h2>Validating a document</h2>
+  <p>Suppose the shop now requires every row in a proposed <code>teaware_documents</code> table to contain a positive JSON-number capacity in millilitres. This is a stronger local rule than the flexible product-document table above. P7 satisfies it; P3’s origin-only document belongs elsewhere.</p>
+  <p>Write down all four parts of that contract: the document is an object, the member exists, its JSON type is number, and its numeric value is positive. The following definition allows extra members while enforcing those requirements:</p>
+  <Sql label="A required positive JSON-number capacity, with guarded conversion" code={`CREATE TABLE teaware_documents (
+  product_id text PRIMARY KEY REFERENCES products,
+  details jsonb NOT NULL,
+  CHECK (jsonb_typeof(details) = 'object'),
+  CHECK (details ? 'capacity_ml'),
+  CHECK (CASE
+    WHEN jsonb_typeof(details -> 'capacity_ml') = 'number'
+      THEN (details ->> 'capacity_ml')::numeric > 0
+    ELSE false
+  END)
+);
+INSERT INTO teaware_documents VALUES
+  ('P7', '{"capacity_ml":300}');`} />
+  <p>The <code>CASE</code> matters twice. It returns false for a missing, null or wrong-type member, and it performs the cast only in the numeric branch. Do not depend on the left-to-right order of conditions joined by <code>AND</code> to protect an unsafe cast.</p>
+  <p>A weaker <code>CHECK ((details -&gt;&gt; 'capacity_ml')::numeric &gt; 0)</code> accepts <code>{'{}'}</code>: extraction and comparison produce unknown, and a PostgreSQL check accepts true or unknown. It also accepts <code>{'{"capacity_ml":"300"}'}</code>, losing the intended JSON-type rule. Figure 2’s rejected inputs test those gaps as well as zero and the non-numeric string. The explicit contract rejects them without trying to cast “large”.</p>
+  <p>The longer definition buys flexibility for other document members, while accepting responsibility for this one field’s schema. Compare it with a typed <code>teaware_details</code> row containing <code>capacity_ml numeric NOT NULL CHECK (capacity_ml &gt; 0)</code>. If most members acquire stable types, requiredness and separate query uses, columns can express that growing contract more directly. Keys and foreign keys still govern relationships; a check over one JSON value is not a replacement for them. <a href="/learn/databases/relational/constraints/">Constraints and data integrity</a> develops enforcement across the wider schema.</p>
+</section>
+
+<section id="predicates">
+  <h2>Containment, existence and JSON paths</h2>
+  <p>Choosing the operator starts with the question. “Does this object have a key?”, “Does this array include these elements?” and “Is this the whole document?” are different tests.</p>
+  <p>P7 already has the tags gift and ceramic as independent memberships. To compare the JSON operators, form a diagnostic document from those memberships and put it beside three variations. These are search examples in an isolated <code>tag_probe(label, doc jsonb)</code> table; the membership rows remain authoritative. Change the question in Figure 3 and watch which documents qualify.</p>
+  <JsonFigures kind="predicates" />
+  <p><code>doc ? 'gift'</code> does not descend into <code>tags</code>. <code>(doc -&gt; 'tags') ? 'gift'</code> applies existence to the extracted array instead. Containment, <code>@&gt;</code>, takes another JSONB value and asks whether that structure fits inside the document. <code>{'{"tags":["gift"]}'}</code> preserves the nesting needed for this search.</p>
+  <p>Extra object members and array elements are allowed by containment. Within arrays, order and repeated occurrences do not matter to containment. Whole-value JSONB equality still distinguishes the reversed, extended and repeated arrays, although rearranging an object’s keys would not change equality. Use an explicit count or occurrence model when “two gifts” means two occurrences: repeating “gift” in a containment operand does not demand two.</p>
+  <h3>JSONPath filters</h3>
+  <p>JSONPath describes a route through a JSON value. <code>$</code> is the document root; <code>@</code> is the item currently being tested inside a filter. This search asks whether a numeric capacity of at least 300 occurs:</p>
+  <Sql label="A JSONPath filter for a positive numeric capacity bound" code={`SELECT product_id FROM product_documents
+WHERE details @? '$.capacity_ml ? (@ >= 300)';
+-- P7`} />
+  <p><code>@?</code> asks whether the path produces any item. <code>@@</code> instead evaluates a JSONPath predicate, such as <code>details @@ '$.capacity_ml &gt;= 300'</code>. They are different expression forms; do not wrap a Boolean predicate in <code>@?</code> and assume it tests that Boolean’s truth.</p>
+  <p>The default lax mode can adapt structure, including unwrapping arrays. A diagnostic <code>{'{"capacity_ml":[300]}'}</code> can therefore pass the search above, although it fails our stored-number contract. The match operators also suppress missing-member, unexpected-type, numeric and datetime errors. That makes heterogeneous-document searches useful; it does not make a successful search a validation certificate. A strict path changes structural adaptation, but the match operators’ error suppression still needs accounting for.</p>
+  <h3>Turning JSON into rows, and rows into JSON</h3>
+  <p>Use native expansion when a document contains a list that SQL needs to inspect. <code>jsonb_array_elements</code> returns one row per element; <code>WITH ORDINALITY</code> retains its one-based occurrence number:</p>
+  <Sql label="Retain a document identity and each array occurrence" code={`SELECT p.label, e.position, e.tag
+FROM tag_probe AS p
+CROSS JOIN LATERAL
+  jsonb_array_elements(p.doc -> 'tags')
+  WITH ORDINALITY AS e(tag, position)
+WHERE p.label = 'repeated'
+ORDER BY e.position;
+-- repeated | 1 | "gift"
+-- repeated | 2 | "ceramic"
+-- repeated | 3 | "gift"`} />
+  <p>The document label and position identify an occurrence in this result. The two gifts remain two rows. PostgreSQL also offers <code>jsonb_to_recordset</code> and <code>JSON_TABLE</code> to project document fields into declared SQL column types. Projection and conversion do not install constraints on the stored document; converting a numeric-looking string can erase exactly the distinction we checked earlier.</p>
+  <p>The other direction separates an API’s shape from storage. Order 103 already has numbered relational lines. Build its response from those rows, with the agreed unit prices:</p>
+  <Sql label="Build an order response from existing relational order lines" code={`SELECT jsonb_build_object(
+  'order_id', o.order_id,
+  'status', o.status,
+  'lines', COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'line_no', i.line_no, 'product_id', i.product_id,
+      'quantity', i.quantity, 'unit_price', i.unit_price
+    ) ORDER BY i.line_no)
+    FROM order_items AS i
+    WHERE i.order_id = o.order_id
+  ), '[]'::jsonb)
+) AS response
+FROM orders AS o
+WHERE o.order_id = 103;`} />
+  <p>The response contains pending order 103, line 1 with P7 × 1 at 20.00, and line 2 with P3 × 2 at 4.50. The lines still total 29.00. Ordering inside <code>jsonb_agg</code> fixes their array order; <code>COALESCE</code> supplies an empty array for an order without lines. Nothing requires storing the response as the order. <a href="/learn/databases/relational/query-results/">Joins and the meaning of a result row</a> and <a href="/learn/databases/relational/aggregates-and-windows/">Aggregates and window functions</a> develop those result-level choices.</p>
+</section>
+
+<section id="indexes">
+  <h2>Indexing the question being asked</h2>
+  <p>An index must match the expression and operator the query actually uses. Figure 4 puts three requests above the information each needs. Follow the operator to its left operand before choosing an index.</p>
+  <JsonFigures kind="indexes" />
+  <h3>JSONB GIN operator classes</h3>
+  <p>The default <code>jsonb_ops</code> GIN class supports <code>?</code>, <code>?|</code>, <code>?&amp;</code>, <code>@&gt;</code>, <code>@?</code> and <code>@@</code>. <code>jsonb_path_ops</code> supports the last three, without the key-existence operators.</p>
+  <Sql label="Alternative whole-document GIN definitions" code={`-- Alternatives to compare, rather than a reason to keep both:
+CREATE INDEX tag_probe_doc_ops ON tag_probe USING gin (doc);
+CREATE INDEX tag_probe_doc_paths ON tag_probe
+  USING gin (doc jsonb_path_ops);
+
+SELECT label FROM tag_probe
+WHERE doc @> '{"tags":["gift"]}'::jsonb;`} />
+  <p>The default class retains separate keys and values. The path class combines a value with the keys leading to it in a hash entry. That can make a path-and-value search more specific and its index smaller, but it cannot answer whether a key exists independently of a value. An empty structure such as <code>{'{"a":{}}'}</code> provides no value entry for the path class; searching for it can require a full index scan. Choose from the searches that occur, rather than treating one class as universally better.</p>
+  <p>JSONPath support also has a limit. GIN extracts useful equality clauses of the form a member route equals a constant. Supporting <code>@?</code> does not mean a pure <code>&gt;= 300</code> path filter supplies selective index keys. Nor does GIN provide capacity order or reconstruct the whole document for an index-only result. <a href="/learn/databases/relational/postgresql/indexes/">PostgreSQL index methods and operators</a> explains candidates, rechecks and bitmap precision.</p>
+  <h3>Indexes on JSON expressions</h3>
+  <p>A GIN on <code>doc</code> fits whole-document containment. For the extracted-array existence search, index that extracted value instead:</p>
+  <Sql label="A subdocument expression index matching its existence predicate" code={`CREATE INDEX tag_probe_tags ON tag_probe
+USING gin ((doc -> 'tags'));
+
+SELECT label FROM tag_probe
+WHERE (doc -> 'tags') ? 'gift';`} />
+  <p>That targeted index need only retain the <code>tags</code> subvalue. It cannot answer arbitrary searches elsewhere in the document. On our four diagnostic arrays, this query and the whole-document gift containment query return the same labels; that equivalence depends on the tags-array contract. An object or scalar under <code>tags</code> can change their meanings.</p>
+  <p>A recurring capacity bound needs numeric order. The stricter <code>teaware_documents</code> contract makes this cast safe for every stored row:</p>
+  <Sql label="A B-tree matching validated numeric extraction and ordering" code={`CREATE INDEX teaware_capacity ON teaware_documents
+  (((details ->> 'capacity_ml')::numeric));
+
+SELECT product_id, (details ->> 'capacity_ml')::numeric AS ml
+FROM teaware_documents
+WHERE (details ->> 'capacity_ml')::numeric >= 300
+ORDER BY (details ->> 'capacity_ml')::numeric;`} />
+  <p>The indexed expression is numeric extraction, rather than the document or its text spelling. The query repeats that expression for the bound and order. An unguarded cast over flexible documents can make index creation or a later write fail; the index is no substitute for deciding the input contract.</p>
+  <p>These definitions show eligible access paths, not a measured speed comparison. On a real catalogue, compare complete results first, then inspect <code>EXPLAIN (ANALYZE, BUFFERS)</code> under normal planner settings. Check the index condition, candidates reaching the heap, recheck rejects, separate filters, buffer work and any remaining sort. Include common as well as rare tags. Count index size and write work too: indexing every member maintains information that a tags-only query never asks for.</p>
+</section>
+
+<section id="updates">
+  <h2>Changing part of a document</h2>
+  <p><code>jsonb_set</code> returns a changed JSONB value. In an <code>UPDATE</code>, assigning that result changes the row’s document. In an independent replay, change P7’s diagnostic capacity from 300 to 330 ml:</p>
+  <Sql label="Change one JSON member using the value stored in the row" code={`UPDATE product_documents
+SET details = jsonb_set(details, '{capacity_ml}', '330'::jsonb)
+WHERE product_id = 'P7'
+RETURNING details;
+-- {"capacity_ml": 330}`} />
+  <p>The default permits creation of the last path member, but earlier members must already exist. <code>{"jsonb_set('{}', '{dimensions,capacity_ml}', '330')"}</code> therefore leaves the empty object unchanged. JSONB assignment subscripting can create missing intermediate objects:</p>
+  <Sql label="Assignment subscripting and a missing intermediate path" code={`UPDATE product_documents
+SET details['dimensions']['capacity_ml'] = '330'::jsonb
+WHERE product_id = 'P7';`} />
+  <p>This is a separate path-creation example, not another authoritative capacity to add beside the first. Existing intermediate values must be traversable; a scalar or JSON null can make assignment fail. The value supplied is JSONB: <code>'330'::jsonb</code> is a number, while <code>'"330"'::jsonb</code> is a string.</p>
+  <p>Concatenation, <code>||</code>, merges only the top level. Combining <code>{'{"dimensions":{"capacity_ml":300}}'}</code> with <code>{'{"dimensions":{"width_mm":80}}'}</code> replaces the entire dimensions object, losing capacity. It is not a recursive patch operation.</p>
+  <p>Which starting value the edit uses matters too. Figure 5 adds a care instruction, then compares a stale client replacement with a server-side member edit.</p>
+  <JsonFigures kind="writes" />
+  <p>Editing the current stored value avoids replacing unrelated members with an older client copy. It does not by itself protect a decision made from an earlier read. Two edits to the same capacity can still overwrite each other’s intended value. Use a transaction protocol or a version condition when the application must detect an intervening change; <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> develops those choices.</p>
+  <p>Different members in one document still share a row lock. PostgreSQL does not give a capacity edit and a care edit independent key-level write locks. An update creates a new row version and can require index maintenance; naming a small path does not promise a few-byte physical write. A whole-document GIN references the changed column, and so does an expression index over that column. That can rule out HOT even when an edit leaves the indexed expression’s result unchanged. <a href="/learn/databases/relational/postgresql/architecture/">Inside PostgreSQL</a> follows those physical conditions. Split independently managed facts when their ownership and contention justify separate rows.</p>
+</section>
+
+<section id="evolution">
+  <h2>Keeping the schema useful as requirements change</h2>
+  <p>A field can begin as optional catalogue description and become a required business fact. A capacity used for a range filter, shipping rule or external reference has acquired a stronger contract. Reassess its home then: the JSONB field, a typed column and a specialised row are alternatives with different validation and update costs.</p>
+  <p>Before promoting capacity, decide what missing and JSON-null values mean, which JSON types are accepted, how units are interpreted, and which existing rows need correction. Do not quietly accept numeric strings because a backfill can cast them. Once a typed column becomes authoritative, give readers and writers one clear contract rather than leaving two independently editable capacities.</p>
+  <p>That is a live migration, not merely an <code>UPDATE</code> that reaches the last row. Old callers, in-flight writes and failure partway through can reintroduce disagreement. <a href="/learn/databases/relational/schema-changes/">Live schema changes and backfills</a> and <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a> own the handover and index-building procedures.</p>
+  <p>Keep JSON where its variable structure remains useful, and keep the schema visible where the application relies on stable facts. For P7, that means preserving product identity and independent memberships, making the capacity’s type and missing-value policy explicit, and choosing each query’s operator and index together. The document can change shape; the meaning still needs an owner.</p>
+</section>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against PostgreSQL 18 documentation on 26 October 2026. The semantic examples were executed in an owned disposable PGlite 0.5.8 instance reporting PostgreSQL 18.3/WebAssembly. The drawings and update schedule are illustrative; index definitions establish supported matches without reporting native plans, timings or measured write costs.</p>
+<ul>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/datatype-json.html">JSON types</a>: JSON/JSONB representation, containment and existence, document design, GIN classes and assignment subscripting.</li>
+  <li><a href="https://www.postgresql.org/docs/18/functions-json.html">JSON functions and operators</a>: extraction, JSONPath, expansion, construction, <code>jsonb_set</code> and concatenation.</li>
+  <li><a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a> and <a href="https://www.postgresql.org/docs/18/sql-expressions.html#SYNTAX-EXPRESS-EVAL">Expression evaluation rules</a>: unknown check results and why Boolean order does not guard a cast.</li>
+  <li><a href="https://www.postgresql.org/docs/18/arrays.html">Arrays</a> and <a href="https://www.postgresql.org/docs/18/rowtypes.html">Composite types</a>: typed structured alternatives and their constraint limits.</li>
+  <li><a href="https://www.postgresql.org/docs/18/indexes-expressional.html">Indexes on expressions</a>, <a href="https://www.postgresql.org/docs/18/indexes-types.html">Index types</a> and <a href="https://www.postgresql.org/docs/18/storage-hot.html">Heap-only tuples</a>: expression matching, numeric B-tree searches and write implications.</li>
+  <li><a href="https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-ROWS">Row-level locks</a>: a document remains part of one row’s update boundary.</li>
+</ul>
