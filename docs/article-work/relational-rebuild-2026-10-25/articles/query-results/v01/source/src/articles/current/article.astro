@@ -1,0 +1,133 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import JoinRows from '../../components/relational-rebuild-query-results/JoinRows.astro';
+import MissingRows from '../../components/relational-rebuild-query-results/MissingRows.astro';
+import Multiplication from '../../components/relational-rebuild-query-results/Multiplication.astro';
+import Summaries from '../../components/relational-rebuild-query-results/Summaries.astro';
+import * as sql from '../../components/relational-rebuild-query-results/queries.mjs';
+import '../../components/relational-rebuild-query-results/figures.css';
+---
+<p>A join builds result rows by matching rows from two sources. An order can match one customer, two order lines and no payments. Those three relationships produce different numbers of rows, even when every matching condition is correct.</p>
+<p>The difference matters when a query becomes an application report. A shop wants to know what is still due on each order. The order lines record what was bought and at what price; the payments record what has been paid. Joining both to orders seems a natural way to put the amounts together. For an order with two lines and two payments, it produces four rows and counts every amount twice.</p>
+<p>Every example here uses the same small shop. Mina Shah, customer 1, placed orders 101 and 103. Tariq Aziz, customer 2, placed order 102. Edda Berg, customer 3, has no orders. Order 101 has two lines and two payments; 102 has one line and one payment; 103 has two lines and no payments. We will build the still-due report by following what one result row means at each stage.</p>
+<p class="example-note">The SQL uses PostgreSQL 18. The drawings show how results follow from the shop’s facts, not the engine’s physical execution. <a href="/relational-rebuild/query-results/shop-queries.sql" download>Download the data and queries</a> to reproduce the results in a PostgreSQL session. The script uses temporary tables and rolls its changes back.</p>
+
+<section id="row-meaning">
+ <h2>What should one result row mean?</h2>
+ <p>Choose the unit of the answer before choosing its columns. For “what is still due on each order?”, one row should mean one order. An order ID identifies which one. A customer name is useful alongside it, but Mina’s name does not identify an order: she has two.</p>
+ <p>This unit is often called the result’s <em>grain</em>. A result with one row per order has a different grain from one with a row per order line. Both can be correct answers. They answer different questions.</p>
+ <p>Keep the identifying columns visible while constructing the query. If the result is one row per line, keep both <code>order_id</code> and <code>line_no</code>: line 1 belongs to several orders. If it is one row per order, seeing order 101 twice is a reason to ask what introduced the second row.</p>
+ <p>The <code>SELECT</code> list chooses the values shown in each row. It does not, by itself, change how many rows there are. Selecting just the customer’s name from three order rows still gives three rows: Mina, Tariq and Mina. Removing the order ID hides the distinction between Mina’s orders; it does not combine them.</p>
+</section>
+
+<section id="inner-join">
+ <h2>INNER JOIN produces one row for every match</h2>
+ <p>Start by attaching each order’s customer. <code>orders.customer_id</code> names the customer, and <code>customers.customer_id</code> is that table’s primary key.</p>
+ <Sql code={sql.customerJoin} label="Attach each order’s customer" />
+ <p><code>AS o</code> and <code>AS c</code> give the tables short names, or <em>aliases</em>, within this query. <code>o.order_id</code> means the order ID from <code>orders</code>. The <code>ON</code> condition says which pairs match: the order’s customer ID must equal the customer row’s ID. <code>INNER JOIN</code> returns one row for each matching pair and none for an unmatched order.</p>
+ <p>Figure 1 considers one order at a time. Attach its customer first, then switch to its order lines. Watch how many result rows order 101 contributes.</p>
+ <JoinRows />
+ <p>Attaching the customer keeps one row per order. The customer key is unique, so an order can match at most one customer. Here the order’s non-null foreign key also requires that customer to exist, so each order matches exactly one.</p>
+ <p>The same reasoning does not hold in the other direction. A customer can match several orders. Nor does it hold when we attach order lines:</p>
+ <Sql code={sql.lineJoin} label="Attach every order line" />
+ <p>Order 101 matches line 1 and line 2, so it contributes two rows. Order 102 contributes one, and 103 contributes two: five rows in all. The result now means one row per order line. The repeated order IDs describe the relationship; they are not accidental copies.</p>
+ <p>To bound the number of matches, check the complete key on the side being attached. The primary key of <code>order_items</code> is <code>(order_id, line_no)</code>. Matching on <code>order_id</code> alone deliberately leaves room for several lines. Matching on both columns would identify at most one line. A foreign key does not make its own column unique: many orders may reference Mina, and many lines may reference order 101.</p>
+</section>
+
+<section id="left-join">
+ <h2>LEFT JOIN keeps rows without a match</h2>
+ <p>Payments bring a different problem. An inner join to payments would show order 101 twice and 102 once, but omit 103 entirely. An order without a payment is precisely one the shop needs to see.</p>
+ <Sql code={sql.leftJoin} label="Retain orders without payments" />
+ <p><code>LEFT JOIN</code> returns the matching pairs as before. If a row from its left side has no match, it adds one result row with <code>NULL</code> in the right side’s columns. Here order 103 keeps its ID, while its payment ID, amount and method are all null.</p>
+ <p><code>NULL</code> marks the absence of a value. It is not a zero payment or an empty payment method. The payment table’s primary key cannot store a null payment ID, so a null <code>p.payment_id</code> in this result tells us no payment matched. With a nullable right-side column, a null could also have come from a stored row; use a column that cannot be null when you need to distinguish those cases.</p>
+ <p>Now suppose the shop wants card payments alongside every order. Change the condition in Figure 2 and watch order 103.</p>
+ <MissingRows />
+ <p>Putting the method condition in <code>ON</code> restricts which payments match. The outer join still preserves an order with no matching card payment:</p>
+ <Sql code={sql.onCard} label="Attach only card payments while retaining all orders" />
+ <p>Putting the same test in <code>WHERE</code> asks a different question. It filters the rows after the join’s missing-match rows have been included:</p>
+ <Sql code={sql.whereCard} label="Keep only result rows with a card payment" />
+ <p>The gift-card row fails the test. Order 103’s null payment method makes <code>p.method = 'card'</code> unknown, and <code>WHERE</code> retains only true conditions. So 103 disappears too. This query answers “which orders have card payments, with a row for each one?”, rather than “show every order with any card payments it has”.</p>
+ <p>A left join preserves at least one row per left-side row at the join itself. Later filtering can remove it. A join can also produce several rows for it, as order 101’s two payments show.</p>
+</section>
+
+<section id="exists">
+ <h2>EXISTS asks whether there is a match</h2>
+ <p>Sometimes the matching rows supply no columns at all. The shop wants a customer list containing everyone who has placed an order. Starting from customers and joining orders would produce Mina twice. The question needs only a yes or no for each customer.</p>
+ <Sql code={sql.existsOrders} label="Find customers with at least one order" />
+ <p>The query inside <code>EXISTS</code> is a <em>subquery</em>. It refers to <code>c.customer_id</code> from the surrounding query, asking whether any order belongs to that customer. That makes it a correlated subquery. <code>EXISTS</code> is true if the subquery has at least one row and false if it has none.</p>
+ <p>The <code>1</code> in <code>SELECT 1</code> is a convention: the test needs a row’s presence, not its values. It does not mean “find customer 1” or “return only one order”. Mina’s two orders make one true test for her customer row. The result contains customer 1, Mina Shah, and customer 2, Tariq Aziz, once each.</p>
+ <p><code>NOT EXISTS</code> keeps customers for whom the same test finds no order:</p>
+ <Sql code={sql.noOrders} label="Find customers without orders" />
+ <p>That returns only customer 3, Edda Berg. In both queries the outer rows come from <code>customers</code>, and each is either kept or rejected. Matching orders never multiply them.</p>
+ <p>The same form can find orders without payments:</p>
+ <Sql code={sql.noPayments} label="Find orders without any payment" />
+ <p>It returns order 103 in the starting data. “No payments” is narrower than “money still due”. A partial payment makes this test false while leaving a balance. The still-due report must compare amounts.</p>
+</section>
+
+<section id="multiplication">
+ <h2>Why two joins multiply amounts</h2>
+ <p>To compare the amounts, it is tempting to join order lines and payments to the same order, then add their values. Follow order 101 first. Its first line is one pack of tea at 4.50; its second is one teapot at 35.00. Its payments are 501 for 30.00 by card and 502 for 9.50 by gift card.</p>
+ <Sql code={sql.rawJoin} label="Inspect the line and payment combinations for order 101" />
+ <p>Both lines match order 101. Both payments match it too. Nothing in either condition chooses one payment for a particular line, so each line is paired with each payment.</p>
+ <Multiplication />
+ <p>One row now means an order-line-and-payment combination. The line value 4.50 appears once with payment 501 and once with payment 502. Payment 501’s 30.00 appears once with each line. Adding either column adds both occurrences.</p>
+ <Sql code={sql.badTotals} label="A report that sums multiplied rows" />
+ <p><code>SUM</code> adds a column’s values, and <code>GROUP BY o.order_id</code> makes a separate sum for each order. But the values it receives have already multiplied. This query gives order 101 a line total of 79.00 and a paid total of 79.00, both twice the real 39.50. Even a zero balance would conceal the error: two wrong totals happen to cancel.</p>
+ <p><code>DISTINCT</code> is not a general repair. <code>SELECT DISTINCT</code> removes rows equal across the selected columns. Figure 3’s rows all have different line/payment pairs, so it removes none. Dropping the IDs can make different facts look equal instead. And <code>SUM(DISTINCT amount)</code> adds distinct amount values, not distinct payment records. Two separate payments of 20.00 still contribute 40.00, not 20.00.</p>
+ <p>The same mistake can affect lines. Split order 102’s quantity-two mug line into two numbered lines, each for one mug at 20.00. The value remains 40.00. Summing distinct line values would keep only one 20.00. A correct total counts each contributing fact once, even when two facts have equal values.</p>
+</section>
+
+<section id="summarise">
+ <h2>Summarise each side before joining</h2>
+ <p>The report needs one row per order, so make both sides have that meaning before attaching them. Add the lines within each order independently. Add the payments within each order independently. Then join those two summaries to the orders.</p>
+ <h3>One total for each order</h3>
+ <p>Each line’s value is its quantity multiplied by its recorded <code>unit_price</code>. Order 103’s two packs of tea contribute 9.00, not 4.50. Use the price recorded on the line rather than the product’s current price: a later price change should not rewrite the value of an earlier order.</p>
+ <Sql code={sql.lineTotals} label="Calculate one line total per order" />
+ <p><code>GROUP BY order_id</code> puts rows with the same order ID into one group. <code>SUM(quantity * unit_price)</code> calculates one total from that group’s lines. The result has order 101 with 39.50, 102 with 40.00 and 103 with 29.00. <code>AS line_total</code> names the calculated column.</p>
+ <p>The payment summary follows the same pattern, using <code>SUM(amount)</code> from <code>payments</code>, grouped by <code>order_id</code>. It has only two rows: 101 with 39.50 and 102 with 40.00. There is no payment for 103, so there is no group, and no summary row, for it.</p>
+ <Summaries />
+ <p>These summaries cannot multiply an order’s rows: each has at most one row for a given <code>order_id</code>. This is the property the final joins need. The two lines and two payments of order 101 have become one line total and one payment total.</p>
+ <h3>The still-due report</h3>
+ <p>A <code>WITH</code> clause gives each intermediate query a name that the rest of this statement can use. These are <em>common table expressions</em>, often shortened to CTEs. Name the two summaries <code>line_totals</code> and <code>payment_totals</code>, then calculate <code>balances</code> from them:</p>
+ <Sql code={sql.report} label="Calculate and filter the still-due report" />
+ <p>The left joins start from every order. When a summary is absent, <code>COALESCE(value, 0)</code> returns zero instead of null; otherwise it keeps the value. For this report, no recorded payments count as zero paid, and no recorded lines count as zero line value. That is an explicit reporting policy, not a general rule that an unknown amount means zero. The line prices and payment amounts in this schema cannot be null.</p>
+ <p>Without the zero for 103’s missing payment summary, subtracting its null paid total would produce a null balance. The final <code>WHERE due &gt; 0</code> would then discard it. Giving the missing summary its intended value is necessary to keep the unpaid order in the answer.</p>
+ <p>The <code>balances</code> query names the difference <code>due</code>. The outer query can then filter that named column. A <code>SELECT</code> alias is not available to <code>WHERE</code> at the same query level, so writing <code>WHERE due &gt; 0</code> inside the <code>balances</code> definition would not refer to the alias just declared there.</p>
+ <p>Before filtering, the three balances are 0.00, 0.00 and 29.00, as Figure 4 shows. The final result contains only order 103: line total 29.00, paid total 0.00, due 29.00. Remove <code>WHERE due &gt; 0</code> to inspect all three orders.</p>
+ <p>This report compares recorded line values with recorded positive payments. It has no tax, delivery charges, refunds or cancellation policy. If the application needs those, they must contribute to the calculation deliberately; the order’s <code>status</code> label alone cannot supply the amount.</p>
+</section>
+
+<section id="union">
+ <h2>Combining result rows with UNION</h2>
+ <p>A join attaches columns from matching rows. Sometimes the task is to combine two lists of the same kind of row. The shop has a customer-ID list from paid orders and another from pending orders:</p>
+ <Sql code={sql.unionAll} label="Combine paid-order and pending-order customer lists with occurrences retained" />
+ <p>The first query supplies customer IDs 1 and 2 from orders 101 and 102. The second supplies customer ID 1 from order 103. <code>UNION ALL</code> keeps all three occurrences. With the final ordering shown, the answer is 1, 1, 2.</p>
+ <div class="table-scroll" role="region" tabindex="0" aria-label="How the set operation changes the customer list"><table><caption>Paid-order IDs: 1, 2 · pending-order IDs: 1</caption><thead><tr><th scope="col">Operation</th><th scope="col">Result IDs</th><th scope="col">Question answered</th></tr></thead><tbody>
+  <tr><th scope="row"><code>UNION ALL</code></th><td>1, 1, 2</td><td>All occurrences from both lists</td></tr>
+  <tr><th scope="row"><code>UNION</code></th><td>1, 2</td><td>Customers in either list, once each</td></tr>
+  <tr><th scope="row"><code>INTERSECT</code></th><td>1</td><td>Customers in both lists</td></tr>
+  <tr><th scope="row"><code>EXCEPT</code></th><td>2</td><td>Customers in the paid list but absent from the pending list</td></tr>
+ </tbody></table></div>
+ <p>Replace <code>UNION ALL</code> in the query with the operation you need. <code>UNION</code>, <code>INTERSECT</code> and <code>EXCEPT</code> remove duplicate result rows by default. They compare the whole row: adding a status column would make <code>(1, 'paid')</code> different from <code>(1, 'pending')</code>, so a union would keep both.</p>
+ <p>Each side must return the same number of columns, with compatible types in corresponding positions. The columns match by position, not by name. If each row represents an event or an occurrence, preserve it with <code>UNION ALL</code>. If each row represents membership, deliberate duplicate removal may be exactly the question, as it is for “customers in either list”.</p>
+</section>
+
+<section id="check-result">
+ <h2>Check the result against the question</h2>
+ <p>A plausible result is easier to produce than a correct report. Order 101’s doubled totals even gave the right zero balance. Check the contributing amounts as well as the final difference, and trace a result row back to the facts that made it.</p>
+ <p>Missing and multiple matches are useful tests. Order 103 proves that an unpaid order survives the joins and filtering. Order 101 proves that several lines and several payments do not multiply either total. The equal-valued lines for 102 prove that separate facts survive even when their amounts coincide.</p>
+ <p>Now make a separate change to the starting data: add payment 504, a 10.00 card payment for order 103. Its paid total becomes 10.00 and its balance becomes 19.00. The still-due report keeps it. The “no payments” query loses it, because it now has a payment. These two queries have continued to answer their own questions correctly.</p>
+ <p>Finally, put presentation order in <code>ORDER BY</code>. Tables and query results supply no dependable row order without it. The examples use order ID, or order ID then line or payment ID, to make their results easy to follow. The final <code>ORDER BY customer_id</code> on the combined lists orders the combined result; it does not promise that one input list will be returned before the other.</p>
+ <p>The drawings’ sequence is a way to reason about the answer. PostgreSQL may use different join methods, rearrange work or fold a CTE into its surrounding query while preserving its meaning. Decide what each row must represent first. Measuring how the engine produces it is the next question.</p>
+</section>
+
+<h2>Sources and further reading</h2>
+<p>Checked against the PostgreSQL 18 documentation. The shop is invented; its query results were verified in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. Monetary figures have no assigned currency.</p>
+<ul>
+ <li><a href="https://www.postgresql.org/docs/18/queries-table-expressions.html">Table expressions</a>: inner and outer joins, matching conditions, aliases, filtering and grouping.</li>
+ <li><a href="https://www.postgresql.org/docs/18/functions-subquery.html">Subquery expressions</a>: correlated <code>EXISTS</code> tests and their treatment of multiple matching rows.</li>
+ <li><a href="https://www.postgresql.org/docs/18/functions-aggregate.html">Aggregate functions</a> and <a href="https://www.postgresql.org/docs/18/functions-conditional.html#FUNCTIONS-COALESCE-NVL-IFNULL">COALESCE</a>: summing values and substituting for null.</li>
+ <li><a href="https://www.postgresql.org/docs/18/queries-with.html">WITH queries</a> and <a href="https://www.postgresql.org/docs/18/sql-select.html">SELECT</a>: named subqueries, output aliases, duplicate removal and the distinction between query meaning and execution.</li>
+ <li><a href="https://www.postgresql.org/docs/18/queries-union.html">Combining queries</a> and <a href="https://www.postgresql.org/docs/18/queries-order.html">Sorting rows</a>: compatible columns, set operations and explicit result ordering.</li>
+ <li><a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>: primary, unique and foreign keys.</li>
+</ul>

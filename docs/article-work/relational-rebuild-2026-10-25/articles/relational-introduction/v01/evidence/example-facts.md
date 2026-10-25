@@ -1,0 +1,9 @@
+# Example and continuity · introduction
+
+Starting facts: docs/coverage/relational-rebuild-2026-10-25-example.md. The prose calls an `order_items` row an order line. No currency is assigned. Quantities, prices, identities, payment absence and UTC order moment preserve the supplied facts.
+
+The opening and query figures are explicitly after purchase 103. The purchase, race and recovery figures reset explicitly to before 103: only orders 101 and 102 exist; P7 stock is 1, P3 stock 12, P9 stock 4. The successful purchase creates pending order 103 and its two agreed-price lines; P7 becomes 0 and P3 10; 29.00 remains due with no payment row. The current-price change in the constraints example is labelled a separate experiment.
+
+Separate scenarios: an invented application failure immediately after the mug update rolls the purchase back; the mug race compares two full purchases with only their mug-related steps drawn; the unguarded counterexample hypothetically admits Tariq's 104, while the protected scenario rolls 104 back and preserves the shared outcome. No permanent shared-example extension is proposed. Recovery and placement scenes are conceptual models, not observed crashes or cluster traces. The two-portion placement is invented, not a native CockroachDB placement claim. Index work uses only three shop orders; no reference dataset is imported into the shop.
+
+Continuity pass: new vocabulary is introduced before use; row identity precedes references and joins; guarded writes precede the race; atomicity precedes isolation and durability. Query result rows mean lines, while stored orders remain three. Missing payment is distinguished from NULL amount. External payment/email effects are outside the database rollback. Detailed construction, protocols and operation remain with their assigned neighbours. Deeper canonical routes were reconciled with the supplied input/routes.json.

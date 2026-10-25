@@ -124,6 +124,20 @@ export function relationalRebuildLinks(html: string, entries: RelationalRebuildS
     if (!href.startsWith('/') && !/^https?:\/\/staycurrent\.dev(?:\/|$)/i.test(href)) return match;
     const target = new URL(href.replaceAll('&amp;', '&'), 'https://staycurrent.dev');
     if (target.hostname !== 'staycurrent.dev') return match;
+    const downloadHome = `${relationalRebuildHome}downloads/`;
+    // Astro's directory-format dev router requires a slash even for this file endpoint.
+    // Built static downloads retain their ordinary filenames.
+    if (target.pathname.startsWith(downloadHome)) {
+      if (!import.meta.env.DEV || target.pathname.endsWith('/')) return match;
+      return `<a${before}href=${quote}${escapeHtml(`${target.pathname}/${target.search}${target.hash}`)}${quote}${after}>${label}</a>`;
+    }
+    const fixtureHome = '/relational-rebuild/';
+    if (target.pathname.startsWith(fixtureHome)) {
+      const file = target.pathname.slice(fixtureHome.length);
+      const [key, ...parts] = file.split('/');
+      if (!safeKey.test(key) || !parts.length || !parts.every(part => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part) && part !== '.' && part !== '..')) return match;
+      return `<a${before}href=${quote}${escapeHtml(`${downloadHome}${file}${import.meta.env.DEV ? '/' : ''}${target.search}${target.hash}`)}${quote}${after}>${label}</a>`;
+    }
     const publicHome = '/learn/databases/relational/';
     const preview = target.pathname.startsWith(relationalRebuildHome);
     const publicReading = target.pathname.startsWith(publicHome);

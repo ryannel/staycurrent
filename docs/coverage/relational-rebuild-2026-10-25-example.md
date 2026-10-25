@@ -66,3 +66,20 @@ These scenarios start from the shared rows above. They are separate explorations
 
 - Partial payment: add payment 504 for order 103, amount 10.00, method card. Keep the lines and pending status. Recorded balance is then 19.00; the order has a payment without being fully paid.
 - Equal line values: split order 102's quantity-two P7 line into numbered lines 1 and 2, quantity one and agreed unit price 20.00 each. Keep payment 503 at 40.00. The two occurrences total 40.00; removing equal amounts before summing would give 20.00.
+
+## Worked value scenarios
+
+- Package weights: add a nullable integer package_weight_g field for this scenario. P3 is 65 grams, P7 is NULL meaning not yet measured, and P9 is 820 grams. These are invented example measurements.
+- Optional loyalty codes: add loyalty_code for this scenario. Customer 1 has TEA-7; customers 2 and 3 have no assigned code (NULL). Any uniqueness policy and engine behaviour must be stated explicitly.
+
+## Worked integrity scenarios
+
+- Tenant integrity: tenant10 has the starting shop rows; tenant20 has a distinct customer4, Rowan Vale. In this variant customers keep globally unique customer_id, and orders also carry tenant_id. A proposed order with tenant_id10 and customer_id4 exposes a mismatched tenant/customer association; the composite reference must preserve both.
+- Room reservations: tea-tasting room R1 has reservation7001 on 2 November2026 from10:00 to11:00UTC. Attempted reservation7002 from10:30 to11:30 overlaps; reservation7003 from11:00 to12:00 is adjacent. All intervals are half-open [start,end). This is a resource non-overlap scenario, not an enrollment/capacity model.
+- Payment limit: from order103's starting state (line value29.00, no payments), suppose the shop prohibits total recorded payments exceeding the line value. Two proposed20.00 payments after separate reads can jointly exceed that rule. These are attempted scenario operations, not new committed starting rows. The constraints article exposes the unsafe aggregate check; transaction protocols have their own owner.
+
+## Modelling scenarios
+
+These illustrations start independently from the shared rows unless stated otherwise. An additional order-103 line 3 for P7 distinguishes line identity from product identity. Customer 1's current name can be corrected from Mina Shah to Mina Patel. A later P7 catalogue price is 22.00; its agreed order-103 unit price remains 20.00, preserving the order total29.00 rather than repricing it to31.00.
+
+For higher-form examples the offers are (S1,P7,North), (S1,P3,South), (S2,P7,South); (S1,P7,South) is absent. P7 has independent tags gift/ceramic and suppliers S1/S2. A subtype example gives P3 origin Japan and P7 capacity300ml. A category hierarchy has Teaware→Mugs→Blue mugs; a multiple-parent alternative also places Mugs under Gifts.
