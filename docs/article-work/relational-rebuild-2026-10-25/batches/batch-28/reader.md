@@ -1,0 +1,33 @@
+# Batch 28 independent reader and rendered review
+
+Version: pg-wal v01, five-file manifest in `review-source.json` (all hashes independently matched after review). Preview: `http://127.0.0.1:4606/review/relational-rebuild/postgresql/recovery/`. Audience: intelligent application engineers with the named storage/architecture prerequisites. No edits, delegation, commits or publication.
+
+## Findings
+
+No substantive teaching, editorial or rendered finding. The piece can sit beside the fixed references at this bounded scope.
+
+Optional low selection point: the opening lists stock 10/0/4 and the pending order's full context before those invariants matter to the drill. This asks the reader to retain extra facts while learning WAL progress. The facts are consistent and later used; shortening that opening inventory would be polish, not a delivery condition.
+
+## Reader judgement and coverage
+
+I followed figures, captions and changing explanations first, then the body. `initial-notes.md` was saved before reading the plan, ownership/example records or author evidence. The four figures establish the main chain without requiring the body to supply a missing central relationship: Figure 1 separates inserted, written and flushed history from the application's reply and the still-old table page; Figure 2 leaves page A dirty at completion while changing the safe restart point to R; Figure 3 compares acknowledged and unfinished work with fresh recovered reads; Figure 4 explains the real log sequence through readiness. The tables/SQL then supply practical inspection rather than treating one counter as a tuning verdict.
+
+Calibration used bounded source passages and actual rendered drawings: Storage and durability's WAL/commit and crash-recovery development with Figure 5; Indexes' sequential-scan/index-entry explanation and Figure 1; Sequence diagrams' booking and waiting development with the first drawing. The draft similarly tells the reader what to watch, then explains the observed consequence. Its narrower grid is appropriate to the progress distinction. Headings such as “Inserted, written and flushed WAL”, “Completing a checkpoint” and “Why pg_wal can keep growing” name the subject directly. Plain connected examples carry the difficult qualifications: removing a queue message after an early reply can destroy the recovery source; K cannot be read as the new redo boundary; P9's bytes can be replayed without becoming a committed price. These qualifications sit with the reasoning they affect rather than reading as appended objections.
+
+After the blind notes, I checked the supplied plan and incoming/neighbour ownership. Coverage fulfils the promised progress interpretation, commit choice, checkpoint/retention diagnosis and bounded restart evidence. It gives a useful local answer before handing archive-chain/standby operations to their owners. The complete reading also supplies the continuity pass: the independent P7 20.00→22.00 scenario retains stock, pending order 103, no payment and agreed total 29.00; the unfinished P9 attempt and separate mistaken 2.20 branch do not silently change that baseline. No automatic second complete reading was added.
+
+## Rendered checks
+
+Owned IAB tabs, no visibility option. Desktop actual dimensions 1280×720; fresh phone tab after reapplying the viewport override independently reported 375×720, document scrollWidth 375. Each of four figures measured width 343 and scrollWidth 341 on the phone. Inspected actual dark desktop progress/checkpoint states and both static evidence figures; explicit light desktop progress; light phone progress and its early-success state; explicit dark phone checkpoint completion, stacked recovery-result cards and wrapped log. Phone controls and changed explanation remain readable together; diagrams reflow, while SQL/tables retain their existing contained scrolling.
+
+Exercised both commit choices; Next/Back/Reset, Play/Pause and checkpoint Replay; opened both Figure as text disclosures and checked their content against the drawings. Enter/Space advanced the progress player. Keyboard Back retained focus at step 1, and checkpoint Next retained focus at step 5 with aria-disabled=true. Current playback was observed advancing: checkpoint 1→2 across page timestamps about 7.5 seconds apart; progress 1→3 across about 13 seconds. This verifies advancement and available pause, not precise frame timing. The explanations hold long enough for their short text in these observations.
+
+Retained the applicable mechanical colour observations from v01 `authoring-checks.md` after the blind notes: text/background contrasts reported above 6:1 for muted text and above 8:1 for the shaded progress cells, with redundant ticks/text/borders. I judged the current colours and text visually; I did not repeat a computed colour matrix or use the author's quality/continuity verdict as review evidence.
+
+One unrelated registry HMR refresh reset player state mid-reading. Root confirmed WAL source was unchanged and held shared changes for the remaining lease; I rechecked current controls rather than repeating unaffected reading. At cleanup both article tabs' players were reset/stopped, main System selection and 1280×720 were verified, the override was reset, and all three owned tabs were closed. Reference-origin theme was never changed and its visited storage player was paused/reset before leaving. Lease released to root.
+
+## Practitioner checks and limits
+
+Checked the consequential distinction between asynchronous loss and corruption, per-transaction setting timing and dependent database work against [PostgreSQL 18 Asynchronous Commit](https://www.postgresql.org/docs/18/wal-async-commit.html); checkpoint pacing/page images and retained/recycled WAL against [WAL Configuration](https://www.postgresql.org/docs/18/wal-configuration.html); immediate versus fast shutdown against [pg_ctl](https://www.postgresql.org/docs/18/app-pg-ctl.html). No conflict found. This is a reader/practitioner spot-check, not a replacement for the separately assigned technical verification of every native field/log claim.
+
+No new native database lifecycle or SQL execution was performed. The process-stop evidence is judged as presented, with its surviving-storage limit; no power-loss, lost-volume, flush-honesty or recovery-capacity result is inferred. No screen-reader session, reduced-motion emulation, real handset or precise animation-frame timing was available. Screenshots and DOM/AX observations established the rendered judgements above; no exhaustive theme/state matrix or new build was run by this reviewer. Root owns integration, builds and acceptance.

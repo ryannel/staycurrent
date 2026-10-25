@@ -1,0 +1,16 @@
+# Batch 27 — blind reader notes
+
+Fixed pg-json v01, manifest review-source.json. Independent first reading on 26 October 2026. No plans, example facts, author notes, earlier reviews or verdicts consulted before saving this file.
+
+I first followed the five figures through their labels, captions and relevant states, then read the finished article body in the rendered DOM. The initial AX export exposed the whole body, but my initial attention was to the figures. Desktop was actual 1280 × 720, System appearance (dark). References: bounded passages and finished renderings from Indexes (partial/expression indexes and building an index), Sequence diagrams (lifelines/messages and booking drawing), and Storage and durability (row versions/undo and P7 drawing).
+
+Figure-only understanding: product identity survives either specialised typed detail rows or JSONB detail rows; independent tag pairs have their own row boundary. JSON number 300 and string "300" can become identical text, while JSON extraction retains type. JSON null and absent differ before text extraction. A required positive-number rule rejects both. Existence, containment and equality ask different questions; order/repetition matter for equality but not containment. Index eligibility follows the operator's left operand; numeric range/order requires a numeric expression. A stale whole-document replacement loses an unrelated committed member, while editing the stored value preserves it in the illustrated schedule.
+
+Concrete observations:
+- Figure 2's changing input/results and rejection explanation explain the hardest distinction well. Numeric 300, numeric-looking string, JSON null and absent field states were operated. Figure 3's containment and equality states visibly change qualifying rows and explain why.
+- Prose develops one field consistently from representation to extraction, contract, index and update. “The CASE matters twice” connects the guard to both null/type rejection and safe conversion. The weaker CHECK counterexample earns the longer constraint. Headings mostly use familiar subjects, comparable to the references' “Partial, expression and unique indexes” and “Row versions and undo logs”.
+- The references use values and labels to make the relationship directly visible. Figures 1, 2, 3 and 5 meet that teaching role here; Figure 4 is a compact access-path mapping rather than a physical mechanism drawing, appropriate for its stated purpose.
+- Potential wording ambiguity to assess: Figure 4 labels doc @> '{"tags":["gift"]}' as “Fragment anywhere in the document”. “Anywhere” may imply recursive depth search, whereas the earlier containment passage says the operand preserves the required nesting. The displayed expression is sound; the label may be read too broadly.
+- Some qualifiers are conspicuous (“local diagnostic”, “independent replay”, collection's starting facts), but they keep alternatives and observations distinct. No substantial prose/teaching problem established from the blind read.
+
+Remaining at save time: intended-scope/ownership comparison; representative phone; explicit light/dark inspection; player and keyboard boundary checks; source verification of any consequential finding. These notes are not a delivery verdict.

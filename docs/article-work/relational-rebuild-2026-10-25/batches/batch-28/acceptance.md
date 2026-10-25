@@ -1,0 +1,1 @@
+Accepted after the single substantive checkpoint write/sync label correction, coordinator confirmed current states3/4/5 and build. See articles/pg-wal/repairs/checkpoint-sync/confirmation.md. Both first reviews otherwise apply; no additional review/native run.

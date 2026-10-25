@@ -1,0 +1,192 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import RecoveryFigures from '../../components/relational-rebuild-pg-backup/RecoveryFigures.astro';
+---
+<p>PostgreSQL can recover an earlier database state by restoring a <strong>base backup</strong>, replaying saved write-ahead log (WAL) and stopping at a chosen record. The backup supplies the files. The log supplies the changes needed to make those files consistent, then the later changes leading to the target. Every required stretch must belong to the right source history and remain retrievable.</p>
+<p>Follow the shop’s separate recovery branch. Order 103 has already committed: a blue mug at an agreed 20.00 and two packets of tea at 4.50, total 29.00. The order is pending, with stock P3 10, P7 0 and P9 4. A mistake then commits P7’s catalogue price as 2.20. Later, payment 504 records a valid 10.00 card payment for the order. A hypothetical provider has accepted its charge.</p>
+<p>Recovering before the mistake brings back 20.00. It also omits payment 504, although the provider still has the charge. We will build that recovery path, inspect its stopping point, then account for the payment before returning service. <a href="/learn/databases/relational/backup-and-restore/">Backup, restore and reconciliation</a> establishes the recovery design and business decisions. Here the tools and stopping rules are PostgreSQL 18’s.</p>
+
+<section id="chain">
+<h2>Which backup can reach the target?</h2>
+<p>A PostgreSQL <strong>database cluster</strong> is the set of databases managed by one server instance. Physical archive recovery restores that whole cluster. It does not restore one table into the currently running database, and a copy of arbitrary live files is not a substitute for PostgreSQL’s backup procedure.</p>
+<p>A <strong>logical dump</strong> instead saves definitions and data for reconstruction. It can help restore a database or selected objects, but cannot be advanced using WAL. If a dump contains the 2.20 mistake, adding an earlier WAL file will not undo it. The <a href="#logical">logical restore</a> near the end follows that separate path.</p>
+<p>Figure 1 divides the physical path at backup completion. First follow the bundled WAL down to a consistent backup. Then follow the later archive to the target, and remove one required segment.</p>
+<RecoveryFigures kind="chain" />
+<p>The later files remain, and the base can still pass verification, but this path cannot cross the gap. Another complete backup and its dependencies might provide a different path. That is why retention starts from the states you must recover, rather than the age of individual files.</p>
+</section>
+
+<section id="archive">
+<h2>Archive WAL before taking the backup</h2>
+<p>PostgreSQL divides WAL into segment files, normally 16 MiB each. With continuous archiving, the server hands completed segments to an archive command or library before recycling them. Enable archiving and test retrieval before taking the base backup.</p>
+<pre aria-label="Source archiving configuration"><code>wal_level = 'replica'
+archive_mode = 'on'
+archive_command = '/srv/shop-backup/archive-wal "%p" "%f"'</code></pre>
+<p>The helper path is a deployment choice: supply and test your archive tool there. <code>%p</code> gives it the source path and <code>%f</code> the original filename. <code>wal_level</code> and <code>archive_mode</code> require a server restart. Check the effective settings after that restart, including whether an archive library is configured instead.</p>
+<p>The helper must return success only after the file is safely retained. It must preserve filenames, keep unrelated cluster histories apart, refuse a conflicting existing file, and safely accept a repeated identical file that is already persisted. Test failure as well as success: an unavailable destination or conflicting contents must produce failure. A command that returns zero without storing anything tells PostgreSQL it may recycle your only copy.</p>
+<p>Use a protected archive outside the loss you intend to survive. The local directory in this drill tests the mechanics; it does not survive loss of its container’s storage. Record the source system identifier with the archive and backup inventory:</p>
+<Sql label="Identify the source cluster and inspect archiving" code={`SELECT system_identifier FROM pg_control_system();
+SHOW data_directory;
+SHOW archive_mode;
+SHOW archive_command;
+
+SELECT archived_count, last_archived_wal,
+       last_archived_time, failed_count, last_failed_wal
+FROM pg_stat_archiver;`} />
+<p>Run privileged inspection through the intended administrative connection. A recent <code>last_archived_wal</code> is progress evidence, not proof that every earlier file exists. Inspect the archive, retrieve files and read the server and archive-tool logs too. Some failures that restart the archiver are absent from its failure counter. Repeated archival failure can also leave WAL accumulating on the source until storage runs out.</p>
+<h3>A local commit can be ahead of the archive</h3>
+<p>The normal commit promise concerns local durable WAL; it does not wait for completed-segment archiving. A quiet server may leave a recently committed change in an unfinished segment for a long time. <code>archive_timeout</code> can force periodic segment switches when there has been activity, at the cost of archiving full-sized segment files even when little of each is used.</p>
+<Sql label="Make the current WAL segment eligible for archiving" code={`SELECT pg_switch_wal();`} />
+<p>A switch makes the previous segment eligible. Wait for its actual archival success and verify retrieval; the returned LSN alone does not prove it arrived. <a href="/learn/databases/relational/postgresql/recovery/">PostgreSQL WAL, checkpoints and durability</a> follows the local flush and restart promise.</p>
+</section>
+
+<section id="base">
+<h2>Take and verify a base backup</h2>
+<p><code>pg_basebackup</code> takes a supported copy while the source runs. Its connection needs replication permission and an appropriate <code>pg_hba.conf</code> entry. Streaming the backup’s WAL needs a second WAL sender as well as the sender copying the files.</p>
+<p>Use explicit connection details and a new, empty destination. These command shapes assume a verified administrative shell: <code>SOURCE_SOCKET</code>, <code>SOURCE_PORT</code>, <code>BACKUP_ROLE</code> and the absolute <code>BASE</code> directory name the intended isolated resources. Clear inherited service and connection overrides before setting them; check the source’s identity before copying.</p>
+<pre aria-label="Take a plain-format base backup with its consistency WAL"><code>pg_basebackup --host="$SOURCE_SOCKET" --port="$SOURCE_PORT" \
+  --username="$BACKUP_ROLE" --pgdata="$BASE" \
+  --format=plain --wal-method=stream \
+  --manifest-checksums=SHA256
+
+pg_verifybackup "$BASE"</code></pre>
+<p><code>--wal-method=stream</code> includes WAL needed to make this backup usable. It does not subscribe the saved directory to every future change. Keep the base intact, including <code>backup_label</code>, its manifest and any tablespace map. For a cluster with extra tablespaces, arrange separate safe destinations with <code>--tablespace-mapping</code>; plain backups otherwise use those tablespaces’ original absolute paths.</p>
+<p><code>pg_verifybackup</code> checks the manifest, expected files and their checksums, and parses the WAL required for backup consistency. Use matching-major verification tools, including <code>pg_waldump</code>. Success does not check every later archived segment, prove that a chosen target is reachable or establish the shop’s recovered facts. Those need a restore.</p>
+<p>An online backup cannot recover a target from halfway through its own copying. Its earliest consistent recovery point is the backup end. Choose an older completed backup if the desired incident boundary is earlier. We deliberately create our drill’s named point only after the backup has completed.</p>
+<h3>Incremental backups add dependencies</h3>
+<p>PostgreSQL’s native incremental backup uses WAL summaries to identify changed blocks. Enable <code>summarize_wal</code> and retain the summaries covering the required interval before attempting an increment. Pass the earlier backup’s manifest to <code>pg_basebackup --incremental</code>.</p>
+<p>An increment is not a directly startable full cluster. Reconstruct a full backup from its required chain, oldest first:</p>
+<pre aria-label="Reconstruct and verify a full backup from increments"><code>pg_combinebackup --output="$COMBINED" \
+  "$FULL" "$INCREMENT_1" "$INCREMENT_2"
+pg_verifybackup "$COMBINED"</code></pre>
+<p>Verify the constituent backups as well. <code>pg_combinebackup</code> checks their relationship, not every input file’s integrity. Retain the dependencies until a tested replacement makes them unnecessary. WAL summaries help take increments; they do not replace the archived WAL needed to recover the reconstructed backup to a later target.</p>
+</section>
+
+<section id="target">
+<h2>Choose the target and timeline</h2>
+<p>For this controlled drill, create a named restore point on the source after the completed backup, before either later change:</p>
+<Sql label="Mark the controlled recovery boundary" code={`SELECT pg_create_restore_point('before_price_mistake');
+-- Keep the returned LSN with the source identity and timeline.
+
+-- Only afterwards, in this independent recovery branch:
+UPDATE products SET price = 2.20 WHERE product_id = 'P7';
+-- The later valid payment is a separate committed transaction.`} />
+<p>The named point is a WAL record, not a saved copy of the database. Retain its containing segment and the path leading to it. Use a unique name for each real marker. You cannot create a marker retrospectively before an unknown mistake.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="PostgreSQL recovery target choices"><table><caption>Other target forms use different evidence</caption><thead><tr><th>Setting</th><th>What identifies the cut</th><th>What to check</th></tr></thead><tbody>
+<tr><td><code>recovery_target_time</code></td><td>A commit-time boundary</td><td>Use an explicit offset, such as <code>+00</code>; detection time and application timestamps do not establish it.</td></tr>
+<tr><td><code>recovery_target_xid</code></td><td>A transaction’s completion boundary</td><td>Recovery follows commit order. A smaller transaction ID can finish later.</td></tr>
+<tr><td><code>recovery_target_lsn</code></td><td>A WAL record position</td><td>Establish its meaning in the intended source and timeline.</td></tr>
+</tbody></table></div>
+<p>Configure only one target form. For time, transaction ID and LSN targets, <code>recovery_target_inclusive</code> controls whether the exact target boundary is included; the default is <code>on</code>. It does not apply to a named restore point. Prove the selected cut with recovered facts, whichever form supplied it.</p>
+<RecoveryFigures kind="branch" />
+<p>A <strong>timeline</strong> identifies a branch of WAL history. Completing archive recovery creates a new one, with a small history file recording its parent and branch point. Keep those history files alongside WAL. An LSN alone cannot distinguish different changes at the same position on different branches.</p>
+<p><code>recovery_target_timeline = 'current'</code> follows the timeline current when the base was taken. An explicit timeline ID chooses a particular intended branch. The default, <code>latest</code>, finds the latest timeline in the archive; that may be useful for a standby, but should not silently choose an incident investigation’s history. Record the source system identifier, backup, timeline and target together.</p>
+</section>
+
+<section id="restore">
+<h2>Restore into an isolated cluster</h2>
+<p>Keep the source and original recovery material intact. Copy the verified backup into a separate, stopped target with compatible PostgreSQL software, extensions and architecture. Restore permissions and tablespace destinations deliberately. Do not let symlinks or replayed tablespace operations lead back to live storage.</p>
+<p>Inspect the copied configuration before starting it. Data directories, sockets, ports, archive helpers and external configuration paths may still name the source. Remove source streaming settings and any <code>standby.signal</code>; a standby signal takes precedence over <code>recovery.signal</code>. Exclude ordinary callers through network isolation and authentication, and keep application workers and external dispatch stopped.</p>
+<p>In a target that retrieves from a plain local archive, the recovery settings have this shape. <code>/srv/recovery/shop-wal</code> is the selected source’s archive, made readable to the target’s server account:</p>
+<pre aria-label="Targeted archive recovery configuration"><code>restore_command = 'cp /srv/recovery/shop-wal/%f %p'
+recovery_target_name = 'before_price_mistake'
+recovery_target_timeline = 'current'
+recovery_target_action = 'pause'
+hot_standby = 'on'
+primary_conninfo = ''
+listen_addresses = ''</code></pre>
+<p>The retrieval command must return failure when a requested file is unavailable, rather than creating an empty substitute. Create an empty <code>recovery.signal</code> in the copied data directory. With the target configuration reviewed, start it as its server account. These variables identify the separate target and a pre-created, server-owned socket directory; the example paths contain no spaces:</p>
+<pre aria-label="Start the isolated recovery target"><code>touch "$RESTORE_DATA/recovery.signal"
+pg_ctl --pgdata="$RESTORE_DATA" --log="$RESTORE_LOG" \
+  --options="-p $RESTORE_PORT -k $RESTORE_SOCKET" start</code></pre>
+<p>Retain the server log and connect only through that target’s explicit socket and port. The source and target must never share a data directory or tablespace files.</p>
+<RecoveryFigures kind="restore" />
+<h3>Confirm that recovery actually paused</h3>
+<p>A server accepting a read-only connection may still be replaying. Inspect the state through the target’s verified connection:</p>
+<Sql label="Inspect recovery on the isolated target" code={`SELECT system_identifier FROM pg_control_system();
+SHOW data_directory;
+SELECT pg_is_in_recovery(),
+       pg_get_wal_replay_pause_state(),
+       pg_last_wal_replay_lsn();`} />
+<p>Expect recovery to be active and the pause state to be <code>paused</code>. Match the log’s named stopping point to the intended marker, source history and timeline. Then read the shop:</p>
+<Sql label="Check the recovered agreement separately from recorded payments" code={`SELECT (SELECT price FROM products WHERE product_id = 'P7') AS p7_price,
+       o.status,
+       (SELECT sum(quantity * unit_price) FROM order_items
+        WHERE order_id = o.order_id) AS line_total,
+       (SELECT coalesce(sum(amount), 0)::numeric(8,2) FROM payments
+        WHERE order_id = o.order_id) AS paid
+FROM orders o WHERE order_id = 103;
+-- Before the mistake: 20.00 | pending | 29.00 | 0.00
+
+SELECT product_id, stock FROM products ORDER BY product_id;
+-- P3 10; P7 0; P9 4
+SELECT * FROM payments WHERE payment_id = 504;
+-- No rows`} />
+<p>The two sums remain separate so payments cannot multiply order lines. Check required objects, other representative rows, constraints and application reads under the intended access identity, with dispatch still disabled. Catalogue price, agreement, stock and payments are different facts; one correct price is not sufficient acceptance evidence.</p>
+<p>If the target is too early, keep recovery unfinished: shut down, choose a later supported target and restart to continue. An earlier target needs a fresh restore from the original material. Calling <code>pg_wal_replay_resume()</code> after reaching a <code>pause</code> target finishes recovery; it is not the instruction to inspect the next transaction.</p>
+<h3>A missing segment must fail the attempt</h3>
+<p>Test a gap on a separate disposable restore and a copied archive. Withhold a required post-backup segment and choose an explicit target beyond it. Ensure that neither bundled <code>pg_wal</code> nor streaming provides another copy. Leave the original archive unchanged.</p>
+<p>Recovery can request absent history or next-segment files during normal discovery, so one failed file lookup alone does not establish failure. The decisive evidence is whether it reached the explicit target. When archive recovery ends first, PostgreSQL reports a fatal error rather than accepting that different stopping point as the requested recovery.</p>
+<p>In the PostgreSQL 18.6 drill, the intact archive reached <code>before_price_mistake</code> and paused with the expected shop facts. The gap attempt logged that it had reached consistency and was ready for read-only connections, then failed before its configured <code>after_payment</code> target:</p>
+<pre aria-label="Observed native failure when required later WAL was withheld"><code>FATAL: recovery ended before configured recovery target was reached</code></pre>
+<p>The original base still passed verification afterwards. That pair of results is Figure 1’s distinction in a running server: backup integrity did not establish later target coverage.</p>
+</section>
+
+<section id="reconcile">
+<h2>Complete recovery and reconcile the payment</h2>
+<p>The isolated candidate can be prepared while the source still runs. Final reconciliation needs a closed source history. Stop new authoritative source writes and dispatch, account for database commits and provider calls already in flight, and preserve their final outcomes. Prevent stale clients, workers and a restarted old source from becoming writers again. <a href="/learn/databases/relational/failover/">Failover and fencing</a> develops that authority boundary.</p>
+<p>After accepting the paused target, finish recovery under controlled access:</p>
+<Sql label="Finish the accepted targeted recovery" code={`SELECT pg_wal_replay_resume();
+-- Wait for completion, then confirm on the target:
+SELECT pg_is_in_recovery();
+-- false`} />
+<p>This creates the new writable history in Figure 2. Keep ordinary writers and dispatch excluded while applying the accepted repairs. Do not replay the original purchase: order 103 and its stock decrement are already present. Do not replay the bad price.</p>
+<p>The payment’s original operation identity is <code>order-103-part-payment-1</code>, with immutable meaning: order 103, 10.00 by card, resulting payment 504. Obtain its provider outcome using the provider’s retained lookup contract. The supplied branch assumes a known accepted result matching that meaning. Record that existing charge in the recovered database; sending another charge would create another effect.</p>
+<p>Use the reconciliation established in <a href="/learn/databases/relational/backup-and-restore/">Backup, restore and reconciliation</a>: verify the order and agreement, compare any existing payment and identity mapping, then atomically record the omitted payment with its mapping. A repeat must verify the same result, and a changed amount or order must stop. Under the example payment rule, recorded payments must not exceed the unchanged 29.00 agreement.</p>
+<Sql label="Verify the reconciled identity and payment together" code={`SELECT operation_id, x.order_id, x.amount, x.payment_id,
+       p.amount AS recorded_amount, p.method
+FROM payment_operations x
+JOIN payments p USING (payment_id)
+WHERE operation_id = 'order-103-part-payment-1';
+-- order-103-part-payment-1 | 103 | 10.00 | 504 | 10.00 | card`} />
+<p><code>payment_operations</code> is the drill’s identity-to-payment record, separate from the shop’s original tables. A uniqueness constraint protects the mapping; comparing its meaning protects against a wrong first mapping. If the provider outcome is unknown, keep that case unresolved. Restored absence is not evidence that no charge happened, and an uncertain outcome does not justify a new charge.</p>
+<p>The completed branch must now show P7 at 20.00, pending order 103 with agreed total 29.00, exactly one 10.00 payment and 19.00 due. Stock remains 10/0/4. Review restored dispatch records before workers resume: a job that looks unsent may already have caused an effect. Carry forward applicable correction and deletion decisions before exposing recovered older data or rebuilding derived copies.</p>
+<p>Return callers to one authority and resume only the work whose outcomes are accounted for. Promoting an existing physical replica is a different route, developed in <a href="/learn/databases/relational/postgresql/replication/">PostgreSQL physical replicas and promotion</a>. A successfully restored cluster still needs a controlled service handover.</p>
+</section>
+
+<section id="logical">
+<h2>Restoring a logical dump</h2>
+<p>A custom-format dump follows a simpler reconstruction path. Export one database, inspect its contents, then restore into a fresh isolated database created from <code>template0</code>:</p>
+<pre aria-label="Bounded custom-format dump and fresh-database restore"><code>pg_dump --host="$SOURCE_SOCKET" --port="$SOURCE_PORT" \
+  --username="$DUMP_ROLE" --dbname="$SOURCE_DB" \
+  --format=custom --file="$DUMP_FILE"
+
+pg_restore --list "$DUMP_FILE"
+createdb --host="$TARGET_SOCKET" --port="$TARGET_PORT" \
+  --username="$RESTORE_ROLE" --template=template0 "$FRESH_DB"
+pg_restore --host="$TARGET_SOCKET" --port="$TARGET_PORT" \
+  --username="$RESTORE_ROLE" --dbname="$FRESH_DB" \
+  --exit-on-error --single-transaction "$DUMP_FILE"</code></pre>
+<p>Use explicit verified destinations and stop on errors. The single transaction makes this small restore all-or-nothing; it cannot be combined with parallel restore jobs. A plain SQL dump goes through <code>psql -X --set=ON_ERROR_STOP=1</code> instead of <code>pg_restore</code>.</p>
+<p>Check required roles and grants before restoring ownership and privileges. A single-database dump does not define cluster-wide roles or tablespaces; handle required globals separately, for example with a reviewed <code>pg_dumpall --globals-only</code> export. Install compatible extension software before recreating its database objects. Inspect ownership and extension versions afterwards; omitting ownership or privilege restoration changes the result rather than repairing a missing role.</p>
+<p>The drill’s dump is taken before the price mistake and restores P7 at 20.00 with no payment 504. It is a reconstruction of the dump’s saved view, not a selectable WAL target. Check the actual rows and intended application access just as with a physical restore. <a href="/learn/databases/relational/postgresql/upgrades/">Upgrading and migrating PostgreSQL</a> covers version compatibility and a migration’s write handover.</p>
+</section>
+
+<section id="keep">
+<h2>Keep the recovery path testable</h2>
+<p>Retain the complete path: full and required incremental backups, consistency and later WAL, timeline history, manifests, compatible software and extensions, configuration, recovery access and any decryption material. Test the new writable branch’s backup and archive coverage before expiring an older usable path.</p>
+<p>Rehearse the service objective with representative data and retained history. Measure obtaining access, fetching material, reconstruction, replay, validation and necessary reconciliation. A tiny restore proves that these steps work for its fixture; it gives no production recovery rate.</p>
+<p class="example-note">The figures are explanatory models. The full base backup, named-point restore, missing-segment failure, custom-format logical restore and repeated payment repair were checked on an owned Linux PostgreSQL 18.6 instance. Source and targets had separate data directories in one disposable container; this did not test an independent storage failure or a production recovery rate. Incremental reconstruction is described from the manual.</p>
+<p class="example-note">The source database was closed to connections before the recovered target’s payment repair. No production authority handover or external provider was tested: the accepted charge is supplied example evidence. Additional SQL checks for changed identity, atomic rollback and blind replay ran in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3.</p>
+</section>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against PostgreSQL 18 documentation on 26 October 2026. The provider contract and shop recovery ordering are illustrative.</p>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/continuous-archiving.html">Continuous Archiving and Point-in-Time Recovery</a>: archive integrity, recovery procedure, backup completion boundaries, timelines and tablespace caveats.</li>
+<li><a href="https://www.postgresql.org/docs/18/app-pgbasebackup.html">pg_basebackup</a> and <a href="https://www.postgresql.org/docs/18/app-pgverifybackup.html">pg_verifybackup</a>: backup contents, streamed consistency WAL, tablespaces, manifests and verification limits.</li>
+<li><a href="https://www.postgresql.org/docs/18/runtime-config-wal.html">WAL settings</a>: archiving, segment switches, recovery targets, timeline selection, pause/finish behaviour and WAL summaries.</li>
+<li><a href="https://www.postgresql.org/docs/18/functions-admin.html">System administration functions</a> and <a href="https://www.postgresql.org/docs/18/monitoring-stats.html#PG-STAT-ARCHIVER-VIEW">pg_stat_archiver</a>: identity, restore points and recovery-state inspection; progress counters and their limits.</li>
+<li><a href="https://www.postgresql.org/docs/18/app-pgcombinebackup.html">pg_combinebackup</a>: reconstructing a full backup from dependent increments.</li>
+<li><a href="https://www.postgresql.org/docs/18/app-pg-ctl.html">pg_ctl</a>: explicit target configuration, server options, logs and startup status.</li>
+<li><a href="https://www.postgresql.org/docs/18/backup-dump.html">SQL dump</a>, <a href="https://www.postgresql.org/docs/18/app-pgdump.html">pg_dump</a>, <a href="https://www.postgresql.org/docs/18/app-pgrestore.html">pg_restore</a> and <a href="https://www.postgresql.org/docs/18/app-pg-dumpall.html">pg_dumpall</a>: dump scope, fresh databases, ownership, archive formats and error handling.</li>
+</ul>

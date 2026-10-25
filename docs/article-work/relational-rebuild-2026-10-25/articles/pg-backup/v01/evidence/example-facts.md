@@ -1,0 +1,11 @@
+# Example and continuity
+
+The article uses only the accepted independent recovery-reconciliation branch, not the separate successful20→22 price experiment. Starting state is post103: P3/P7/P9 stock10/0/4, P7 catalogue20.00, pending103 with lines P7×1 at20.00 and P3×2 at4.50, total29.00, no103 payment. Original branch commits bad catalogue2.20, then valid payment504/103/10.00/card, leaving19.00 due and pending status. Provider's known accepted10.00 remains independent.
+
+Stable operation identity order-103-part-payment-1 keeps immutable order/amount/method/payment mapping. No provider is contacted. Unavailable provider outcome remains unresolved; absent recovered rows do not justify charging. Source write/dispatch closure includes in-flight outcomes and precedes final reconciliation. Original authority remains fenced.
+
+Local assumptions: core-table drill adds payment_operations(operation_id primary key,order_id,amount,method,payment_id unique), with FKs to orders/payments. This is an operational mapping, no changed shared business fact. Named marker before_price_mistake is deliberately created after completed backup; after_payment is a second drill target, not an existing business timestamp. Native positions/timelines come only from recorded execution. Figure segment boundaries, branch layout and six-step schedule are conceptual, without invented LSNs/times.
+
+No inherited order-line reprice, stock reconstruction, paid-status change, actual external effect, retention duration or currency is implied. Existing payments501–503 and core orders101–103 are seeded exactly. Figure2 does not place a new purchase after the mistake. No ownership change proposed.
+
+Author continuity pass: reread complete article including figures/options/captions. Backup end precedes named marker; bundled vs later WAL used consistently. Correct price alone never accepts restoration. At paused target504 absent and recorded due29; accepted reconciliation504 once and due19; unresolved branch retains due29 locally and remains open. Logical route is a saved-view reconstruction, never WAL advance. General design/reconciliation remains with backups; restart/flush with pg-wal; existing-copy promotion with pg-replication; migration compatibility/handover with pg-upgrades. Neighbour links use exact canonical index routes.
