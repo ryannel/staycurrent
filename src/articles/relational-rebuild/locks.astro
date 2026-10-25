@@ -1,0 +1,184 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Schedule from '../../components/relational-rebuild-locks/Schedule.astro';
+import { mug, authority, snapshot, deadlock } from '../../components/relational-rebuild-locks/models.mjs';
+---
+
+<p>A <strong>lock</strong> makes competing operations take turns over a resource. A transaction changing the last mug holds a lock on its product row; another transaction trying to change that row may have to wait. The first transaction is the <strong>holder</strong>, and the second is a <strong>waiter</strong>. When the holder ends, the waiter can try to continue. Competition for conflicting access to that resource is <strong>lock contention</strong>.</p>
+
+<p>That turn is useful only if it covers the decision that needs protecting. Lock the wrong rows and two payments can both fit an order separately while exceeding its value together. Lock the right row but read from an earlier snapshot and the same mistake can survive. A sound lock protocol needs both an authority that every competing change respects and a view of the data that supports the decision.</p>
+
+<p><a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> establishes transaction boundaries and snapshot visibility. Here we follow the locks themselves: what they protect, how long they remain held, how waits become a deadlock, and how to bound a wait without changing the meaning of the operation. The SQL and lock behaviour are PostgreSQL 18’s. The drawings are selected schedules, with no implied time scale.</p>
+
+<section aria-labelledby="what-waits">
+  <h2 id="what-waits">What waits for a lock</h2>
+  <p>Go back to the last blue mug. P7 has stock 1. Mina’s purchase 103 subtracts one mug, and Tariq’s purchase 104 tries to do the same. The guarded change keeps the stock test beside the subtraction:</p>
+  <Sql label="Allocate one mug only if it is available" code={`UPDATE products
+SET stock = stock - 1
+WHERE product_id = 'P7' AND stock >= 1
+RETURNING stock;`} />
+  <p>The <code>UPDATE</code> takes a row lock as part of changing P7. There is no need for a preceding locking read just to repeat this one-row test. In Figure 1, watch the gap between Mina’s statement returning and her transaction committing. Then compare Tariq’s guarded change with a locking read and an ordinary read.</p>
+  <Schedule model={mug} />
+  <p>Mina’s lock survives the end of her <code>UPDATE</code>. It is her transaction ending that releases it. Tariq’s guarded change waits, then checks the condition against stock 0 and returns no row. His caller must treat that result as a refused purchase and roll back its work. Waiting for the lock did not reserve a successful outcome.</p>
+  <p>A <strong>locking read</strong> asks for a lock explicitly:</p>
+  <Sql label="Read P7 while acquiring an exclusive row lock" code={`BEGIN;
+SELECT stock
+FROM products
+WHERE product_id = 'P7'
+FOR UPDATE;
+-- Check the returned stock and do the protected work.
+ROLLBACK;`} />
+  <p><code>FOR UPDATE</code> makes the returned row a resource that this transaction holds against conflicting writers and lockers. An ordinary <code>SELECT stock</code> does not ask for that row lock. In PostgreSQL it can read committed stock 1 while Mina’s uncommitted change is 0. That makes it useful for a display, but it has not secured a mug for a later purchase.</p>
+  <p>The distinction is between conflicting operations, not simply reads and writes. A locking <code>SELECT</code> can wait for a row; an ordinary snapshot read can proceed. Table locks, including those used for schema changes, add another kind of conflict, to which we will return.</p>
+</section>
+
+<section aria-labelledby="authority">
+  <h2 id="authority">Choose the row that governs the decision</h2>
+  <p>A product row was a natural authority for its own stock. A total across several rows needs more thought. Start a separate scenario after order 103 exists. Its agreed lines are one mug at 20.00 and two teas at 4.50 each: 29.00 in all. It has no payments.</p>
+  <p>Suppose the shop requires total recorded payments not to exceed that line value. Two requests, A and B, each want to record 20.00. Either payment fits on its own. Both together make 40.00, which does not.</p>
+  <h3 id="condition">Locking rows does not lock a condition</h3>
+  <p>A tempting first step is to lock the payments that will be summed:</p>
+  <Sql label="The unsuccessful attempt to protect a payment total" code={`SELECT payment_id, amount
+FROM payments
+WHERE order_id = 103
+FOR UPDATE;`} />
+  <p>It returns no rows, so there is no payment row to hold. More fundamentally, the protected fact is a condition over every payment for the order, including a payment that does not exist yet. Even when some rows exist, their row locks alone do not stand for that whole condition.</p>
+  <p>Order 103 already has one stable parent row. Make that row the shared authority: every operation that could invalidate the payment limit must acquire its conflicting lock before making its decision. Compare the two choices in Figure 2. Watch B’s turn and the total it reads.</p>
+  <Schedule model={authority} />
+  <p>With the order lock, A and B cannot be in the protected decision together. A commits 20.00; B then reads 20.00 and refuses another 20.00. With only existing payment rows locked, both can decide from zero and both can commit. The schema’s distinct payment identifiers do not express a limit on their sum.</p>
+  <p>The parent row works because of the protocol around it. A plain insert into <code>payments</code> is not automatically a correct payment-limit check. The protocol must cover payment creation and amount changes, moving a payment between orders, and any edit to order lines that could reduce the allowed total. A move needs both orders’ authorities. Each path must leave the rule true when it commits.</p>
+  <p>Where a declarative constraint expresses the rule, prefer its enforcement across callers. Where the rule needs a protocol, put that protocol at a boundary every writer must use. An unprotected administrative script can break a rule that all web requests respect. <a href="/learn/databases/relational/constraints/">Constraints and data integrity</a> develops that choice.</p>
+</section>
+
+<section aria-labelledby="decision-read">
+  <h2 id="decision-read">Read the decision after acquiring the lock</h2>
+  <p>The successful payment run used a particular order of statements at <strong>Read Committed</strong>. First acquire order 103’s lock. Only after that statement returns, start the query that reads the line value and the paid amount. Keep the lock through the decision, insertion and commit.</p>
+  <Sql label="Acquire order 103, then read the amounts in a later statement" code={`BEGIN ISOLATION LEVEL READ COMMITTED;
+
+SELECT order_id
+FROM orders
+WHERE order_id = 103
+FOR UPDATE;
+-- Require exactly one returned order before continuing.
+
+SELECT
+  (SELECT sum(quantity * unit_price)
+   FROM order_items WHERE order_id = 103) AS line_value,
+  (SELECT coalesce(sum(amount), 0)
+   FROM payments WHERE order_id = 103) AS paid;
+-- First attempt: line_value 29.00, paid 0.00.
+-- Waiting second attempt: line_value 29.00, paid 20.00.`} />
+  <p>The two sums use separate input sets, so order lines and payments do not multiply each other through a join. <code>coalesce</code> makes an empty payment sum zero. For this scenario the order is required to have its two lines; an absent line total is a refused operation, not permission to accept a payment.</p>
+  <p>The caller accepts only a positive proposed amount whose addition keeps <code>paid + amount &lt;= line_value</code>. A, seeing zero, can continue on the same connection and transaction:</p>
+  <Sql label="Accept the first scenario payment while holding the authority" code={`INSERT INTO payments (payment_id, order_id, amount, method)
+VALUES (601, 103, 20.00, 'card');
+COMMIT;`} />
+  <p>B must make the decision again from its own result. It sees 20.00, so another 20.00 fails the test. It inserts nothing and sends <code>ROLLBACK</code>. The committed payment total stays 20.00, leaving 9.00 unpaid. This example records payments; it does not call a payment provider or change order 103 to paid.</p>
+  <p>The decisive interval starts when the authority is acquired and ends with the transaction. Every relevant writer respects that interval, and the decision read begins inside it. Moving the read before acquisition would leave B using the earlier zero even though B eventually gets its turn.</p>
+  <h3 id="snapshot">A lock does not refresh a snapshot</h3>
+  <p>Now keep the same order lock but change when B takes its snapshot. At PostgreSQL Read Committed a later statement can include A’s intervening commit. At Repeatable Read, B retains the snapshot established by its first query. B’s first locking <code>SELECT</code> can establish that snapshot before waiting.</p>
+  <p>Figure 3 restarts with no payments. A holds order 103, records 20.00 and commits while B waits. Compare what B sees once it acquires the same unchanged order row.</p>
+  <Schedule model={snapshot} />
+  <p>In the Repeatable Read comparison, the ownership order is correct: A has the guard, then B. The payment decision is still wrong. B’s snapshot excludes A’s payment, so B sees zero and can add another 20.00. Locking an unchanged guard is not the same as updating it: the concurrent-update failure that can protect a changed row does not arise just because two transactions lock it in turn.</p>
+  <p>Combining the lock and the aggregate into one Read Committed statement also removes the promised later snapshot. A subquery or lock-first CTE is still inside a statement that began before the wait ended. SQL text order is no substitute for the boundary between these two statements.</p>
+  <p>This protocol depends on Read Committed with a separate decision statement. Other designs can make the authority carry a conflicting write, or use Serializable with complete transaction retries. Their visibility and failure behaviour need to support the whole invariant; <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> compares those choices.</p>
+</section>
+
+<section aria-labelledby="scope">
+  <h2 id="scope">Choose lock scope and strength</h2>
+  <p>Order 103 is a smaller authority than the whole payments table. Two attempts for that order compete, as they must. A payment for another order can use that order’s own authority. Replacing them with one shop-wide guard would force unrelated orders through the same turn.</p>
+  <div class="table-scroll" role="region" tabindex="0" aria-label="Lock scopes and what they coordinate"><table>
+    <caption>Choose the resource from the rule it must protect</caption>
+    <thead><tr><th scope="col">Resource</th><th scope="col">A useful boundary</th><th scope="col">What must be true</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">One product row</th><td>Available stock for P7</td><td>The guarded change checks and changes that stock together.</td></tr>
+      <tr><th scope="row">One order row</th><td>The payment limit for order 103</td><td>Every invalidating change takes its turn and uses a sound decision snapshot.</td></tr>
+      <tr><th scope="row">A table</th><td>Work requiring a table-wide exclusion</td><td>The chosen mode conflicts with the operations that must wait.</td></tr>
+      <tr><th scope="row">An advisory key</th><td>An application-defined resource without a convenient row</td><td>Every participant agrees on the key, mode and lifetime.</td></tr>
+    </tbody>
+  </table></div>
+  <p>PostgreSQL table locks have modes too: a table lock need not block every operation. Commands take table locks automatically alongside their row work. An <code>ACCESS EXCLUSIVE</code> table lock, used by operations such as <code>TRUNCATE</code>, also conflicts with ordinary reads. “The query only reads” therefore does not mean it can never wait.</p>
+  <p><strong>Advisory locks</strong> let an application assign a lock to a key of its own. The database does not infer that the key governs payment changes. A transaction-level advisory lock ends with the transaction; a session-level one can survive a rollback and remain with a pooled connection. Choose its lifetime deliberately, and make participation part of the same protocol as the decision.</p>
+  <p>Strength decides which operations conflict. Two <code>FOR UPDATE</code> requests on order 103 exclude each other. Two <code>FOR SHARE</code> requests can coexist, so replacing the first with the second would let both payment attempts enter the decision together. A weaker lock is useful only when it still excludes everything that could invalidate the protected work. PostgreSQL’s row-lock compatibility table is the reference for choosing one; names alone are not enough.</p>
+  <h3 id="short-work">Keep the protected work short</h3>
+  <p>Once A holds order 103, every competing attempt for that order depends on A ending. Asking the customer a question or calling a remote service during that interval extends every waiter’s delay. Prepare input first, then acquire, decide, change and end. Keep the reads that justify the decision inside the protected interval.</p>
+  <p>A statement can finish while its transaction sits idle, still holding the lock. The holder need not be using a processor to hold up everyone else. Inspect the transaction’s lifetime, not only the duration of the last SQL command.</p>
+  <p>If one authority remains hot despite short transactions, adding connections only creates more contenders for its turn. Changing the business unit of serialisation may help, but it requires a new argument that the rule still holds. How much work to admit and where to queue it belongs to <a href="/learn/databases/relational/connections-and-capacity/">Connections, overload and capacity</a>.</p>
+</section>
+
+<section aria-labelledby="deadlocks">
+  <h2 id="deadlocks">How a deadlock forms</h2>
+  <p>A waiter can make progress when its holder can finish. A <strong>deadlock</strong> forms when the dependencies close a cycle: each transaction needs a resource that another transaction in the cycle holds, and none can reach the step that releases it.</p>
+  <p>Use a new, lock-only scenario with P3 and P7. No purchase is being made and no stock changes. A locks P3; B locks P7. A then asks for P7, and B asks for P3. Follow the arrows in Figure 4, first with opposite acquisition orders, then with both paths taking P3 first.</p>
+  <Schedule model={deadlock} />
+  <p>The first wait, A → B, was not a deadlock. B could still finish and release P7. B’s later request added B → A and closed the cycle. Waiting longer cannot make either next statement finish by itself.</p>
+  <p>PostgreSQL breaks the cycle by aborting a transaction. Either can be the victim; application correctness must not depend on a particular one losing. A deadlock error has SQLSTATE <code>40P01</code>. If the application retries, it must restart the entire aborted work, including its decisions, rather than continue from the statement that failed. <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a> develops that recovery and the different case where a commit’s reply is lost.</p>
+  <h3 id="ordering">Acquire locks in a consistent order</h3>
+  <p>With P3 before P7 on both paths, B waits before taking P7. A can acquire P7 and end, then B can do the same. The ordering prevented the cycle by preventing B from holding the resource A needed while B waited for A.</p>
+  <Sql label="Acquire the two product rows in a deliberate order" code={`BEGIN;
+SELECT product_id FROM products
+WHERE product_id = 'P3' FOR UPDATE;
+SELECT product_id FROM products
+WHERE product_id = 'P7' FOR UPDATE;
+-- Protected work, then COMMIT or ROLLBACK.
+ROLLBACK;`} />
+  <p>For a variable set of product keys, sort them with one agreed ordering and acquire them in that order on every path. An unordered <code>IN ('P3', 'P7')</code> names a set; its written order does not establish lock acquisition order. Product identifiers used to order acquisition must remain stable during this work.</p>
+  <p>The agreement has to include less frequent paths: cancellation, repair, imports and administrative changes. It also needs to account for locks acquired implicitly by writes, foreign-key checks and triggers. Ordering only the explicit <code>FOR UPDATE</code> statements is not a proof about all locks in a larger operation.</p>
+  <p>Acquire the strength the protected work needs early enough to avoid competing upgrades. If A and B first take compatible shared locks and then both ask to strengthen them, each can end up waiting for the other’s shared lock. Consistent resource ordering and suitable strength address different ways of making a cycle.</p>
+</section>
+
+<section aria-labelledby="blockers">
+  <h2 id="blockers">Follow the waiter to the blocker</h2>
+  <p>When a request is stuck, “waiting for a lock” describes only one edge. Reconstruct what its transaction requests, who blocks it, and what that transaction is doing. The blocker may itself be waiting.</p>
+  <div class="table-scroll" role="region" tabindex="0" aria-label="A lock wait chain"><table>
+    <caption>A separate lock-only illustration: A → B → C</caption>
+    <thead><tr><th scope="col">Transaction</th><th scope="col">Holds</th><th scope="col">Requests</th><th scope="col">State</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">A</th><td>Nothing in this chain</td><td>P7, held by B</td><td>Waiting for B</td></tr>
+      <tr><th scope="row">B</th><td>P7</td><td>P3, held by C</td><td>Waiting for C</td></tr>
+      <tr><th scope="row">C</th><td>P3</td><td>No lock</td><td>Idle in an open transaction</td></tr>
+    </tbody>
+  </table></div>
+  <p>The chain ends at C. If C ends its transaction, B can proceed and eventually release A. There is no cycle here, however long C has been idle. A deadlock detector does not supply a deadline for this wait.</p>
+  <p>Look at transaction age, current state and requested locks together. A long-lived transaction may have acquired its blocking lock much earlier than its last visible query. In PostgreSQL, <code>pg_blocking_pids()</code> identifies blocking sessions, including a conflicting request ahead in the wait queue; <code>pg_stat_activity</code> supplies transaction and query times and whether a session is idle in a transaction. A deadlock report records the cycle that the server found.</p>
+  <p>Use that evidence to find the protocol to repair: an unexpectedly long protected interval, an unnecessary shared guard, an inconsistent acquisition order or a competing upgrade. Cancelling an arbitrary waiter does not explain why the holder is still open. Native monitoring queries and bounded interventions belong to <a href="/learn/databases/relational/postgresql/operations/">Operating and diagnosing PostgreSQL</a>; establishing whether this wait accounts for the request’s delay belongs to <a href="/learn/databases/relational/slow-queries/">Diagnosing a database incident</a>.</p>
+</section>
+
+<section aria-labelledby="bound-waiting">
+  <h2 id="bound-waiting">Put a bound on waiting</h2>
+  <p>A correct protocol can still wait too long for its caller. Choose what a busy resource means for the operation: wait for a bounded interval, refuse immediately, or select some other eligible work. The choice must preserve the meaning of the result.</p>
+  <div class="table-scroll" role="region" tabindex="0" aria-label="Waiting policies"><table>
+    <caption>What the caller learns when order 103 is busy</caption>
+    <thead><tr><th scope="col">Policy</th><th scope="col">What happens</th><th scope="col">What it does not establish</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Wait</th><td>Try to acquire the authority when it is released.</td><td>That the payment will pass its later check.</td></tr>
+      <tr><th scope="row"><code>NOWAIT</code></th><td>A busy selected row causes an error immediately.</td><td>That the payment limit has been exceeded.</td></tr>
+      <tr><th scope="row"><code>SKIP LOCKED</code></th><td>A busy selected row is omitted.</td><td>That order 103 is absent, or that recording a payment is safe.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Skipping can serve a queue consumer whose question is “give me an available job”. It cannot serve this payment decision by treating a busy authority as an empty payment total. If the operation requires order 103, failure to acquire it means the protected decision has not been made. <code>NOWAIT</code> and <code>SKIP LOCKED</code> apply to the selected row locks; the statement can still encounter a table-lock wait.</p>
+  <p>PostgreSQL’s <code>lock_timeout</code> bounds each lock-acquisition wait. <code>statement_timeout</code> bounds one statement, including its execution. An application request deadline has a wider lifetime, including time before the server gets the SQL. For example:</p>
+  <Sql label="Use transaction-local bounds before requesting the order authority" code={`BEGIN ISOLATION LEVEL READ COMMITTED;
+SET LOCAL lock_timeout = '250ms';
+SET LOCAL statement_timeout = '2s';
+
+SELECT order_id FROM orders
+WHERE order_id = 103
+FOR UPDATE;
+-- Continue with the separate decision read only on success.
+-- On failure, ROLLBACK the failed transaction.`} />
+  <p>These are invented budgets, not recommended universal settings. Several waits can each fit under 250 ms while their combined duration exceeds it. Several statements can each fit under 2 seconds while the request exceeds its own deadline. Set the bounds around the work the caller can still use, and end failed work cleanly before returning the connection.</p>
+  <p><code>deadlock_timeout</code> serves another purpose: it delays the server’s deadlock check, with a default of one second. It is not a general maximum lock wait. The long chain ending at idle C can remain blocked beyond it because there is no cycle to break.</p>
+  <p>The final decision is the same one the payment example exposed. A timeout, an omitted row or an eventual lock grant is not proof that a business action is allowed. Acquiring the right authority, reading the right view, checking the rule and ending the protected work are the protocol.</p>
+</section>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>PostgreSQL 18 documentation, checked 25 October 2026. The SQL was checked in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. The payment comparisons and two-transaction product-lock schedules were also run on a disposable native PostgreSQL 18.6 server. Those are selected executions, not timings or a proof about every schedule. The drawings explain documented behaviour rather than reproduce traces; the three-transaction wait chain, shop data and wait budgets are illustrative.</p>
+<ul>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit Locking</a>: row and table conflicts, lock lifetimes, advisory locks and deadlocks.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction Isolation</a> and <a href="https://www.postgresql.org/docs/18/applevel-consistency.html">Data Consistency Checks at the Application Level</a>: statement and transaction snapshots, and why blocking alone does not give a later view.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/sql-select.html#SQL-FOR-UPDATE-SHARE">SELECT: the locking clause</a>: returned-row scope, <code>NOWAIT</code>, <code>SKIP LOCKED</code> and ordering qualifications.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/mvcc-serialization-failure-handling.html">Serialization Failure Handling</a>: SQLSTATE values and retrying complete transactions.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-SESSION">Session information functions</a> and <a href="https://www.postgresql.org/docs/18/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW">pg_stat_activity</a>: blockers, transaction age and idle state.</li>
+  <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/runtime-config-client.html">Client Connection Defaults</a> and <a href="https://www.postgresql.org/docs/18/runtime-config-locks.html">Lock Management</a>: lock and statement timeouts, idle transactions and deadlock-check timing.</li>
+</ul>

@@ -1,0 +1,37 @@
+# Pagination plan notes
+
+## Reference exposure
+
+Read the supplied current breakdown, write and continuity instructions. Read all bounded text parts separately through `scripts/read-writing-reference.py`, with every END marker delivered: Sequences 1–6, Indexes 1–7, Storage 1–6. Complete-text hashes were `722e27d…4809c`, `d60bf12…c8c1` and `2bebcdf…c07` respectively.
+
+Inspected finished drawings in three owned temporary IAB tabs on the supplied server: Sequences, “Who is waiting”; Indexes, “Column order in a composite index”, including the completed two-entry result; Storage, “Where the old version of P7 waits”, including the old report reading 20.00 while a later query reads 22.00. Tabs closed afterwards. No viewport/theme changes or user-tab operations. The useful teaching pattern is one changed condition, visible consequences, then an explanation of what the reader can infer. The writer chooses the visual form; the essential things to expose are the moving ordinal boundary, the tie-preserving key boundary, and separate page snapshots versus one retained view.
+
+## Agreed example extension
+
+Keep every supplied starting row and value. Coordinator-approved independent order-list extension uses only projected `order_id`, `customer_id`, `placed_at` and `status`; line/payment details are unspecified and unused. Add pending orders 201 and 202 for Edda (customer 3), both at `2026-10-20 10:15:00+00`, tied with order 103. Page size two and `ORDER BY placed_at DESC, order_id DESC` produce 202, 201 / 103, 102 / 101. After page one, the full cursor is (20 October 10:15 UTC, 201); a timestamp-only strict predicate wrongly skips 103. Order 104 remains reserved for its existing independent purchase race.
+
+Each subsequent change starts independently after that first page:
+
+- Insert pending order 203 for customer 3 at `2026-10-21 09:00:00+00`: OFFSET 2 repeats 201; the keyset continuation returns 103 and 102. The newly leading 203 is outside that continuation.
+- Delete 202 in a hypothetical list experiment: OFFSET 2 starts at 102 and omits 103; the keyset continuation still starts at 103. This is a list deletion illustration, with dependent rows outside its projected scenario.
+- Correct unread order 103's timestamp to `2026-10-21 08:00:00+00`: its position moves before the cursor and it is omitted. This is explicitly a hypothetical correction, separate from all core and history scenarios.
+
+The coordinator approved these projected-list rows and independent mutations, selecting IDs 201–203 to avoid the separately assigned order 105. Preserve the core 103 and 104 scenarios. The coordinator integrates the extension into the shared record. A mixed-direction case can reuse the same rows with `placed_at DESC, order_id ASC`. Nullable ordering needs a separately agreed optional scenario field, or a compact generic comparison example: neither `placed_at` nor `order_id` is nullable in the shop. No new schema field is assumed by this outline.
+
+## Primary-source checks · 25 October 2026
+
+- [PostgreSQL 18: LIMIT and OFFSET](https://www.postgresql.org/docs/18/queries-limit.html): unique ordering is required for predictable subsets; skipped rows are still computed. Mutation examples above are deductions from that ordinal contract, not observed runs.
+- [PostgreSQL 18: Sorting rows](https://www.postgresql.org/docs/18/queries-order.html) and [row constructor comparison](https://www.postgresql.org/docs/18/functions-comparisons.html#ROW-WISE-COMPARISON): later sort terms resolve ties; each direction is independent; row comparison is lexicographic and can yield unknown at a decisive NULL. For the core descending non-null order, continuation is `placed_at < :t OR (placed_at = :t AND order_id < :id)`, equivalently `(placed_at, order_id) < (:t, :id)`. The mixed variant uses `order_id > :id` in the equality branch. Previous-page retrieval reverses the strict predicate and all sort directions, then reverses the fetched rows for display.
+- [Google AIP-158](https://google.aip.dev/158): an API contract can keep tokens opaque, preserve other query arguments and check authorisation on every request. Use this as one documented design, not a universal SQL rule. Exact database timestamp precision must survive token encoding; token expiry and query changes need an application policy.
+- [PostgreSQL 18: Transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html): ordinary Read Committed SELECT uses a statement snapshot; successive SELECTs can differ even within one transaction. Repeatable Read reuses the snapshot established by its first non-transaction-control statement. Scope the concrete guarantee to PostgreSQL and to ordinary read-only database results; do not infer a serialisable business report or stability of external/volatile values.
+- [PostgreSQL 18: DECLARE](https://www.postgresql.org/docs/18/sql-declare.html): a SQL cursor fetches batches of one result. Its normal lifetime is the transaction; WITH HOLD survives commit in the same session by copying results to memory or temporary storage and still ends with the session. An API token and a held database cursor have different lifetimes and resource costs.
+- [PostgreSQL 18: Snapshot synchronisation](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-SNAPSHOT-SYNCHRONIZATION): another session can import an exported snapshot while the exporting transaction remains open. Its identifier is not a durable export or a reconnect token after that transaction ends. Full parallel-worker setup is unnecessary here.
+- [PostgreSQL 18: Routine vacuuming](https://www.postgresql.org/docs/18/routine-vacuuming.html#VACUUM-FOR-SPACE-RECOVERY): old versions cannot be removed while potentially visible to transactions. This supports the retention cost of a long snapshot; cancellation and cleanup mechanics belong in application SQL. Materialising the complete projected values trades that continued snapshot for stored output; storing only IDs freezes membership at best.
+
+No execution, timings or page-count measurements were made. The planner's worked changes and resource comparisons are illustrative deductions from documented behaviour. Any later observed claim needs the coordinator's disposable-system evidence.
+
+## Ownership and continuity
+
+No new nested article is proposed: this article owns both continuation correctness and export consistency completely. Contextual onward reading goes to the already-owned indexes and application SQL articles; adding them as children would change the accepted tree. Query results already owns row meaning, so only the pagination consequence of a join's multiplicity belongs here. General isolation analysis, storage cleanup internals, engine-specific export procedures and durable job recovery remain with their accepted owners.
+
+Continuity pass checked the outline against the intended prerequisites and supplied schema. The article supplies its own next-page predicate and export decision without requiring an indexing detour. A unique ID is a tie-breaker, not commit order; a high-water ID/timestamp is not snapshot membership. The closing resource decision applies the earlier distinction rather than adding a separate operating manual. The coordinator approved the extra list rows and independent mutations. Nullable ordering can use a clearly generic micro-example without expanding the shop schema. No unresolved ownership change.

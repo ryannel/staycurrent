@@ -74,24 +74,63 @@ These scenarios start from the shared rows above. They are separate explorations
 
 ## Worked integrity scenarios
 
-- Tenant integrity: tenant10 has the starting shop rows; tenant20 has a distinct customer4, Rowan Vale. In this variant customers keep globally unique customer_id, and orders also carry tenant_id. A proposed order with tenant_id10 and customer_id4 exposes a mismatched tenant/customer association; the composite reference must preserve both.
-- Room reservations: tea-tasting room R1 has reservation7001 on 2 November2026 from10:00 to11:00UTC. Attempted reservation7002 from10:30 to11:30 overlaps; reservation7003 from11:00 to12:00 is adjacent. All intervals are half-open [start,end). This is a resource non-overlap scenario, not an enrollment/capacity model.
-- Payment limit: from order103's starting state (line value29.00, no payments), suppose the shop prohibits total recorded payments exceeding the line value. Two proposed20.00 payments after separate reads can jointly exceed that rule. These are attempted scenario operations, not new committed starting rows. The constraints article exposes the unsafe aggregate check; transaction protocols have their own owner.
+- Tenant integrity: tenant 10 has the starting shop rows; tenant 20 has customer 4, Rowan Vale. Customer IDs remain globally unique. Orders also carry a tenant ID. The proposed pair `(tenant_id, customer_id) = (10, 4)` exposes a mismatched association.
+- Room reservations: R1 has reservation 7001 on 2 November 2026, 10:00–11:00 UTC. Attempt 7002 is 10:30–11:30 and overlaps; attempt 7003 is 11:00–12:00 and adjoins. All intervals use half-open `[start, end)` bounds. This is a resource non-overlap scenario.
+- Payment limit: starting from order 103's line value 29.00 and no payments, suppose total recorded payments may not exceed the line value. Two attempted payments of 20.00 (attempt IDs 601 and 602) after separate reads can exceed the rule together. These are scenario attempts, not new starting rows.
+- Deferred reference: new order 105 belongs to customer 1, placed 25 October 2026 at 12:00 UTC, pending. Its line 1 is P7, quantity 1, unit price 20.00. The line arrives before its parent within the same illustrative transaction.
 
 ## Modelling scenarios
 
-These illustrations start independently from the shared rows unless stated otherwise. An additional order-103 line 3 for P7 distinguishes line identity from product identity. Customer 1's current name can be corrected from Mina Shah to Mina Patel. A later P7 catalogue price is 22.00; its agreed order-103 unit price remains 20.00, preserving the order total29.00 rather than repricing it to31.00.
+These illustrations start independently from the shared rows unless stated otherwise.
 
-For higher-form examples the offers are (S1,P7,North), (S1,P3,South), (S2,P7,South); (S1,P7,South) is absent. P7 has independent tags gift/ceramic and suppliers S1/S2. A subtype example gives P3 origin Japan and P7 capacity300ml. A category hierarchy has Teaware→Mugs→Blue mugs; a multiple-parent alternative also places Mugs under Gifts.
+- Add order 103 line 3 for P7 to distinguish line identity from product identity.
+- Correct customer 1's current name from Mina Shah to Mina Patel.
+- A later P7 catalogue price is 22.00. Its agreed order-103 unit price remains 20.00, preserving the order total 29.00; repricing it would give 31.00.
+- Offers are `(S1, P7, North)`, `(S1, P3, South)`, `(S2, P7, South)`. `(S1, P7, South)` is absent.
+- P7 has independent tags gift/ceramic and suppliers S1/S2.
+- A subtype example gives P3 origin Japan and P7 capacity 300 ml.
+- Categories are Teaware → Mugs → Blue mugs. A multiple-parent alternative also places Mugs under Gifts.
 
-Values also uses independent calculation/comparison/clock illustrations: divide P7's20.00 into three shares without adding payments; compare written forms P7/p7 without creating another product; compare the Stockholm calendar day25October2026 with elapsed hours. The writer verifies the named-zone result and records the runtime; these are separate illustrations, not changes to order103's time or shop rows.
+## Calculation and clock scenarios
+
+Divide P7's 20.00 into three shares without adding payments; compare written forms P7/p7 without adding a product. A separate clock example compares the Stockholm calendar day 25 October 2026 with 24 elapsed hours. It does not change order 103's time or the shop rows. The writer retains the actual named-zone verification and runtime.
 
 ## History scenarios
 
-For catalogue history, P7's22.00 price is initially recorded on21October2026at12:00UTC as effective from22October00:00UTC. On24October09:00UTC its effective time is corrected to21October00:00UTC. Earlier price20.00 applies before the relevant effective boundary. These recorded/effective times support separate questions about what applied and what the system knew. Order103 remains20October, agreed unit price20.00 and total29.00.
+P7's price 22.00 is initially recorded on 21 October 2026 at 12:00 UTC as effective from 22 October at 00:00 UTC. On 24 October at 09:00 UTC, its effective time is corrected to 21 October at 00:00 UTC. Price 20.00 applies before the relevant effective boundary. Use a displayed window beginning 20 October, without inventing an earlier origin date. These are business recording/effective times, not asserted database commit timestamps. Order 103 remains on 20 October, with agreed unit price 20.00 and total 29.00.
 
-A separate hypothetical later customer1 deletion request can include a generated invoice PDF and search copy as external dependants. No retention duration, policy decision or legal outcome is specified.
+A separate hypothetical later customer-1 deletion request includes a generated invoice PDF and a derived search copy as external dependants. No retention duration or legal outcome is specified; the scenario takes an approved policy decision as an input.
 
 ## Catalogue import B17
 
-Independent immutable source rows have identity(batch_id,row_no):1=P7/Blue mug/22.00;2=newP11/Tea strainer/8.00;3=P3/Green tea,50g/-4.50(rejected);4=P9/Teapot/36.00. This feed owns catalogue name and price only. Existing stock and order-line agreed prices remain unchanged; new P11 starts stock0. Rows1and2 and their applied records commit; work stops before row4's chunk starts, leaving row3 rejected and row4 pending. This is a known pre-start interruption, not an uncertain commit outcome. A separate duplicate-P7 variant demonstrates conflicting destination product keys and is rejected before application.
+Immutable source rows have identity `(batch_id, row_no)`:
+
+| Row | Product | Name | Proposed price |
+| --- | --- | --- | --- |
+| 1 | P7 | Blue mug | 22.00 |
+| 2 | P11 (new) | Tea strainer | 8.00 |
+| 3 | P3 | Green tea, 50 g | -4.50 (rejected) |
+| 4 | P9 | Teapot | 36.00 |
+
+The feed supplies catalogue name and price. Existing stock and order-line agreed prices stay unchanged; new P11 starts with stock 0. Rows 1 and 2 and their applied records commit. Work stops before row 4's chunk starts, leaving row 3 rejected and row 4 pending. This is a known pre-start interruption. Resuming applies row 4; final accounting is 4 received, 4 validation decisions, 1 rejected, 3 applied and 0 pending.
+
+A separate duplicate-P7 input proposes 22.00 and 23.00; both source rows are rejected before application. A separate stock-replenishment illustration starts at 1: adding 2 reaches 3, and an accidental additive replay reaches 5. Neither variation changes B17's starting rows.
+
+## Application purchase replay
+
+Replay order 103 creation before that order or its lines exist, with stock P3 = 12, P7 = 1, P9 = 4. Success produces the supplied pending order 103 and two lines, stock P3 = 10, P7 = 0, P9 = 4, and no payment. Other existing orders/payments remain unchanged. This is the introduction's before/after-purchase scenario.
+
+## Pagination list scenarios
+
+An independent projected list adds pending order rows 201 and 202, customer 3, both placed 20 October 2026 at 10:15 UTC, tied with 103. Their unused line/payment details are unspecified. Descending `(placed_at, order_id)` gives 202, 201, 103, 102, 101. Page size 2 ends at 201; the next cursor needs timestamp and ID to retain 103.
+
+Independent next-page mutations:
+
+- Insert 203 at 21 October 2026, 09:00 UTC, exposing an offset repeat.
+- Delete 202, exposing offset omission of 103.
+- Correct unread 103 to 21 October 2026, 08:00 UTC, exposing omission across a keyset boundary.
+- Move already-read 202 to 19 October 2026, 12:00 UTC, exposing a repeat after cursor 201.
+
+Preserve core 103/104 and the separate constraint-deferral 105 scenario.
+
+For a separate export comparison, change unread 103 from pending to paid between batches while its sort key stays fixed. Compare separate Read Committed observations with one read-only Repeatable Read transaction whose first SELECT has already established its snapshot. A retained projection created by one SELECT can keep the earlier status; retaining IDs then joining live rows cannot preserve earlier values. Native two-session verification is being recorded by the pagination writer.

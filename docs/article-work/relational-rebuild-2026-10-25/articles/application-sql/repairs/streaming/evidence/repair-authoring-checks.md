@@ -1,0 +1,10 @@
+# Scoped repair authoring checks
+
+Read the whole current article before repair. After repair, reread the new consumption section with preceding mapping and following N+1, then the existing multi-query snapshot, connection ownership, release/disposal and deadline/cancellation uses. Continuity decisions and source/behaviour evidence are in repair-notes.md. No unrelated rewrite or fresh full review was initiated.
+
+- New helper uses actual promise API of installed pg-cursor2.22.1. Bound customer parameter, explicit order-line projection and ORDER BY match the same shared facts in new Figure2. The two-row batch is an explanation size, not a production tuning claim.
+- Awaited read/consumer/close and final release/discard form one owner. A thrown read/consumer/close leaves discard=true and original failure escapes; normal completion and early false close before reuse. Explicit surrounding transactions and stuck reads/consumers are qualified beside the decision and routed to existing ownership/deadline explanations.
+- LIMIT/result bounds, read batch bounds, total server work and resource lifetime are distinguished. Backpressure requires an awaited bounded consumer; continuation and snapshot correctness stay with pagination. Canonical neighbour slug confirmed as large-results.
+- Scoped native verifier and counterexamples pass; actual limits in repair-notes.md. Earlier verify.mjs/PGlite/native results match their original hashes and remain unchanged.
+- Section IDs unique. Figures now1–5; all local numeric references updated. Existing figure logic unchanged except labels. No new controls were introduced; earlier existing-control checks retained.
+- Build and changed-media rendered checks requested from coordinator. Source hashb579b6e87c5e466edcc3a86e4933b090b49e6540b157f6106c50b0e28bcf4d89. New-turn IAB unavailable; inventory only exposes Chrome. No viewport/theme changed by writer and no tab created on the failed IAB attempt. Awaiting central rendered check or a coordinated Chrome lease. Do not credit v01 rendered checks to the new figure.

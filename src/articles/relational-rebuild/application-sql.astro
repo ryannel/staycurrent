@@ -1,0 +1,286 @@
+---
+import { Code } from 'astro:components';
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Loading from '../../components/relational-rebuild-application-sql/Loading.astro';
+import Lifecycle from '../../components/relational-rebuild-application-sql/Lifecycle.astro';
+import Consumption from '../../components/relational-rebuild-application-sql/Consumption.astro';
+const history = `const { rows } = await pool.query(
+  \`SELECT order_id, placed_at, status
+   FROM orders
+   WHERE customer_id = $1
+   ORDER BY placed_at DESC, order_id DESC
+   LIMIT $2\`,
+  [customerId, 20]
+);`;
+const sort = `const sorts = new Map([
+  ['newest', 'placed_at DESC, order_id DESC'],
+  ['oldest', 'placed_at ASC, order_id ASC']
+]);
+const orderBy = sorts.get(requestedSort);
+if (!orderBy) throw new Error('Unsupported sort');
+
+const { rows } = await pool.query(
+  \`SELECT order_id, placed_at, status
+   FROM orders WHERE customer_id = $1
+   ORDER BY \${orderBy} LIMIT $2\`,
+  [customerId, 20]
+);`;
+const batch = `SELECT order_id, line_no, product_id, quantity, unit_price
+FROM order_items
+WHERE order_id = ANY($1::integer[])
+ORDER BY order_id, line_no;`;
+const joined = `SELECT o.order_id, o.placed_at, o.status,
+       i.line_no, i.product_id, i.quantity, i.unit_price
+FROM orders AS o
+LEFT JOIN order_items AS i ON i.order_id = o.order_id
+WHERE o.customer_id = $1
+ORDER BY o.placed_at DESC, o.order_id DESC, i.line_no
+LIMIT 2;`;
+const boundedJoin = `WITH selected_orders AS (
+  SELECT order_id, placed_at, status
+  FROM orders
+  WHERE customer_id = $1
+  ORDER BY placed_at DESC, order_id DESC
+  LIMIT $2
+)
+SELECT o.order_id, o.placed_at, o.status,
+       i.line_no, i.product_id, i.quantity, i.unit_price
+FROM selected_orders AS o
+LEFT JOIN order_items AS i ON i.order_id = o.order_id
+ORDER BY o.placed_at DESC, o.order_id DESC, i.line_no;`;
+const purchase = `async function writeOrder103(tx) {
+  for (const [productId, quantity] of [['P3', 2], ['P7', 1]]) {
+    const changed = await tx.query(
+      \`UPDATE products SET stock = stock - $2
+       WHERE product_id = $1 AND stock >= $2
+       RETURNING stock\`,
+      [productId, quantity]
+    );
+    if (changed.rowCount !== 1) {
+      throw new PurchaseRejected(productId);
+    }
+  }
+  await tx.query(
+    \`INSERT INTO orders (order_id, customer_id, placed_at, status)
+     VALUES ($1, $2, $3, 'pending')\`,
+    [103, 1, '2026-10-20T10:15:00Z']
+  );
+  await tx.query(
+    \`INSERT INTO order_items
+       (order_id, line_no, product_id, quantity, unit_price)
+     VALUES ($1, 1, 'P7', 1, '20.00'),
+            ($1, 2, 'P3', 2, '4.50')\`,
+    [103]
+  );
+}`;
+const ownership = `const tx = await pool.connect();
+// The owner retains tx until commit/rollback and cleanup finish.
+await tx.query('BEGIN');
+await writeOrder103(tx);
+await tx.query('COMMIT');
+tx.release();`;
+const consumption = `import Cursor from 'pg-cursor';
+
+async function consumeOrderLines(pool, customerId, consume) {
+  const client = await pool.connect();
+  let discard = true;
+  try {
+    const cursor = client.query(new Cursor(
+      \`SELECT i.order_id, i.line_no, i.product_id,
+              i.quantity, i.unit_price
+       FROM orders AS o
+       JOIN order_items AS i ON i.order_id = o.order_id
+       WHERE o.customer_id = $1
+       ORDER BY i.order_id, i.line_no\`,
+      [customerId]
+    ));
+    for (;;) {
+      const rows = await cursor.read(2);
+      if (rows.length === 0) break;
+      if (await consume(rows) === false) break;
+    }
+    await cursor.close();
+    discard = false;
+  } finally {
+    client.release(discard);
+  }
+}`;
+---
+
+<p>A SQL query can be correct on its own and still become the wrong application behaviour. A value pasted into its text can change the question. An order object can hide a query every time its lines are read. A transaction can start on one connection while its writes run on another.</p>
+<p>The application boundary is where SQL text and input values go to the database, and rows, completion messages and errors come back. A <em>driver</em> carries those messages. A <em>connection pool</em> lends the application reusable connections. A query builder or object-relational mapper, usually called an ORM, can construct SQL and turn rows into objects above that driver. Each layer must preserve the meaning of the request.</p>
+<p>Every example follows the shop from <a href="/learn/databases/relational/">Relational databases</a>. Mina Shah, customer 1, has orders 103 and 101, with two lines each. We will load her history, then go back to just before order 103 to create its pending purchase of one blue mug and two teas. The code uses JavaScript and node-postgres, the <code>pg</code> driver for PostgreSQL. The same questions apply in other languages; placeholder syntax and cleanup APIs differ.</p>
+
+<section aria-labelledby="request"><h2 id="request">From an application request to SQL</h2>
+<p>Mina’s order-history request asks for orders belonging to customer 1, newest first. The application derives that customer ID from her authenticated identity. The driver receives a query and its values separately:</p>
+<div class="sql-scroll" role="region" tabindex="0" aria-label="Read the newest orders with node-postgres"><Code code={history} lang="javascript" theme="css-variables" /></div>
+<p><code>pool.query</code> borrows a connection, sends the query and returns it after the query finishes. <code>$1</code> and <code>$2</code> mark value positions, supplied here as the customer ID and a limit of 20. The result’s <code>rows</code> array contains two order rows: 103, pending, followed by 101, paid. It contains no order lines yet.</p>
+<figure class="boundary-figure">
+  <figcaption><span class="figure-number">Figure 1</span><strong>One request crosses the boundary</strong></figcaption>
+  <div class="boundary-route">
+    <div><span class="panel-label">Application</span><b>Mina’s order history</b><p>customerId = 1<br/>limit = 20</p></div>
+    <span class="route-arrow" aria-hidden="true">↓</span>
+    <div><span class="panel-label">Driver · borrowed connection</span><b>Text + bound values</b><p><code>WHERE customer_id = $1</code><br/><code>[1, 20]</code></p></div>
+    <span class="route-arrow" aria-hidden="true">↓</span>
+    <div><span class="panel-label">PostgreSQL → driver → application</span><b>Two rows, in the requested order</b><p>103 · 20 October · pending<br/>101 · 12 October · paid</p></div>
+  </div>
+  <p class="figure-note">The pool chooses a connection; the SQL chooses the rows. The driver maps each returned column to a value in the result. This is a schematic path, not a measured trace.</p>
+</figure>
+<p>A query builder expresses the same filter, order and limit through its own API. An ORM may return order objects instead of plain rows. Neither changes what the database is being asked. Read the generated SQL when checking behaviour: which customer is selected, how many rows are allowed, and whether accessing an object sends another query.</p>
+</section>
+
+<section aria-labelledby="parameters"><h2 id="parameters">Parameters and SQL structure</h2>
+<p>A parameter supplies a value to an expression. It cannot become a new clause. A hostile string such as <code>1 OR TRUE</code> bound as a customer ID will not widen the filter: PostgreSQL expects an integer there and rejects that string. Concatenated into <code>WHERE customer_id = </code>, the same text becomes part of the SQL and selects every customer’s orders. This is SQL injection.</p>
+<p>Keep input values out of the text even when they seem easy to escape. Bind names, dates, amounts and lists through the driver’s documented API. node-postgres converts a JavaScript array to a PostgreSQL array parameter; the batched loader below uses that to supply several order IDs.</p>
+<p>SQL structure needs a different decision. <code>ORDER BY $1</code> does not make a bound string into a column name, and a parameter cannot stand for <code>ASC</code> or <code>DESC</code>. If Mina can choose oldest or newest first, select from two pieces of SQL owned by the application:</p>
+<div class="sql-scroll" role="region" tabindex="0" aria-label="Choose SQL structure from two application-controlled sorts"><Code code={sort} lang="javascript" theme="css-variables" /></div>
+<p>The interpolation is safe because <code>orderBy</code> can contain only one of those two fixed strings. The request chooses a key in the map; it never supplies the SQL fragment. For genuinely variable identifiers, use the library’s identifier-quoting facility and still decide which objects the caller is allowed to name.</p>
+<p>Binding values does not require naming a prepared statement. node-postgres accepts the text and values above without a name. Supplying a <code>name</code> in its query configuration additionally asks it to reuse a server-side prepared statement on each connection that uses it. That concerns repeated preparation and planning; it is separate from keeping values out of executable text.</p>
+</section>
+
+<section aria-labelledby="mapping"><h2 id="mapping">Mapping the result</h2>
+<p>The result is an interface to the rest of the application. Its contract includes the selected column names, their types, the meaning of one row and how many rows may appear. Selecting explicit columns keeps a schema addition from silently becoming part of that interface. When a join returns two columns with the same name, give them distinct aliases before mapping them to an object.</p>
+<p>The database and the language do not necessarily represent a value the same way. An exact decimal in PostgreSQL should not silently become an approximate calculation in application code. An instant should not turn into an unexplained local clock reading.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Mapping shop values with default node-postgres parsers"><table><caption>Values at the boundary · node-postgres defaults, without custom parsers</caption><thead><tr><th>Selected value</th><th>JavaScript receives</th><th>What to preserve</th></tr></thead><tbody>
+<tr><td><code>order_id</code> 103, PostgreSQL <code>integer</code></td><td>Number <code>103</code></td><td>The order’s identity. Do not assume a wider integer type has the same conversion.</td></tr>
+<tr><td><code>unit_price</code> 4.50, PostgreSQL <code>numeric(8,2)</code></td><td>String <code>"4.50"</code></td><td>An exact decimal amount. Use decimal arithmetic or a deliberately defined scaled-integer representation for calculations.</td></tr>
+<tr><td><code>placed_at</code> for order 103</td><td>A <code>Date</code>; <code>toISOString()</code> gives <code>2026-10-20T10:15:00.000Z</code></td><td>The instant. Choose the display time zone explicitly. JavaScript Date keeps milliseconds; PostgreSQL can hold finer precision.</td></tr>
+<tr><td>No matching payment in a left join</td><td>A row with <code>payment_id: null</code></td><td>The missing match. There is no payment row behind those null payment columns.</td></tr>
+</tbody></table></div>
+<p>For a lookup that should find at most one row, check <code>rows.length</code> before using <code>rows[0]</code>. An empty array means no row was returned. A row containing <code>null</code> exists and carries a missing value in that column. In the table’s left-join result, the payment key cannot itself be null in a stored payment row, so it distinguishes an unmatched payment from a matched one.</p>
+<p>Choose where conversion happens and test it with the actual driver configuration. A type annotation on a query result does not validate the database response or install a parser. Custom parsers, JSON construction inside SQL and ORM mappings can all change these defaults. <a href="/learn/databases/relational/values/">Values, missing data and equality</a> develops the stored meanings; the boundary must carry those meanings into the program.</p>
+<h3 id="write-result">Reading a write’s result</h3>
+<p>A write has two useful results: how many rows it affected, and any rows it explicitly returned. In node-postgres an <code>UPDATE</code> without <code>RETURNING</code> can have <code>rowCount === 1</code> and an empty <code>rows</code> array. Adding <code>RETURNING stock</code> makes the changed stock available too.</p>
+<Sql code={`UPDATE products SET stock = stock - $2
+WHERE product_id = $1 AND stock >= $2
+RETURNING stock;`} label="Allocate stock only if enough is available" />
+<p>With values <code>['P7', 1]</code> before order 103, this changes one row and returns stock 0. Run the same change again after the purchase and it changes zero rows, returning none. The statement completed successfully; its condition did not match. It does not tell the caller whether the product was absent or lacked enough stock. The purchase code must recognise the unsuccessful allocation and abandon the whole purchase, including any earlier stock change.</p>
+</section>
+
+<section aria-labelledby="consuming"><h2 id="consuming">Consuming a large result</h2>
+<p>The history query asks for at most 20 orders and returns them as one array. An export may need far more rows. Increasing the limit and collecting everything in <code>rows</code> can make the application hold the whole result before it can finish processing it. An incremental reader delivers parts of one result as the application is ready for them.</p>
+<p>A cursor keeps a position in that result. With <code>pg-cursor</code>, the application asks for a batch, processes it, then asks for the next. The batch size bounds the rows delivered by each read; it is different from a SQL <code>LIMIT</code>, which bounds the result itself. Figure 2 follows Mina’s four order lines in two-row batches. Watch how long the connection belongs to the reader.</p>
+<Consumption />
+<p>This helper uses <code>pg-cursor</code> 2.22.1 and that same small batch size so the example is easy to follow. Its promise-based <code>read</code> returns an array of rows directly. The caller supplies an asynchronous <code>consume</code> function, such as a bounded writer to an export file. It can return <code>false</code> to stop early.</p>
+<div class="sql-scroll" role="region" tabindex="0" aria-label="Consume an order-line result incrementally and release or discard its connection"><Code code={consumption} lang="javascript" theme="css-variables" /></div>
+<p>Each <code>await consume(rows)</code> finishes before the next read. This pacing is called <em>backpressure</em>: a slow consumer slows the producer instead of building an ever-growing queue in application memory. The consumer must honour that contract. Launching a write without awaiting it, or appending every batch to a growing array, would accumulate work again. In a real export, choose the batch size for row width as well as count; two large documents can cost more memory than a hundred narrow rows.</p>
+<p>On completion, a read returns an empty batch. On an early stop, unread rows remain. Both successful paths await <code>cursor.close()</code> before returning the connection. If a read, the consumer or closing throws, this deliberately conservative helper calls <code>release(true)</code> to discard the client, and the original error escapes. It never lends an unfinished result to the next borrower. Releasing an open cursor normally would mark the client available while its result still owns the connection; another query can then wait behind work nobody will finish.</p>
+<p>Incremental consumption bounds neither all server work nor the lifetime of the connection. A sort may need substantial work before producing its first row, and a slow export keeps its connection and database resources occupied. If a surrounding transaction owns the reader, closing the result does not finish that transaction: its owner still commits or rolls back before release. This helper owns its connection and runs without an explicit surrounding transaction. It also needs the deadline policy described below if a read or consumer stops responding; returning <code>false</code> handles an orderly early stop, not cancellation of in-flight work.</p>
+<p>Reading a result in batches does not make it resumable after a broken connection. For an export that must resume or describe one consistent view, <a href="/learn/databases/relational/large-results/">Pagination and consistent exports</a> develops the continuation, ordering and snapshot choices.</p>
+</section>
+
+<section aria-labelledby="n-plus-one"><h2 id="n-plus-one">The N+1 query problem</h2>
+<p>The history query loaded two orders. Suppose the application now loops over them and queries each order’s lines. It sends one query for the list, then one for 103 and another for 101: three queries. With N orders, that shape is N+1 queries. An ORM can hide the loop when reading <code>order.lines</code> lazily loads the relationship.</p>
+<p>Figure 3 loads the same two orders three ways. Follow one query per order first, then switch to a batch and a join. Count both the queries and the rows that travel back.</p>
+<Loading />
+<p>The batched version keeps the two order IDs from the first result and asks for all their lines together. In node-postgres its values argument is <code>[[103, 101]]</code>: one parameter whose value is an array.</p>
+<Sql code={batch} label="Load all lines for a selected array of order IDs" />
+<p>Group those rows by <code>order_id</code> and attach each group to its order. Keep the parent list’s existing order: this line query orders by order ID, which does not replace the requested newest-first order of the parents. An order with no lines gets an empty collection rather than disappearing.</p>
+<p>The batch needs two queries and transfers six rows, two parents and four lines. A joined load needs one query and transfers four joined rows, repeating each order’s columns beside each of its two lines. On a larger collection that repetition can be substantial. Neither count tells you the bytes transferred or all the work inside the server, but three sequential round trips put three network waits on the path. Query count is a useful first observation, not the whole cost.</p>
+<h3 id="choosing-load">Choosing what to load</h3>
+<p>If the page only shows the order ID and status, do not load its lines. If it needs the complete lines, select a bounded set of orders first. A limit placed after joining counts joined rows:</p>
+<Sql code={joined} label="A limit on joined rows does not select two complete orders" />
+<p>For Mina, <code>LIMIT 2</code> returns the two lines of order 103 and nothing from 101. It has selected two rows, not two orders. A different limit can even cut an order’s collection in half. Put the parent selection inside the query instead:</p>
+<Sql code={boundedJoin} label="Select the parent orders before attaching all their lines" />
+<p>With values <code>[1, 2]</code>, the inner query selects orders 103 and 101. The outer left join attaches their four lines and would retain an order with no lines. A batched load makes the same separation through two statements. A bound on parents does not bound the total number of lines if one order can contain many; decide what the response can accommodate.</p>
+<p>ORMs offer these choices under names such as lazy loading, joined eager loading and select-in loading. SQLAlchemy, for example, documents select-in loading as a separate query using parent keys, while a joined load repeats parent columns across the joined rows. Inspect SQL and query counts with the intended relationships loaded. One method call is not a promise of one database query.</p>
+<h3 id="several-queries">Several queries and one result</h3>
+<p>The two batched queries are also two observations. Another transaction may commit between them. Holding one connection does not by itself freeze the data. Even inside a PostgreSQL transaction at the default Read Committed isolation level, successive <code>SELECT</code> statements can see different committed states.</p>
+<p>For an order-history screen, seeing a newly added line alongside the order selected a moment earlier may be acceptable. For an export that must describe one point in time, it may not be. State that requirement before choosing the loader. One statement gives this ordinary PostgreSQL read one statement snapshot; a multi-statement result that needs a shared snapshot requires an isolation choice. The planned Transactions and isolation reading owns that design.</p>
+</section>
+
+<section aria-labelledby="connections"><h2 id="connections">Connections and transaction ownership</h2>
+<p>Go back to before order 103. It and its lines do not exist yet; P3 has stock 12 and P7 has stock 1. The purchase must allocate two teas and one mug, insert order 103 and insert its two lines. One transaction owns those changes.</p>
+<p>A PostgreSQL transaction belongs to a database session, reached through one connection. Several calls to <code>pool.query</code> can borrow different connections. Sending <code>BEGIN</code> through that convenience method does not make later pool calls join its transaction.</p>
+<figure class="boundary-figure">
+  <figcaption><span class="figure-number">Figure 4</span><strong>A transaction cannot follow the request between connections</strong></figcaption>
+  <div class="split-connections"><div><span class="panel-label">Connection A</span><ol><li><code>BEGIN</code></li><li>Waits in its open transaction</li><li><code>ROLLBACK</code></li></ol><p>No stock change here to undo</p></div><div><span class="panel-label">Connection B</span><ol><li>No explicit transaction</li><li><code>UPDATE</code> reduces P7 stock</li><li>That statement commits</li></ol><p>P7 remains at 0</p></div></div>
+  <p class="figure-note">An illustrative possible dispatch if calls borrow independently. Rolling back A cannot undo B’s already committed statement. The request’s logical grouping is invisible to the pool.</p>
+</figure>
+<p>Check out a client once and pass it into every helper that participates in the transaction. Here <code>tx</code> is that client. The helper checks each guarded change and writes the known order facts. <code>PurchaseRejected</code> is an application error indicating that an allocation did not match; it must escape to the transaction owner.</p>
+<div class="sql-scroll" role="region" tabindex="0" aria-label="Write order 103 through the caller’s transaction"><Code code={purchase} lang="javascript" theme="css-variables" /></div>
+<p>The helper does not acquire another connection, commit or catch and ignore a rejection. Its caller owns completion. The successful path has this shape:</p>
+<div class="sql-scroll" role="region" tabindex="0" aria-label="The success path through one checked-out client"><Code code={ownership} lang="javascript" theme="css-variables" /></div>
+<p>This short listing shows only success; Figure 5 supplies the error paths that must surround it. After a confirmed commit, P3 stock is 10 and P7 stock is 0. Order 103 is pending, with line value 29.00 and no payment. A helper that commits its own part could leave reduced stock even if a later insert fails. Keep the ownership at the level that can decide whether the whole purchase is acceptable.</p>
+<h3 id="borrowing">Borrowing and returning a connection</h3>
+<p>Keep a pool for the process, rather than constructing one for each HTTP request. Borrow a connection for the database work and return it on every completed path. A pool with all its clients checked out makes the next borrower wait. A forgotten release can therefore stall requests that have nothing to do with the failed one. Pool budgets and overload policy belong to the planned Connections, overload and capacity reading.</p>
+<p>Returning a client with <code>release()</code> makes it available to another borrower. <code>release(true)</code> removes and disconnects that client instead. <code>pool.end()</code> closes the pool during process shutdown or at the end of a script; it is not the way to finish each request. Handle the pool’s documented background error event too, because an idle connection can fail while no request is using it.</p>
+<p>Do request validation and unrelated remote waits before beginning this transaction where possible. Waiting for an email provider while holding the purchase open keeps its connection and any locks occupied. Moving that call after commit reduces the time held, but raises a separate delivery problem later in this article.</p>
+<h3 id="session-state">Session state survives a request</h3>
+<p>A reusable connection reaches a reusable database session. That session can retain settings after the request ends. Returning it to the pool is not itself a promise to reset them.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Session settings after a connection returns to the pool"><table><caption>Two borrowers of the same PostgreSQL session, initially in UTC</caption><thead><tr><th>First borrower does</th><th>After completion and release</th><th>Next borrower sees</th></tr></thead><tbody><tr><td><code>SET TIME ZONE 'Europe/Stockholm'</code></td><td>The session setting remains</td><td><code>Europe/Stockholm</code></td></tr><tr><td><code>BEGIN</code>, then <code>SET LOCAL TIME ZONE 'Europe/Stockholm'</code>, then <code>COMMIT</code></td><td>The local setting ends with the transaction</td><td><code>UTC</code>, its earlier session setting</td></tr></tbody></table></div>
+<p>Establish stable defaults when a connection is created, and scope temporary settings to the transaction where appropriate. PostgreSQL’s <code>SET LOCAL</code> reverts at commit or rollback; it does not clean up earlier session-level changes. Apply the same care to settings such as statement timeouts and schema lookup. A connection reset policy must account for all the session features the application uses.</p>
+<h3 id="orm-session">ORM sessions and commits</h3>
+<p>An ORM’s session or unit of work tracks objects and their pending changes. Changing an object, flushing its changes as SQL and committing the database transaction are distinct steps. A flush can send an <code>UPDATE</code> without committing it. Some operations flush automatically: SQLAlchemy can flush pending changes before an ORM query and flushes them before commit. Lazy relationship access can also read the database.</p>
+<p>Locate the transaction owner in the ORM API and pass its context through participating helpers, just as with <code>tx</code>. Keep one mutable unit of work local to the request or concurrent task it serves; SQLAlchemy specifies a Session per thread and an AsyncSession per task. Sharing one between unrelated requests can mix their pending changes and transaction decisions. The useful review question remains “which statements run, on whose transaction, and who commits them?”</p>
+</section>
+
+<section aria-labelledby="cleanup"><h2 id="cleanup">Errors and connection cleanup</h2>
+<p>The request can fail without the database reporting an error. A zero-row guard is one example; an exception in the application is another. A database rejection is different again. PostgreSQL reports a stable five-character SQLSTATE code, with a separate constraint name for an integrity violation. Preserve those fields through the data layer. Match an expected code and constraint when translating a rejection; do not classify it by searching human-readable message text.</p>
+<p>For example, <code>23505</code> means a uniqueness violation, but does not by itself say “this logical request was already completed”. It could name an unrelated unique constraint. A syntax error is a programming fault, not a customer rejection, and a broken socket does not carry the same knowledge as a database answer. Keep the original cause when adding application context.</p>
+<p>Follow Figure 5 through a stock rejection and a SQL error before trying the two broken-connection paths. The connection and the purchase outcome are separate things to settle.</p>
+<Lifecycle />
+<p>After a statement error inside an ordinary PostgreSQL transaction, subsequent commands are rejected with <code>25P02</code>, “in failed SQL transaction”, until the transaction is rolled back. The full rollback here abandons the purchase. Savepoints allow narrower recovery in other designs, but merely catching the driver exception does not restore this transaction.</p>
+<p>Put release in the owner’s final cleanup path, after outstanding work and transaction completion. If rollback fails or the connection’s usable state cannot be established, discard the client instead of lending it to another request. Keep the original purchase or database failure as the main error, with cleanup failure recorded alongside it. Otherwise an exception from <code>ROLLBACK</code> can hide the reason cleanup was needed.</p>
+<h3 id="deadlines">Deadlines and cancellation</h3>
+<p>A request deadline can expire while waiting to borrow a connection, while a query runs or while commit is in flight. Those are different situations. A client-side timer that stops waiting does not prove the server stopped. Nor does the browser cancelling its HTTP request automatically cancel a database query.</p>
+<p>PostgreSQL’s <code>statement_timeout</code> limits how long a statement runs at the server. It does not include the application’s earlier wait for a pool client or bound the whole HTTP request. A transaction-local timeout can protect this purchase’s statements without leaving a changed session timeout for the next borrower.</p>
+<p>When the request is abandoned, stop scheduling further purchase work. Use the driver’s documented cancellation mechanism if available, then wait for the original query’s completion or dispose of its connection. PostgreSQL cancellation can arrive too late to affect a finished statement; sending the cancellation request alone is not confirmation. A confirmed statement cancellation inside the transaction still requires rollback before reuse. Keep time for that cleanup, or discard the connection if it cannot finish safely within the cleanup budget.</p>
+<h3 id="missing-commit">When the commit reply is missing</h3>
+<p>Before <code>COMMIT</code> is sent, the owner can abandon its open transaction. After it is sent, losing the reply leaves a different question: did the server commit? The same connection failure can follow a commit or precede it. Neither cancellation nor a later rollback attempt proves that an already committed purchase failed.</p>
+<p>Return that uncertainty to the caller. Disposing of the connection protects the next borrower; it does not resolve whether order 103 exists. Do not turn “commit not confirmed” into “nothing happened” and repeat the purchase. The planned Retries and uncertain commit outcomes reading owns request identity, deduplication and recovery of the recorded result. A specific database rejection of commit can provide a known failure; a missing answer cannot.</p>
+</section>
+
+<section aria-labelledby="external"><h2 id="external">External work after a database change</h2>
+<p>Suppose the shop emails Mina when it accepts order 103. Sending the email inside the transaction holds database resources while the provider answers. It also cannot make the email roll back: the provider might accept it before a later database failure. Sending it after commit leaves the opposite gap. The process can stop after storing the order and before making the call.</p>
+<p>Record a durable intention to send the confirmation in the same database transaction as the order. That intention and the purchase then commit together. A separate worker delivers it later. This is a <em>transactional outbox</em>. It closes the gap between the committed order and the existence of work to deliver, rather than making the external service part of the database transaction.</p>
+<p>The worker still needs to handle a lost provider reply, duplicate delivery and its own failure. The planned Outboxes and database-backed jobs reading owns those protocols. Fire-and-forget code after commit supplies no durable record from which to recover.</p>
+</section>
+
+<section aria-labelledby="identity"><h2 id="identity">The identity behind a connection</h2>
+<p>The database authenticates the account that opened the connection. That is often an application account shared by requests from many customers. It is different from Mina’s authenticated customer identity. Binding <code>customerId</code> safely prevents it from changing the SQL structure; it does not decide which customer Mina is allowed to request.</p>
+<p>Derive or validate the row scope through the application’s authorisation rules. Where database row policies also enforce scope, establish their context deliberately on the actual connection and give it the same lifecycle care as other session state. A stale customer context on a reused connection is an access failure, even if every query is parameterised.</p>
+<p>Runtime requests, schema migrations and support investigations also do different work. Give each deliberate database authority rather than using a powerful administrative identity for all three. The planned Database access and least privilege reading owns that design and its verification.</p>
+</section>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against the primary documentation on 25 October 2026. Figures illustrate the stated request and connection paths; they are not traces or timings. The shop SQL was checked with PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly. The driver mappings, guarded purchase, failed-transaction cleanup, session settings and split-connection counterexample were also checked with node-postgres 8.23.1 against an isolated PostgreSQL 18.6 server. The incremental reader’s completion, early stop and failure disposal were checked separately with pg-cursor 2.22.1 on PostgreSQL 18.6. Cancellation and missing-commit paths describe documented behaviour, rather than fault-injection runs.</p>
+<ul>
+<li>node-postgres: <a href="https://node-postgres.com/features/queries">Queries</a>, for parameters, identifiers and named prepared statements; <a href="https://node-postgres.com/features/types">Data types</a>, for value parsers and Date precision; <a href="https://node-postgres.com/apis/result">Result</a>, for returned rows and affected-row counts.</li>
+<li>node-postgres: <a href="https://node-postgres.com/features/transactions">Transactions</a> and <a href="https://node-postgres.com/apis/pool">Pool</a>, for connection ownership, checkout, release, disposal and background errors; <a href="https://node-postgres.com/apis/cursor">Cursor</a>, for incremental reads and closing an unfinished result.</li>
+<li><a href="https://raw.githubusercontent.com/brianc/node-postgres/0980cefebe0ae461da8883703be049fe13ca96cf/packages/pg-cursor/index.js">pg-cursor implementation</a>, for the promise reader’s array result and completion handling; Node.js, <a href="https://nodejs.org/en/learn/modules/backpressuring-in-streams">Backpressuring in streams</a>, for pacing a producer behind its consumer.</li>
+<li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/sql-set.html">SET</a>, for session and transaction-local settings; <a href="https://www.postgresql.org/docs/18/runtime-config-client.html">Client connection defaults</a>, for statement timeouts; <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a>, for statement snapshots at Read Committed; <a href="https://www.postgresql.org/docs/18/sql-select.html">SELECT</a>, for ordering and limits; <a href="https://www.postgresql.org/docs/18/sql-prepare.html">PREPARE</a>, for statement lifetime; <a href="https://www.postgresql.org/docs/18/tutorial-transactions.html">Transactions</a>, for rollback and implicit statement transactions.</li>
+<li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/errcodes-appendix.html">Error codes</a> and <a href="https://www.postgresql.org/docs/18/protocol-flow.html#PROTOCOL-FLOW-CANCELING-REQUESTS">Cancelling requests in progress</a>, for structured failures, cancellation and connection termination.</li>
+<li>SQLAlchemy 2.0: <a href="https://docs.sqlalchemy.org/en/20/orm/session_basics.html">Session basics</a>, for flush, commit and concurrency ownership; <a href="https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html">Relationship loading techniques</a>, for lazy, joined and select-in loading.</li>
+<li>Chris Richardson, <a href="https://microservices.io/patterns/data/transactional-outbox.html">Transactional outbox</a>, for committing an intention with the domain change and the remaining delivery problem.</li>
+</ul>
+
+<style is:global>
+  .relational-design .boundary-figure { margin:2rem 0;padding:1.3rem;border:1px solid var(--color-rule-strong);background:var(--color-surface-alt);font:.85rem/1.65 var(--font-sans); }
+  .relational-design .boundary-figure figcaption { display:block;margin-bottom:1rem;font:1.1rem/1.5 var(--font-serif);color:var(--color-text); }
+  .relational-design .boundary-figure figcaption strong { display:block;font-weight:500; }
+  .relational-design .figure-number { display:block;color:var(--color-text-secondary);font:.72rem/1.8 var(--font-sans); }
+  .relational-design .boundary-figure p { font:inherit;margin:.7rem 0; }
+  .relational-design .panel-label { display:block;font:.72rem/1.6 var(--font-sans);color:var(--color-text-secondary); }
+  .relational-design .figure-note { color:var(--color-text-secondary); }
+  .relational-design .boundary-route { max-width:29rem;margin:0 auto; }
+  .relational-design .boundary-route > div { border:1px solid var(--color-rule-strong);padding:.8rem 1rem;background:var(--color-surface); }
+  .relational-design .route-arrow { display:block;text-align:center;font:1.6rem/1.5 var(--font-sans);color:var(--teal); }
+  .relational-design .boundary-figure .choice { display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.8rem 0; }
+  .relational-design .boundary-figure select { max-width:100%;padding:.45rem;background:var(--color-surface);color:var(--color-text);border:1px solid var(--color-rule-strong);border-radius:3px;font:inherit; }
+  .relational-design .figure-controls { display:flex;align-items:center;flex-wrap:wrap;gap:.45rem;margin-top:1rem; }
+  .relational-design .figure-controls button { background:var(--color-surface);color:var(--color-text);border:1px solid var(--color-rule-strong);border-radius:3px;padding:.4rem .7rem;font:inherit;cursor:pointer; }
+  .relational-design .figure-controls button[aria-disabled="true"] { opacity:.55; }
+  .relational-design .boundary-figure :is(button,select,summary):focus-visible { outline:2px solid var(--teal);outline-offset:3px; }
+  .relational-design .step-explanation { min-height:5.4em; }
+  .relational-design .counts { color:var(--color-text);border-top:1px solid var(--color-rule-strong);padding-top:.8rem; }
+  .relational-design .hold { height:3px;background:var(--color-rule);margin:1rem 0; }
+  .relational-design .hold span { display:block;height:100%;width:0;background:var(--teal); }
+  .relational-design .boundary-figure details { margin-top:1rem; }
+  .relational-design .boundary-figure summary { cursor:pointer;font:inherit; }
+  .relational-design .split-connections { display:grid;grid-template-columns:1fr 1fr;gap:1rem; }
+  .relational-design .split-connections > div { border:1px solid var(--color-rule-strong);padding:.8rem;background:var(--color-surface); }
+  .relational-design .split-connections ol { padding-left:1.2rem; }
+  .relational-design .split-connections li { padding:.5rem 0; }
+  @media(max-width:550px) { .relational-design .boundary-figure {padding:1rem;} .relational-design .split-connections {grid-template-columns:1fr;} }
+</style>

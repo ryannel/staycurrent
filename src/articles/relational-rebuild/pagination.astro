@@ -1,0 +1,238 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import OrderWalk from '../../components/relational-rebuild-pagination/OrderWalk.astro';
+import Ties from '../../components/relational-rebuild-pagination/Ties.astro';
+import Snapshots from '../../components/relational-rebuild-pagination/Snapshots.astro';
+import '../../components/relational-rebuild-pagination/pagination.css';
+---
+<p>A page of results needs a rule for where the next page starts. An export needs a rule for which version of the data it contains. Those are different decisions. Remembering the last order on a page can make a changing list pleasant to browse without making a download a consistent account of the shop.</p>
+
+<p>Suppose the shop’s order screen shows the newest orders first, two at a time. While someone reads the first page, another order arrives. “Skip the first two rows” now skips a different pair. A <strong>keyset cursor</strong> remembers the last ordering key instead: “continue after this time and order ID”. It avoids that shift, but an order whose time changes can still cross the boundary, and its other values can change between reads.</p>
+
+<p>Every example starts from the same shop. For this order-list exercise, add orders 201 and 202, both for customer 3 and both placed at the same instant as 103: 20 October 2026 at 10:15 UTC. The list has one row per order; it uses no order-line or payment details for the two additions. The SQL uses PostgreSQL 18. The drawings show ordered results and changes between reads, rather than the engine’s execution plan.</p>
+
+<section id="limit-offset">
+  <h2>LIMIT and OFFSET</h2>
+  <p><code>LIMIT</code> caps the number of result rows returned. <code>OFFSET</code> skips a number of result rows first. With a page size of two, the first page has offset zero, the second offset two, the third offset four.</p>
+
+  <Sql label="The first page of orders" code={`SELECT order_id, placed_at, status
+FROM orders
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 2;`} />
+
+  <p><code>DESC</code> puts the largest value first. The timestamp orders the rows from newest to oldest; the ID orders rows whose times tie. Our five orders therefore appear as 202, 201, 103, 102, 101, and the first page returns 202 and 201.</p>
+
+  <p>The ID matters before we think about changes. An order by timestamp alone would leave 202, 201 and 103 tied, with no promised order among them. To divide a result predictably, the ordering terms together must distinguish every result row. A unique order ID supplies that distinction here.</p>
+
+  <Sql label="The second numbered page" code={`SELECT order_id, placed_at, status
+FROM orders
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 2 OFFSET 2;`} />
+
+  <p>With no changes, the second query skips 202 and 201, then returns 103 and 102. Now step through Figure 1. Insert order 203 before requesting the second page, then try deleting 202 instead. Watch which rows occupy the two positions the query skips.</p>
+
+  <OrderWalk mode="offset" number={1} />
+
+  <p>The insertion made 201 appear twice. The deletion made 103 disappear from the traversal. Both queries used a unique order and answered correctly at the time they ran. The problem is that a row count describes a position in the current result, and that position changes when earlier rows arrive or leave.</p>
+
+  <p>Numbered pages are useful when people need to jump to a page, especially over a small or fixed result. They also have a cost: the rows an offset skips still have to be computed inside PostgreSQL. Returning ten rows after skipping a million does not make the skipped million free. Whether an index or a sort supplies that order changes the work, but not the offset’s meaning.</p>
+</section>
+
+<section id="keyset">
+  <h2>Keyset pagination</h2>
+  <p>Keyset pagination continues from a value in the order instead of counting from the start. The first page still uses the first query above. Its last returned row is 201, so save that row’s complete ordering key: its timestamp and ID.</p>
+
+  <p>In a descending order, the next rows have a smaller timestamp, or the same timestamp and a smaller ID. Figure 2 applies those two tests to the timestamp tie. Follow 103: its time is not smaller, but its ID is.</p>
+
+  <Ties />
+
+  <p>The complete next-page condition is:</p>
+  <Sql label="Continue after time and order ID" code={`SELECT order_id, placed_at, status
+FROM orders
+WHERE placed_at < timestamptz '2026-10-20 10:15:00+00'
+   OR (placed_at = timestamptz '2026-10-20 10:15:00+00'
+       AND order_id < 201)
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 2;`} />
+
+  <p>PostgreSQL can write the same test as a <strong>row comparison</strong>. It compares the first pair of values, then moves to the next pair only when they are equal:</p>
+  <Sql label="The same continuation as a row comparison" code={`SELECT order_id, placed_at, status
+FROM orders
+WHERE (placed_at, order_id)
+    < (timestamptz '2026-10-20 10:15:00+00', 201)
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 2;`} />
+
+  <p>The answer is 103 and 102. Use a strict <code>&lt;</code>: <code>&lt;=</code> would include 201 itself again. Saving just the timestamp and testing <code>placed_at &lt; ...</code> would lose 103. Testing <code>placed_at &lt;= ...</code> would include the already-read timestamp group again. The pair identifies a boundary inside that group.</p>
+
+  <p>This condition also gives the database a range it can find in a suitable index, rather than an instruction to discard all earlier result rows. An index matching the filters and order can make that cheap. The predicate alone does not guarantee a particular plan or constant work: rejected rows, joins and sorting still matter. Index design and measured access costs belong to <em>Indexes and access paths</em>.</p>
+
+  <h3 id="whole-order">Matching the whole sort order</h3>
+  <p>The row-comparison shorthand works here because both terms are non-null and both sort in the same direction. Derive the continuation from the order you actually use. For example, change the ID to ascending within each timestamp:</p>
+  <Sql label="A continuation for mixed sort directions" code={`SELECT order_id, placed_at, status
+FROM orders
+WHERE placed_at < timestamptz '2026-10-20 10:15:00+00'
+   OR (placed_at = timestamptz '2026-10-20 10:15:00+00'
+       AND order_id > 201)
+ORDER BY placed_at DESC, order_id ASC
+LIMIT 2;`} />
+
+  <p>That order starts 103, 201, 202, 102, 101. After 201, it needs 202 and 102. Time still moves downwards, but ID moves upwards inside a tie, so its comparison becomes <code>&gt;</code>. A plain <code>(placed_at, order_id) &lt; (...)</code> would express the wrong order.</p>
+
+  <p>Nulls need an explicit place too. Take the shop’s separate package-weight example: P3 weighs 65 grams, P9 weighs 820 grams, and P7 has not been measured. With <code>ORDER BY package_weight_g ASC NULLS LAST, product_id ASC</code>, the order is P3, P9, P7. After P9, a numerical comparison alone would discard P7: comparing its null weight with 820 is unknown, not true. Include the null group deliberately:</p>
+
+  <Sql label="Continue from a measured weight into the null group" code={`SELECT product_id, package_weight_g
+FROM products
+WHERE package_weight_g > 820
+   OR (package_weight_g = 820 AND product_id > 'P9')
+   OR package_weight_g IS NULL
+ORDER BY package_weight_g ASC NULLS LAST, product_id ASC
+LIMIT 2;`} />
+
+  <p>Once the cursor is inside that last, null group, continue with <code>package_weight_g IS NULL AND product_id &gt; ...</code>. There are no measured weights after it. The cursor must distinguish a null boundary from a measured one; changing <code>NULLS LAST</code> to <code>NULLS FIRST</code> changes these cases. For text terms, preserve the same collation, the rules used to order strings, on every page too.</p>
+
+  <p>Finally, use the identity of a <em>result row</em>. If a join produces one row per order line, an order ID cannot break ties between lines of the same order. A descending order by <code>placed_at, order_id, line_no</code> needs all three boundary values and matching directions. <a href="/learn/databases/relational/query-results/">Joins and the meaning of a result row</a> establishes why those repeated order IDs are separate rows worth preserving.</p>
+
+  <h3 id="previous-page">Previous pages and the end of the list</h3>
+  <p>To fetch the preceding page, start from the <em>first</em> row on the current page. Page two begins at 103. Ask for keys greater than its key, reverse the query order, then reverse the returned rows for display:</p>
+
+  <Sql label="Find the nearest two rows before page two" code={`SELECT order_id, placed_at, status
+FROM orders
+WHERE (placed_at, order_id)
+    > (timestamptz '2026-10-20 10:15:00+00', 103)
+ORDER BY placed_at ASC, order_id ASC
+LIMIT 2;`} />
+
+  <p>The query returns 201, 202: the nearest preceding rows first. Display them as 202, 201 to restore the screen’s newest-first order. Keeping the descending query order would fetch the start of the list, which need not be the page immediately before this one. With changing data, even a correctly fetched previous page need not reproduce the page someone saw earlier.</p>
+
+  <p>To show whether another page is available, request one extra row. With page size two, use <code>LIMIT 3</code>, return only the first two, and make the next cursor from the second row, not the extra one. On the first read the extra row is 103: it proves a next row existed in that read. It does not count the remaining rows, nor promise they will still be present when the next request arrives.</p>
+</section>
+
+<section id="tokens">
+  <h2>What a cursor must preserve</h2>
+  <p>An API usually wraps the boundary in a <strong>page token</strong>, a string the client returns unchanged on its next request. Inside it, or in server-side state it refers to, the service needs enough information to reconstruct the same continuation.</p>
+
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Information carried by an order-list continuation">
+    <table><caption>Continuing the same order-list query</caption><thead><tr><th>Preserve</th><th>Why it matters</th></tr></thead><tbody>
+      <tr><td>Last returned timestamp and ID</td><td>Locate the boundary inside timestamp ties.</td></tr>
+      <tr><td>Filters, including the list’s scope</td><td>A cursor from all orders is not a cursor from just pending orders or one customer’s orders.</td></tr>
+      <tr><td>Sort definition and version</td><td>Directions, null placement and text comparison rules determine what “after” means.</td></tr>
+      <tr><td>Expiry and any retained-result identity</td><td>Say when the continuation can no longer be honoured, and which saved export it belongs to.</td></tr>
+    </tbody></table>
+  </div>
+
+  <p>Use database precision for boundary values. PostgreSQL timestamps can distinguish microseconds. Rounding a returned timestamp to milliseconds before putting it in a token moves the boundary; reading an ID through a number type that cannot represent it exactly has the same problem. Preserve the exact typed value and bind it back as a query parameter. Display formatting is a separate choice.</p>
+
+  <p>Changing a filter or sort starts a new traversal. Either bind those choices into the token or check the new request against the saved query definition; reject a mismatch with an instruction to restart. An expired token also needs an explicit restart outcome. Quietly treating it as a first-page request makes a continuation repeat the start.</p>
+
+  <p>The token is continuation data, not permission to read the rows. Check the caller’s current authority on every request, and protect token integrity if clients must not alter its scope or boundary. Encoding readable fields in base64 supplies no such protection. These are API design choices; Google’s pagination guidance makes the distinction between a page token and authorisation explicit.</p>
+
+  <p>An API cursor need not keep a database connection open. A <em>database cursor</em> is different: it is database-side state that lets one session fetch a query’s result in batches. The same word describes two mechanisms with very different lifetimes.</p>
+</section>
+
+<section id="changes">
+  <h2>Changes between pages</h2>
+  <p>A saved key does not depend on how many rows precede it. Delete 202 and the next request still asks for keys after 201. Insert 203 before the key and the next request still begins with 103. Figure 3 starts with those cases, then changes an order’s timestamp. Follow where the changed row lands relative to the saved key.</p>
+
+  <OrderWalk mode="keyset" number={3} />
+
+  <p>When unread 103 moves before the key, the next query cannot see it. When already-read 202 moves after the key, it can appear again. The cursor identifies an ordering position; it does not remember every identity already shown. Choosing stable ordering fields removes these particular movements, but it does not freeze the rest of the query.</p>
+
+  <p>Filters can change too. On a pending-only list, an unread order marked paid disappears from later pages. An order that becomes pending can join the unread part, or be missed if its key lies in the part already passed. A customer list based on a changing name or a ranking based on a changing score has the same issue in its sort terms. Decide whether the interface is browsing the current list or promising the membership from an earlier read.</p>
+
+  <p>A <strong>high-water key</strong> adds an upper bound captured at the start. In this descending list that ceiling is the first key, belonging to 202. Requiring keys at or below it excludes later arrivals with greater keys. It can keep a run from growing at that end, but it does not create a snapshot. A later transaction may commit a row with a key below the ceiling after the traversal has already passed its position. The ceiling neither makes it visible earlier nor brings the traversal back to find it. Updates, deletions and changing values remain possible too.</p>
+
+  <p>For ordinary browsing, that can be the right contract: continue through the current list, with a refresh to see new entries at the start. It is not enough for an export that must contain the rows and values visible at one database snapshot.</p>
+</section>
+
+<section id="export">
+  <h2>One snapshot for an export</h2>
+  <p>A consistent export needs to say what it preserves: all result rows and their selected values from one database snapshot. That includes the values used by joins and calculations, not just the order IDs. Reading a large result in batches changes how it is delivered; it must not silently change which database state supplies those batches.</p>
+
+  <p>At PostgreSQL’s default isolation level, Read Committed, each ordinary <code>SELECT</code> takes a fresh snapshot. Putting several such queries between <code>BEGIN</code> and <code>COMMIT</code> does not make them share one. In a read-only Repeatable Read transaction, they use the snapshot established by the first query. The read-only mode keeps this export from making application writes; the isolation level is what keeps its reads on that snapshot.</p>
+
+  <p>Figure 4 changes only 103’s status. First read two rows, let another transaction mark 103 paid and commit, then request the next batch. Switch the isolation level and watch the value copied for 103.</p>
+
+  <Snapshots />
+
+  <p>For the separate-query approach, start the transaction before the first batch and keep all batches on that same transaction and connection:</p>
+
+  <Sql label="Keep the batch queries in one read-only snapshot" code={`BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+
+SELECT order_id, placed_at, status
+FROM orders
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 2;
+
+SELECT order_id, placed_at, status
+FROM orders
+WHERE (placed_at, order_id)
+    < (timestamptz '2026-10-20 10:15:00+00', 201)
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 2;
+
+-- Continue from the last returned key until exhausted.
+-- End the transaction only after the final batch.
+COMMIT;`} />
+
+  <p>Within that snapshot, the membership and stored values stay fixed, so the unique order divides one result into batches without the shifts above. This example selects stored columns only. A snapshot of table data does not freeze an external service or turn a volatile expression such as a fresh random value into a stored fact; fix such inputs if they belong in the export’s definition.</p>
+
+  <p>Another route is to execute one query and consume its result in batches through a driver or database cursor. That avoids issuing a new list query for every batch. It still needs a bounded lifetime and a connection owner. PostgreSQL’s ordinary SQL cursor lives inside its transaction; a cursor declared <code>WITH HOLD</code> can survive commit by retaining its result, but remains tied to that database session. It is not a durable export job or an API page token. Driver streaming and cancellation mechanics belong to <em>SQL at the application boundary</em>.</p>
+
+  <h3 id="resume">Resuming the same export</h3>
+  <p>Saving the last key lets a new query continue from a position. It cannot restore a snapshot whose transaction has ended. In Figure 4, rerunning after 201 in a new transaction can read 103 as paid, even if the original export needed pending.</p>
+
+  <p>Saving only the membership IDs is not enough either. They identify the same orders, but joining those IDs back to the live table reads their current values. If an order has been deleted, even that row may be missing. To resume the same exported content later, retain the required <strong>projection</strong>: the columns and calculated values the export actually delivers, with an order or ordinal for reading them back.</p>
+
+  <div class="table-scroll" tabindex="0" role="region" aria-label="What survives when order 103 becomes paid">
+    <table><caption>Capture while 103 is pending; read after it becomes paid</caption><thead><tr><th>What is saved</th><th>Later read of 103</th><th>Preserves the original content?</th></tr></thead><tbody>
+      <tr><td>Its ordering key</td><td>A new query can return paid.</td><td>No: it preserves a position.</td></tr>
+      <tr><td>Its ID, joined to live orders</td><td>Paid</td><td>No: it preserves membership only.</td></tr>
+      <tr><td>ID, time and status copied from the export snapshot</td><td>Pending</td><td>Yes, for these selected columns.</td></tr>
+    </tbody></table>
+  </div>
+
+  <p>A background job can copy the required result into a retained table or output file, then close the source transaction. Later download requests read that retained result. If several source queries build it, they must share the chosen snapshot too. Store all values the download needs, rather than looking some of them up again later.</p>
+
+  <p>Give that retained result an identity and a completion state. A resume token can refer to the result and the next row or byte position, with an expiry matching its retention. After expiry, offer a deliberately new export; do not call it a continuation of the old content. How a worker records progress and recovers a failed job is a separate protocol from choosing what this result means.</p>
+</section>
+
+<section id="cost">
+  <h2>The cost of keeping a result available</h2>
+  <p>Keeping the transaction open preserves its snapshot, but ties up a connection. In PostgreSQL it can also prevent vacuum from reclaiming old row versions that the snapshot might need. The cost depends on changes made while it is open, not merely on how many rows the export returns. A read-only export can therefore affect a busy database even while it waits for a slow client.</p>
+
+  <p>Materialising the output spends storage and write work instead. The source transaction can end once the copy is complete, and a person can download later without holding that snapshot open. The retained data still needs space, access checks and eventual removal.</p>
+
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Choosing a result lifetime">
+    <table><caption>Choose the promise before choosing the delivery mechanism</caption><thead><tr><th>Need</th><th>A suitable approach</th><th>Bound its cost</th></tr></thead><tbody>
+      <tr><td>Browse a changing list</td><td>Short-lived keyset page token; fresh read per request.</td><td>Page size, query duration and token lifetime.</td></tr>
+      <tr><td>Read one snapshot promptly</td><td>One result in batches, or batch queries in one read-only snapshot transaction.</td><td>Transaction duration and client waiting.</td></tr>
+      <tr><td>Download the same content later</td><td>Retained projection or completed output file.</td><td>Generation time, output size and retention.</td></tr>
+    </tbody></table>
+  </div>
+
+  <p>Cancellation must reach the work that is consuming those resources. Stopping an HTTP response alone need not stop a database query or end its transaction. The application must cancel or finish the active operation, close its cursor where applicable, and end or roll back the transaction before releasing the connection. Bound waiting between batches as well as time spent executing queries.</p>
+
+  <p>A partial file needs to remain recognisable as partial. Mark a retained export complete only after all required rows and final output have been written successfully. If generation fails, a client must not mistake the bytes already received for a complete result. Retaining a finished export separates that generation outcome from a download that can be retried later.</p>
+
+  <p>Use the list’s continuation contract for navigation and the export’s snapshot contract for reproducibility. A complete ordering key tells the next request where to continue. Keeping the chosen snapshot, or retaining the content read from it, tells the eventual reader what the result contains.</p>
+</section>
+
+<section id="examples">
+  <h2>Trying the queries</h2>
+  <p><a href="/relational-rebuild/pagination/pagination-queries.sql">Download the data and pagination queries</a> to reproduce the list results in a PostgreSQL session. The script creates temporary projected tables, keeps each change independent and rolls everything back. It includes the time-only and non-strict counterexamples, mixed directions, previous-page query and null-weight cases.</p>
+  <p>The list SQL was checked in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. The two-session snapshot comparison and retained-value comparison were checked separately on a disposable PostgreSQL 18.6 server. The figures arrange those results to explain their meaning; they make no performance measurements.</p>
+</section>
+
+<section id="sources">
+  <h2>Sources and further reading</h2>
+  <p>Checked against primary documentation on 25 October 2026. Pagination examples use ordinary reads of stored values, with the explicitly stated ordering and independent changes.</p>
+  <ul>
+    <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/queries-limit.html">LIMIT and OFFSET</a> and <a href="https://www.postgresql.org/docs/18/queries-order.html">Sorting rows</a>: unique ordering, skipped-row work, directions and null placement.</li>
+    <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/functions-comparisons.html#ROW-WISE-COMPARISON">Row constructor comparison</a>: left-to-right comparisons and nulls. <a href="https://www.postgresql.org/docs/18/datatype-datetime.html">Date/time types</a> specifies timestamp precision.</li>
+    <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/indexes-ordering.html">Indexes and ORDER BY</a>: how matching order and a limit can avoid reading the remainder.</li>
+    <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a>, <a href="https://www.postgresql.org/docs/18/sql-begin.html">BEGIN</a> and <a href="https://www.postgresql.org/docs/18/sql-set-transaction.html">SET TRANSACTION</a>: statement snapshots, PostgreSQL Repeatable Read and read-only transactions.</li>
+    <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-declare.html">DECLARE</a> and <a href="https://www.postgresql.org/docs/18/sql-close.html">CLOSE</a>: cursor lifetime, held results and resource release. <a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">Routine vacuuming</a> explains why old row versions must remain while a snapshot might need them.</li>
+    <li>Google, <a href="https://google.aip.dev/158">AIP-158: Pagination</a>: binding a continuation to its query arguments, page-token opacity, expiry and authorisation. Its API guidance is a concrete design example, not a PostgreSQL requirement.</li>
+  </ul>
+</section>

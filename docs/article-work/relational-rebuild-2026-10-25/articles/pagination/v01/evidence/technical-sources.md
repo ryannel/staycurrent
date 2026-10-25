@@ -1,0 +1,20 @@
+# Technical sources and execution boundaries
+
+Primary sources checked through web access on 25 October 2026:
+
+- https://www.postgresql.org/docs/18/queries-limit.html — stable unique ordering required; OFFSET rows still computed; semantics of LIMIT/OFFSET.
+- https://www.postgresql.org/docs/18/queries-order.html — secondary terms break ties, directions independent, explicit null placement and default placement.
+- https://www.postgresql.org/docs/18/functions-comparisons.html#ROW-WISE-COMPARISON — pair/tuple comparison is lexicographic and can be unknown on null. The mixed-direction and null-group predicates are derivations checked by SQL.
+- https://www.postgresql.org/docs/18/datatype-datetime.html — timestamp microsecond resolution.
+- https://www.postgresql.org/docs/18/indexes-ordering.html — matching B-tree order and a limit can avoid reading the remainder. No index plan or timing measurement is asserted here.
+- https://www.postgresql.org/docs/18/transaction-iso.html — Read Committed statement snapshots, PostgreSQL Repeatable Read stability.
+- https://www.postgresql.org/docs/18/sql-begin.html and https://www.postgresql.org/docs/18/sql-set-transaction.html — syntax and first-query snapshot acquisition, read-only semantics.
+- https://www.postgresql.org/docs/18/sql-declare.html and https://www.postgresql.org/docs/18/sql-close.html — database cursor transaction/session lifetimes, held-result retention, resource release. Cursor implementation was described from these sources, not claimed as an observed cursor run.
+- https://www.postgresql.org/docs/18/routine-vacuuming.html — row versions potentially visible to transactions cannot yet be reclaimed. No retained-byte or vacuum measurement is claimed.
+- https://www.postgresql.org/docs/18/xfunc-volatility.html — volatile functions can yield new values on successive evaluations; snapshot prose limits reproducibility to the stated stored values/fixed inputs.
+- https://www.postgresql.org/docs/18/libpq-cancel.html and https://www.postgresql.org/docs/18/protocol-flow.html#PROTOCOL-FLOW-CANCELING-REQUESTS — cancellation is a request to database work, not an HTTP-response property; no driver cancellation procedure/test is supplied.
+- https://google.aip.dev/158 — page-token opacity, matching query arguments, expiry, and explicit separation from authority. Used as a concrete API design source rather than PostgreSQL requirements.
+
+The boundary predicates and failure outcomes are deductions from SQL ordering, verified in an owned disposable PGlite 0.5.8 instance (actual PostgreSQL 18.3/WASM). `verify-sql.mjs` extracts all seven displayed ordinary SELECT templates from the article, asserts their results and the contrasting failures, then executes the exact downloadable SQL file. The instance is closed in finally. `sql-results.json` includes actual version, SQL, rows, source hash and download hash.
+
+Native comparisons passed on root's disposable PostgreSQL fixture. The writer's initial restricted client connect failed before connection or writes; root ran the retained `verify-native.mjs` with access to the explicitly chosen fixture. It verified database/user/cluster/data directory/version before writes, reset each scenario independently, dropped its own schema and closed both clients in finally. Generated authentication stays outside retained evidence. `native-results.json` records actual PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on aarch64-unknown-linux-gnu, pg 8.23.1, database sc_pagination, user sc_pagination_writer, cluster staycurrent-pagination-20261025 and directory /var/lib/postgresql/18/docker, plus all results and matching source hash. The coordinator's input/native-verification.md records official postgres:18 image provenance pinned to sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6. The fixture was root-owned and disposable; root was notified no further native work remained. No PGlite observation is called native. High-water and changing-filter schedules remain conceptual; no timing, streaming, cancellation or arbitrary client resume implementation is claimed.

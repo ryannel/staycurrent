@@ -1,0 +1,13 @@
+# Streaming repair — reader confirmation
+
+Confirmed the accepted medium finding from `reader.md` in its changed context only. Input: private application-SQL article SHA-256 `b579b6e87c5e466edcc3a86e4933b090b49e6540b157f6106c50b0e28bcf4d89`; new Consumption figure `2f3e592d6bfa3968b235dce09f752f3f17c6ace859720565998f7c8ffa03eb9f`.
+
+**Finding resolved.** “Consuming a large result” now gives the missing bridge from a complete driver array to incremental consumption. It distinguishes the size of a read from SQL LIMIT, follows the same four lines in deterministic two-row batches, and explains why awaited consumption paces the next read. The code and prose make ordinary completion, orderly early stop, failure disposal and connection ownership concrete. The new explanation fits after result mapping and before relationship-loading choices; it does not require another lesson in pagination correctness.
+
+The connection remains borrowed through consumption and cursor close. The later transaction-owner and cleanup explanation still agrees: closing a result does not complete a surrounding transaction, an unresponsive read/consumer needs the deadline policy, and orderly early stop is not cancellation of in-flight work. The explicit warning about a sort and long occupation prevents “small batches” from implying bounded server work or connection lifetime. The pagination handoff preserves continuation, ordering and snapshot ownership and explicitly says a broken connection does not make this reader resumable.
+
+Inspected the new static figure source and four actual operator screenshots: `1280-light-start.png`, `1280-dark-end.png`, `375-dark-start.png`, `375-light-end.png` in `streaming-render/`. The desktop columns make the repeated consume/read boundary clear inside one borrowed span; the phone stack preserves its order and leads to close then release. Captions and line tickets are legible in these samples. Retained root's current checks of the remaining light/dark screenshots, fitting page/figure widths, caption numbering 1–5 and the focusable overflow region.
+
+No new substantive reader issue. Earlier unaffected review remains applicable; optional joined-row visual polish remains optional.
+
+Limits: this confirmation used source and actual operator images, not a fresh interactive browser session. No viewport/theme changes, playback claim, new keyboard-scroll pass or database execution claim. The static figure has no new interactive states. Root reports the separate technical confirmation completed; this record confirms teaching and scoped visual context, not that execution work. No unrelated article or batch reread, edits or delegation.

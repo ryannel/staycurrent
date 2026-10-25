@@ -1,0 +1,158 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Figure from '../../components/relational-rebuild-writes/Figure.astro';
+import { guardSQL, upsertSQL, chunkSQL, reportSQL } from '../../components/relational-rebuild-writes/sql.mjs';
+---
+<p>An <code>UPDATE</code> changes every row that satisfies its condition. An upsert proposes a new row and says what to do when its key already exists. A bulk import makes those same decisions for a whole source: which rows are acceptable, which facts they may change, and how to tell what remains after work stops.</p>
+<p>The examples follow the tea shop’s catalogue. P7, a blue mug, starts at 20.00 with stock 1. A catalogue feed proposes 22.00 for it and introduces P11, a tea strainer at 8.00. The feed owns product names and catalogue prices. It has no authority over existing stock or the prices already agreed on order lines.</p>
+<p>A small change and a large import need the same discipline: put the eligibility rule in the write, interpret what the write returned, and keep enough identity to account for the work. The SQL here is PostgreSQL 18. The drawings are worked illustrations; the SQL results were checked in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3.</p>
+
+<section id="conditional-changes">
+<h2>Conditional updates and deletes</h2>
+<p>Suppose the shop wants to raise P7 from 20.00 to 22.00, but only if nobody has already changed that price. The key identifies the product. The expected price expresses the condition under which this particular change is allowed.</p>
+<Sql label="Raise P7 only from the expected catalogue price" code={guardSQL} />
+<p><code>SET</code> says which values to assign. <code>WHERE</code> decides which rows are eligible. Read the two conditions together: “the product is P7, and its price is 20.00”. Step through the figure, then set P7’s starting price to 22.00 and repeat.</p>
+<Figure kind="guard" number={1} title="The condition decides whether P7 changes" caption="Each setting starts afresh. P3 and P9 never qualify; P7 qualifies only at the expected price. This figure illustrates the statement’s decision, rather than a schedule of concurrent transactions." />
+<p>With P7 at 20.00, the statement returns P7 at 22.00. With P7 already at 22.00, it returns no row. The statement with only <code>WHERE product_id = 'P7'</code> would assign 22.00 whatever price P7 had. Without a <code>WHERE</code> clause it would assign 22.00 to every product, including the tea and the teapot.</p>
+<p>An earlier <code>SELECT</code> can preview the intended rows. It cannot make a later write conditional: the write must contain the condition too. The expected-price test checks the value at the write; it does not prove that the row has never changed and changed back. A version number can express a stricter “this revision only” rule when that is needed.</p>
+<h3>Assigning a value or changing a value</h3>
+<p><code>SET price = 22.00</code> assigns a value. An expression such as <code>SET stock = stock + 2</code> calculates a new value from the stored row. Starting at stock 1, that expression gives 3; running it again gives 5. Calculating 3 in application code after a read and later sending <code>SET stock = 3</code> expresses a different operation.</p>
+<p>This distinction matters for replay as well as concurrency. It does not, by itself, solve a purchase involving stock, an order and several lines. <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> owns the rules for keeping those changes consistent when buyers act together.</p>
+<h3>Constraints still apply</h3>
+<p>Passing <code>WHERE</code> makes a row eligible. It does not suspend the schema’s rules. Setting P7’s price to −4.50 fails the shop’s non-negative price constraint. Deleting P7 fails its foreign-key check while order lines still refer to it.</p>
+<Sql label="Attempt to delete a product that existing order lines reference" code={`DELETE FROM products
+WHERE product_id = 'P7'
+RETURNING product_id;`} />
+<p><code>DELETE</code> uses its condition in the same way as <code>UPDATE</code>, but removes the whole eligible row. In this schema the attempt raises an error and P7 remains. There is no cascading deletion declared on the order-line reference. Choosing a different reference action would change the result, so check the declared relationship before deleting.</p>
+<p>A condition that admits no row is a successful statement with no change. A constraint violation is a failed statement. Those are different outcomes, and the caller should treat them differently. Nor does one successful row condition establish a rule about several rows: “this product has an acceptable price” is a smaller claim than “all payments together stay below the order total”.</p>
+</section>
+
+<section id="affected-rows">
+<h2>What the affected rows tell you</h2>
+<p>PostgreSQL reports an affected-row count. <code>RETURNING</code> also gives values from the rows the statement changed, saving a separate lookup. The guarded update returned the new catalogue price, so the caller knows which row the statement accepted.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Interpreting write results"><table>
+<caption>Three outcomes of the P7 change</caption><thead><tr><th scope="col">Outcome</th><th scope="col">What it establishes</th></tr></thead><tbody>
+<tr><td>One updated row; P7 returned</td><td>The statement applied to P7. Read the returned price as its result.</td></tr>
+<tr><td>Zero updated rows; none returned</td><td>No row satisfied the whole guard. It does not say whether P7 was absent or its price differed.</td></tr>
+<tr><td>Constraint error</td><td>The statement failed. Handle the failure and the surrounding transaction.</td></tr>
+</tbody></table></div>
+<p>An update count is not necessarily a count of different values. After the first change, <code>UPDATE products SET price = 22.00 WHERE product_id = 'P7'</code> still reports one updated row even though P7 already costs 22.00. If “already equal” needs its own outcome, compare the relevant old and proposed fields explicitly; PostgreSQL’s <code>IS DISTINCT FROM</code> comparison also handles NULL values.</p>
+<p>The counts here assume the sample schema, with no triggers suppressing updates. On a real table, triggers can affect which changes take place and what is returned. A later diagnostic read may help explain zero rows, but it is a new observation, not a record of what the earlier statement saw.</p>
+<p>Returned rows also do not establish that a surrounding transaction committed. <code>BEGIN</code> starts a transaction; <code>COMMIT</code> accepts its work together; <code>ROLLBACK</code> abandons it. An update can return P7 at 22.00 and a later rollback leave its committed price at 20.00. With no explicit transaction, PostgreSQL normally runs each statement in its own transaction; client libraries may manage boundaries for you.</p>
+</section>
+
+<section id="upsert">
+<h2>Choosing an upsert’s meaning</h2>
+<p>An ordinary insert of P7 fails because that primary key already exists. An <strong>upsert</strong> means “insert, or update an existing row on a specified key conflict”. PostgreSQL spells it <code>INSERT … ON CONFLICT … DO UPDATE</code>.</p>
+<p>The catalogue feed proposes two rows. P7 exists, so only its name and price should change. P11 is new, so the shop creates it with stock 0.</p>
+<Sql label="Apply catalogue fields while preserving existing stock" code={upsertSQL} />
+<p><code>EXCLUDED</code> names the row proposed for insertion. For P7, <code>EXCLUDED.price</code> is 22.00. The update assigns that price and the supplied name, and leaves stock alone because stock is absent from its <code>SET</code> list. The proposed stock 0 is used for a new product such as P11; it does not reset P7’s existing stock.</p>
+<p>The mug’s agreed unit price on order 103 remains 20.00. That price is a different fact, stored on the order line. Updating <code>products.price</code> neither changes it nor authorises a second update to reprice the order. The distinction is developed in <a href="/learn/databases/relational/modelling/">Relational data modelling</a>.</p>
+<h3>Ignore, replace or accumulate</h3>
+<p>A duplicate key needs a business decision before it needs syntax. The right action depends on what the source’s row means.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Policies for an existing product key"><table><caption>What should an existing P7 mean?</caption><thead><tr><th scope="col">Policy</th><th scope="col">PostgreSQL action</th><th scope="col">Meaning</th></tr></thead><tbody>
+<tr><td>Refuse</td><td>Ordinary <code>INSERT</code></td><td>This operation was allowed to create a new key only.</td></tr>
+<tr><td>Keep existing</td><td><code>DO NOTHING</code></td><td>Ignore the proposed row on this key conflict.</td></tr>
+<tr><td>Replace supplied fields</td><td><code>price = EXCLUDED.price</code></td><td>This source supplies the current catalogue value.</td></tr>
+<tr><td>Accumulate</td><td><code>stock = products.stock + EXCLUDED.stock</code></td><td>The source supplies an additional quantity.</td></tr>
+</tbody></table></div>
+<p><code>DO NOTHING</code> does not check that two payloads agree. If P7 already costs 20.00, ignoring a proposal for 22.00 leaves it at 20.00. That may be intentional, but it is not confirmation that the proposal was previously applied.</p>
+<p>The next figure repeats one operation. Start with replacement, then switch to adding stock.</p>
+<Figure kind="replay" number={2} title="The same key does not make every change safe to repeat" caption="These are independent examples starting at price 20.00 and stock 1. The stock addition is a separate hypothetical delivery, not a field in catalogue batch B17." />
+<p>Repeating an assignment of 22.00 has the same final price as applying it once. Repeating a delta adds it twice. Even replacement can be wrong later: replaying an old file can overwrite a newer catalogue price. Safe replay therefore needs a rule about source identity and ordering as well as an upsert.</p>
+<p><code>ON CONFLICT (product_id)</code> handles the specified unique-key conflict. It does not excuse a negative price, a missing required value or a broken foreign key. Without an additional update condition, PostgreSQL’s upsert provides an atomic insert-or-update decision for that key even when another writer inserts it concurrently, provided no independent error occurs.</p>
+<h3>One proposed value for each key</h3>
+<p>The destination key and the source-row identity answer different questions. B17’s row 1 identifies one received record; P7 identifies the product it would change. Two distinct source rows can propose conflicting values for the same destination.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Conflicting source rows"><table><caption>A separate duplicate-P7 variant</caption><thead><tr><th scope="col">Source row</th><th scope="col">Destination</th><th scope="col">Decision</th></tr></thead><tbody><tr><td>First P7 proposal</td><td>P7</td><td>Reject: duplicate product key</td></tr><tr><td>Second P7 proposal</td><td>P7</td><td>Reject: duplicate product key</td></tr></tbody></table></div>
+<p>This importer rejects both proposals before changing products. Here the two proposals are 22.00 and 23.00. Another source might supply a revision number that identifies an authoritative winner. Choose and record that rule; position in a file is not automatically a last-writer policy.</p>
+<Sql label="Find destination keys proposed more than once in a batch" code={`SELECT product_id_raw, count(*)
+FROM catalogue_raw
+WHERE batch_id = 'B17'
+GROUP BY product_id_raw
+HAVING count(*) > 1;`} />
+<p>For ordinary B17, this returns no rows. In the duplicate variant it identifies P7. PostgreSQL refuses a multi-row <code>ON CONFLICT DO UPDATE</code> that would affect one existing row twice. <code>UPDATE … FROM</code> has a different trap: if several source rows join to one target row, it uses one match without a predictable choice. Neither behaviour implements a conflict-resolution policy. Make the validated source unique on its destination key first.</p>
+</section>
+
+<section id="staging">
+<h2>Load into staging first</h2>
+<p>A <strong>staging table</strong> holds received data before it becomes shop data. It lets the importer preserve a bad proposal, explain its rejection and apply the good proposals deliberately. Loading straight into <code>products</code> mixes transport, validation and catalogue changes into one operation.</p>
+<p>Batch B17 has four immutable source rows. Keep the original file, its identity and checksum, the parser’s settings, and each record’s source row number. A CSV record can span physical lines, so define what that row number counts. Here it counts data records, starting at 1.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Catalogue batch B17"><table><caption>B17 · all received values, before validation</caption><thead><tr><th scope="col">Row</th><th scope="col">Product</th><th scope="col">Name</th><th scope="col">Price text</th></tr></thead><tbody><tr><td>1</td><td>P7</td><td>Blue mug</td><td>22.00</td></tr><tr><td>2</td><td>P11</td><td>Tea strainer</td><td>8.00</td></tr><tr><td>3</td><td>P3</td><td>Green tea, 50 g</td><td>-4.50</td></tr><tr><td>4</td><td>P9</td><td>Teapot</td><td>36.00</td></tr></tbody></table></div>
+<p><code>(batch_id, row_no)</code> identifies a received record, including a rejected one. Store the original field values as text and keep the interpreted values and validation decision separately. Fixing row 3 must not erase the evidence that B17 originally contained −4.50.</p>
+<h3>Validate the proposed rows</h3>
+<p>Validation has several layers. A file may be impossible to parse at all; a parsed record can still contain an invalid number; a valid number can break a shop rule. Keep those outcomes distinct.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Validation layers"><table><caption>From a file to an eligible catalogue proposal</caption><thead><tr><th scope="col">Check</th><th scope="col">Question</th><th scope="col">B17</th></tr></thead><tbody>
+<tr><td>File parsing</td><td>Can the declared encoding, delimiters and quoting be read?</td><td>Four records received. A parsing failure would stop acceptance of this batch.</td></tr>
+<tr><td>Value conversion</td><td>Does the price fit the agreed decimal format and destination type?</td><td>All four do, including −4.50.</td></tr>
+<tr><td>Row rules</td><td>Are key and name present, and is the price non-negative?</td><td>Row 3 fails: negative price.</td></tr>
+<tr><td>Source-key conflicts</td><td>Does the batch propose more than one row per product?</td><td>No. The separate duplicate variant is rejected here.</td></tr>
+<tr><td>Cross-table rules</td><td>Do any required referenced facts exist?</td><td>The feed may create a product, so P11’s absence is permitted. A feed assigning a required category would need to check that category.</td></tr>
+</tbody></table></div>
+<p>Decide how to handle rounding before converting prices. This feed accepts at most two decimal places; it rejects an extra fraction rather than silently rounding it. The worked SQL checks that format and conversion before casting, then records a reason for each rejected row. A cast applied indiscriminately to untrusted text can stop validation at its first bad value.</p>
+<p>Validation produces three pending proposals and one retained rejection. Final table constraints still apply when proposals are written. In particular, an earlier cross-table check cannot promise that a referenced row will remain available until application.</p>
+<p>Step through B17 below. The upper table keeps the source identities and their recorded states; the lower table shows only committed catalogue data. Stop at “Work stops before the next chunk” and account for every source row before continuing.</p>
+<Figure kind="batch" number={3} title="B17 keeps its source and its progress" caption="The feed changes only names and catalogue prices. Existing stock remains P3 12, P7 1 and P9 4; new P11 starts at 0. Order-line agreements are unchanged. The stop occurs before row 4’s chunk starts, so this scenario has no uncertain commit." />
+<h3>Account for every source row</h3>
+<p>“Four rows loaded” means that staging received four records. It does not mean that four catalogue changes happened. Before application, B17 has three pending rows and one rejected row. Every received identity must have exactly one validation decision; any unvalidated row means the importer is not ready to apply the batch.</p>
+<p>This importer counts a row as <strong>applied</strong> when its accepted proposal has been written and its progress record committed. Assigning already-equal fields still counts as applied. There is no separate “unchanged” state here. An importer that deliberately skips equal proposals should record that decision and include it in reconciliation; silently filtering them out loses their outcome.</p>
+</section>
+
+<section id="apply">
+<h2>Apply a validated batch</h2>
+<p>Once input and decisions are sealed, select a group of pending proposals and apply them as a set. “Sealed” means their contents and identities are fixed: a later resume uses the same records, not a replacement file under the same batch ID. The importer must enforce that boundary through its write permissions or import procedure.</p>
+<p>The example uses <code>catalogue_decisions</code> for typed proposals and their rejection reasons, and <code>catalogue_applied</code> for committed progress. A NULL reason means validation accepted the proposal. A unique index permits only one accepted product key per batch. The download keeps only the product and order-line columns needed for this example; the two order-103 lines retain their agreed total of 29.00. The full setup and validation are in the <a href="/relational-rebuild/writes/catalogue-import.sql" download>worked SQL download</a>.</p>
+<p>The following transaction takes at most two pending rows in source-row order. For the first chunk, those are rows 1 and 2: P7 and P11.</p>
+<Sql label="Commit a chunk’s catalogue changes and applied records together" code={chunkSQL} />
+<p>The temporary <code>chunk</code> fixes which proposals this transaction is handling. <code>INSERT … SELECT</code> sends those rows to the same upsert used earlier. The <code>written</code> expression returns the product keys accepted by that write; joining them back to the chunk records their source identities as applied. It does not infer completion from an earlier preview.</p>
+<p>The final <code>COMMIT</code> accepts the catalogue changes and applied records together. If the statement fails, roll back the transaction. A failure while recording progress must also roll back its catalogue writes. Otherwise a resume could find a changed product with no record that its source row had been applied.</p>
+<p>This worked importer has one worker for B17, fixed decisions, ordinary tables and no other writer of these catalogue fields during application. Its chunk selection is not a protocol for competing import workers or overlapping feeds. Existing stock can change independently because the upsert does not assign it. Coordinating concurrent invariants belongs in <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a>.</p>
+<h3>Upsert or MERGE</h3>
+<p><code>ON CONFLICT</code> fits B17 because every accepted proposal either creates a product or replaces its catalogue fields on one unique-key conflict. <code>MERGE</code> is useful when a source-to-target match needs several explicit actions, such as updating matched rows, inserting unmatched source rows and treating unmatched target rows separately.</p>
+<p>They are not interchangeable spellings. <code>MERGE</code> first matches source and target and chooses actions. At PostgreSQL’s Read Committed level, another transaction inserting the same key can cause its insert action to fail with a uniqueness error; it does not gain the upsert’s guarantee of an insert-or-update outcome. Choose it for the matching rules you need, with their concurrency behaviour understood.</p>
+<p>B17 is a partial feed. A product missing from it is not a deletion request. A complete replacement catalogue would need a declared completeness boundary and an explicit policy for absent products, including their order-line references. Adding a “delete unmatched targets” action to this feed would invent authority it does not have.</p>
+<h3>Choose the commit boundary</h3>
+<p>One transaction can apply all three valid rows atomically: either all its catalogue changes and progress records commit, or none do. That is the simplest boundary when the batch is small enough and readers must not see part of it.</p>
+<p>Committed chunks make a different promise. After the first chunk, readers can see P7 at 22.00 and P11 at 8.00 while P9 still costs 35.00. A later rollback cannot undo that earlier commit. Chunking bounds each transaction’s work and makes progress resumable, but deliberately permits a partly applied batch. The shop must accept that intermediate catalogue state.</p>
+<p>A chunk is not a fixed number of bytes or a universal row count. Wider rows, checks and indexes change its cost. Measure a suitable size for the workload, balancing transaction cost, lock duration and the amount of partial progress readers can see. A requirement to publish a whole new catalogue at once may need a different design rather than smaller chunks.</p>
+</section>
+
+<section id="resume">
+<h2>Resume and reconcile an interrupted import</h2>
+<p>In Figure 3, work stops after the P7/P11 chunk commits and before the P9 chunk starts. The durable records say exactly what remains: rows 1 and 2 applied, row 3 rejected, row 4 pending. Restarting the process does not reverse the first commit.</p>
+<p>Run the same chunk transaction again against the sealed B17. It skips the recorded applied identities and selects row 4. P9 becomes 36.00 and row 4’s applied record commits with it. Run it once more and the selected chunk is empty.</p>
+<p>Read status from the received rows, so missing decisions cannot disappear from the report:</p>
+<Sql label="Reconcile each received source identity with its recorded outcome" code={reportSQL} />
+<p>After the resume, rows 1, 2 and 4 are applied; row 3 is still rejected for a negative price. Thus four received records equal three applied plus one rejected, with no pending or unvalidated records. Check the identities as well as that arithmetic: a duplicated record and a missing record can cancel in a count.</p>
+<p>Compare the intended catalogue fields too. P7 is 22.00, P11 is 8.00 with stock 0, P9 is 36.00, and P3 remains 4.50. Existing stock remains unchanged. Those checks establish the intended result at reconciliation time; if authorised catalogue writers continue afterwards, later differences are not automatically an import failure.</p>
+<h3>Replaying the same batch</h3>
+<p>A resume reuses B17’s original identity, source and decisions. It does not validate a different payload under B17 or erase its rejection. Corrected P3 data belongs to a distinct revision, linked back to the rejected source if that history is useful.</p>
+<p>The applied records stop completed B17 rows from being selected again. The upsert alone would not do that: a replacement would still write, a delta could accumulate twice, and an old replacement could overwrite newer work. Replaying an earlier batch after a later one also needs an ordering policy; a batch ledger is not a source revision policy.</p>
+<p>This interruption was known to happen before the next chunk began. If a connection disappears during <code>COMMIT</code>, the caller may not know whether that chunk committed. Recovering one logical request, checking that its payload agrees and retrieving its recorded result needs the fuller protocol in <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a>. The progress tables here demonstrate atomic import bookkeeping; they do not replace that protocol.</p>
+</section>
+
+<section id="bulk-methods">
+<h2>Choosing a bulk loading method</h2>
+<p>Receiving a batch and applying it are separate choices. B17 is small enough to receive with a multi-row insert. A large file usually deserves a bulk transport into staging, followed by the same validation and set-based application.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Choosing a loading method"><table><caption>Match transport to the source</caption><thead><tr><th scope="col">Method</th><th scope="col">Useful when</th><th scope="col">What it does not decide</th></tr></thead><tbody>
+<tr><td>Multi-row <code>INSERT … VALUES</code></td><td>The application already has a modest group of records.</td><td>Which duplicate-key policy is correct.</td></tr>
+<tr><td><code>INSERT … SELECT</code></td><td>The source is already in tables, as with validated staging rows.</td><td>Whether source keys are unique and values acceptable.</td></tr>
+<tr><td>PostgreSQL <code>COPY FROM</code></td><td>Many records arrive as a stream or file. It avoids much of the overhead of individual inserts.</td><td>How to validate, resolve conflicts, record progress or publish a batch.</td></tr>
+</tbody></table></div>
+<p>SQL <code>COPY … FROM '/path/file.csv'</code> reads a file on the database server, using the server’s filesystem access. <code>COPY … FROM STDIN</code> receives data over the client connection. The <code>psql</code> command <code>\copy</code> reads a file on the client and sends it through that connection. Choose according to where the file actually exists and which process may read it; a path on your laptop is not automatically a path on the server.</p>
+<p>By default, PostgreSQL stops a <code>COPY</code> at an error. PostgreSQL 18’s <code>ON_ERROR ignore</code> can skip input type-conversion failures in text and CSV input, with an optional <code>REJECT_LIMIT</code>. It does not provide a general “skip bad business rows” mode: a negative numeric price can convert successfully and then fail a check constraint. It does not replace a retained rejection record either.</p>
+<p>Loading raw text into staging preserves values that typed loading would reject. Malformed file structure can still prevent receipt, so retain the original file even then. Reconcile the sealed source, validation decisions and committed outcomes independently of the loader’s count.</p>
+<p>The <a href="/relational-rebuild/writes/catalogue-import.sql" download>worked SQL file</a> creates its own <code>writes_example</code> schema in a disposable database and uses literal inserts to receive B17. It includes validation, the first commit, the status report at the known interruption, resume, an empty replay and final reconciliation queries. It has been run as SQL in PGlite 0.5.8 (PostgreSQL 18.3); it is not a measured <code>COPY</code> or concurrent-server experiment. Use a fresh disposable database; the setup refuses to reuse an existing schema of that name.</p>
+<p>Bulk transport saves overhead; it does not change what a row means. Index and storage costs belong with their own readings. A live schema backfill adds another problem—converging while callers keep writing—which is owned by <a href="/learn/databases/relational/schema-changes/">Live schema changes and backfills</a>.</p>
+</section>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against the PostgreSQL 18 documentation on 25 October 2026. The shop, B17, the delta replay and the duplicate-key variant are invented worked scenarios. Ordinary SQL results, including constraint failures, chunk rollback and replay, were checked in PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly. No concurrent schedule or client/server file transfer is claimed as an observed run.</p>
+<ul>
+<li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/sql-update.html">UPDATE</a> and <a href="https://www.postgresql.org/docs/18/sql-delete.html">DELETE</a>: conditions, affected counts and the multiple-source-match warning for <code>UPDATE FROM</code>.</li>
+<li><a href="https://www.postgresql.org/docs/18/dml-returning.html">Returning data from modified rows</a>: values returned by data-changing statements; <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>: checks and reference actions.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-insert.html">INSERT</a>: <code>ON CONFLICT</code>, <code>EXCLUDED</code>, the atomic upsert outcome and duplicate input keys.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-merge.html">MERGE</a> and <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a>: matching actions and the difference from upsert under concurrent inserts.</li>
+<li><a href="https://www.postgresql.org/docs/18/tutorial-transactions.html">Transactions</a> and <a href="https://www.postgresql.org/docs/18/queries-with.html#QUERIES-WITH-MODIFYING">Data-modifying statements in WITH</a>: atomic boundaries and using a write’s returned rows.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-copy.html">COPY</a>, <a href="https://www.postgresql.org/docs/18/app-psql.html">psql</a> and <a href="https://www.postgresql.org/docs/18/populate.html">Populating a database</a>: transport, file access, conversion-error handling and loading cost.</li>
+<li><a href="https://www.postgresql.org/docs/18/functions-comparison.html">Comparison functions</a>: NULL-aware comparisons. <a href="https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-VALIDITY">Data validity checking functions</a>: <code>pg_input_is_valid</code>, used by the download before casting accepted price text.</li>
+</ul>

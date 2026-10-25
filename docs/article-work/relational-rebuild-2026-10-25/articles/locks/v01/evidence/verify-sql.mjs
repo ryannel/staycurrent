@@ -1,0 +1,42 @@
+import { PGlite } from '@electric-sql/pglite';
+import fs from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+const base=new URL('../',import.meta.url);
+const article=await fs.readFile(new URL('src/articles/current/article.astro',base),'utf8');
+const blocks=[...article.matchAll(/code=\{`([\s\S]*?)`\}/g)].map(match=>match[1]);
+assert.equal(blocks.length,7);
+const db=new PGlite();
+const result={runtime:'@electric-sql/pglite 0.5.8, PostgreSQL WASM; actual version below',blocks:[],limits:'One PGlite instance/connection. Ordinary SQL syntax and sequential results only; concurrency checked separately on native server.'};
+try {
+  result.version=(await db.query('SELECT version()')).rows[0].version;
+  await db.exec(await fs.readFile(new URL('evidence/fixture.sql',base),'utf8'));
+  await db.exec("UPDATE products SET stock=CASE product_id WHEN 'P3' THEN 12 WHEN 'P7' THEN 1 ELSE stock END");
+  result.blocks.push({index:1,result:await db.query(blocks[0])});
+  assert.equal(result.blocks[0].result.rows[0].stock,0);
+  result.blocks.push({index:2,result:await db.exec(blocks[1])});
+  const empty=await db.query(blocks[2]);
+  assert.equal(empty.rows.length,0);
+  result.blocks.push({index:3,result:empty});
+  const first=await db.exec(blocks[3]);
+  assert.equal(Number(first.at(-1).rows[0].line_value),29);
+  assert.equal(Number(first.at(-1).rows[0].paid),0);
+  result.blocks.push({index:4,pass:'A',result:first});
+  result.blocks.push({index:5,result:await db.exec(blocks[4])});
+  const second=await db.exec(blocks[3]);
+  assert.equal(Number(second.at(-1).rows[0].paid),20);
+  result.blocks.push({index:4,pass:'B',result:second,decision:'refuse 20+20 > 29'});
+  await db.exec('ROLLBACK');
+  result.blocks.push({index:6,result:await db.exec(blocks[5])});
+  result.blocks.push({index:7,result:await db.exec(blocks[6])});
+  await db.exec('ROLLBACK');
+  const totals=await db.query(`SELECT sum(amount) AS paid FROM payments WHERE order_id=103`);
+  assert.equal(Number(totals.rows[0].paid),20);
+  const lines=await db.query('SELECT quantity,unit_price FROM order_items WHERE order_id=103 ORDER BY line_no');
+  result.arithmetic={lineValue:lines.rows.reduce((total,row)=>total+row.quantity*Number(row.unit_price),0),twoAttempts:20+20,remaining:29-20};
+  assert.deepEqual(result.arithmetic,{lineValue:29,twoAttempts:40,remaining:9});
+  result.sourceHash=crypto.createHash('sha256').update(article).digest('hex');
+  result.verifierHash=crypto.createHash('sha256').update(await fs.readFile(new URL('evidence/verify-sql.mjs',base))).digest('hex');
+  result.status='passed';
+} catch(error) { result.status='failed'; result.error={message:error.message,code:error.code}; process.exitCode=1; }
+finally { await db.close(); result.closed=true; await fs.writeFile(new URL('evidence/sql-results.json',base),JSON.stringify(result,null,2)+'\n'); console.log(JSON.stringify({status:result.status,version:result.version,error:result.error,blocks:result.blocks.length,closed:true})); }

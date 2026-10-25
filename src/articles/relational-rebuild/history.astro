@@ -1,0 +1,138 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Prices from '../../components/relational-rebuild-history/Prices.astro';
+import Deletion from '../../components/relational-rebuild-history/Deletion.astro';
+import { currentQuery, earlierQuery } from '../../components/relational-rebuild-history/model.mjs';
+import '../../styles/relational-design.css';
+import '../../styles/relational-rebuild-code.css';
+import '../../components/relational-rebuild-history/history.css';
+---
+  <p>A historical record lets an application answer a question about the past after its data has changed. That question might be what Mina agreed to pay, which catalogue price applied on a particular day, or what the shop believed about that day before someone corrected its records. Those are three different questions, and they need different facts.</p>
+  <p>The distinction starts with a blue mug. P7 costs 20.00 when Mina places order 103 on 20 October 2026 at 10:15 UTC. Her order contains one mug and two packets of green tea at 4.50 each: 29.00 in all. Later, the catalogue price becomes 22.00. The agreement on the order stays 20.00, as <a href="/learn/databases/relational/modelling/">Relational data modelling</a> established.</p>
+  <p>Keeping earlier prices adds another question: when did each one apply? Correcting an earlier price adds a second clock: when did the shop record that account? This article follows both clocks through one correction, then follows a separate deletion request through the database and its copies. The drawings are worked models; the SQL results were checked in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. All times in the price example are UTC.</p>
+
+  <section id="past">
+    <h2>Which past are we keeping?</h2>
+    <p>Today’s catalogue and Mina’s order can disagree without either being wrong. The catalogue answers what the shop offers now. The order line records what was agreed for that purchase. Compare the two after the mug’s price rises.</p>
+    <figure class="history-figure" aria-labelledby="agreement-title">
+      <figcaption id="agreement-title"><span class="figure-number">Figure 1</span> One product, two different price facts</figcaption>
+      <div class="history-scene">
+        <div class="agreement-pair">
+          <div><span class="small-label">Catalogue · after the change</span><strong>P7 · 22.00</strong><p>The price offered for the mug.</p></div>
+          <div><span class="small-label">Order 103 · agreed 20 October</span><dl><dt>P7 · 1 × 20.00</dt><dd>20.00</dd><dt>P3 · 2 × 4.50</dt><dd>9.00</dd></dl><strong>Total · 29.00</strong></div>
+        </div>
+        <p class="pair-result">Using the current catalogue would give 22.00 + 9.00 = <strong>31.00</strong>. The agreement gives <strong>29.00</strong>.</p>
+      </div>
+      <p class="history-caption">The product reference says which mug was bought. The line’s <code>unit_price</code> says what was agreed. A later catalogue change changes only the first price fact.</p>
+    </figure>
+    <p>An agreement does not require a complete history of the catalogue. Capturing the agreed unit price on each line is enough to preserve this amount. It is not enough to answer “What did the catalogue say on 21 October?” No purchase need have occurred that day.</p>
+    <h3>Facts, versions and events</h3>
+    <p>Keep a current value when only the present matters. Keep an agreement when a past decision must retain its own terms. Keep dated versions when the application must look up a value at a past or future time. Keep events when it must explain actions such as a cancellation or refund, including their order and reason.</p>
+    <p>These choices can coexist. An order has captured terms; a product has price versions; a refund is a later action against the purchase. An <code>updated_at</code> column says when a row last changed, but cannot recover a replaced price or say why it changed. An event log can preserve those changes, but only if the events contain enough information and the rules for rebuilding the state are defined. Recording “order changed” is no more informative than recording its last update time.</p>
+  </section>
+
+  <section id="effective">
+    <h2>Effective time</h2>
+    <p><em>Effective time</em>, also called valid time, says when a fact applies in the business. The shop can record a price today that begins tomorrow. On 21 October at 12:00 it records P7’s price of 22.00 as effective from 22 October at 00:00. Until that boundary, 20.00 applies.</p>
+    <p>Figure 2 draws the schedule as two adjoining periods. Select the instant at the boundary and watch which price contains it.</p>
+    <Prices />
+    <p>The price periods belong to P7, whose identity stays the same. Each assertion has its own identity, A1 or A2 in the drawing. Changing the price creates a new version of a price fact; it does not create another product.</p>
+    <h3>Periods and boundaries</h3>
+    <p>A <em>half-open period</em> includes its start and excludes its end: <code>[start, end)</code>. The 20.00 period ends just before the boundary; the 22.00 period includes the boundary itself. There is no need to invent a final microsecond for the old price. Two inclusive ends would make both versions apply at exactly midnight.</p>
+    <p>The unbounded right end means “from this start onwards, with no end specified”. It does not mean an unknown price, and it does not mean the version applies now. On 21 October, A2 is open-ended and still in the future. A query needs to test that its requested instant lies inside the period, rather than merely finding a version with no end.</p>
+    <p>PostgreSQL can store such periods as <code>tstzrange</code> values. Its range constructor accepts <code>'[)'</code> for these boundaries; an omitted bound represents an unbounded end. In the SQL below, <code>period @&gt; instant</code> tests whether the period contains that instant.</p>
+    <h3>Overlaps and gaps</h3>
+    <p>For one product and one account of its history, the shop wants at most one catalogue price at an instant. An overlapping version claiming 21.00 from 21 to 23 October would conflict with the existing prices. Sorting the rows and taking the first would conceal that disagreement.</p>
+    <p>A non-overlap rule does not require a price to exist. End the first period on 21 October and start the next on 22 October, and the intervening day has no price. Decide what that means: perhaps the product cannot be offered then, or perhaps the history is incomplete. If the shop requires continuous coverage, its change procedure must preserve that coverage as well as preventing overlaps. Neither a unique version ID nor a non-overlap constraint proves that there are no gaps.</p>
+  </section>
+
+  <section id="recorded">
+    <h2>Recorded time</h2>
+    <p>On 24 October at 09:00 the shop discovers that the price change should have applied from 21 October, one day earlier than recorded. Editing A2’s effective start would give today’s corrected answer. It would also erase the explanation of an earlier report that used the old schedule.</p>
+    <p><em>Recorded time</em> says when an assertion formed part of the stored account. Keep the original schedule for its recording period, then record the corrected schedule from the correction onwards. A1 and A2 were the account from 21 October at 12:00 until 24 October at 09:00. A3 and A4 are the corrected account from then onwards.</p>
+    <p>Figure 3 retains both schedules. Leave the effective instant on 21 October and change only the recorded time.</p>
+    <Prices advanced />
+    <p>The earlier account gives 20.00. The corrected account gives 22.00 for the same business instant. Neither answer is a calculation mistake. One reconstructs the shop’s earlier assertion; the other uses its corrected account of when the price applied. Keeping both is called <em>bitemporal data</em>: the fact has an effective period and a recorded period.</p>
+    <h3>Correcting an effective date</h3>
+    <p>The correction changes both sides of the effective boundary. In the new account, the 20.00 period ends on 21 October and the 22.00 period starts there. Moving only the latter would leave an overlap. The earlier pair keeps its original effective boundary, but its recording period now ends at the correction.</p>
+    <p>Close the affected recording periods and install the replacement account in one transaction, with a rule that coordinates competing corrections. Readers should see a coherent account before or after the change. The retained earlier assertions are historical facts in their own right; ordinary writers must not silently rewrite them. Record the correction’s reason, source and author or process, with access and retention rules for that evidence. Let the trusted recording process assign the recorded time: a client backdating it could rewrite what an earlier account appears to have known.</p>
+    <p>This example starts its retained record on 21 October at 12:00. An earlier recording instant is outside its coverage. The unbounded effective start says that 20.00 applies before the price boundary within this model; it does not supply an earlier record of when the shop learnt that fact.</p>
+    <h3>Asking both time questions</h3>
+    <p>The four assertions in the drawing are stored in <code>price_history</code>. Each has a product, price, <code>effective_during</code> range and <code>recorded_during</code> range. To ask for today’s account of the price at midday on 21 October, select its effective period and the still-open recording period.</p>
+    <Sql code={currentQuery} label="Price on 21 October according to the corrected account" />
+    <p><code>upper_inf</code> tests whether the range has no upper bound. Here it identifies the current recorded account. It would be wrong to apply it to the effective period and treat that as today’s price.</p>
+    <p>To reproduce the account available at midday on 23 October, supply that second instant explicitly.</p>
+    <Sql code={earlierQuery} label="Price on 21 October according to the earlier recorded account" />
+    <p>Omit the recording condition and two assertions match that effective instant: A1 gives 20.00 and A4 gives 22.00. The extra row is a retained disagreement across time. The query must say which account it means.</p>
+    <p>The <a href="/relational-rebuild/history/price-history.sql" download>complete price-history example</a> creates temporary rows and runs both queries. Its PostgreSQL exclusion constraint refuses two assertions for the same product when <em>both</em> their effective periods and their recorded periods overlap. Historical accounts can therefore overlap in effective time while remaining separate in recorded time. The script demonstrates the final four-row history, rather than implementing a production correction service. It does not enforce continuous effective coverage.</p>
+    <h3>System-versioned tables</h3>
+    <p>Some engines manage a table’s history for you. SQL Server’s system-versioned temporal tables save previous versions on update and deletion and support queries using <code>FOR SYSTEM_TIME</code>. That can supply the recording dimension while the application supplies business effective periods.</p>
+    <p>Check what the engine’s timestamps mean. SQL Server uses the transaction’s begin time in UTC for its system periods. That is not the business effective date, and a transaction can begin before its changes commit. Such a timestamp alone cannot establish the exact instant at which another transaction could see a change.</p>
+    <p>PostgreSQL’s internal row versions are also different from retained business history. They support concurrent transactions, and vacuum can reclaim old versions once they are no longer needed. A hidden transaction ID or physical row location is not a durable history model. Choose explicit retained facts or a documented temporal feature when later queries must rely on them.</p>
+  </section>
+
+  <section id="purchase">
+    <h2>Correcting a purchase</h2>
+    <p>The catalogue correction leaves order 103 alone. It was placed on 20 October, before either proposed price boundary, and its line explicitly records the agreed 20.00. More generally, even a corrected catalogue price does not by itself prove that a particular agreement was different. A discount or negotiated price can differ from the catalogue.</p>
+    <p>Before changing a purchase, establish what happened. A later decision is a different fact from a mistake in the original record.</p>
+    <figure class="history-figure" aria-labelledby="correction-title">
+      <figcaption id="correction-title"><span class="figure-number">Figure 4</span> What kind of correction is this?</figcaption>
+      <div class="history-scene">
+        <ol class="correction-paths">
+          <li><span><strong>Catalogue changes</strong><small>New offer or corrected effective date</small></span><span aria-hidden="true">→</span><span>Change the catalogue’s account.<small>The purchase agreement stays put.</small></span></li>
+          <li><span><strong>Purchase was recorded wrongly</strong><small>Evidence shows different agreed terms</small></span><span aria-hidden="true">→</span><span>Record a correction linked to the affected line.<small>Preserve the previous assertion, evidence and reason as permitted.</small></span></li>
+          <li><span><strong>Agreement changes later</strong><small>Amendment, cancellation or refund</small></span><span aria-hidden="true">→</span><span>Record the later action against the purchase.<small>Keep what was originally agreed distinguishable from its later outcome.</small></span></li>
+        </ol>
+      </div>
+      <p class="history-caption">These are alternative cases, not three changes made to order 103. A refund records money returned; changing an old price cannot stand in for it.</p>
+    </figure>
+    <h3>Related facts at the same time</h3>
+    <p>A product ID identifies the product through time. It does not identify one price version. Joining an old order to today’s product price reprices it; joining it to every price version multiplies its lines. Even a lookup by the order’s time can change after an effective-date correction.</p>
+    <p>Captured terms make an agreement self-contained for those terms. A reference to a specific retained version can also identify exactly which terms were used, provided that version’s meaning remains stable and it is retained for as long as the reference needs it. A temporal lookup is useful when the question really is “Which fact applied then?” With bitemporal data, reproducing an earlier decision may require both the effective instant and the recorded account used for that decision.</p>
+    <p>Apply that choice to every related fact that matters: price, product description, recipient details and contractual terms need not share one history rule. A corrected customer profile may appropriately change the name shown on a current account page while leaving an issued document’s original content explainable.</p>
+    <h3>Carrying a correction through</h3>
+    <p>Find the authoritative fact, the records that depend on it and the outputs already issued. Correct a mistaken line through an explicit correction record or retained revision; refresh derived totals and reports from that corrected authority. Where an issued document needs replacement or an adjustment, link it to what it replaces so both the earlier output and the current outcome can be explained. Keep a pending state for any external work, and verify the result rather than treating a queued request as completion.</p>
+    <p>A backup restore rewinds database history, including unrelated valid work. It does not express a business correction. Correct the facts in the current database when that is the required change. Restoring damaged or lost history, and reconciling later work, is a separate recovery problem.</p>
+  </section>
+
+  <section id="retirement">
+    <h2>Retirement, cancellation and deletion</h2>
+    <p>Retiring P7 means the shop stops offering it. Cancelling an order changes the order’s status and may require further actions. Hiding a customer account changes what the application shows. Deleting information removes it from the defined scope. One <code>deleted_at</code> flag cannot give all four operations the same meaning.</p>
+    <h3>Soft deletion</h3>
+    <p>A row with a deletion flag is still stored. That can support recovery or retirement, but every ordinary read must apply the intended live-row rule. Reports, joins, exports and administrative screens need deliberate treatment too. A foreign key still sees a row that exists; it does not ordinarily reject it because the application marked it inactive. Decide whether new orders may refer to retired products while old orders retain their product references.</p>
+    <p>Uniqueness also needs a policy. If an account identifier may be reused after retirement, a unique rule over all rows forbids that reuse; a unique rule over only live rows permits it. Restoring the older row can then conflict with its replacement. PostgreSQL’s partial unique indexes can enforce uniqueness over the selected rows, but the application must still decide what restoration means. A flag that keeps personal details in place does not itself carry out an erasure policy.</p>
+    <h3>Choosing deletion behaviour</h3>
+    <p>Choose each relationship’s behaviour from the facts it connects. Deleting an abandoned editable order might reasonably delete its lines. Deleting a product should not silently remove the lines of past purchases that refer to it. A customer’s request must not become an accidental cascade through orders and payments.</p>
+    <p>Foreign keys can reject deletion, cascade it to dependants or set an optional reference to null. A required reference cannot simply become null. The starting shop schema requires every order to reference a customer, so removing that customer row while retaining its orders needs an explicit model change: for example, separating the customer’s removable profile from an identity retained for a stated purpose. That retained identity and its links still need a retention decision. Calling it anonymous does not make it so.</p>
+  </section>
+
+  <section id="retention">
+    <h2>Retention across the whole record</h2>
+    <p>A history model preserves facts deliberately. It must also be able to stop preserving them. Set the purpose, permitted contents, retention end or review trigger, and disposal action for each class of record. Include earlier versions, correction reasons and audit records. “Keep it for audit” does not specify why each personal detail is needed or when that need ends.</p>
+    <p>Suppose customer 1 later requests deletion. The decision about what may or must be retained is an input to the engineering work. It depends on the applicable policy and obligations; this example supplies no duration or legal conclusion. Retaining a limited purchase record may be justified while retaining a customer’s entire profile history is not. Keep those facts separable so the decision can actually be implemented.</p>
+    <p>Removing a name is not sufficient to establish anonymity. Order IDs, payment references, addresses, retained versions and external copies may still link the information to a person. Assess the retained combination and who can connect it to other information. A customer number left on every purchase is a link, even after its display name disappears.</p>
+    <h3>Deleting related and external copies</h3>
+    <p>Figure 5 supposes that a decision has approved removal of the profile and specified copies. A generated invoice PDF and a search copy are part of that hypothetical scope. Watch the request stay open after the database work succeeds.</p>
+    <Deletion />
+    <p>The deletion needs an inventory of destinations, including history tables and derived stores. Record durable work for each destination with the approved scope, its state, attempts and verification result. Keep that work consistent with the database change so a process crash cannot leave a removed profile with no record of its outstanding external copies. Repeated attempts must target the same removal safely, and producers must stop recreating the deleted copy.</p>
+    <p>Verification is specific to the destination: confirm that the intended object is absent, that a search lookup no longer returns it, or that the required redaction is present. A provider accepting a request is only an intermediate result if its deletion happens later. Track failure and escalation until the required outcome is verified. Do not copy the removed personal payload into an unrestricted deletion log; the evidence of completion has its own purpose and retention limit.</p>
+    <h3>Backups and restored data</h3>
+    <p>Include backup copies in the retention plan. Where the agreed policy allows them to await expiry, define the restrictions while they remain, their expiry and the evidence that expiry occurred. Deleting live rows does not remove an older backup’s contents. PostgreSQL’s ordinary deletion also need not immediately remove an old physical row version; logical absence and removal from every stored copy are different milestones.</p>
+    <p>A restore can bring deleted information back. Recovery must carry forward the still-applicable deletion decisions and apply them before the restored data returns to ordinary use. Preserve enough controlled information to do that without retaining the whole removed payload. The same check belongs before rebuilding search indexes or documents from an old source. Backup selection, restore procedures and reconciliation have their own scope in the planned <em>Backup, restore and reconciliation</em> article.</p>
+  </section>
+
+  <section id="choosing">
+    <h2>Choosing how much history to build</h2>
+    <p>Start from the question the application must still answer after a change. An agreed line price needs captured terms. A scheduled catalogue needs effective periods. Reproducing the account used before a late correction needs a recorded dimension too. Explaining a refund needs the later action and its relationship to the purchase. Do not build every kind of history simply because the engine can store it.</p>
+    <p>Then walk the model through an exact boundary, a correction received late and a deletion that fails at one external destination. At midnight, does exactly the intended version apply? After the correction, can the earlier report still be explained without repricing the agreement? After the local deletion, can the system name what remains and prevent it being recreated or restored into use?</p>
+    <p>The useful history is the smallest one that can answer those questions for the required period. Its keys identify products, versions, purchases and actions separately; its clocks say which past a query asks about; its retention rules say when each record’s work is done.</p>
+  </section>
+
+    <h2 id="sources">Sources and further reading</h2>
+    <p>Checked on 25 October 2026. The price queries and exclusion examples were run in PGlite 0.5.8 (PostgreSQL 18.3/WASM). The correction and deletion drawings are illustrative models, not observations of a production workflow.</p>
+    <ul>
+      <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/rangetypes.html">Range types</a> and <a href="https://www.postgresql.org/docs/18/functions-range.html">Range functions and operators</a>: bounds, unbounded ranges, containment and overlap. The download uses <code>btree_gist</code> to combine product equality with range overlap.</li>
+      <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>, <a href="https://www.postgresql.org/docs/18/indexes-partial.html">Partial indexes</a> and <a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">Routine vacuuming</a>: deletion actions, live-row uniqueness and the lifetime of old physical row versions.</li>
+      <li>Microsoft, <a href="https://learn.microsoft.com/en-us/sql/relational-databases/tables/temporal/overview?view=sql-server-ver17">Temporal tables</a>: engine-managed history and transaction-begin timestamps for system periods.</li>
+      <li>UK Information Commissioner’s Office, <a href="https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/individual-rights/individual-rights/right-to-erasure/">Right to erasure</a> and <a href="https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/data-sharing/anonymisation/how-do-we-ensure-anonymisation-is-effective/">How do we ensure anonymisation is effective?</a>: context for retention decisions, copies, backups and identification through retained links. This guidance is marked as under review; it supplies no policy decision for the invented shop.</li>
+    </ul>

@@ -1,0 +1,29 @@
+# Batch 02 practitioner review
+
+Reviewed 25 October 2026: the complete current Values, Constraints and Aggregation sources and their models, fixed by `review-source.json`. All 18 manifest entries matched the files at review time. No source edits or additional reviewers.
+
+## Findings
+
+No substantive practitioner findings. No optional correction is needed for acceptance from this perspective.
+
+The explanations and examples support the promised decisions: preserving numeric/time/text distinctions, reasoning about missing attributes, choosing enforceable row/reference rules, and choosing a grouped or per-row calculation with deliberate populations, ties and frames. I found no consequential incorrect SQL, result, rule or observed-execution claim.
+
+## Coverage
+
+- **Values:** checked conversion before/after integer division; numeric precision, storage rounding and allocation; instant versus local timestamp and explicit business zone; deterministic comparison and trailing spaces; generation versus uniqueness; structured-value validation; three-valued predicates, NULL-containing IN/NOT IN, null-safe comparison, COALESCE, uniqueness/DISTINCT and null sort placement. The package-weight and loyalty-code scenarios remain separate from missing payment rows.
+- **Constraints:** checked required values plus CHECK, line identity, optional-code uniqueness, parent changes and reference actions, composite tenant membership including partial NULLs, non-overlap and half-open bounds, eligible deferral and immediate checks, and NOT VALID versus validation. The two-payment schedule is a sound conceptual counterexample: separate positive payment rows can both pass reads of the unpaid state. Its proposed remedies retain the crucial requirement that every relevant writer participates; the full protocol remains with Transactions.
+- **Aggregation:** checked grouping grain and independent MAX values, WHERE/HAVING/FILTER populations, matches versus preserved outer-join rows, non-null counts and empty input, weighted means, windows over surviving rows, ties and deterministic selection, default peers versus ROWS, bounded ROWS/GROUPS/RANGE, LAST_VALUE and LAG/LEAD, and outer filtering. All stated five-line quantities, totals and ranks agree with the shared facts.
+
+I read the three plans, relevant accepted-map ownership and canonical example record. The ownership boundaries are useful and proportionate: Values covers comparison without taking over modelling/JSON procedures; Constraints supplies practical enforcement without trying to finish lifecycle, permissions or concurrency; Aggregation generalises the narrow per-order primer without repeating the still-due report or teaching physical plans/pagination. Bounded reference reads (Sequences part 1, Indexes part 2, Storage part 1) calibrated the standard of explicit inputs, concrete counterexamples and model/observation boundaries.
+
+## Evidence checked
+
+Inspected each technical-source map, actual verifier and recorded SQL results, plus model code. The source hashes connect the existing execution evidence to these unchanged article/model inputs. Values records exact displayed snippets and boundary failures; Constraints records valid cases, invalid inserts/updates, omitted-protection counterexamples, tenant/exclusion cases, deferral and reference actions. These are PGlite 0.5.8 / PostgreSQL 18.3 WASM observations.
+
+Independently executed the **exact current** `src/article-downloads/relational-rebuild/aggregation/shop-aggregates.sql` in a fresh owned in-memory PGlite instance using `node --input-type=module`. It equals current `setup` plus all 29 shared query entries, executes 41 statements successfully and leaves `pg_temp.line_facts` absent after rollback. Independently reread outputs for default/ROWS/bounded frames, LAST_VALUE, previous NULL and weighted means; they match the article and existing evidence. The instance was closed.
+
+External primary checks used PostgreSQL 18 manuals: [numeric types](https://www.postgresql.org/docs/18/datatype-numeric.html), [date/time types](https://www.postgresql.org/docs/18/datatype-datetime.html), [calendar arithmetic](https://www.postgresql.org/docs/18/functions-datetime.html), [character types](https://www.postgresql.org/docs/18/datatype-character.html), [collation](https://www.postgresql.org/docs/18/collation.html), [identity columns](https://www.postgresql.org/docs/18/ddl-identity-columns.html), [IN/NOT IN](https://www.postgresql.org/docs/18/functions-comparisons.html), [constraints](https://www.postgresql.org/docs/18/ddl-constraints.html), [ranges](https://www.postgresql.org/docs/18/rangetypes.html), [check timing](https://www.postgresql.org/docs/18/sql-set-constraints.html), [isolation](https://www.postgresql.org/docs/18/transaction-iso.html), [ALTER TABLE](https://www.postgresql.org/docs/18/sql-altertable.html), [aggregate functions](https://www.postgresql.org/docs/18/functions-aggregate.html), [window input](https://www.postgresql.org/docs/18/tutorial-window.html), [frame syntax](https://www.postgresql.org/docs/18/sql-expressions.html) and [window semantics](https://www.postgresql.org/docs/18/functions-window.html).
+
+## Limits
+
+This is the practitioner check, not a rendered layout, theme, keyboard or animation review. I inspected figure/model semantics but did not change the reader reviewer's browser state. I reused applicable Values/Constraints single-session evidence rather than rerunning their retained temporary-workspace verifiers. No native PostgreSQL execution, multi-session payment experiment, ICU collation execution or performance measurement was performed or inferred. The coordinator's separate native runtime does not retroactively establish such evidence for these pieces. No old drafts, earlier review findings or author quality verdicts were read.
