@@ -1,0 +1,23 @@
+# Backup, restore and reconciliation — first reader review
+
+Version: backups/v01, fixed batch-11 manifest. Current body, RecoveryFigure component, model and SQL hashes match that manifest. Scope: first independent blind editorial/teaching reading, figure-first rendered review, then plan/ownership assessment. Blind observations were saved in initial-notes.md before consulting plans, example facts or authored checks. No article edits, delegation, builds or publication.
+
+## Findings
+
+No substantive reader or rendered finding. No optional repair requested.
+
+The article fulfils its transferable promise: choose recoverable coverage against objectives, select an intended point, distinguish verification levels, close the source boundary, classify omitted operations, preserve identity and reconcile independent effects before controlled return. Native restore syntax, promotion/fencing mechanisms and ordinary worker delivery remain with their named owners. Its separate recovery branch consistently retains order 103 and stock 10/0/4, removes both the 2.20 mistake and later payment, then records the known 10.00 charge once, leaving 19.00 due.
+
+The figures carry the difficult relationships. Figure 1 makes present-but-unreachable C visible after B is removed. Figure 2 contrasts the three cuts while independently tracking catalogue price, agreed order total, payment, due amount and unchanged provider charge. Figure 3 makes the growing versus finite later-work set concrete. Figure 4 changes the local payment and identity mapping while retaining the provider outcome; unavailable and conflicting evidence stop at an unresolved state. The body develops the missing practical judgement rather than repeating the pictures.
+
+The writing can sit beside the fixed references. “C’s files still exist, but this path cannot use them to cross the missing B” explains a result directly. “Close the source history” names a required stage that the following in-flight-work paragraph explains. Qualifications about application timestamps, key expiry and the hypothetical provider prevent specific mistaken actions and sit with the reasoning they alter. Compared with the references’ booking/order examples and crash cuts, this is a similarly coherent one-example argument rather than an inventory of cautions. Calibration used bounded Sequence diagrams booking/outbox passages and rendered Figure 1; Indexes covering/index-only passage and rendered Figure 8; Storage and durability crash-recovery passage and rendered page-layout figure.
+
+## Rendered coverage and limits
+
+Direct current IAB inspection: 1280×720 System/dark, explicit Light desktop, and 375×720 Light/Dark. All four phone figures sampled; their arrows, fact/provider stacking, long identity, captions and current controls remain legible without clipping. Observed phone document width/scroll width both 375; figure widths about 343, with no figure overflow. Both tables fit their regions. Desktop verification table and payment comparison remain clear.
+
+Direct controls: both dependency states, all three target cuts, accepted payment steps 1–6, unavailable/disagreeing terminal states, phone keyboard Next, text alternative opening/keyboard closing, Play/Pause and Reset. Playback advanced to a meaningful provider-outcome step during a bounded timed sample and paused successfully. No claim of precise frame timing in a hidden browser pane. Existing authored v01 phone/theme/control receipts are retained for the unchanged full option/keyboard/replay/disclosure matrix; computed contrast receipt gives a minimum 6.05:1 for the reported text pairs. I did not repeat that matrix or independently recalculate every colour pair.
+
+Targeted primary-source checks support the main factual boundaries: [PostgreSQL continuous archiving](https://www.postgresql.org/docs/18/continuous-archiving.html) for continuous WAL, logical-dump and cluster scope limits; [pg_verifybackup](https://www.postgresql.org/docs/18/app-pgverifybackup.html) for the need for test restores and resulting-data checks; [Stripe idempotent requests](https://docs.stripe.com/api/idempotent_requests) for v1 key pruning and fresh execution after pruning. This reader review is not a replacement for the separate technical review. I did not execute SQL, a native restore, real provider calls, a production-size recovery, a screen reader or an actual reduced-motion OS session.
+
+All owned article/reference tabs closed. Restored actual 1280×720/System, reset payment player and verified zero playing Pause controls before releasing the viewport/theme lease to root. Acceptance remains with the coordinator.

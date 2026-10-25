@@ -208,3 +208,5 @@ Replica catch-up arithmetic may use an independent assumed 600MiB backlog, 20MiB
 Use a separate monthly-partitioned copy of the exact generated 2026 order workload, preserving rows, IDs and statuses. A hypothetical approved retirement boundary at 2026-02-01 UTC makes January wholly eligible; a partial-month boundary does not. No real retention duration or legal policy is implied. Core shop rows and schema stay unchanged.
 
 The comparison retains globally meaningful order_id and explicitly distinguishes it from the different uniqueness/reference contract enforced by (order_id, placed_at). Actual retirement must account for incoming references, related lines and retained recovery copies; dropping the model partition does not establish that all related records or copies disappeared.
+
+An isolated key_demo may attempt order_id 103 at 2026-11-01 00:00 UTC to contrast composite-key acceptance with same-pair rejection and ID-only reference refusal. A separate route_demo may reuse 103 at that exact month boundary and beyond supplied ranges, with rollback/owned schema only. Neither demonstration adds an order to the core shop or generated report copy.
