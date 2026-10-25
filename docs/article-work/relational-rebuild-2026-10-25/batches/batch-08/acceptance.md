@@ -1,0 +1,5 @@
+# Batch 08 acceptance
+
+Normalisation's accepted critical finding is resolved. The repaired paragraph covers the full four-attribute schema, applies the binary lossless test and retains the intended lost-dependency contrast. Original practitioner confirmation is normalisation-repair-confirmation.md; the delta, focused relational witness and stable compilation are preserved under articles/normalisation/repairs/complete-projections/. The first author v01 is untouched. Figures/models/styles/metadata are byte-identical; unaffected first technical, reader, SQL, proof and rendered checks remain retained.
+
+Hierarchies is accepted with its import-only nonpublic-asset integration adaptation. Both first reports found no substantive hierarchy problem; native/model/SQL/renderer limits are retained. The blind reader found no substantive problem in either article. No further whole-article/collection reading or execution matrix was run after the local repair. Both registry entries are reviewed; publication remains unauthorised.
