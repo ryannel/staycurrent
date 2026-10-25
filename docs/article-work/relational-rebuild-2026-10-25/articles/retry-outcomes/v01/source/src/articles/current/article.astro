@@ -1,0 +1,151 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import RecoveryFigure from '../../components/relational-rebuild-retry-outcomes/RecoveryFigure.astro';
+const schema = `CREATE TABLE purchase_requests (
+  customer_id integer NOT NULL REFERENCES customers,
+  request_key text NOT NULL,
+  payload jsonb NOT NULL,
+  result jsonb,
+  PRIMARY KEY (customer_id, request_key)
+);`;
+const claim = `BEGIN ISOLATION LEVEL READ COMMITTED;
+
+INSERT INTO purchase_requests
+  (customer_id, request_key, payload)
+VALUES (1, 'purchase-103', $1::jsonb)
+ON CONFLICT (customer_id, request_key) DO NOTHING
+RETURNING request_key;`;
+const recover = `-- A separate statement, after INSERT returned no row:
+SELECT payload, result
+FROM purchase_requests
+WHERE customer_id = 1
+  AND request_key = 'purchase-103';`;
+const guard = `SAVEPOINT purchase_work;
+
+UPDATE products SET stock = stock - 2
+WHERE product_id = 'P3' AND stock >= 2
+RETURNING stock;
+
+UPDATE products SET stock = stock - 1
+WHERE product_id = 'P7' AND stock >= 1
+RETURNING stock;`;
+const finish = `UPDATE purchase_requests
+SET result = '{"outcome":"accepted", "order_id":103,
+  "status_at_creation":"pending", "total":"29.00"}'::jsonb
+WHERE customer_id = 1 AND request_key = 'purchase-103';
+
+COMMIT;`;
+---
+<p>A retry is another attempt to carry out the same request. It can repair a transaction that the database aborted, but a missing reply asks a different question: did the first attempt already commit? Repeating a purchase without answering that question can buy twice, or tell a customer that stock is unavailable after their purchase succeeded.</p>
+<p>The database can help answer it if the application gives the request a stable identity and commits its result with the purchase. Each later attempt can then recover that result instead of purchasing again. This is often called an <em>idempotency key</em>: repeated calls with the same key and meaning have one retained effect.</p>
+<p>Every example follows Mina’s purchase of one blue mug, P7 at 20.00, and two packs of green tea, P3 at 4.50 each. Before it, stock is P7 = 1 and P3 = 12. A successful transaction creates pending order 103 and its two order lines, leaves P7 = 0 and P3 = 10, and records no payment. <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> establishes the atomic purchase; here the problem is recovering it when an attempt fails or its reply disappears.</p>
+
+<h2 id="missing-reply">When the reply never arrives</h2>
+<p>Mina submits the purchase. The application sends <code>COMMIT</code>, then loses its database connection before it receives an answer. Figure 1 puts two possible runs beside each other. Follow the database state down each column, then compare what the application hears.</p>
+<RecoveryFigure kind="uncertainty" number="1" />
+<p>The application hears no commit reply in either run. In the first run there is no order 103 and the mug is still available. In the second the order exists and its mug has gone. A timeout tells us when the application stopped waiting; it does not choose between these histories.</p>
+<p>A blind repeat after the committed run might see stock 0 and report “mug unavailable”. That answer is wrong for Mina’s original request: she already has the mug in order 103. With more stock, the repeat might instead create a second order. A stock guard protects the stock count, but it does not identify whose earlier purchase consumed it.</p>
+<h3 id="known-abort">A known abort</h3>
+<p>If the database explicitly reports a transaction abort, that attempt did not commit. A serialization failure is one such answer. After ending the failed transaction, the application can make a new attempt where the failure is retryable. It must repeat the reads and the decisions that chose the writes: a stock count read by the aborted attempt is no longer a basis for the next one.</p>
+<h3 id="uncertain-outcome">An uncertain outcome</h3>
+<p>A broken connection while committing provides no such answer. Nor does merely sending a cancellation request: it can arrive after the command finished. Losing the application’s reply to Mina creates the same problem one hop further out, even if the application received <code>COMMIT</code> successfully. Database commit, the database’s reply and the caller’s reply are three separate events.</p>
+<p>Connection recovery and disposal belong at the <a href="/learn/databases/relational/application-sql/">application boundary</a>. Once there is doubt about commit, this article’s protocol must recover the logical request on a usable connection.</p>
+
+<h2 id="request-identity">One request identity across attempts</h2>
+<p>Mina’s caller creates <code>purchase-103</code> before the first attempt and keeps it for every repeat of this purchase, including after a page reload or an application restart. The name is memorable for the example; in an application the token should come from an identifier scheme that avoids accidental reuse.</p>
+<p>The key belongs to customer 1’s purchase operation. Another customer’s token is a different identity, and a refund operation must have its own scope. The resulting order number is separate: the caller needs the request identity before it knows whether an order was created.</p>
+<figure class="request-record">
+  <figcaption><span>Figure 2</span> What stays the same on a retry</figcaption>
+  <div class="identity"><b>Request identity</b><code>customer 1 · purchase · purchase-103</code></div>
+  <div class="record-pair">
+    <div><b>Meaning supplied with the request</b><p>P7 × 1 at 20.00<br />P3 × 2 at 4.50</p></div>
+    <div><b>Result retained at commit</b><p>Accepted → order 103<br />Created pending · total 29.00</p></div>
+  </div>
+  <p class="record-caption">The same identity and payload recover this result. P7 × 2 under this identity is a mismatch, even if it comes from the same customer.</p>
+</figure>
+<p>The service binds the key to a <em>canonical payload</em>, the relevant request values in an agreed representation. Here those values are the product identities, quantities and agreed prices. It validates the values, normalises their representation and compares them on every duplicate. Equivalent line ordering can be normalised if the API defines it as equivalent. Delivery address, currency or a quote identity would also belong here if they changed the operation’s meaning.</p>
+<p>A changed quantity under <code>purchase-103</code> is rejected as a key–payload mismatch, without applying it. The service must not overwrite the old payload. Two intentional purchases of identical contents need two different keys; comparing contents alone cannot tell a repeat from a second purchase. The authenticated customer determines whose results may be recovered: a token is no substitute for authorisation.</p>
+
+<h2 id="atomic-result">Commit the purchase and its result together</h2>
+<p>The application adds a request table. Its primary key admits one row for each customer’s token; the table itself supplies the purchase-operation scope. <code>payload</code> holds the canonical request and <code>result</code> holds the terminal answer. A terminal answer is one this request will keep returning, such as “accepted as order 103” or “refused for insufficient stock”.</p>
+<Sql code={schema} label="Request records for the purchase operation" />
+<p>The protocol temporarily leaves <code>result</code> null while its transaction works. It must never commit that intermediate row. Access to this table must go through the protocol, which either fills the result or rolls the whole transaction back. Null is not a separately committed “in progress” job requiring another worker to finish it.</p>
+<p>Figure 3 moves the result record across the transaction boundary. Choose each arrangement and look at what a crash between commits would leave for recovery.</p>
+<RecoveryFigure kind="atomicity" number="3" />
+<p>With one transaction, an aborted attempt leaves neither purchase nor request record. A committed attempt leaves both. Committing the purchase first can leave an order without a way to recognise its repeat. Committing the answer first can leave a success record for a purchase that never happened. Either separate order creates a gap.</p>
+<h3 id="business-refusal">A business refusal is a result</h3>
+<p>Suppose the purchase cannot obtain all its stock. This service’s contract retains “insufficient stock” as a terminal refusal. It commits the refusal with no order and no stock change. A later restock does not turn a repeat of that key into a new purchase; the caller must deliberately start a new request with a new key.</p>
+<p>That differs from a database abort. An abort retains no decision from the failed attempt. The next attempt may make a different decision from fresh data. Choose and document which business refusals your API retains; input rejected before the protocol begins need not consume a key.</p>
+
+<h2 id="concurrent-attempts">Two attempts for the same request</h2>
+<p>Checking for an existing request before buying is insufficient. Two application instances can both read “absent” before either inserts a row. The database-enforced unique key must decide which attempt may do the purchase.</p>
+<p>This PostgreSQL example starts a Read Committed transaction and attempts to insert the key. <code>$1</code> is the validated canonical payload, supplied as a parameter. Only an attempt that receives a row from <code>RETURNING</code> may enter the purchase branch.</p>
+<Sql code={claim} label="Claim the purchase request before changing stock" />
+<p>A competing insert for the same key may wait while the first transaction is unresolved. Figure 4 follows two attempts. Step to the end with A committing, then switch to A aborting and see when B may purchase.</p>
+<RecoveryFigure kind="competition" number="4" />
+<p>If A commits, B’s <code>DO NOTHING</code> returns no row. B then runs the following <em>separate statement</em> to obtain a fresh Read Committed snapshot, compares the payload and returns the stored result if it matches.</p>
+<Sql code={recover} label="Read the committed request in a fresh statement" />
+<p>The separation matters. PostgreSQL can decline an <code>ON CONFLICT DO NOTHING</code> insert because of a concurrent row that its statement snapshot cannot see. Combining the insert and an ordinary fallback read in one statement can therefore return nothing. A missing row in that observation is not evidence of rollback. Under the retained-record protocol, the next Read Committed statement can read the committed row; if an implementation still cannot obtain it, it must re-enter the protected protocol or report unresolved recovery, never bypass the gate.</p>
+<p>If A aborts, its row and purchase disappear. B’s waiting insert can then succeed, and B may carry out the purchase itself. At Repeatable Read or Serializable, be prepared for an abort and a fresh transaction instead of assuming a later statement refreshes visibility. The schedule in the drawing illustrates these branches; it is not a record of a particular server’s timing.</p>
+
+<h2 id="purchase-branch">The purchase branch</h2>
+<p>Once the attempt owns the key, it performs the complete atomic purchase. The following outline shows where each decision belongs. The order number 103 is the result allocated in this example, not a caller-chosen replacement for the request key.</p>
+<ol class="protocol">
+  <li>Claim the key. If it already exists, compare its payload, finish the read transaction and return its terminal result. Reject a mismatch.</li>
+  <li>For a new key, establish a savepoint after the claim. Apply the guarded stock changes, checking that each returns one row.</li>
+  <li>If stock is insufficient, roll back to that savepoint, removing every purchase change while keeping the claim. Store the refusal in the request row.</li>
+  <li>Otherwise create order 103 and its two order lines, then store the accepted result in the request row.</li>
+  <li>Commit. Return the terminal answer only after commit is confirmed. If confirmation is lost, recover using this same key and payload.</li>
+</ol>
+<p>For the fixed basket, the guarded stock statements are below. Stop at the first statement that returns no row. The savepoint lets the service undo an earlier tea decrement before recording a mug refusal; simply committing a refusal after a partial decrement would break the purchase.</p>
+<Sql code={guard} label="Guard each stock decrement inside the claimed request" />
+<p>On success the attempt inserts the pending order, P7 on line 1 at 20.00 and P3 on line 2 at 4.50, then records the answer before committing:</p>
+<Sql code={finish} label="Record the accepted result in the purchase transaction" />
+<p>On refusal it executes <code>ROLLBACK TO SAVEPOINT purchase_work</code>, stores <code>outcome: refused</code> with <code>reason: insufficient_stock</code> in the result and commits. An unexpected SQL error instead ends the attempt by rolling the entire transaction back. Database retry logic must not catch such an error and commit an unfinished request row.</p>
+
+<h2 id="recover-result">Recover the recorded result</h2>
+<p>Now let the successful commit reply disappear. The application knows the key and payload but does not know whether they committed. It starts another attempt of the same protocol. If the original transaction is still running, the unique key coordinates with it. If it committed, the duplicate branch returns accepted order 103; stock stays P3 = 10 and P7 = 0. If it aborted, the new attempt can claim the key and try the purchase.</p>
+<p>Losing the application’s reply works the same way. Mina’s caller sends <code>purchase-103</code> again and receives order 103. The key must survive at the caller too: generating a new token after every timeout makes each recovery look like an intentional new purchase.</p>
+<p>Use the database authority that accepts the key, with a current view, for recovery. A lagging replica or an old snapshot may say “absent” after the purchase committed. Even a fresh absence read is only an observation: another attempt could still be running. Re-entering the unique-key protocol resolves ownership without treating that absence as permission to bypass it.</p>
+<p>The retained answer describes what the original request achieved. If order 103 is later cancelled or paid, that does not rewrite “created pending for 29.00”. Recover the creation result first; read the order’s current state through the ordinary order query when that is what the caller needs.</p>
+
+<h2 id="what-to-retry">Choosing what to retry</h2>
+<p>The outcome determines the next action. “Something went wrong” is too broad a retry condition.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Outcomes and retry decisions">
+<table><caption>Four outcomes for one logical request</caption><thead><tr><th>Evidence</th><th>Next action</th></tr></thead><tbody>
+<tr><td>Known retryable abort</td><td>End the failed transaction. Retry the entire transaction and its decision logic with the same request key.</td></tr>
+<tr><td>Committed business result</td><td>Return the retained acceptance or refusal. A deliberate new purchase needs a new key.</td></tr>
+<tr><td>Persistent error or payload mismatch</td><td>Stop and correct the request or application. Repetition alone cannot fix it.</td></tr>
+<tr><td>Uncertain commit or missing caller reply</td><td>Recover through the protected protocol with the same key and payload.</td></tr>
+</tbody></table></div>
+<p>In PostgreSQL, <code>40001</code> identifies a serialization failure. A deadlock abort, <code>40P01</code>, can also merit a complete retry, alongside fixing recurring lock-order problems. A uniqueness error may instead mean permanently invalid data; do not retry every constraint violation. In this protocol an existing request key is an expected duplicate branch, with a payload comparison, rather than a reason to submit a new purchase.</p>
+<p>Bound both the number of attempts and the elapsed time. Between retryable failures, use backoff with jitter, a random variation in the delay, so competing callers do not all return together. Put responsibility for retries at a deliberate layer: retries in a caller, driver and service can otherwise multiply the work during an outage.</p>
+<p>Exhausting the caller’s budget ends its wait, not the uncertainty. Preserve the key and offer a way to recover later, using a subsequent request or a status lookup that returns a retained result or says it is still unresolved. Do not label an unresolved purchase “failed”, invite a new key or promise that cancellation undid it merely because the timer expired.</p>
+
+<h2 id="limits">The limits of duplicate protection</h2>
+<p>The guarantee lasts as long as the service retains enough history to recognise the key and its meaning. Delete the request row and a late repeat can claim the key again. Agree the caller’s retry window with the retention policy, and define how expired requests are refused or reconciled. Keeping a small tombstone can preserve rejection of old keys, but a payload hash alone cannot recover the original answer.</p>
+<p>One key, one payload comparison, one atomic commit and a retained result protect this database operation. They do not make an email or payment-provider call part of the database transaction. Calling a provider inside a transaction that may be replayed can repeat the external effect even when every database attempt is correct. <a href="/learn/databases/relational/outboxes-and-jobs/">Outboxes and database-backed jobs</a> develops durable external intentions and worker recovery. <a href="/learn/databases/relational/cockroachdb/transactions/">CockroachDB transactions and retries</a> applies the same logical identity to its native retry and ambiguous-result paths.</p>
+
+<h2>Sources and further reading</h2>
+<p>The shop histories and timings of the drawings are conceptual examples. Sequential SQL was checked in PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly. The two request-key wait branches were also checked on an owned Linux PostgreSQL 18.6 server. These checks do not simulate losing a real network reply.</p>
+<ul>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction Isolation</a> and <a href="https://www.postgresql.org/docs/18/sql-insert.html">INSERT</a>: statement snapshots, conflicting inserts and the visibility caveat for <code>DO NOTHING</code>.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/mvcc-serialization-failure-handling.html">Serialization Failure Handling</a>: complete transaction retries, SQLSTATEs and persistent constraint failures.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/libpq-cancel.html">Cancelling queries in progress</a>: dispatching cancellation does not prove that the command was cancelled.</li>
+<li>Malcolm Featonby, Amazon Builders’ Library, <a href="https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/">Making retries safe with idempotent APIs</a>: caller identity, atomic recording, changed intent and retained history.</li>
+<li>Marc Brooker, Amazon Builders’ Library, <a href="https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/">Timeouts, retries, and backoff with jitter</a>: retry budgets, load amplification and staggered retries.</li>
+</ul>
+<style>
+.request-record { margin:2rem 0; border:1px solid var(--color-rule-strong); padding:1.1rem; font:.85rem/1.6 var(--font-sans); background:var(--color-surface-alt); }
+.request-record figcaption { margin:0 0 1rem; font:500 1.1rem var(--font-serif); }
+.request-record figcaption span { font:.67rem var(--font-mono); color:var(--color-text-secondary); text-transform:uppercase; margin-right:.65rem; }
+.identity { padding:.7rem; border:1px solid var(--teal); }
+.identity b,.identity code { display:block; }
+.identity code { font:.79rem/1.8 var(--font-mono); overflow-wrap:anywhere; }
+.record-pair { display:grid; grid-template-columns:1fr 1fr; gap:1rem; padding-top:1rem; }
+.record-pair>div { padding:.7rem; border-top:1px solid var(--color-rule-strong); }
+.record-pair p,.request-record .record-caption { font:.85rem/1.6 var(--font-sans); margin:.5rem 0 0; }
+.request-record .record-caption { border-top:1px solid var(--color-rule); padding-top:.8rem; color:var(--color-text-secondary); }
+.protocol li { margin:.7rem 0; }
+@media(max-width:550px){.record-pair{grid-template-columns:1fr;gap:.2rem}.request-record{padding:.8rem}}
+</style>

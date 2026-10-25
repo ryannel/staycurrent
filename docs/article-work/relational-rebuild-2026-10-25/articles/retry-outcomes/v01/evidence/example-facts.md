@@ -1,0 +1,11 @@
+# Example facts and continuity
+
+Uses the centrally agreed application purchase replay and request-identity scenario, without extending the shared record. Customer1 is Mina. Fixed canonical request is P7×1 at20.00 and P3×2 at4.50, key purchase-103 in customer1/purchase scope. Order identity103 remains distinct from the request key. Success creates pending order103 at2026-10-20 10:15UTC, P7 on line1 and P3 on line2, total29.00, stockP3=10/P7=0/P9=4, no payment. Before success, order103/its lines are absent and stock is12/1/4. Other shop rows are outside the displayed change.
+
+Separate illustrative histories: abort versus committed purchase with missing database reply; missing application reply; simultaneous attempts A/B; two unsafe split-commit gaps. These are not changes to the starting rows.
+
+The refusal check independently sets P7 stock to0 before attempting the same basket. It retains a terminal insufficient-stock refusal and restores the earlier tea decrement through a savepoint; no order/payment survives. This is a verifier counterexample, not a claim that Mina lost the core last-mug race. No refusal order104 is invented. Restocking, later paid/cancelled order status and higher-stock duplicate risk are conditional explanations, not new shared rows.
+
+Continuity pass: read the complete rendered article/AX text, including captions and controls, from the atomic-purchase starting point. Introduces terminal result before receipt protocol; unique-key ownership before the purchase branch; fresh visibility before recovery; known abort before retry policy. Canonical payload is defined in prose and JSON object property order is not used as semantic equality (the verifier compares jsonb values). Kept the request row uncommitted while result is null, and explained that only the complete protocol may commit it. Savepoint retains claim but reverses all partial purchase work before terminal refusal.
+
+Incoming responsibilities are owned here: known-abort/uncertain distinction, stable caller identity, payload mismatch, atomic result, competing attempts, fresh authoritative recovery, full transaction retries, budgets and retained-history limits. Driver/connection cleanup, external delivery/worker identity and native CockroachDB error paths remain contextual links to their supplied canonical destinations. No unresolved shared-example dependency.
