@@ -9,6 +9,8 @@ import sys
 import time
 
 role, filename = sys.argv[1:3]
+prefix = sys.argv[3] if len(sys.argv) > 3 else 'native'
+assert re.fullmatch('[a-z][a-z0-9-]{0,40}', prefix)
 assert re.fullmatch('[a-z][a-z0-9-]{0,31}', role)
 source = Path(filename).resolve()
 workspace = Path('/private/tmp/staycurrent-relational-rebuild-' + role + '-writer-20261025')
@@ -34,8 +36,8 @@ try:
     command = cli + ['exec', '-i', cid, 'env', '-i', 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'PGAPPNAME=' + role + '-owned-verifier', 'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', '/var/run/postgresql', '-U', user, '-d', db]
     guard = f"DO $root_guard$ BEGIN IF current_database()<>'{db}' OR current_user<>'{user}' OR current_setting('cluster_name')<>'{cluster}' OR current_setting('server_version_num')<>'180006' OR current_setting('data_directory')<>'/var/lib/postgresql/18/docker' OR current_setting('listen_addresses')<>'' THEN RAISE EXCEPTION 'Refusing unowned fixture'; END IF; END $root_guard$;\n"
     result = subprocess.run(command, input=guard + source.read_text(), capture_output=True, text=True, timeout=180)
-    (evidence / 'native-results.txt').write_text(result.stdout)
-    (evidence / 'native-stderr.txt').write_text(result.stderr)
+    (evidence / (prefix + '-results.txt')).write_text(result.stdout)
+    (evidence / (prefix + '-stderr.txt')).write_text(result.stderr)
     status.update(exit_code=result.returncode, container_id=cid, configured_image=image, image_id=info['Image'], network='none', port_bindings=info['HostConfig'].get('PortBindings'), command=command, execution='Coordinator inspected author SQL separately; executor adds same-session runtime guard before supplied SQL. Exit0 establishes execution, not unasserted model conclusions.')
 except BaseException as error:
     status.update(exit_code='timeout' if isinstance(error, subprocess.TimeoutExpired) else 'exception', error=str(error))
@@ -43,7 +45,7 @@ finally:
     status.update(elapsed_seconds=round(time.time()-start, 2), verifier_sha256_after=hashlib.sha256(source.read_bytes()).hexdigest())
     cleanup = subprocess.run(['python3', str(runtime / 'native-fixture.py'), 'stop', role], capture_output=True, text=True, timeout=30)
     status['fixture_cleanup_exit_code'] = cleanup.returncode
-    shutil.copy2(runtime / (role + '-fixture.json'), evidence / 'native-fixture.json')
-    (evidence / 'native-execution.json').write_text(json.dumps(status, indent=2) + '\n')
+    shutil.copy2(runtime / (role + '-fixture.json'), evidence / (prefix + '-fixture.json'))
+    (evidence / (prefix + '-execution.json')).write_text(json.dumps(status, indent=2) + '\n')
 print(json.dumps(status))
 sys.exit(0 if status.get('exit_code') == 0 and status['fixture_cleanup_exit_code'] == 0 else 1)

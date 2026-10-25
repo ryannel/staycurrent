@@ -1,0 +1,157 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Gin from '../../components/relational-rebuild-pg-indexes/Gin.astro';
+import Brin from '../../components/relational-rebuild-pg-indexes/Brin.astro';
+import Spatial from '../../components/relational-rebuild-pg-indexes/Spatial.astro';
+import '../../components/relational-rebuild-pg-indexes/methods.css';
+---
+
+<p>An index can store an ordered value, the keys inside a value, or a summary covering many values. Those choices determine which questions it can answer. A customer ID has an order that a B-tree can search. “Contains the tag gift” asks about an element inside an array. “Overlaps this reservation” asks about two intervals. “Falls on this day” can sometimes exclude whole ranges of table pages.</p>
+<p>PostgreSQL supplies six built-in <em>access methods</em>: B-tree, hash, GIN, GiST, SP-GiST and BRIN. The method supplies the structure. An <em>operator class</em> connects a particular type and its operators to that structure. Choosing both starts with what the query means, then asks what information the index must retain to help answer it.</p>
+<p><a href="/learn/databases/relational/indexes/">Indexes and access paths</a> develops composite keys, selectivity and ordered limits. <a href="/learn/databases/relational/postgresql/architecture/">Inside PostgreSQL</a> follows an index entry to a visible heap tuple. Here we keep those ideas and change the information in the index. Small drawings are models; the plan observations come from an owned disposable PostgreSQL 18.6 server.</p>
+
+<h2 id="methods-and-classes">Access methods and operator classes</h2>
+<p><code>USING</code> selects the method. The name after an indexed column, when present, selects its operator class. Leaving it out chooses the default class for that type and method:</p>
+<Sql label="Select a method and an operator class" code={`CREATE INDEX products_name_prefix
+ON products USING btree (name text_pattern_ops);
+
+CREATE INDEX product_tags_gin
+ON product_tags USING gin (tags array_ops);`} />
+<p>The first definition keeps a B-tree but changes how text is compared. The second indexes the component values of a <code>text[]</code> column. <code>product_tags</code> is a separate illustrative catalogue projection; P7 retains its established gift and ceramic tags. Neither definition changes the meaning of the SQL operator.</p>
+<p>Figure 1 gives each method one question. Read the middle of each card: it is the information a search has available before it reaches the heap.</p>
+<figure class="method-figure" aria-labelledby="method-map-title">
+  <figcaption id="method-map-title"><span>Figure 1</span> What the index keeps</figcaption>
+  <div class="method-map">
+    <div><b>B-tree</b><code>ordered keys → row locators</code><p>Find one customer's recent orders, already newest first.</p></div>
+    <div><b>Hash</b><code>hash codes → row locators</code><p>Find rows whose customer ID may equal the supplied ID.</p></div>
+    <div><b>GIN</b><code>component key → row locators</code><p>Find arrays containing gift and ceramic.</p></div>
+    <div><b>GiST</b><code>covering summaries → children</code><p>Skip branches whose values cannot overlap a query.</p></div>
+    <div><b>SP-GiST</b><code>space partitions → children</code><p>Follow the parts of a space the query can reach.</p></div>
+    <div><b>BRIN</b><code>page-range summary → heap pages</code><p>Skip ranges whose timestamps cannot fall on the requested day.</p></div>
+  </div>
+  <p class="figure-note">A capability map, not a speed ranking. The class determines the particular keys, summaries, partitions and operators. Several methods can support the same predicate.</p>
+</figure>
+
+<h3 id="prefix-search">The right column can have the wrong comparison</h3>
+<p>The shop wants names beginning with <code>Blue</code>:</p>
+<Sql label="A fixed product-name prefix" code={`SELECT product_id, name FROM products
+WHERE name LIKE 'Blue%';`} />
+<p>A B-tree can turn a fixed prefix into a narrow search when its comparison puts the relevant strings together. Locale-aware text order can prevent that transformation. In a deterministic non-C collation, <code>text_pattern_ops</code> supplies the character-wise comparison used for the prefix bounds. With the C collation, the default text class already supports this search.</p>
+<p>The resulting plan can show special bounds such as <code>name ~&gt;=~ 'Blue'</code> and <code>name ~&lt;~ 'Bluf'</code>, followed by a <code>LIKE</code> filter. The bounds locate candidates; the original predicate remains the test. This does not serve <code>LIKE '%mug%'</code>, whose unknown beginning supplies no such fixed prefix.</p>
+<p>Nor is the pattern class a replacement for every ordinary text comparison. It supports equality, but queries using ordinary <code>&lt;</code>, <code>&gt;</code> or locale-aware ordering need appropriate default-class support. Match the expression, operand types and collation, as well as the column name.</p>
+<p>Inspect the definition with <code>pg_get_indexdef</code>. To discover available classes, join <code>pg_opclass</code> to <code>pg_am</code>; <code>opcintype</code> identifies the indexed type. The class belongs to an <em>operator family</em>, which can also contain comparisons between related types. PostgreSQL's <code>psql</code> commands <code>\dAc</code>, <code>\dAf</code> and <code>\dAo</code> list classes, families and operators. An operator's spelling alone does not identify its supported search: array <code>&amp;&amp;</code> and range <code>&amp;&amp;</code> have different operand types and implementations.</p>
+
+<h2 id="btree-and-hash">B-tree and hash indexes</h2>
+<p>The established history request fixes a customer, bounds time, asks for descending time and ID, and stops at ten:</p>
+<Sql label="The customer-history request and its ordered index" code={`SELECT order_id, placed_at, status FROM orders
+WHERE customer_id = 1002
+  AND placed_at >= timestamptz '2026-01-01 00:00+00'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;
+
+CREATE INDEX orders_history ON orders
+  (customer_id, placed_at DESC, order_id DESC);`} />
+<p>The B-tree's ordered run supports both the time bound and the early stop. A hash index on <code>customer_id</code> can help find that customer's rows, but it supplies no time order. PostgreSQL must test the time condition and sort the eligible results before choosing ten.</p>
+<p>A hash index computes a 32-bit hash code and uses it to find a bucket. Each index tuple stores the code and a heap locator, rather than the original customer ID. Different values can have the same code, so a candidate still needs an equality recheck against the heap value. This is a <em>lossy</em> representation: the code has discarded information. The query must not return a different customer merely because their hash codes collide.</p>
+<p>Hash supports single-column equality searches. It cannot replace a multicolumn history key, supply range bounds or sorted output, enforce uniqueness, or supply an index-only scan. B-tree supports those capabilities where its class and definition fit the request. Equality alone therefore does not establish that hash is the faster choice. Bucket concentration, overflow pages, key width, caching and the rows fetched all matter.</p>
+<p>On the generated shop fixture, compare a common customer's 84,000 orders with customer 1002's 36. A direct bucket lookup does not make 84,000 heap candidates cheap. The native comparison below keeps one secondary index at a time so that the requested order, rather than another index, explains the difference.</p>
+
+<h2 id="gin">GIN indexes and component values</h2>
+<p>An array's ordinary B-tree order compares whole arrays. It does not place every array containing <code>gift</code> in one run. A <em>Generalized Inverted Index</em>, or GIN, works the other way round: each component key points to the rows containing it.</p>
+<p>P7 supplies two keys, <code>gift</code> and <code>ceramic</code>. Each has a <em>posting list</em> of heap locators; a large list can use a posting tree. To find arrays containing both, look up both keys and keep locations present in both lists. Figure 2 follows this lookup. Then switch to equality without changing the searched keys.</p>
+<Gin />
+<p>Containment asks whether each requested element is present. It does not require the array to have exactly those elements or that order. Array equality does. GIN's built-in <code>array_ops</code> supports <code>@&gt;</code>, <code>&lt;@</code>, <code>&amp;&amp;</code> and <code>=</code>, but they do not all have the same proof available from component membership.</p>
+<p>For this non-null containment example, exact key membership proves the predicate. Equality still needs the original array: the same keys cannot distinguish P7 from the reversed array or the one with an extra element. In the observed native equality plan, all three candidate locations were exact bitmap locations, yet two rows were removed by index recheck. “Exact location” describes where to look, not whether the operator is true.</p>
+<pre class="plan-output" tabindex="0" aria-label="Observed GIN equality plan, selected fields">Bitmap Heap Scan on tag_probe (actual rows=1.00 loops=1)
+  Recheck Cond: (tags = '&#123;gift,ceramic&#125;'::text[])
+  Rows Removed by Index Recheck: 2
+  Heap Blocks: exact=1
+  -&gt; Bitmap Index Scan on tag_gin (actual rows=3.00 loops=1)
+       Index Cond: (tags = '&#123;gift,ceramic&#125;'::text[])</pre>
+<p class="example-note">Selected fields from PostgreSQL 18.6. Sequential scans were discouraged to expose the mechanics on four diagnostic rows; costs, times and other fields are omitted.</p>
+<p>GIN does not reconstruct the whole array for an index-only scan, nor does it supply the final product-name or relevance order. A search can identify matching rows and still need heap work and a sort. Keep <code>ORDER BY</code> in the query when the result order matters.</p>
+<p>The same inverted structure can index text lexemes or JSONB keys, with different extraction and matching rules. Finding component keys does not itself define stemming, phrases or relevance. <a href="/learn/databases/relational/postgresql/full-text-search/">Full-text search in PostgreSQL</a> develops that retrieval design. <a href="/learn/databases/relational/postgresql/json/">PostgreSQL JSON and structured alternatives</a> chooses JSON operators and classes from the facts being queried.</p>
+
+<h2 id="gist-and-spgist">GiST and SP-GiST indexes</h2>
+<p>Overlap does not have the same useful ordering as a customer ID. A reservation can begin before another and still overlap it, contain it or end before it. PostgreSQL's built-in range classes support indexed overlap through both GiST and SP-GiST:</p>
+<Sql label="An indexed reservation-overlap search" code={`CREATE INDEX reservation_during ON reservation_probe
+USING gist (during);
+
+SELECT id FROM reservation_probe
+WHERE during && tstzrange(
+  '2026-11-02 10:30+00', '2026-11-02 11:30+00', '[)');`} />
+<p>The stored reservation 7001 is 10:00–11:00 UTC. This search finds it. A search for 11:00–12:00 does not: the existing upper bound is excluded by the half-open <code>[)</code> interval. An index accelerates that operator's meaning; it does not turn adjoining intervals into an overlap.</p>
+<p><em>Generalized Search Tree</em>, or GiST, provides a framework whose internal summaries cover the values below them. A search can reject a child when its summary proves that no value inside can match. Otherwise it follows the child. Different classes define different summaries and tests. A bounding rectangle is a useful geometric example, not the definition of every GiST index.</p>
+<p><em>Space-partitioned GiST</em>, or SP-GiST, instead supports structures which repeatedly divide a search space. Quadtrees, k-d trees and text tries are examples. The partitioning rule determines which children a query can reach. Figure 3 keeps the same four mathematical points and draws one possible pruning step in each framework.</p>
+<Spatial />
+<p>Both searches return points (1,1) and (3,3). GiST excludes the upper covering region; SP-GiST excludes partitions outside the box's reach. Different data distributions and query shapes change how much can be pruned. Neither method is one universal spatial index, and neither method name alone tells you whether a leaf match needs rechecking. The selected class determines how much information survives.</p>
+<p>The range example uses a built-in type and class. A rule forbidding two reservations for the same room is a separate integrity design: searching for overlap is not by itself a concurrency-safe exclusion rule. <a href="/learn/databases/relational/postgresql/extensions/">Types and extensions in PostgreSQL</a> develops specialised type, operator and extension choices; <a href="/learn/databases/relational/constraints/">Constraints and data integrity</a> establishes the rule.</p>
+
+<h3 id="distance-ordering">Distance ordering and nearest neighbours</h3>
+<p>Some GiST and SP-GiST classes also supply a distance-ordering operator. For the native <code>point</code> classes, this lets a search produce the nearest points without sorting every point's distance first:</p>
+<Sql label="Distance order with a bounded nearest-neighbour request" code={`SELECT id, p <-> point '(0,0)' AS distance
+FROM point_probe
+ORDER BY p <-> point '(0,0)'
+LIMIT 2;`} />
+<p>The first two points in Figure 3 are also the nearest to (0,0). An assisted plan shows the distance expression under <code>Order By</code> in its index scan. This order depends on the query point; it is different from a B-tree's fixed value order. Support belongs to the particular class and operand types, so check its documented ordering operators.</p>
+<p>This native geometric example does not establish the recall of an approximate embedding index. <a href="/learn/databases/relational/postgresql/vector-search/">Vector search in PostgreSQL</a> compares exact and approximate retrieval, filters and recall separately from whether an embedding captures useful meaning.</p>
+
+<h2 id="brin">BRIN indexes and physical correlation</h2>
+<p>A <em>Block Range Index</em>, or BRIN, can retain much less than one entry per tuple. Its timestamp min/max class records the lowest and highest timestamp in each group of adjacent heap pages. If a requested day cannot lie between them, every page in that range can be skipped.</p>
+<p>It cannot identify which tuples match within a surviving range. PostgreSQL collects the pages and tests their tuples. Figure 4 stores the same timestamp values in two orders. Run the increasing order first, then switch to mixed time.</p>
+<Brin />
+<p>Increasing time puts narrow spans in each summary. Mixed time broadens them until all eight pages remain possible. The matching values did not change; the information lost by summarising each physical range did. A timestamp column is therefore not sufficient reason to choose BRIN. Arrival order, backfills and later updates determine whether its values remain usefully correlated with physical placement.</p>
+<Sql label="A timestamp min/max BRIN index" code={`CREATE INDEX orders_time_brin ON orders USING brin (placed_at)
+WITH (pages_per_range = 32);`} />
+<p><code>pages_per_range</code> trades summary count for precision. Smaller ranges give more summaries and can exclude more heap pages, while making the index larger. They cannot recover useful separation when even individual pages mix widely separated timestamps. Other BRIN classes retain different summaries, including multiple min/max intervals or Bloom filters; the figure and experiment use ordinary timestamp min/max.</p>
+<p>Building BRIN summarises existing ranges. Inserts into summarised ranges update their summaries as needed. Newly extended ranges can remain unsummarised until vacuum or explicit summarisation processes them; <code>autosummarize</code> is off by default. An unsummarised range must remain a candidate, preserving correct results at the cost of extra scanning. An old summary that is too broad can also keep unnecessary pages. The upkeep procedure belongs with <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a>.</p>
+
+<h2 id="rechecks">Candidates, rechecks and visible rows</h2>
+<p>A heap visit can answer three different questions. First, does this candidate actually satisfy the indexed operator? Hash collisions, GIN array equality and BRIN summaries can require that <em>index recheck</em>. Second, does another SQL condition pass? A condition on an unindexed stock column is a <em>filter</em>. Third, is this tuple visible to the reader's snapshot? That is the visibility check already developed in <a href="/learn/databases/relational/postgresql/architecture/#visibility">Inside PostgreSQL</a>.</p>
+<p>There is another way to lose precision: the bitmap itself. A bitmap heap scan collects locations before reading heap pages. With enough memory, it can retain exact tuple positions on a page. Under memory pressure it can keep just the page, requiring the executor to retest tuples there. This can happen even when the original index predicate was exact.</p>
+<p>Keep those two losses separate. A GIN equality candidate can have an exact tuple location but an unproved predicate. A B-tree comparison can have a proved predicate but lose its exact tuple location in a page-level bitmap. BRIN already supplies page ranges, so tuple tests are intrinsic to that route.</p>
+<p>A focused native check made the second loss visible. A diagnostic copy of the same 120,003 order IDs and timestamps added a constant 512-byte padding column to spread tuples over more pages. With a B-tree timestamp predicate, a forced bitmap route and <code>work_mem=64kB</code>, it reported 811 exact and 7,761 lossy heap blocks, rejecting 44,279 tuples by recheck. At 4 MiB, it reported 8,572 exact blocks and no recheck rejects. Both returned the same 70,360 order IDs. The padding is an experimental physical width, not another shop fact or an instruction to increase memory globally.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Interpret index and recheck plan evidence">
+<table><caption>Read the plan as work, rather than a method badge</caption><thead><tr><th>Evidence</th><th>What to establish</th></tr></thead><tbody>
+<tr><td><code>Index Cond</code></td><td>The predicate passed to the index. It can define bounds or test candidates; it does not count every entry examined.</td></tr>
+<tr><td><code>Recheck Cond</code></td><td>The predicate available for heap rechecks. Its presence alone does not say how many checks ran or failed.</td></tr>
+<tr><td><code>Rows Removed by Index Recheck</code></td><td>Candidates discarded by the indexed predicate, rather than by a separate filter.</td></tr>
+<tr><td><code>Filter</code> and <code>Rows Removed by Filter</code></td><td>A separate condition tested at that node, and rows it rejected.</td></tr>
+<tr><td><code>Heap Blocks: exact / lossy</code></td><td>Bitmap location precision. Exact locations can still carry an operator recheck.</td></tr>
+<tr><td><code>Buffers</code>, actual rows and loops</td><td>Access work and output volume. Buffer accesses can revisit pages; node row counts are per-loop averages when loops exceed one.</td></tr>
+</tbody></table></div>
+<p>Compare returned results before interpreting a faster plan. Then ask how many candidates reached the heap, which tests removed them and which pages were touched. Zero rejected candidates does not prove that no rechecks ran. Conversely, a <code>Recheck Cond</code> line does not establish that any candidate was rejected. <a href="/learn/databases/relational/postgresql/query-execution/">Reading and repairing PostgreSQL plans</a> develops the wider diagnosis.</p>
+
+<h2 id="writes">What each method adds to writes</h2>
+<p>The read saving comes from information maintained during writes. A B-tree maintains ordered entries and may split pages. Hash adds codes to buckets; concentrated values can build overflow chains, and growth can split buckets. GiST maintains covering summaries, while SP-GiST maintains the chosen partitions. The shape and number of affected entries depend on the data and class.</p>
+<p>GIN can extract many keys from one row. One new document can therefore add many posting-list memberships. With <code>fastupdate</code> enabled, new entries can first accumulate in a pending list and be merged into the main structure later. Searches must include that list, and an insert that crosses its cleanup threshold can inherit a large cleanup. Deferring work changes when it is paid.</p>
+<p>A small native insert comparison made that distinction measurable. Each of 1,000 rows contained the same twenty distinct tag keys. The insert generated 331,241 WAL bytes without an index, 795,933 with default GIN pending entries, and 12,295,046 with <code>fastupdate=off</code>. The pending index then occupied 425,984 bytes, versus 49,152 for the direct-update index. Those are initial insert observations on separately created empty tables: the pending list had not yet been cleaned. They show why a quick insert and a compact settled index are different measurements; they do not rank lifetime cost or production throughput.</p>
+<p>BRIN usually has far fewer summary entries, but an inserted outlier can widen a summary and reduce future pruning. New ranges need summarising. A small index still has a maintenance contract.</p>
+<p>An update must also account for PostgreSQL's row versions. Changing a column used by an ordinary index can prevent a HOT update, including expression inputs, included columns and partial-index predicates. Without HOT, unchanged ordinary indexes can also receive entries for the new tuple. BRIN is the summarising exception: a HOT update can still require summary maintenance. Same-page space remains another HOT condition.</p>
+<p>Measure a candidate's size, write log and buffer work, plus any deferred cleanup, under the relevant mix of inserts and updates. Do not infer write cost from one definition's column count. Concurrent builds, failed builds and operational cleanup need the procedures in <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a>.</p>
+
+<h2 id="checking">Choosing and checking an access method</h2>
+<p>Start with the operator and its meaning. Check supported classes for the stored type, expression and collation. Then predict the information that will remove work: an ordered run, component memberships, a region to prune, or a block-range summary. Include the requested order and limit in that prediction.</p>
+<p>The native checks use the exact 120,003-order shop fixture already used by the index introduction. Sorted and mixed BRIN copies contain the same rows. Small diagnostic tables isolate array matching, point searches, half-open intervals and prefix comparison. Mechanical demonstrations discourage sequential scans where necessary so that the index route is visible; those demonstrations are not claims that the planner would choose that route on a tiny table.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Observed native method comparisons"><table><caption>Observed PostgreSQL 18.6 access work · one execution per listed case</caption><thead><tr><th>Request and candidate</th><th>Work observed</th><th>What it establishes</th></tr></thead><tbody>
+<tr><td>Customer 1002 history · B-tree</td><td>10 rows from an ordered index scan; 13 shared-buffer accesses</td><td>The ten-row limit stopped the ordered scan without a sort.</td></tr>
+<tr><td>Same history · hash</td><td>36 heap rows, then sort; 38 shared-buffer accesses</td><td>Customer equality alone did not supply history order.</td></tr>
+<tr><td>1 October · BRIN, time-sorted heap</td><td>32 lossy heap blocks; 4,695 rejected tuples; 329 returned</td><td>One physical range survived the timestamp summaries.</td></tr>
+<tr><td>Same day · BRIN, mixed heap</td><td>768 lossy heap blocks; 119,674 rejected tuples; 329 returned</td><td>Mixed timestamps prevented useful range exclusion.</td></tr>
+</tbody></table></div>
+<p>The two BRIN queries returned identical sets of order IDs. Both used <code>pages_per_range=32</code>; the sorted heap occupied 6 MiB and its index 24 KiB. Their routes were exposed with sequential scans discouraged. The history queries used normal scan settings, one secondary index at a time. Buffer accesses count hits plus reads, including repeat accesses, rather than distinct pages or drive operations.</p>
+<p>In the deterministic ICU prefix test, the default text index left the query as a sequential scan. Adding <code>text_pattern_ops</code> produced the <code>Blue</code>–<code>Bluf</code> bitmap search and retained the original <code>LIKE</code> filter. GiST and SP-GiST point queries both returned points 1 and 2 and showed index-assisted distance ordering. These checks establish supported searches; they do not establish a performance winner between the frameworks.</p>
+<p>The <a href="/relational-rebuild/pg-indexes/observed-plans.json">recorded plans and results</a> retain the complete counters. The <a href="/relational-rebuild/pg-indexes/native-verifier.sql">method verifier</a> and <a href="/relational-rebuild/pg-indexes/native-bitmap-verifier.sql">focused bitmap verifier</a> include their generated fixture, settings and exact safety guards. They require the specifically named disposable database, user and cluster and roll their changes back. They record these observations rather than supplying commands for an application database.</p>
+<p>For an application choice, restore the normal planner settings and test representative values and layouts. Compare common and rare customers, narrow and broad bounds, stable and recently changed pages. Check the complete ordered result, then the actual plan and buffers. Finally test the write workload and cleanup over time. Keep an index only when the useful work it removes earns its ongoing cost.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against PostgreSQL 18 documentation. Drawings are conceptual models. SQL semantics were also checked in PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly; the server plans use native PostgreSQL 18.6. Neither runtime establishes production latency.</p>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/indexes-types.html">Index types</a> and <a href="https://www.postgresql.org/docs/18/indexes-opclass.html">Operator classes and families</a>: method selection, supported comparisons and pattern classes.</li>
+<li><a href="https://www.postgresql.org/docs/18/hash-index.html">Hash indexes</a>: stored codes, equality rechecks, overflow and growth.</li>
+<li><a href="https://www.postgresql.org/docs/18/gin.html">GIN indexes</a> and the <a href="https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/access/gin/ginarrayproc.c">array operator-class implementation</a>: key extraction, exact containment versus equality rechecks, and pending entries.</li>
+<li><a href="https://www.postgresql.org/docs/18/gist.html">GiST</a> and <a href="https://www.postgresql.org/docs/18/spgist.html">SP-GiST</a>: extensible structures and built-in search and distance-ordering operators.</li>
+<li><a href="https://www.postgresql.org/docs/18/brin.html">BRIN indexes</a> and the <a href="https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/access/brin/README">BRIN implementation notes</a>: summaries, physical correlation, range size and summarisation.</li>
+<li><a href="https://www.postgresql.org/docs/18/using-explain.html">Using EXPLAIN</a>, <a href="https://www.postgresql.org/docs/18/indexes-bitmap-scans.html">Combining indexes</a> and the <a href="https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/nodes/tidbitmap.c">TID bitmap implementation</a>: plan evidence, locations and operator rechecks.</li>
+<li><a href="https://www.postgresql.org/docs/18/indexes-index-only-scans.html">Index-only scans</a>, <a href="https://www.postgresql.org/docs/18/storage-hot.html">Heap-only tuples</a> and <a href="https://www.postgresql.org/docs/18/rangetypes.html">Range types</a>: retained values, visibility, maintenance and half-open bounds.</li>
+</ul>

@@ -1,0 +1,29 @@
+# Batch 23 independent reader and rendered review
+
+Version: cluster-change v01, five-file manifest in `review-source.json`; current source SHA-256 values match all five entries. Reviewed the integrated preview at `http://127.0.0.1:4606/review/relational-rebuild/rebalancing/`. No edits, delegation or publication.
+
+**Findings: none substantive; no optional repair requested.**
+
+## Reader judgement
+
+Saved `initial-notes.md` before consulting intended outcomes, example facts or author records. The illustration sequence teaches a usable distinction between a complete base, durable continuation, applied state and membership authority. Figure 1's fourth and fifth stages both retain 20.00 on R4 while the old voters show 22.00, then the applied endpoint remains explicitly non-voting. Figure 2's two disjoint pairs shows why overlap of membership lists is insufficient. Figure 3 makes the required old AND new counts visible and permits the same R1+R2 pair to satisfy both. Figure 4 turns replay capacity into net progress and preserves incoming work at zero backlog. These are explanations a newcomer can follow directly, rather than decorative diagrams beside a prose lesson.
+
+The prose reads as one developed argument: copying precedes authority, authority precedes the intermediate survival test, and that test leads into work and storage budgets and evidence for retirement. “Copying a live partition”, “Changing voting membership” and “Decommissioning a node” name their subjects plainly. The paragraph beginning “Suppose R3 is already unavailable” and the next joint-checkpoint case require the reader to apply a rule already demonstrated. The table's D4/D5 exclusions support its claim that aggregate free space is insufficient. The closing questions identify distinct causes of stalled removal without promising that retrying a request resolves them. Qualifications about illustrative rates, assumed reached checkpoints and supported native protocols sit beside the reasoning they constrain; they do not read as editorial bookkeeping.
+
+Calibration used bounded finished passages and rendered drawings from all three fixed references: Storage's write-ahead-log memory/disk distinction, Indexes' index-entry/row-location lesson, and Sequence diagrams' ordering-and-gaps lesson. Like those references, this article keeps the recurring entities stable, tells the reader what to watch, and changes a relationship that directly supports the surrounding conclusion. Its figures are less spatially elaborate than the references where the question is a set count, appropriately so.
+
+After the blind notes, consulted `v01/input/article.json`, `plan.yaml`, incoming ownership, neighbours and commission plus the example facts. The commissioned catch-up, membership, temporary capacity, lost redundancy and decommissioning understanding is covered. Native removal procedures, primary/standby promotion, logical shard transfer and binary rollout remain with their named owners. The P7 price branch and order 103 facts remain coherent. No full reread was added after this scope check.
+
+## Rendered coverage
+
+Inspected meaningful states at actual 1280 × 720 and actual 390 × 844. The phone override took effect on a fresh owned tab immediately; dimensions were verified before counting coverage. Both light and dark were inspected. Desktop copy stages 1/4/5/6, the unsafe split, old/joint/new quorum results and growing/caught-up backlog states were read visually and through labels. Phone coverage included the stacked unsafe split, wrapped replica cards and stacked quorum panels, result/explanation with controls, the copy checkpoint, caught-up backlog, destination-capacity table and retirement-evidence table. Labels, values and captions remained readable; tables fit the phone width and controls did not overlap their results.
+
+Operated Next, Back, Reset, Play/Pause, both selectors and the quorum text disclosure. R2+R3 passes old and fails joint; R1+R4 fails joint and passes new; R1+R2 passes joint. Selected 20 and 8 MiB/s cases at 60 seconds showed 0 and 720 MiB respectively. Endpoint controls retained focus when becoming disabled in the observed Next/Back cases. Playback visibly advanced and Pause stopped it; text remains available for manual stepping and through disclosures.
+
+Retained only applicable authored mechanical observations: `verification.json` identifies PGlite 0.5.8/PostgreSQL 18.3, SQL and set-arithmetic limits and hashes matching this source; `contrast.json` records minimum relevant text ratios above 4.5:1 in both themes (secondary panel 6.05 light / 6.15 dark). Browser observation, not those records, supplies the current rendered judgement. I did not retain `browser-backlog.json` as current wording evidence: it contains the older “−20 MiB/s replayed”/net-reduction-at-zero labels, whereas the fixed current rendering correctly says “Up to 20 MiB/s replay” and “caught up; new history still arrives”.
+
+## Limits and cleanup
+
+This is the independent teaching/editorial/rendered assignment; the separate practitioner review owns primary-source technical verification. No real distributed cluster or transfer speed was executed. Browser coverage was representative rather than an exhaustive state/theme/device matrix. Hidden-browser screenshots can lag, so playback was confirmed through changed live accessibility state and Pause, not treated as precise timing evidence. The first accessibility-tree retrieval exposed body text while locating figures; the deliberate illustration reading preceded the deliberate prose reading, but this was not literal text isolation.
+
+All owned tabs closed, players stopped/reset, selector defaults restored, theme restored to System and viewport reset with actual 1280 × 720 verified. Reference theme was left at its original System setting. Main/reference theme lease released to root before this report.
