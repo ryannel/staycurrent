@@ -1,0 +1,9 @@
+# First blind reader notes — batch 26
+
+Reviewed crdb-architecture v01 at the fixed review route, before plans, example records, author notes or verdicts. Read figures, labels, captions and stepped states before considering the body; then read the complete body. Calibrated bounded passages/drawings from Indexes (entries/clustered lookup), Storage and durability (WAL) and Sequence diagrams (lifelines/messages).
+
+The figure sequence alone establishes the useful distinctions: gateway versus range serving replica; secondary keys versus a physical row address; durable Raft command versus applied price; local WAL versus replicated history; multiple versions versus multiple replicas; whole transaction versus per-range agreement; split versus movement versus lease transfer. Figure 7's all-P7 state changes the conclusion meaningfully. Figure 3's separate transaction box prevents its applied-price display from implying SQL commit. Its assumptions are long but constrain an otherwise unsafe inference.
+
+The full prose develops these distinctions in a usable order and in plain, searchable headings. P7's price experiment and the reset before purchase 103 are explicitly signposted. The native single-node evidence is labelled separately from the invented three-voter drawing, including the illustrative customer index. I found no substantive editorial/teaching defect in this first reading. The references' concrete labels and adjacent explanation remain a suitable comparison: this piece's bounded role/authority drawings answer a different question from the references' page counts, and need no invented performance numbers.
+
+Rendered/control work still to complete: phone width, both explicit themes, remaining representative drawing screenshots, keyboard endpoints and playback. This note records first judgement, not final acceptance.
