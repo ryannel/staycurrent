@@ -4,7 +4,7 @@
 
 ## Checks
 
-1. **First reading alone.** Before prose, inspect each figure/table/code example and use each interactive tool. Record apparent meaning and uncertainties under First reading, then read each in place.
+1. **First reading alone.** Before reading the body, follow the illustrations as a learning sequence, using their labels, captions and controls. What can you now explain, and where must you supply missing connections yourself? Compare that understanding with the article's purpose and the references, then read each in place.
 2. **Form fits the teaching.** Compare with relevant reference explanations: can a newcomer follow the important relationship or change directly and understand the conclusion it supports? Keep recurring entities, values and notation consistent and caption-named features present.
 3. **Readable at a glance.** No cell/caption/label needs decoding; code is short, formatted and runs in the shown order.
 4. **Interaction.** Controls change something meaningful. Every state's result and explanation agree. Playback holds changed text long enough to read, with pause available. Keyboard operation retains focus at first/last steps.
