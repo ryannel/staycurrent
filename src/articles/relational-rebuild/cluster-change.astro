@@ -1,0 +1,114 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Scene from '../../components/relational-rebuild-cluster-change/Scene.astro';
+---
+
+<p><strong>Rebalancing</strong> moves stored replicas or active work between machines. A new machine starts with room to help, but none of the history that makes an existing replica useful. Before an old copy can leave, its replacement needs a usable copy, the changes made while that copy travelled, and the right place in the group that agrees future changes.</p>
+
+<p>Those are separate conditions. A transfer can finish while replay is behind. Replay can catch up while the new copy still has no vote. Membership can change safely while the remaining machines have too little capacity to serve the workload after another failure.</p>
+
+<p>This article continues the shop’s product shard P from <a href="/learn/databases/relational/partitioning-and-sharding/">Sharding and distributed SQL</a>. P has three voting replicas, R1, R2 and R3. We will replace R3 with R4, then ask what it would take to remove R3’s machine. The drawings are conceptual schedules and calculations, not observations from a running distributed cluster.</p>
+
+<section aria-labelledby="moves">
+  <h2 id="moves">What rebalancing moves</h2>
+  <p>A <strong>leader transfer</strong> changes which existing replica coordinates a group’s work. It can move request load without moving the stored data. The new leader must qualify under the engine’s authority protocol; directing clients at another process does not give that process authority.</p>
+  <p>A <strong>replica move</strong> changes where a copy of the same shard lives. Replacing R3 with R4 leaves P owning the same products. Its agreed history must survive the replacement. The move can change storage use and which machine or regional failures P survives.</p>
+  <p>A <strong>shard ownership transfer</strong> moves a portion between independently managed owners. Application routing, incoming references and concurrent writers may need a handover as well as a data copy. <a href="/learn/databases/relational/postgresql/sharding/">Distributing PostgreSQL work</a> develops that transfer for application and PostgreSQL distribution choices. Here we keep P’s logical boundary fixed and change its replicas.</p>
+  <p>The distinction matters when adding a machine. Moving a leader can relieve a busy request path, provided a suitable replica already exists there. Moving stored bytes first adds work to the machines that have them. And neither move divides contention on the same last blue mug: that stock decision still belongs to one authoritative history.</p>
+</section>
+
+<section aria-labelledby="copy">
+  <h2 id="copy">Copying a live partition</h2>
+  <p>A live copy needs a consistent starting state and a continuation from that state. Call the starting snapshot <code>b</code>. It represents P after an agreed prefix of history, with P7’s catalogue price still 20.00. Copying arbitrary files or rows while they change would not establish that boundary.</p>
+  <p>Reuse the separate catalogue change from the parent article. While R4 receives the base, the old group agrees a command <code>U</code> that changes P7’s price:</p>
+  <Sql label="The catalogue change during the copy" code={`UPDATE products\nSET price = 22.00\nWHERE product_id = 'P7';`} />
+  <p>P7’s stock stays 0. Order 103 stays pending, with no payment and agreed order lines totalling 29.00. Only the catalogue price changes. Step through Figure 1 and watch R4’s applied price after the last base chunk arrives.</p>
+  <Scene kind="copy" />
+  <p>At the end of the base transfer, R4 has 20.00. The old group already has 22.00. The copy is internally consistent, but it is consistently from before U. R4 needs the compatible history after b, in the correct order, before it reaches the same state.</p>
+  <p>Receiving that continuation durably is another checkpoint. At Figure 1’s fifth stage, R4 could recover U from its stored history, but its applied state still says 20.00. The distinction between durable and applied progress is the one developed in <a href="/learn/databases/relational/replicas-and-read-routing/">Replicas, lag and read routing</a>. A count of copied bytes describes neither applied freshness nor voting authority.</p>
+
+  <h3 id="continuation">Keeping the continuation available</h3>
+  <p>The source must keep a way to bring the destination forward. A snapshot belongs to an identified history boundary; its replication metadata tells the engine where the following records attach. In Raft, that includes the last included log index and term, plus the configuration at that point. The letters b and U here are symbolic markers, not native log positions.</p>
+  <p>History cannot be retained without limit. If the required continuation has been discarded, the engine may need to send a newer snapshot and start that part of catch-up again. A stalled transfer can therefore spend bandwidth without ever becoming a current replica. Monitor progress towards the current history, rather than treating “copy started” as evidence that completion is approaching.</p>
+  <p>The old voters stay authoritative during this copy. R4 joins as a <strong>learner</strong>, a replica that receives history without participating in voting majorities. This avoids counting an empty or badly lagging destination as an available voter. Catching up prepares R4 for a membership change; it does not perform the change.</p>
+</section>
+
+<section aria-labelledby="membership">
+  <h2 id="membership">Changing voting membership</h2>
+  <p>The old voting set is <code>{'{R1, R2, R3}'}</code>. The intended new set is <code>{'{R1, R2, R4}'}</code>. Each has a majority of two, but that does not make an uncoordinated switch safe. Individual replicas can learn a new list at different times.</p>
+  <p>Figure 2 splits the four replicas into two communicating pairs. Suppose each pair is allowed to use its own membership list independently.</p>
+  <figure class="cluster-scene" aria-labelledby="split-title">
+    <figcaption id="split-title"><span class="fig-number">Figure 2</span> Two lists can permit two separate majorities</figcaption>
+    <div class="cluster-panel cluster-counterexample">
+      <div><strong>R2 + R3</strong><span>Use old: R1 R2 R3</span><p>2 of 3 · old majority</p></div>
+      <span>✕<br/>no communication</span>
+      <div><strong>R1 + R4</strong><span>Use new: R1 R2 R4</span><p>2 of 3 · new majority</p></div>
+    </div>
+    <p class="cluster-caption">A deliberately unsafe direct-switch model. The pairs share no replica, even though the two full lists share R1 and R2. Allowing both pairs to choose authority independently would lose the single-history guarantee.</p>
+  </figure>
+  <p>R2 and R3 are two of the old three. R1 and R4 are two of the new three. The sets of actual voters do not overlap. Overlap between the full membership lists is therefore too weak: the transition must prevent these two majorities from acting independently.</p>
+
+  <h3 id="joint">Joint consensus</h3>
+  <p><strong>Joint consensus</strong> is the Raft paper’s solution. An intermediate configuration requires a majority of the old set <em>and</em> a majority of the new set for agreement and elections. It connects the two histories of authority before the old set is released.</p>
+  <p>Figure 3 tests three configuration checkpoints. Leave all four connected first. Then choose R2 + R3 only, and step from old to joint. Finally choose R1 + R4 only and compare joint with new.</p>
+  <Scene kind="membership" />
+  <p>R2 + R3 passes the old count and fails the new one. R1 + R4 does the reverse. Neither pair can act alone under joint rules. R1 + R2 passes both counts, because the same two replicas belong to both sets. Joint consensus requires two majorities, not two disjoint collections of acknowledgements, and not simply three of the combined four replicas.</p>
+  <p>The configuration entries themselves travel through the replicated log. In this version of Raft, a replica uses the latest configuration in its log as soon as it receives it. The joint entry is committed using both majorities. Only after that commitment may the leader propose the final new configuration, which commits under the new set’s rules. Once that final entry is committed, the old configuration is no longer required. This ordering is what the three settled checkpoints summarise.</p>
+  <p>Use the database’s supported reconfiguration mechanism. Engines can use other safe protocols, including restricted changes one voter at a time; the joint model is an explanation, not a command sequence to apply to every Raft system. Deleting a missing voter’s files or changing a client’s routing list is not a replacement for the membership protocol. Primary/standby promotion and fencing have their own authority handover in <a href="/learn/databases/relational/failover/">Failover and fencing</a>.</p>
+</section>
+
+<section aria-labelledby="survival">
+  <h2 id="survival">Preserving the survival margin</h2>
+  <p>A safe membership protocol preserves one authoritative history. Availability through the move needs another check: which additional failure can the intermediate placement survive?</p>
+  <p>Suppose R3 is already unavailable. R1 and R2 can still form the old majority, but there is no remaining allowance for another old voter to disappear before the membership changes. A learner at R4 may hold useful data; it supplies no vote to that old majority. Stopping R2 because “three other copies exist” would leave only R1 able to vote.</p>
+  <p>Repeat the count at the joint checkpoint. R1 + R2 can satisfy both sets while R3 is unavailable. If R1 then fails, R2 + R4 supplies the new majority but only one old voter. Joint rules still need the old majority. After the completed new configuration, the same R2 + R4 set can pass. The timing of the extra failure changes the result.</p>
+  <p>Failure domains matter as well as replica names. If R4 is on a separate machine beside R1 in the same zone, a zone outage can remove both. The completed new set would then have only R2. If R4 replaces R3 in an independent zone, that particular shared failure is avoided. <a href="/learn/databases/relational/regional-placement/">Regional placement and survival</a> develops the placement tests; apply them to every intermediate configuration here.</p>
+  <p>State the survival requirement before the work starts: for example, retain a communicating quorum through one additional machine failure. Check it per affected shard, including groups sharing the machine being retired. A cluster-wide count of healthy machines cannot supply a missing vote for P. Passing the count also assumes working storage, communication, elections and enough resources; it does not promise an outage duration.</p>
+</section>
+
+<section aria-labelledby="capacity">
+  <h2 id="capacity">Capacity during rebalancing</h2>
+  <p>During the move, the source serves ordinary requests while reading a base copy and sending later history. The destination writes that copy, stores incoming history and applies it. Temporary copies and retained history consume space until the old replica can be removed. The operation first increases work and storage use, even if its eventual purpose is to reduce both on one machine.</p>
+  <p>Budget the limiting resource at each location. A spare destination disk does not make the source’s network link spare. A lightly used processor does not make a saturated storage device faster. Copy traffic can also interfere with the small replication messages that keep existing voters responsive.</p>
+
+  <h3 id="catchup">Catching up while writes continue</h3>
+  <p>Reuse the earlier illustrative catch-up numbers: 600 MiB remains after the base copy, new history arrives at 10 MiB/s, and replay can apply 20 MiB/s. Only the difference, 10 MiB/s, reduces the old backlog. Figure 4 changes replay capacity while the arrival rate stays fixed.</p>
+  <Scene kind="backlog" />
+  <p>At 20 MiB/s replay, the ideal catch-up time is 600 ÷ (20 − 10) = 60 seconds. At 10 MiB/s the backlog never shrinks. At 8 MiB/s it grows, reaching 720 MiB after a minute. These are arithmetic results under fixed rates, not measured speeds or completion guarantees.</p>
+  <p>Replay rate alone is insufficient if the network delivers history more slowly. Use compatible units and measure the whole path: available history, delivery, durable receipt and application. If generation outruns any required stage, the destination falls behind there. A snapshot restart, bursts, compaction or foreground contention can invalidate a simple estimate.</p>
+  <p>Throttling base transfers or moving fewer replicas at once can protect foreground service. It can also prolong the period before redundancy is restored. Choose the rate and scope against both requirements: acceptable request latency and enough progress to complete safely. If the current budget cannot satisfy both, add capacity, reduce admitted work or change the maintenance window. Waiting is not a cure for a growing backlog.</p>
+
+  <h3 id="removal-capacity">Capacity after removing a node</h3>
+  <p>The destination must fit after the move as well as during it. For a separate storage calculation, suppose the replica being moved occupies 120 GiB. Reserve space for expected growth, temporary work and the recovery work required by the declared failure promise.</p>
+  <div class="table-scroll" role="region" tabindex="0" aria-label="Illustrative destination capacity"><table>
+    <caption>A 120 GiB replica; free space and reserves are assumed, not measured</caption>
+    <thead><tr><th>Store</th><th>Placement eligible?</th><th>Free</th><th>Keep in reserve</th><th>Room for this move</th></tr></thead>
+    <tbody><tr><th scope="row">D4</th><td>Yes</td><td>180 GiB</td><td>80 GiB</td><td>100 GiB · too small</td></tr><tr><th scope="row">D5</th><td>No · wrong failure domain</td><td>300 GiB</td><td>80 GiB</td><td>Not a candidate</td></tr><tr><th scope="row">D6</th><td>Yes</td><td>220 GiB</td><td>80 GiB</td><td>140 GiB · fits</td></tr></tbody>
+  </table></div>
+  <p>D4 and D5 have 480 GiB free between them, but neither is an acceptable destination for this replica under the stated rules. D6 fits it while retaining the reserve. That establishes only this storage calculation. Its processor, network, memory and storage throughput must also support the final work and the required recovery load.</p>
+  <p>After removing a node, the surviving machines hold more data or serve more work. Recalculate the reduced cluster, including the busiest constrained destination and the next failure it must survive. Even replica counts can hide unequal sizes or hot keys. <a href="/learn/databases/relational/connections-and-capacity/">Connections, overload and capacity</a> develops workload budgets and overload behaviour; movement spends part of that same budget.</p>
+</section>
+
+<section aria-labelledby="decommission">
+  <h2 id="decommission">Decommissioning a node</h2>
+  <p><strong>Decommissioning</strong> permanently removes a node from the cluster. Our R3 move concerns one replica group. Its machine can hold replicas of many groups, lead some of them, and accept application connections. All those responsibilities need a destination or an orderly end.</p>
+  <p><strong>Draining</strong> moves or finishes active work so a process can stop. It does not by itself prove that stored replicas have left. For example, CockroachDB distinguishes draining connections and active roles from the heavier decommissioning operation that moves replica data. Other systems expose different procedures; inspect what each completion signal actually covers.</p>
+  <p>A request being accepted is the start of that procedure. A transfer at 100% is one part of it. The useful completion evidence ties the old node to every affected group and role:</p>
+  <div class="table-scroll" role="region" tabindex="0" aria-label="Evidence for retiring a node"><table>
+    <caption>What must be established before the old location is retired</caption>
+    <thead><tr><th>Question</th><th>Evidence needed</th></tr></thead>
+    <tbody><tr><th scope="row">Has its authority ended?</th><td>Membership changes completed; no group still needs the old replica’s vote; leaders or other active roles have moved through supported protocols.</td></tr><tr><th scope="row">Is the intended protection restored?</th><td>Healthy replacement replicas, compatible caught-up histories and the required failure-domain placement for every affected group.</td></tr><tr><th scope="row">Does the remaining cluster fit?</th><td>Capacity for final data, foreground requests, growth and the declared additional failure and recovery work.</td></tr><tr><th scope="row">Can the process stop?</th><td>Application routing and active sessions handled; the engine’s final removal status reached; foreground service remains acceptable.</td></tr></tbody>
+  </table></div>
+  <p>If progress stalls, identify the missing condition. Does the destination’s applied position advance? Is the continuation still available? Is there an eligible store with room? Can the current group form the quorum needed to change membership? Repeating the removal request cannot create a destination or a missing majority.</p>
+  <p>Remove one planned unit at a time unless the complete concurrent operation has been budgeted and tested. Two independent maintenance requests can share a voter, a zone or a constrained destination. Each request looking safe alone does not make their overlap safe.</p>
+  <p><a href="/learn/databases/relational/cockroachdb/operations/">Operating and securing a CockroachDB cluster</a> supplies native removal commands and health evidence. <a href="/learn/databases/relational/cockroachdb/upgrades/">Upgrading a CockroachDB cluster</a> handles binary rollout and cluster-version compatibility. For either procedure, the general test remains concrete: the replacement has the required history, the protocol has transferred authority, and the remaining placement can carry its promised work and failures.</p>
+</section>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 25 October 2026. All copying schedules, connectivity cases, sizes and rates are illustrative. No distributed cluster was run and no rebalancing time was measured. The catalogue SQL and unchanged shop facts were checked in PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly; that check does not execute replica movement or Raft.</p>
+<ul>
+  <li>Diego Ongaro and John Ousterhout, <a href="https://raft.github.io/raft.pdf">In Search of an Understandable Consensus Algorithm</a>, sections 6–7: the joint-configuration protocol, non-voting catch-up and snapshot metadata. Figure 3 shows assumed checkpoints; the prose distinguishes receipt from commitment of each configuration.</li>
+  <li>etcd, <a href="https://etcd.io/docs/v3.5/learning/design-learner/">etcd learner design</a>: a new copy’s effect on its source, voting membership and catch-up before promotion. <a href="https://etcd.io/docs/v3.5/op-guide/runtime-configuration/">Runtime reconfiguration</a>: supported incremental changes and the need for a working quorum.</li>
+  <li>CockroachDB, <a href="https://www.cockroachlabs.com/docs/stable/architecture/replication-layer">Replication Layer</a>: snapshots, rebalancing and placement constraints. This article’s R1–R4 protocol drawing is the labelled Raft model, rather than a trace of CockroachDB internals.</li>
+  <li>CockroachDB, <a href="https://www.cockroachlabs.com/docs/stable/node-shutdown">Node Shutdown</a>: draining and permanent removal. <a href="https://www.cockroachlabs.com/docs/stable/cluster-setup-troubleshooting#decommissioning-process-hangs-indefinitely">Troubleshoot Self-Hosted Setup</a>: a stalled decommission when replacement nodes lack availability or storage.</li>
+</ul>

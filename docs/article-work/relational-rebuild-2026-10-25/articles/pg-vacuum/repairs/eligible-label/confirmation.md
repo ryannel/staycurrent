@@ -1,0 +1,5 @@
+# Scoped correction confirmation
+
+Coordinator read the complete article, intended plan/scenario and retention component, with Storage reference parts2–3 for the comparable explanation. Accepted the reader's medium finding despite practitioner's low classification: required history→eligible bytes→reclaimed space is this figure's central lesson, and using “still retained” for its first two states obscures that distinction.
+
+Changed one label expression. Actual main-preview IAB confirmed Only report R step4 shows “Eligible for cleanup” beside snapshot released and existing eligibility explanation; second-snapshot branch at the same step still shows “Replaced, still retained”; returning to only-R and advancing shows “Old tuple removed” and reusable space. Inspected current screenshot for legible label/context; confirmed-state.png retained. Reset figure and closed owned tab; theme/viewport unchanged. Integrated preview build passed all13site rules. No prose/SQL/native/model mechanism changed, so existing evidence and unaffected independent checks retained. No new review round.

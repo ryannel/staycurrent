@@ -23,7 +23,7 @@ image='postgres@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6
 p=run(['run','--rm','-d','--name',name,'--label','dev.staycurrent.task=relational-rebuild-2026-10-25','--label','dev.staycurrent.article='+role,'--memory','1g','--cpus','2','--shm-size','128m',*(['--network','none'] if transport=='network-none' else ['--publish','127.0.0.1::5432']),'--env-file',str(envfile),image,'-c','cluster_name='+marker,*(['-c','listen_addresses='] if transport=='network-none' else [])]);assert p.returncode==0,p.stderr;cid=p.stdout.strip();(base/'container-id').write_text(cid+'\n')
 try:
  for i in range(40):
-  if run(['exec',cid,'pg_isready',*(['-h','/var/run/postgresql'] if transport=='network-none' else ['-h','127.0.0.1']),'-U',user,'-d',db]).returncode==0:break
+  if run(['exec',cid,'cat','/proc/1/comm']).stdout.strip()=='postgres' and run(['exec',cid,'pg_isready',*(['-h','/var/run/postgresql'] if transport=='network-none' else ['-h','127.0.0.1']),'-U',user,'-d',db]).returncode==0:break
   time.sleep(.3)
  else:raise RuntimeError('owned fixture readiness timeout')
  port=None;file=None
