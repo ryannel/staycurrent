@@ -1,0 +1,11 @@
+# Example and continuity decisions
+
+Exact accepted generated fixture reused unchanged: input/generated-shop-fixture.sql, hash recorded in source-hashes.json and matching input/fixture-provenance.json. Core orders/lines/payment facts unchanged; October's paid-order line value is not payments received. Core totals Tariq40.00/Mina39.50; 103 pending/no payment/29.00; Edda no result. No currency assigned. No stock reconstruction.
+
+Generated history:120003 orders,360005 lines. Native October filter9176 orders,27525 matching lines,991 customer groups. Customer1001 owns84000 orders;1002 owns36. Each observation is from this writer's own runtime, with fresh sampled statistics; a neighbouring writer's estimates/timings are not substituted.
+
+Local independent requests: full-table order sort for spill demonstration; full-table count by customer for forced parallel counter demonstration; all-orders-for-one-customer prepared query separate from bounded ten-row history. Full-table count1002 groups differs deliberately from October report991. All inputs are the shared fixture, no new business facts. Native diagnostic settings and limits declared in article/captions.
+
+Additional WASM-only semantic counterexamples run within rolled-back transactions: deleting order101's lines makes it an eligible line-free order; guarded lateral matches direct join, unguarded lateral adds one customer/null row. Independent equal-value variation splits order102's quantity2 line into two quantity1 lines: SUM40.00 versus incorrect SUM(DISTINCT)20.00. No such mutation becomes the baseline. Instance closed afterwards.
+
+Continuity pass completed across prose, figures, labels, controls and captions: names/IDs remain customers; report/history/all-order variants introduced at their transitions; rows-per-loop versus accumulated buffers/searches/heap-fetches explicit; 991 vs1002 distinction explicit; diagnostic parallel forcedness explicit; node/operator/memory terms introduced through prerequisite context and local examples. Native method semantics link to pg-indexes; outside-execution delays to pg-operations. No shared scope or fact extension proposed. No unresolved dependency blocks first draft; neighbour links canonical, wrapper owns availability labels.
