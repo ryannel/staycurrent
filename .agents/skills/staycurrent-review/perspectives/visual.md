@@ -5,7 +5,7 @@
 ## Checks
 
 1. **First reading alone.** Before prose, inspect each figure/table/code example and use each interactive tool. Record apparent meaning and uncertainties under First reading, then read each in place.
-2. **Form fits the content.** Use the clearest form; keep recurring entities, values and notation consistent and caption-named features present. For relational examples, show rows under real column headings, one kind of value per column, and visibly connect keys and relationships. Name better forms where needed, such as one table per relation instead of packed `name = value` cells.
+2. **Form fits the teaching.** Compare with relevant reference explanations: can a newcomer follow the important relationship or change directly and understand the conclusion it supports? Keep recurring entities, values and notation consistent and caption-named features present.
 3. **Readable at a glance.** No cell/caption/label needs decoding; code is short, formatted and runs in the shown order.
 4. **Interaction.** Controls change something meaningful. Every state's result and explanation agree. Playback holds changed text long enough to read, with pause available. Keyboard operation retains focus at first/last steps.
 5. **Themes and phones.** Check light/dark themes and phone width, including desktop comparisons. Controls and their changing state or summary remain understandable together. Body text—including warnings, NULL markers and dimmed rows—needs 4.5:1 contrast; large text/graphics need 3:1.

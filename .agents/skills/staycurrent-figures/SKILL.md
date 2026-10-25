@@ -3,7 +3,7 @@ name: staycurrent-figures
 description: Create article figures, tables, code and interactive tools by following the teaching and visual standard of the fixed references.
 ---
 
-Study the finished visual explanations in [Sequence diagrams](../../../src/reference-articles/sequences.astro), [Indexes](../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../src/reference-articles/storage.astro), following their drawings through the ideas they teach. Make the reasoning visible: build the drawing around what the reader needs to follow, compare or test. Develop it with its prose, drawing on the passages that do that teaching work. Judge it by what the drawing makes clear to a newcomer.
+Use the finished explanations in [Sequence diagrams](../../../src/reference-articles/sequences.astro), [Indexes](../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../src/reference-articles/storage.astro) as worked models. Return to the passage and figure that does comparable teaching work while developing your prose and drawing together. Adapt how it directs attention through the reasoning; choose the form that serves this subject. Compare the result with the references: can a newcomer follow the important relationship or change directly, and understand the conclusion it supports?
 
 Use the collection's [example facts](../staycurrent-continuity/SKILL.md), selecting what the explanation needs. Keep shared data and outcomes in one place. Use site colour tokens. For stepped figures, use the shared player and [implementation guide](references/stepper.md).
 
