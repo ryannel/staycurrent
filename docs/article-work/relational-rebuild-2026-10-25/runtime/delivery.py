@@ -42,19 +42,30 @@ elif mode=='freeze':
  print(json.dumps({'key':key,'frozen_files':len(allhash),'owned_source_files':len(owned)}))
 elif mode=='integrate':
  dest=r/'v01';assert dest.exists()
- a=repo/'src/articles/relational-rebuild';shutil.copy2(dest/'source/src/articles/current/article.astro',a/(key+'.astro'));shutil.copy2(dest/'source/src/articles/current/article.meta.json',a/(key+'.meta.json'))
+ transformations=[]
+ def integrate_copy(source,target):
+  target.parent.mkdir(parents=True,exist_ok=True)
+  if source.suffix in ['.astro','.mjs','.js','.ts','.css']:
+   original=source.read_text();updated=original.replace('../../../public/relational-rebuild/','../../article-downloads/relational-rebuild/')
+   target.write_text(updated)
+   if original!=updated:transformations.append({'file':str(target.relative_to(repo)),'baseline_sha256':sha(source),'integrated_sha256':sha(target),'change':'Rebase source asset imports from private public/ into nonpublic staged article-downloads/. Asset bytes and reader material unchanged.'})
+  else:shutil.copy2(source,target)
+ a=repo/'src/articles/relational-rebuild';integrate_copy(dest/'source/src/articles/current/article.astro',a/(key+'.astro'));integrate_copy(dest/'source/src/articles/current/article.meta.json',a/(key+'.meta.json'))
  for folder in ['src/components','public']:
   p=dest/'source'/folder
   if p.exists():
    for f in p.rglob('*'):
     if f.is_file():
      target=(repo/'src/article-downloads'/f.relative_to(dest/'source/public')) if folder=='public' else repo/f.relative_to(dest/'source')
-     target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(f,target)
+     target.parent.mkdir(parents=True,exist_ok=True)
+     if folder == 'public':shutil.copy2(f,target)
+     else:integrate_copy(f,target)
+ if transformations:(r/'integration.json').write_text(json.dumps({'baseline':'v01/source','transformations':transformations,'publication':'Assets remain nonpublic; author first source preserved.'},indent=2)+'\n')
  registry=a/'collection.json';x=json.loads(registry.read_text());entry=next(e for e in x['entries'] if e['key']==key);entry['status']='draft';registry.write_text(json.dumps(x,indent=2)+'\n')
  statusfile=repo/'docs/article-work/relational-rebuild-2026-10-25/status.json'
  if statusfile.exists():
   status=json.loads(statusfile.read_text());status['available_drafts']=sum(e['status'] in ['draft','reviewed'] for e in x['entries']);status['reviewed_drafts']=sum(e['status']=='reviewed' for e in x['entries'])
   status['articles'].setdefault(key,{}).update(state='first stable version frozen/integrated; independent review pending',writer_state='complete')
   statusfile.write_text(json.dumps(status,indent=2)+'\n')
- print('Integrated unchanged first-version source:',key)
+ print(json.dumps({'integrated_first_version':key,'asset_import_rebases':len(transformations)}))
 else:raise SystemExit('use build, freeze or integrate with article role')

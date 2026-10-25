@@ -1,0 +1,190 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import HierarchyFigure from '../../components/relational-rebuild-hierarchies/HierarchyFigure.astro';
+import example from '../../../public/relational-rebuild/hierarchies/hierarchy-example.sql?raw';
+const between=(start,end)=>example.slice(example.indexOf(start),example.indexOf(end,example.indexOf(start))).trim();
+const schema=between('CREATE TABLE categories (','-- The guarded walk');
+const descendants=between('WITH RECURSIVE below(category_id,name,depth,route)','-- Breadcrumbs');
+const ancestors=between('WITH RECURSIVE above(category_id,name,parent_id,depth,route)','-- CYCLE reports');
+const safeMove=between('BEGIN ISOLATION LEVEL READ COMMITTED;\nLOCK TABLE categories','\nBEGIN;\nCREATE TABLE category_paths');
+const cycle=between('WITH RECURSIVE below(category_id,parent_id,depth)','-- One reachable node');
+const distinct=between('WITH RECURSIVE reachable(id)','-- Each distinct path');
+const pathRows=example.slice(example.indexOf('WITH RECURSIVE routes(id,route)')).trim();
+const edgeSchema=between('CREATE TABLE category_edges (','INSERT INTO category_edges');
+const closureSchema=between('CREATE TABLE category_closure (','CREATE TABLE category_bounds');
+const insertion=between('INSERT INTO category_closure\n  SELECT ancestor_id, 12','INSERT INTO category_bounds SELECT * FROM expected_bounds();\nSELECT assert_derived();\nROLLBACK;');
+const closureMove=between('DELETE FROM category_closure c','\n  UPDATE category_paths');
+const pathMove=between('UPDATE category_paths SET path','\n  UPDATE categories SET parent_id');
+const numbering=between('CREATE FUNCTION expected_bounds()','-- Numbering orders siblings');
+const dagRebuild=between('CREATE FUNCTION expected_dag_closure()','INSERT INTO dag_closure SELECT');
+---
+<p>A hierarchy records which things sit beneath which others. The shop puts Blue mugs beneath Mugs, and Mugs beneath Teaware. An application might need only the immediate children of Teaware, or it might need everything below it, however deep the catalogue grows. Those are different queries over the same relationships.</p>
+<p>The simplest representation stores one parent ID on each category. Other representations store complete paths, every ancestor–descendant pair, or numbers that enclose a subtree. They make some reads more direct by storing answers that a parent chain would otherwise have to calculate. Moving a branch then changes those stored answers too.</p>
+<p>Every example follows five invented categories: Catalogue (0), Teaware (10), Mugs (11), Blue mugs (12) and Gifts (20). Catalogue is a synthetic root added to the modelling article’s categories. Each variation starts from the same tree unless stated otherwise. We will move Mugs from Teaware to Gifts, leaving Blue mugs beneath it, then consider a different rule that permits Mugs under both.</p>
+<p>The SQL uses PostgreSQL 18. The drawings are models of the rows and algorithms, rather than recordings of physical execution. The <a href="/relational-rebuild/hierarchies/hierarchy-example.sql" download>complete example script</a> builds the data, maintenance functions and consistency checks in a disposable database. It keeps direct parentage as the authority for a tree, and direct edges for the multiple-parent alternative.</p>
+
+<h2 id="parents-and-ancestry">Parents and ancestry</h2>
+<p>A <strong>parent</strong> is one immediate step above a category. An <strong>ancestor</strong> is reached through one or more parent steps. Teaware is Mugs’ parent; Catalogue is its ancestor. In the other direction, Mugs and Blue mugs are both descendants of Teaware. A <strong>subtree</strong> includes a category and everything beneath it, so the Mugs subtree contains Mugs itself and Blue mugs.</p>
+<p>Start with the tree in Figure 1. Switch to <em>Move Mugs</em> and watch which parent value changes. Then choose <em>Two parents</em>.</p>
+<HierarchyFigure kind="relation" />
+<p>A rooted <strong>tree</strong> has one root, one parent for every other node, and no cycles: following parent links never brings you back to a category you already visited. Several disconnected trees make a <strong>forest</strong>. A nullable parent column can represent a forest just as easily as a tree; it does not choose the root policy for you.</p>
+<p>With two parents, Mugs still has one category identity, 11. Giving each occurrence a new category ID would turn a shared category into two separate categories whose names merely agree. The edge-table alternative permits several routes to the same node. If it forbids cycles, the result is a <strong>directed acyclic graph</strong>, usually shortened to DAG. A tree is a restricted DAG with a single route from its root to each node.</p>
+<p>That choice affects the application as well as the storage. A tree has one ancestor chain for a breadcrumb. A shared category can have several breadcrumbs. Before choosing its tables, decide whether the application wants one category, one route to it, or one displayed occurrence on a chosen route.</p>
+
+<h2 id="adjacency-lists">Adjacency lists</h2>
+<p>An <strong>adjacency list</strong> stores each node’s immediate neighbour: here, its parent. One row records one category, its current name and its current parent ID.</p>
+<Sql label="The five category rows and their direct parent references" code={schema} />
+<p>The self-referencing foreign key requires a non-null parent ID to name an existing category. <code>CHECK (category_id &lt;&gt; parent_id)</code> rejects a category naming itself. It still accepts Teaware naming Blue mugs while Blue mugs names Mugs and Mugs names Teaware. Every target exists, yet the three links form a cycle.</p>
+<p>The second check makes Catalogue the only row allowed to have a null parent, and requires every other category to have a parent. It does not require the Catalogue row to exist in an empty table, or rule out a disconnected cycle. The starting insert supplies the root; the maintenance procedure must preserve connectivity and acyclicity. <a href="/learn/databases/relational/constraints/">Constraints and data integrity</a> distinguishes row rules from invariants spanning several rows.</p>
+<h3 id="children-and-order">Children and sibling order</h3>
+<p>Direct children need no recursion. <code>WHERE parent_id = 10</code> finds Mugs. Roots satisfy <code>parent_id IS NULL</code>. The parent index helps a query find children without searching every category; it does not enforce any hierarchy rule.</p>
+<p>Keep identity separate from display. Renaming Blue mugs leaves ID 12 and its links intact. If the shop wants an editorial order among siblings, store an explicit sibling position and order by it with a stable tie-breaker such as category ID. Neither insertion order nor the name supplies an editorial order automatically. The examples order siblings by ID to keep their drawings and results reproducible.</p>
+
+<h2 id="recursive-queries">Recursive queries</h2>
+<p>A fixed number of joins can follow a fixed number of levels. It cannot answer “all descendants” when the tree may grow deeper. A <strong>recursive common table expression</strong>, or recursive CTE, repeatedly applies the same relationship to the rows it found last time.</p>
+<p>The query below starts with Teaware and includes that starting category in its answer. <code>depth</code> counts edges from Teaware. <code>route</code> carries the visited category IDs.</p>
+<Sql label="Descendants of Teaware, including Teaware itself" code={descendants} />
+<p>The first <code>SELECT</code> is the starting term. The <code>SELECT</code> after <code>UNION ALL</code> is the recursive term: join a category’s <code>parent_id</code> to an ID in the current working rows. Figure 2 makes each generation visible. Step through until the working set is empty.</p>
+<HierarchyFigure kind="recursion" />
+<p>The result contains Teaware at depth 0, Mugs at 1 and Blue mugs at 2. The working set is replaced at each round; the accumulated result is retained. When Blue mugs produces no child, the empty working set ends the recursion. To ask for strict descendants only, filter <code>depth &gt; 0</code> in the outer query.</p>
+<h3 id="breadcrumbs">Breadcrumbs</h3>
+<p>Reverse the join to go upwards. Carry the current row’s parent ID, then find the category whose own ID matches it. Choose <em>Breadcrumb for Blue mugs</em> in Figure 2 and follow the chain to Catalogue.</p>
+<details class="sql-setup"><summary>SQL for the ancestor chain</summary><Sql label="Read Blue mugs’ breadcrumb from Catalogue downwards" code={ancestors} /></details>
+<p>This query starts at Blue mugs, so its working rows arrive in the opposite direction from the displayed breadcrumb. <code>ORDER BY depth DESC</code> puts Catalogue first: Catalogue → Teaware → Mugs → Blue mugs.</p>
+<h3 id="ordering-and-cycles">Ordering and cycle detection</h3>
+<p>The descendant query sorts by its ID array. A prefix sorts before an extension, so Mugs comes before Blue mugs, and a complete branch precedes the next sibling. For level order, use <code>ORDER BY depth, category_id</code>. Both specify the final presentation order. Neither instructs PostgreSQL to physically visit nodes in that order.</p>
+<p>The visited-ID condition prevents a path from revisiting a category. It makes the read terminate on malformed data, but silently omits the repeated step. PostgreSQL’s <code>CYCLE</code> clause can instead report the repeated row and stop expanding it:</p>
+<details class="sql-setup"><summary>SQL that marks a cycle</summary><Sql label="Mark a repeated category with PostgreSQL CYCLE" code={cycle} /></details>
+<p>On the valid tree every <code>is_cycle</code> value is false. If Teaware’s parent is changed to Blue mugs, the walk from Teaware reaches 10, 11, 12, then 10 again; that last row is marked true. Detecting it during a query does not prevent the bad links from being stored.</p>
+<p>Replacing <code>UNION ALL</code> with <code>UNION</code> is sufficient only when revisiting a node produces the same complete row. A result containing just category IDs can discard a repeated ID. A row containing ID and depth is different at every lap of a cycle: (10,0), (10,3), (10,6). Whole-row duplicate removal cannot stop that walk. Track the visited identity or use <code>CYCLE</code> when carrying changing path information.</p>
+
+<h2 id="moving-a-subtree">Moving a subtree</h2>
+<p>In the adjacency list, moving Mugs under Gifts changes one stored relationship: Mugs’ <code>parent_id</code> becomes 20. Blue mugs continues to reference 11. No descendant row needs a new parent merely because an ancestor moved.</p>
+<p>Before making that change, find the entire moving subtree, including its root. The proposed parent must exist and must be outside that set. Mugs cannot move beneath itself or Blue mugs. Teaware cannot move beneath Blue mugs either: the proposed 12 → 10 edge would close the cycle drawn in Figure 1.</p>
+<p>Checking and updating in one transaction is necessary, but the check must also be protected from concurrent topology changes. Suppose one request moves Teaware under Gifts while another moves Gifts under Teaware. Each request looks valid against the starting tree.</p>
+<HierarchyFigure kind="race" />
+<p>The two moves update different rows, so locking only each moving row leaves room for both checks to pass. Switch Figure 3 to <em>Lock before reading</em>. A conservative protocol makes all category writers take turns across the whole table, before they inspect the hierarchy.</p>
+<h3 id="protected-move">A protected PostgreSQL move</h3>
+<p>For a small catalogue, the following complete transaction is a practical starting point. It uses Read Committed and acquires a <code>SHARE ROW EXCLUSIVE</code> table lock before reading categories. That lock conflicts with another such lock and with ordinary inserts, updates and deletes, while ordinary readers can continue.</p>
+<Sql label="Check and move one adjacency-list subtree under a topology lock" code={safeMove} />
+<p>The example rolls back so the next experiment starts from the same tree. Use <code>COMMIT</code> to retain an accepted move. An exception aborts the attempt; the caller must roll back. The recursive membership test uses <code>UNION</code> over IDs alone, so it terminates even if the input already contains a cycle. Establish that imported data forms a valid tree before enabling moves; a terminating membership query is not a complete data audit.</p>
+<p>Acquire the lock as the first hierarchy operation in a fresh transaction, then read and validate in a subsequent statement. If another writer held the table, the lock waits for it to finish; the following Read Committed query sees its committed result. Reusing an earlier Repeatable Read snapshot would defeat that reasoning. Keep the lock through every maintained copy and the final commit.</p>
+<p>The cost is broad contention: a move also blocks an unrelated category insert or name edit until the transaction ends. More selective locking and serializable execution can allow more concurrency, but need a complete protocol and, where required, retries. <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> develops those choices. Changing the lock without revisiting the invariant is not a safe optimisation.</p>
+<h3 id="deleting-categories">Deleting a category</h3>
+<p>Decide what deletion means before choosing its SQL. The example’s <code>ON DELETE RESTRICT</code> refuses to delete Mugs while Blue mugs references it. That makes “remove this one category” fail instead of silently choosing what happens to its children.</p>
+<p>A subtree deletion deliberately selects the moving-style descendant set and removes all its nodes and associated derived rows within the protected transaction. Promoting children instead assigns Mugs’ direct children to Mugs’ former parent, then removes Mugs; their descendants remain attached to them. Both need the same topology boundary and subsequent consistency checks. Neither operation should delete the synthetic root. Retention and the decision to erase or retire business records belong in <a href="/learn/databases/relational/data-lifecycle/">History, correction and deletion</a>; the hierarchy procedure implements the policy it is given.</p>
+
+<h2 id="edge-tables">Edge tables and multiple parents</h2>
+<p>Now take the independent alternative in which Mugs belongs under both Teaware and Gifts. Remove the single-parent fact from the node table. Store each immediate parent–child association as an <strong>edge</strong>:</p>
+<Sql label="An edge table permits several parents for one category" code={edgeSchema} />
+<p>The separate <code>dag_categories</code> table contains one row per category ID and name. Both foreign keys require existing endpoints. The pair is unique, so Teaware → Mugs cannot be recorded twice. There is deliberately no <code>UNIQUE (child_id)</code>: that would restrict a child to one parent again. The checks reject self-edges and any incoming edge to Catalogue.</p>
+<p>The root now has two routes to Mugs, and two to Blue mugs. Figure 4 draws the two routes to Blue mugs separately. Repeated IDs mean the same nodes on each route.</p>
+<figure class="dag-routes" aria-label="Two routes reach the same Blue mugs category">
+ <figcaption><span>Figure 4</span> One category, two paths</figcaption>
+ <div class="route-line"><strong>0 Catalogue</strong><b>→</b><strong>10 Teaware</strong><b>→</b><strong>11 Mugs</strong><b>→</b><strong>12 Blue mugs</strong></div>
+ <div class="route-line"><strong>0 Catalogue</strong><b>→</b><strong>20 Gifts</strong><b>→</b><strong>11 Mugs</strong><b>→</b><strong>12 Blue mugs</strong></div>
+ <p>Two paths end at category 12. There is still one Mugs row and one Blue mugs row. A category list needs five distinct IDs; a traversal retaining every path from Catalogue produces seven rows, including Catalogue.</p>
+</figure>
+<h3 id="nodes-or-paths">One reachable node, or every path?</h3>
+<p>For “which categories can Catalogue reach?”, the recursive row can be just an ID. Use <code>UNION</code> to keep each reachable ID once:</p>
+<Sql label="Return each reachable category once" code={distinct} />
+<p>For “which paths can a shopper follow?”, keep the route and preserve its occurrences:</p>
+<details class="sql-setup"><summary>SQL that retains the paths</summary><Sql label="Retain each simple path from Catalogue" code={pathRows} /></details>
+<p>Mugs and Blue mugs each appear twice in the path result. Removing duplicates on ID afterwards would discard path information. Choosing the minimum depth would define “shortest route”, not a unique inherent depth of the category. A breadcrumb needs a chosen route, perhaps the route by which the shopper arrived.</p>
+<h3 id="changing-edges">Changing edges</h3>
+<p>Adding parent → child is forbidden if the proposed parent is already reachable from the child, including the child itself. Apply that test while holding the topology lock on the edge table and its node table, then insert and maintain any derived reachability before committing. Every edge-changing procedure must use the same lock order.</p>
+<p>Removing Gifts → Mugs deletes one association. It does not delete Mugs, Blue mugs or Teaware → Mugs. The download’s <code>change_edge(20,11,false)</code> procedure deletes that edge, rechecks reachability from Catalogue and rebuilds the DAG closure in one protected transaction. Mugs and Blue mugs remain reachable through Teaware. The chosen shop policy rejects an edge removal that leaves any category unreachable; a system permitting disconnected roots would choose another policy.</p>
+<p>A tree’s “delete this subtree” has no automatic equivalent here. Some reachable nodes may still belong under another branch. First decide whether the operation removes an edge, every path from a chosen root, or the categories themselves. Weighted parts explosions and general graph algorithms introduce further meanings; this category model does not calculate quantities along paths.</p>
+
+<h2 id="materialised-paths">Materialised paths</h2>
+<p>An adjacency list stores one step and calculates ancestry when asked. A <strong>materialised path</strong> stores the whole sequence from root to node. Blue mugs’ path is <code>0.10.11.12</code>. Its ancestors are the preceding segments; all descendants of Mugs share the complete segment prefix <code>0.10.11</code>.</p>
+<p>Figure 5 stores IDs rather than names. Switch to the moved tree and watch the shared prefix change.</p>
+<HierarchyFigure kind="path" />
+<p>Stable IDs keep a category rename from rewriting every descendant path. Compare whole segments, not arbitrary text prefixes: a prefix ending partway through an ID is not an ancestor. A delimited text format needs an unambiguous encoding and segment-aware comparisons.</p>
+<p>PostgreSQL’s <code>ltree</code> extension supplies a path type and operators for this purpose. Store <code>path ltree</code>, then <code>path &lt;@ '0.10.11'::ltree</code> selects Mugs and Blue mugs. The descendant operator includes equality, so use an additional inequality if the starting category must be excluded. <code>@&gt;</code> reads the relationship in the other direction. GiST indexes support these ancestry tests; whether one pays for the workload remains a measured query question.</p>
+<h3 id="rewriting-paths">A move rewrites descendant paths</h3>
+<p>Moving Mugs means replacing its old prefix in every subtree path, preserving each suffix. Capture Mugs’ old path and Gifts’ destination path after taking the topology lock. Validate the move against authoritative parentage. The download’s move function then applies this update:</p>
+<Sql label="Path update inside the protected move function" code={pathMove} />
+<p>Here <code>old_path</code> is <code>0.10.11</code> and <code>destination</code> is <code>0.20</code>. Mugs becomes <code>0.20.11</code>. For Blue mugs, <code>subpath</code> retains the remaining <code>12</code> and appends it to that new prefix. The special equality case handles Mugs itself, which has no remaining suffix. These are function-body statements; the complete function, declarations and transaction call are in the download.</p>
+<p>Update the authoritative parent and all paths in that same transaction. Afterwards, rebuild expected root-to-node paths from the parent references and compare both directions: every expected row must exist, and no stored row may be extra or different. Checking only that a path ends in its category ID would miss a wrong ancestor.</p>
+<p>A single path per category represents one parentage route. It cannot hold both paths in Figure 4. A separate table can store every route to a shared category, but a graph with many branching and rejoining routes can have far more paths than nodes. A move or edge removal may then rewrite many occurrences. Store those paths because their reads justify that maintenance, not merely because the first example is small.</p>
+
+<h2 id="closure-tables">Closure tables</h2>
+<p>A <strong>closure table</strong> stores the answer to reachability directly. Each row says that one category is an ancestor of, or equal to, another. For a tree, a depth column records the number of edges between them.</p>
+<Sql label="A tree closure stores one row per ancestor–descendant pair" code={closureSchema} />
+<p>Include every node’s self-pair at depth 0. Mugs’ pairs are (11,11,0) and (11,12,1). Figure 6 lays the pairs out as a matrix: row ID is the ancestor, column ID the descendant, and a number marks a stored pair.</p>
+<HierarchyFigure kind="closure" />
+<p>To read Mugs’ subtree, find closure rows with <code>ancestor_id = 11</code> and join their descendant IDs to categories. For its breadcrumb, find rows with <code>descendant_id = 11</code> and join the ancestor IDs; descending depth puts the root first. There is no recursive read because the reachability has already been stored.</p>
+<h3 id="inserting-closure">Inserting a leaf</h3>
+<p>Choose <em>Insert Blue mugs</em> in Figure 6. Imagine building the baseline by adding Blue mugs last. Every ancestor of its parent, Mugs, becomes an ancestor of Blue mugs one edge further away. Add the new self-pair too:</p>
+<Sql label="Extend a valid tree closure when inserting the Blue mugs leaf" code={insertion} />
+<p>That adds four rows: (12,12,0), (11,12,1), (10,12,2) and (0,12,3). Insert the category and these rows inside the protected topology transaction. A missing self-pair would make the same recipe miss the direct parent, so self-pairs are part of the invariant rather than optional decoration.</p>
+<h3 id="moving-closure">Moving the Mugs subtree</h3>
+<p>Internal subtree ancestry survives the move: Mugs still reaches Blue mugs in one edge. What changes is the ancestry entering the subtree from outside. Under the topology lock, remove those outside-to-inside pairs, then form every new-ancestor × subtree-descendant combination.</p>
+<details class="sql-setup"><summary>Tree closure statements inside the protected move</summary><Sql label="Remove old outside ancestry and add the new combinations" code={closureMove} /></details>
+<p>For this move, the outside ancestors before the change are Catalogue and Teaware; the subtree nodes are Mugs and Blue mugs. The general procedure removes their four crossing pairs. It then combines Catalogue and Gifts with the two subtree nodes, adding four pairs. The depth is distance to Gifts + one new edge + distance down from Mugs.</p>
+<p>Catalogue’s two pairs return at the same depths because this move leaves the subtree at the same level. The net difference visible in Figure 6 is that Teaware loses its two pairs and Gifts gains two. Retain the self-pairs and all internal pairs. Update parentage, then compare the entire stored closure with reachability freshly derived from it before accepting the transaction.</p>
+<p>Closure trades traversal work for stored pairs. A chain of <var>n</var> nodes has 1 + 2 + … + <var>n</var> pairs when self-pairs are included: <var>n</var>(<var>n</var> + 1)/2. A wide shallow tree stores fewer. Count the expected pairs for the actual depth and shape before choosing it.</p>
+<h3 id="closure-with-shared-ancestry">Closure with shared ancestry</h3>
+<p>The tree move recipe depends on unique parentage. In the DAG, removing Gifts → Mugs must remove Gifts’ reachability to Mugs and Blue mugs, but Catalogue still reaches both through Teaware. Deleting every pair once supported by the removed edge would remove valid answers too.</p>
+<p>There may also be several path lengths between the same two nodes. This shop’s DAG closure therefore stores distinct (ancestor, descendant) pairs with no unqualified depth column. After a protected edge change, it rebuilds those pairs from the authoritative edges:</p>
+<details class="sql-setup"><summary>Rebuildable reachability for the DAG</summary><Sql label="Distinct-pair DAG reachability, including each node itself" code={dagRebuild} /></details>
+<p>Delete the old derived rows and insert this result in the same transaction as the edge change; the download’s procedure does both. <code>UNION</code> compares the pair alone, so another path to an existing pair contributes no second row. Rebuilding is simple and checkable for a small catalogue. If its pair count and change rate make the rebuild too costly, a more elaborate incremental reachability scheme needs its own accounting of alternative support. Reusing a tree’s deletion rule is not that scheme.</p>
+
+<h2 id="nested-sets">Nested sets</h2>
+<p><strong>Nested sets</strong> encode a tree by numbering a traversal. Give a node an entry number when entering it, visit its children, then give it an exit number when leaving. An ancestor’s interval encloses every descendant’s interval.</p>
+<p>Figure 7 visits siblings by category ID. Teaware’s interval (2,7) encloses Mugs (3,6) and Blue mugs (4,5). Gifts (8,9) sits outside it. Switch to the moved tree and compare all five rows.</p>
+<HierarchyFigure kind="nested" />
+<p>The subtree query becomes a range condition. Join the chosen category’s bounds as <code>parent</code>, then select nodes whose entry number satisfies <code>node.lo BETWEEN parent.lo AND parent.hi</code>. This includes the chosen category. Ancestors instead have a lower entry and a higher exit; make comparisons inclusive when self is wanted.</p>
+<p><code>CHECK (lo &lt; hi)</code> is far from enough to establish this representation. Two rows can reuse an endpoint or cross, such as intervals (2,6) and (4,8), while both pass that check. A correct numbering has unique endpoints across both columns, properly nested or disjoint intervals, and ancestry agreeing with the source tree.</p>
+<h3 id="renumbering">Insertions and moves renumber the tree</h3>
+<p>Before inserting Blue mugs into the baseline, Mugs would have (3,4), Teaware (2,5), Gifts (6,7) and Catalogue (1,8). Making room before Mugs’ exit shifts every endpoint at 4 or above by two. The four existing category rows change; Blue mugs takes (4,5). One new leaf can therefore affect rows outside its branch.</p>
+<p>A subtree move has to remove one numbered region and open another without leaving crossings, collisions or stale bounds. For this small, infrequently changed catalogue, a simpler maintenance route keeps direct parents authoritative and regenerates all bounds deterministically under the topology lock. The download creates two events per node, orders entry before descendants and exit after them, then numbers the events:</p>
+<details class="sql-setup"><summary>SQL for deterministic numbering from the parent tree</summary><Sql label="Regenerate nested-set bounds from a valid parent tree" code={numbering} /></details>
+<p>The <code>tree_walk</code> view supplies root-to-node ID arrays. The extra markers sort entry before any child and exit after all children; this example reserves those marker values outside its allowed category IDs. Every node’s first event is its entry and its second its exit.</p>
+<p>After updating the parent, delete the old derived bounds and insert the regenerated result before committing. Readers see committed versions according to their isolation level; an ordinary query does not see the intermediate empty table. Use a <code>DELETE</code> here rather than replacing this procedure with <code>TRUNCATE</code>, which has different locking and snapshot behaviour. A reader issuing several queries at Read Committed can still cross a commit between queries; use one query or a suitable snapshot if those answers must describe one version.</p>
+<p>The Mugs move changes four categories’ bounds, although this rebuild replaces all five stored bound rows. Check endpoint uniqueness, reject crossings and compare the result with the deterministic source-tree traversal. That last comparison also catches a perfectly nested numbering that encloses the wrong category.</p>
+<p>A single interval per category gives every node one place in a tree. It cannot place Mugs inside both disjoint Teaware and Gifts intervals while retaining those branches. Duplicating intervals creates route occurrences and brings back the identity and maintenance questions of materialised paths.</p>
+
+<h2 id="choosing-a-representation">Choosing and checking a representation</h2>
+<p>Start with the questions and changes the application actually needs. Direct children, breadcrumbs and whole subtrees place different demands on a representation. So do a narrow chain, a shallow catalogue, frequent branch moves and shared ancestry.</p>
+<p>The worked move makes the write differences concrete. The counts below concern logical example rows, excluding indexes, row versions and logging. They are not speed measurements.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="The same Mugs move in four tree representations"><table>
+ <caption>Move Mugs and Blue mugs from Teaware to Gifts</caption>
+ <thead><tr><th scope="col">Representation</th><th scope="col">Read made direct</th><th scope="col">Work in this example</th></tr></thead>
+ <tbody>
+ <tr><th scope="row">Adjacency list</th><td>Immediate children or parent</td><td>One parent value changes. Ancestry needs traversal.</td></tr>
+ <tr><th scope="row">Materialised path</th><td>One breadcrumb; subtree by segment prefix</td><td>Two paths change, alongside the authoritative parent.</td></tr>
+ <tr><th scope="row">Tree closure</th><td>Ancestor or descendant pairs</td><td>Four crossing pairs removed, four added; internal pairs stay.</td></tr>
+ <tr><th scope="row">Nested sets</th><td>A whole subtree as an interval</td><td>Four nodes’ bounds differ. The chosen rebuild replaces all five bound rows.</td></tr>
+ </tbody>
+</table></div>
+<p>For a changing category tree, an adjacency list often supplies enough with the fewest stored answers to maintain. Add paths when route reads justify rewriting descendant paths; closure when reachability reads justify its pair count; nested sets when interval reads justify renumbering. There is no universal read-speed order among them: indexes, result size, shape, cache state and query plans still matter. <a href="/learn/databases/relational/indexes/">Index design</a> and <a href="/learn/databases/relational/query-execution/">query execution</a> cover how to measure that work.</p>
+<p>If several parents are a real requirement, start with edges and be precise about nodes versus paths. The single-path and single-interval tree representations do not acquire DAG semantics merely by allowing duplicate category IDs somewhere. A reachability closure can support a DAG, but its maintenance must preserve pairs still supported by another route.</p>
+<p>For every derived representation, name one authority and one update boundary. The download deliberately maintains all three beside parentage to compare their procedures; an application need not store all three. Its <code>move_tree_node</code> function locks categories and the derived tables in a fixed order, validates, updates each representation and rejects any mismatch before the transaction can commit. A production interface must also control direct writes so other writers cannot bypass that boundary.</p>
+<p>A useful consistency check rebuilds the expected answer from the direct facts, then compares in both directions. An expected row absent from storage is missing data. A stored row absent from the expected result is stale or invented data. Equal row counts alone cannot distinguish them. The example’s <code>assert_derived()</code> checks paths, closure and bounds this way, as well as verifying that every category is reachable from Catalogue.</p>
+<p>Try a move, a forbidden descendant-parent link, a leaf insertion and an edge removal with another route left intact. Remove one derived pair deliberately and confirm that the checker finds it. Test opposing moves with two real sessions, because a single successful move cannot establish concurrency protection. Those checks turn a convenient representation into a maintainable contract.</p>
+
+<h2 id="sources-and-further-reading">Sources and further reading</h2>
+<p>The five-category examples are invented. Single-session SQL, results, ltree updates and deliberate consistency failures were checked in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. The same script and checks also passed on native PostgreSQL 18.6. A two-session run stored the unprotected cycle; with the stated lock protocol, the second session waited for the first and then rejected its move. These are observations on the disposable example, not performance measurements; the figures remain conceptual schedules and row models. The download creates a separate <code>hierarchy_lab</code> schema in a disposable PostgreSQL database and leaves it available for inspection; its worked variations roll back to their starting rows.</p>
+<ul>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/queries-with.html">WITH queries</a>: recursive working tables, result ordering, <code>SEARCH</code>, <code>CYCLE</code> and whole-row duplicate removal.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a>: self-referencing foreign keys, delete actions and the boundary of row checks.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-lock.html">LOCK</a> and <a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit locking</a>: the lock mode used to exclude topology writers while allowing ordinary reads.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a>: statement snapshots at Read Committed and the limits of an earlier Repeatable Read snapshot.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-truncate.html">TRUNCATE</a>: its stronger locking and special snapshot behaviour, which the derived-table rebuild avoids.</li>
+ <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ltree.html">ltree</a>: label paths, ancestry including equality, path functions and supported indexes.</li>
+ <li><a href="/learn/databases/relational/modelling/">Relational data modelling</a> establishes identity, references and the one-parent versus several-parent choice; <a href="/learn/databases/relational/query-results/">Joins and the meaning of a result row</a> explains why path occurrences and distinct category rows answer different questions.</li>
+</ul>
+<style>
+.dag-routes { margin:2rem 0;font:.85rem/1.6 var(--font-sans); }
+.dag-routes figcaption { margin-bottom:.8rem;font:1.2rem/1.45 var(--font-serif); }
+.dag-routes figcaption span { font:.7rem/1.4 var(--font-sans);text-transform:uppercase;letter-spacing:.1em;color:var(--color-text-secondary);margin-right:.5rem; }
+.route-line { display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:1rem;border:1px solid var(--color-rule-strong);background:var(--color-surface-alt); }
+.route-line + .route-line { border-top:0; }
+.route-line strong { font-weight:500; }
+.route-line b { color:var(--teal);font-weight:400; }
+.dag-routes p { font:.85rem/1.7 var(--font-sans);color:var(--color-text-secondary); }
+@media(min-width:900px){.dag-routes{width:calc(100% + 120px);margin-left:-60px;}}
+@media(max-width:550px){.route-line{display:grid;grid-template-columns:1fr;text-align:center;gap:.25rem;}.route-line b{transform:rotate(90deg);}}
+</style>

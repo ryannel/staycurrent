@@ -1,0 +1,379 @@
+# Joins and the meaning of a result row
+
+Factual neighbouring context, extracted from http://127.0.0.1:4606/review/relational-rebuild/query-results/. The fixed references lead writing and teaching.
+
+A join builds result rows by matching rows from two sources. An order can match one customer, two order lines and no payments. Those three relationships produce different numbers of rows, even when every matching condition is correct.
+
+The difference matters when a query becomes an application report. A shop wants to know what is still due on each order. The order lines record what was bought and at what price; the payments record what has been paid. Joining both to orders seems a natural way to put the amounts together. For an order with two lines and two payments, it produces four rows and counts every amount twice.
+
+Every example here uses the same small shop. Mina Shah, customer 1, placed orders 101 and 103. Tariq Aziz, customer 2, placed order 102. Edda Berg, customer 3, has no orders. Order 101 has two lines and two payments; 102 has one line and one payment; 103 has two lines and no payments. We will build the still-due report by following what one result row means at each stage.
+
+The SQL uses PostgreSQL 18. The drawings show how results follow from the shop’s facts, not the engine’s physical execution. Download the data and queries to reproduce the results in a PostgreSQL session. The script uses temporary tables and rolls its changes back.
+
+What should one result row mean?
+
+Choose the unit of the answer before choosing its columns. For “what is still due on each order?”, one row should mean one order. An order ID identifies which one. A customer name is useful alongside it, but Mina’s name does not identify an order: she has two.
+
+This unit is often called the result’s grain. A result with one row per order has a different grain from one with a row per order line. Both can be correct answers. They answer different questions.
+
+Keep the identifying columns visible while constructing the query. If the result is one row per line, keep both order_id and line_no: line 1 belongs to several orders. If it is one row per order, seeing order 101 twice is a reason to ask what introduced the second row.
+
+The SELECT list chooses the values shown in each row. Simply choosing which columns to display does not change how many rows there are. Selecting just the customer’s name from three order rows still gives three rows: Mina, Tariq and Mina. Removing the order ID hides the distinction between Mina’s orders; it does not combine them.
+
+INNER JOIN produces one row for every match
+
+Start by attaching each order’s customer. orders.customer_id names the customer, and customers.customer_id is that table’s primary key.
+
+SELECT o.order_id, c.name
+FROM orders AS o
+INNER JOIN customers AS c
+ON c.customer_id = o.customer_id
+ORDER BY o.order_id;
+
+AS o and AS c give the tables short names, or aliases, within this query. o.order_id means the order ID from orders. The ON condition says which pairs match: the order’s customer ID must equal the customer row’s ID. INNER JOIN returns one row for each matching pair and none for an unmatched order.
+
+Figure 1 considers one order at a time. Attach its customer first, then switch to its order lines. Watch how many result rows order 101 contributes.
+
+Figure 1One order, as many rows as it has matches
+
+Attach
+
+Orders · one row per order
+Order 101customer 1
+
+Order 102customer 2
+
+Order 103customer 1
+
+→
+
+Result · one row per order
+
+No order considered yet.
+
+Start with the three orders. Each order will contribute one result row for each matching customer.
+
+1 / 4
+
+The drawing constructs the result to explain its meaning; it does not show PostgreSQL’s execution plan. Switch to order lines and watch order 101 contribute two rows.
+
+Both results, as text
+
+With customers: 101 → Mina Shah, 102 → Tariq Aziz, 103 → Mina Shah. With order lines: 101 → line 1 P3, 101 → line 2 P9, 102 → line 1 P7, 103 → line 1 P7, 103 → line 2 P3.
+
+Attaching the customer keeps one row per order. The customer key is unique, so an order can match at most one customer. Here the order’s non-null foreign key also requires that customer to exist, so each order matches exactly one.
+
+The same reasoning does not hold in the other direction. A customer can match several orders. Nor does it hold when we attach order lines:
+
+SELECT o.order_id, i.line_no, i.product_id,
+i.quantity, i.unit_price
+FROM orders AS o
+INNER JOIN order_items AS i
+ON i.order_id = o.order_id
+ORDER BY o.order_id, i.line_no;
+
+Order 101 matches line 1 and line 2, so it contributes two rows. Order 102 contributes one, and 103 contributes two: five rows in all. The result now means one row per order line. The repeated order IDs describe the relationship; they are not accidental copies.
+
+To bound the number of matches, check the complete key on the side being attached. The primary key of order_items is (order_id, line_no). Matching on order_id alone deliberately leaves room for several lines. Matching on both columns would identify at most one line. A foreign key does not make its own column unique: many orders may reference Mina, and many lines may reference order 101.
+
+LEFT JOIN keeps rows without a match
+
+Payments bring a different problem. An inner join to payments would show order 101 twice and 102 once, but omit 103 entirely. An order without a payment is precisely one the shop needs to see.
+
+SELECT o.order_id, p.payment_id, p.amount, p.method
+FROM orders AS o
+LEFT JOIN payments AS p
+ON p.order_id = o.order_id
+ORDER BY o.order_id, p.payment_id;
+
+LEFT JOIN returns the matching pairs as before. If a row from its left side has no match, it adds one result row with NULL in the right side’s columns. Here order 103 keeps its ID, while its payment ID, amount and method are all null.
+
+NULL marks the absence of a value. It is not a zero payment or an empty payment method. The payment table’s primary key cannot store a null payment ID, so a null p.payment_id in this result tells us no payment matched. With a nullable right-side column, a null could also have come from a stored row; use a column that cannot be null when you need to distinguish those cases.
+
+Now suppose the shop wants card payments alongside every order. Change the condition in Figure 2 and watch order 103.
+
+Figure 2Which orders survive the payment condition?
+
+Payment condition
+
+Order 101
+
+501 · 30.00card
+
+502 · 9.50gift card
+
+Order 102
+
+503 · 40.00card
+
+Order 103
+
+NULL · NULLNo matching payment
+
+Order 101 contributes two payment rows, 102 contributes one, and 103 contributes one row with NULL payment columns. All three orders survive.
+
+Each payment box is a result row. A dashed NULL box has no payment behind it; “No result row” marks an order removed by the filter. “Card in ON” keeps every order but attaches only card payments. “Card in WHERE” keeps only rows whose attached payment is by card.
+
+Comparison, as text
+
+All payments: 101/501, 101/502, 102/503, 103/NULL. Card in ON: 101/501, 102/503, 103/NULL. Card in WHERE: 101/501, 102/503; order 103 is absent.
+
+Putting the method condition in ON restricts which payments match. The outer join still preserves an order with no matching card payment:
+
+SELECT o.order_id, p.payment_id, p.amount, p.method
+FROM orders AS o
+LEFT JOIN payments AS p
+ON p.order_id = o.order_id
+AND p.method = 'card'
+ORDER BY o.order_id, p.payment_id;
+
+Putting the same test in WHERE asks a different question. It filters the rows after the join’s missing-match rows have been included:
+
+SELECT o.order_id, p.payment_id, p.amount, p.method
+FROM orders AS o
+LEFT JOIN payments AS p
+ON p.order_id = o.order_id
+WHERE p.method = 'card'
+ORDER BY o.order_id, p.payment_id;
+
+The gift-card row fails the test. Order 103’s null payment method makes p.method = 'card' unknown, and WHERE retains only true conditions. So 103 disappears too. This query answers “which orders have card payments, with a row for each one?”, rather than “show every order with any card payments it has”.
+
+A left join preserves at least one row per left-side row at the join itself. Later filtering can remove it. A join can also produce several rows for it, as order 101’s two payments show.
+
+EXISTS asks whether there is a match
+
+Sometimes the matching rows supply no columns at all. The shop wants a customer list containing everyone who has placed an order. Starting from customers and joining orders would produce Mina twice. The question needs only a yes or no for each customer.
+
+SELECT c.customer_id, c.name
+FROM customers AS c
+WHERE EXISTS (
+SELECT 1 FROM orders AS o
+WHERE o.customer_id = c.customer_id
+)
+ORDER BY c.customer_id;
+
+The query inside EXISTS is a subquery. It refers to c.customer_id from the surrounding query, asking whether any order belongs to that customer. That makes it a correlated subquery. EXISTS is true if the subquery has at least one row and false if it has none.
+
+The 1 in SELECT 1 is a convention: the test needs a row’s presence, not its values. It does not mean “find customer 1” or “return only one order”. Mina’s two orders make one true test for her customer row. The result contains customer 1, Mina Shah, and customer 2, Tariq Aziz, once each.
+
+NOT EXISTS keeps customers for whom the same test finds no order:
+
+SELECT c.customer_id, c.name
+FROM customers AS c
+WHERE NOT EXISTS (
+SELECT 1 FROM orders AS o
+WHERE o.customer_id = c.customer_id
+)
+ORDER BY c.customer_id;
+
+That returns only customer 3, Edda Berg. In both queries the outer rows come from customers, and each is either kept or rejected. Matching orders never multiply them.
+
+The same form can find orders without payments:
+
+SELECT o.order_id
+FROM orders AS o
+WHERE NOT EXISTS (
+SELECT 1 FROM payments AS p
+WHERE p.order_id = o.order_id
+)
+ORDER BY o.order_id;
+
+It returns order 103 in the starting data. “No payments” is narrower than “money still due”. A partial payment makes this test false while leaving a balance. The still-due report must compare amounts.
+
+Why two joins multiply amounts
+
+To compare the amounts, it is tempting to join order lines and payments to the same order, then add their values. Follow order 101 first. Its first line is one pack of tea at 4.50; its second is one teapot at 35.00. Its payments are 501 for 30.00 by card and 502 for 9.50 by gift card.
+
+SELECT o.order_id, i.line_no, p.payment_id,
+i.quantity * i.unit_price AS line_value,
+p.amount
+FROM orders AS o
+INNER JOIN order_items AS i ON i.order_id = o.order_id
+INNER JOIN payments AS p ON p.order_id = o.order_id
+WHERE o.order_id = 101
+ORDER BY i.line_no, p.payment_id;
+
+Both lines match order 101. Both payments match it too. Nothing in either condition chooses one payment for a particular line, so each line is paired with each payment.
+
+Figure 3Two lines × two payments = four result rows
+
+Order 101 · each cell is one joined row
+
+| Order line ↓
+Payment → | 501
+30.00 | 502
+9.50
+
+| Line 1 · P3
+4.50 | 101 · 1 · 501Line 4.50Paid 30.00 | 101 · 1 · 502Line 4.50Paid 9.50
+
+| Line 2 · P9
+35.00 | 101 · 2 · 501Line 35.00Paid 30.00 | 101 · 2 · 502Line 35.00Paid 9.50
+
+SUM of line values79.00Each line appears twice
+
+SUM of payments79.00Each payment appears twice
+
+The real line total is 39.50 and the real paid total is 39.50. The joined rows total 79.00 on each side. Every pair of line and payment is different; DISTINCT over these five selected columns removes nothing.
+
+One row now means an order-line-and-payment combination. The line value 4.50 appears once with payment 501 and once with payment 502. Payment 501’s 30.00 appears once with each line. Adding either column adds both occurrences.
+
+SELECT o.order_id,
+SUM(i.quantity * i.unit_price) AS line_total,
+SUM(p.amount) AS paid_total
+FROM orders AS o
+INNER JOIN order_items AS i ON i.order_id = o.order_id
+LEFT JOIN payments AS p ON p.order_id = o.order_id
+GROUP BY o.order_id
+ORDER BY o.order_id;
+
+SUM adds a column’s values, and GROUP BY o.order_id makes a separate sum for each order. But the values it receives have already multiplied. This query gives order 101 a line total of 79.00 and a paid total of 79.00, both twice the real 39.50. Even a zero balance would conceal the error: two wrong totals happen to cancel.
+
+DISTINCT is not a general repair. SELECT DISTINCT removes rows equal across the selected columns. Figure 3’s rows all have different line/payment pairs, so it removes none. Dropping the IDs can make different facts look equal instead. And SUM(DISTINCT amount) adds distinct amount values, not distinct payment records. Two separate payments of 20.00 still contribute 40.00, not 20.00.
+
+The same mistake can affect lines. Split order 102’s quantity-two mug line into two numbered lines, each for one mug at 20.00. The value remains 40.00. Summing distinct line values would keep only one 20.00. A correct total counts each contributing fact once, even when two facts have equal values.
+
+Summarise each side before joining
+
+The report needs one row per order, so make both sides have that meaning before attaching them. Add the lines within each order independently. Add the payments within each order independently. Then join those two summaries to the orders.
+
+One total for each order
+
+Each line’s value is its quantity multiplied by its recorded unit_price. Order 103’s two packs of tea contribute 9.00, not 4.50. Use the price recorded on the line rather than the product’s current price: a later price change should not rewrite the value of an earlier order.
+
+SELECT order_id,
+SUM(quantity * unit_price) AS line_total
+FROM order_items
+GROUP BY order_id
+ORDER BY order_id;
+
+GROUP BY order_id puts rows with the same order ID into one group. SUM(quantity * unit_price) calculates one total from that group’s lines. The result has order 101 with 39.50, 102 with 40.00 and 103 with 29.00. AS line_total names the calculated column.
+
+The payment summary follows the same pattern, using SUM(amount) from payments, grouped by order_id. It has only two rows: 101 with 39.50 and 102 with 40.00. There is no payment for 103, so there is no group, and no summary row, for it.
+
+Figure 4Give each side one row per order
+
+Order lines → line_totals
+Order 1014.50 + 35.00
+↓ SUM in this order’s group
+
+101 · 39.50
+
+Order 10240.00
+↓ SUM in this order’s group
+
+102 · 40.00
+
+Order 10320.00 + 9.00
+↓ SUM in this order’s group
+
+103 · 29.00
+
+Payments → payment_totals
+Order 10130.00 + 9.50
+↓ SUM in this order’s group
+
+101 · 39.50
+
+Order 10240.00
+↓ SUM in this order’s group
+
+102 · 40.00
+
+Order 103No payments
+↓ No group to summarise
+
+No summary row
+
+↓ LEFT JOIN both summaries to orders on order_id
+
+One result row per order · absent summaries treated as zero
+
+| Order | Lines | Paid | Due
+
+| 101 | 39.50 | 39.50 | 0.00
+
+| 102 | 40.00 | 40.00 | 0.00
+
+| 103 | 29.00 | 0.00 | 29.00
+
+Each summary can match an order at most once. Order 103 has no payment summary: the outer join retains it, and the report’s zero policy makes its recorded balance 29.00.
+
+These summaries cannot multiply an order’s rows: each has at most one row for a given order_id. This is the property the final joins need. The two lines and two payments of order 101 have become one line total and one payment total.
+
+The still-due report
+
+A WITH clause gives each intermediate query a name that the rest of this statement can use. These are common table expressions, often shortened to CTEs. Name the two summaries line_totals and payment_totals, then calculate balances from them:
+
+WITH line_totals AS (
+SELECT order_id,
+SUM(quantity * unit_price) AS line_total
+FROM order_items
+GROUP BY order_id
+), payment_totals AS (
+SELECT order_id, SUM(amount) AS paid_total
+FROM payments
+GROUP BY order_id
+), balances AS (
+SELECT o.order_id,
+COALESCE(l.line_total, 0) AS line_total,
+COALESCE(p.paid_total, 0) AS paid_total,
+COALESCE(l.line_total, 0)
+- COALESCE(p.paid_total, 0) AS due
+FROM orders AS o
+LEFT JOIN line_totals AS l ON l.order_id = o.order_id
+LEFT JOIN payment_totals AS p ON p.order_id = o.order_id
+)
+SELECT order_id, line_total, paid_total, due
+FROM balances
+WHERE due > 0
+ORDER BY order_id;
+
+The left joins start from every order. When a summary is absent, COALESCE(value, 0) returns zero instead of null; otherwise it keeps the value. For this report, no recorded payments count as zero paid, and no recorded lines count as zero line value. That is an explicit reporting policy, not a general rule that an unknown amount means zero. The line prices and payment amounts in this schema cannot be null.
+
+Without the zero for 103’s missing payment summary, subtracting its null paid total would produce a null balance. The final WHERE due > 0 would then discard it. Giving the missing summary its intended value is necessary to keep the unpaid order in the answer.
+
+The balances query names the difference due. The outer query can then filter that named column. A SELECT alias is not available to WHERE at the same query level, so writing WHERE due > 0 inside the balances definition would not refer to the alias just declared there.
+
+Before filtering, the three balances are 0.00, 0.00 and 29.00, as Figure 4 shows. The final result contains only order 103: line total 29.00, paid total 0.00, due 29.00. Remove WHERE due > 0 to inspect all three orders.
+
+This report compares recorded line values with recorded positive payments. It has no tax, delivery charges, refunds or cancellation policy. If the application needs those, they must contribute to the calculation deliberately; the order’s status label alone cannot supply the amount.
+
+Combining result rows with UNION
+
+A join attaches columns from matching rows. Sometimes the task is to combine two lists of the same kind of row. The shop has a customer-ID list from paid orders and another from pending orders:
+
+SELECT customer_id FROM orders WHERE status = 'paid'
+UNION ALL
+SELECT customer_id FROM orders WHERE status = 'pending'
+ORDER BY customer_id;
+
+The first query supplies customer IDs 1 and 2 from orders 101 and 102. The second supplies customer ID 1 from order 103. UNION ALL keeps all three occurrences. With the final ordering shown, the answer is 1, 1, 2.
+
+Paid-order IDs: 1, 2 · pending-order IDs: 1
+
+| Operation | Result IDs | Question answered
+
+| UNION ALL | 1, 1, 2 | All occurrences from both lists
+
+| UNION | 1, 2 | Customers in either list, once each
+
+| INTERSECT | 1 | Customers in both lists
+
+| EXCEPT | 2 | Customers in the paid list but absent from the pending list
+
+Replace UNION ALL in the query with the operation you need. UNION, INTERSECT and EXCEPT remove duplicate result rows by default. They compare the whole row: adding a status column would make (1, 'paid') different from (1, 'pending'), so a union would keep both.
+
+Each side must return the same number of columns, with compatible types in corresponding positions. The columns match by position, not by name. If each row represents an event or an occurrence, preserve it with UNION ALL. If each row represents membership, deliberate duplicate removal may be exactly the question, as it is for “customers in either list”.
+
+Check the result against the question
+
+A plausible result is easier to produce than a correct report. Order 101’s doubled totals even gave the right zero balance. Check the contributing amounts as well as the final difference, and trace a result row back to the facts that made it.
+
+Missing and multiple matches are useful tests. Order 103 proves that an unpaid order survives the joins and filtering. Order 101 proves that several lines and several payments do not multiply either total. The equal-valued lines for 102 prove that separate facts survive even when their amounts coincide.
+
+Now make a separate change to the starting data: add payment 504, a 10.00 card payment for order 103. Its paid total becomes 10.00 and its balance becomes 19.00. The still-due report keeps it. The “no payments” query loses it, because it now has a payment. These two queries have continued to answer their own questions correctly.
+
+Finally, put presentation order in ORDER BY. Tables and query results supply no dependable row order without it. The examples use order ID, or order ID then line or payment ID, to make their results easy to follow. The final ORDER BY customer_id on the combined lists orders the combined result; it does not promise that one input list will be returned before the other.
+
+The drawings’ sequence is a way to reason about the answer. PostgreSQL may use different join methods, rearrange work or fold a CTE into its surrounding query while preserving its meaning. Decide what each row must represent first. Measuring how the engine produces it is the next question.
