@@ -1,0 +1,151 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import RecoveryFigure from '../../components/relational-rebuild-backups/RecoveryFigure.astro';
+const checkFacts = `SELECT
+  (SELECT price FROM products
+   WHERE product_id = 'P7') AS p7_price,
+  o.status,
+  (SELECT sum(quantity * unit_price)
+   FROM order_items WHERE order_id = o.order_id) AS line_total,
+  (SELECT coalesce(sum(amount), 0)::numeric(8,2)
+   FROM payments WHERE order_id = o.order_id) AS paid
+FROM orders o
+WHERE o.order_id = 103;
+-- Before the mistake: 20.00 | pending | 29.00 | 0.00
+-- After reconciliation: 20.00 | pending | 29.00 | 10.00`;
+---
+<p>A <em>backup</em> preserves material from which a database can be recovered after its live history is lost or becomes unwanted. A <em>restore</em> uses that material to build a usable database. The useful promise is a state you can recover, within the time the service can afford to be unavailable.</p>
+<p>Start with a separate recovery branch of the shop example. Order 103 already exists: one blue mug, P7, at an agreed 20.00 and two packets of tea at 4.50 each, total 29.00. The order is pending and has no payment. Then a mistaken transaction sets P7’s catalogue price to 2.20. Later, a valid partial payment records 10.00 against order 103 as payment 504. A payment provider has already accepted the corresponding charge.</p>
+<p>Restoring a database from before the price mistake can bring back 20.00. It also removes the later payment record. The provider’s charge remains. This article follows that recovery through three questions: which history can be restored, where to stop, and how to account for the work left outside that point. The drawings are models of that ordering, without invented commit times or log positions.</p>
+
+<section id="choosing">
+<h2>Choosing recovery from the loss</h2>
+<p>Restart recovery should keep the committed 2.20, just as it would keep a correct change. A replica can faithfully copy it too. Durability and replication preserve database history; they do not decide whether the shop intended a price. <a href="/learn/databases/relational/storage-and-durability/">Storage and durability</a> establishes that boundary.</p>
+<p>If only the current catalogue price is wrong and the rest of the history is sound, correcting it in the current database may be enough. Keep the evidence and any dependent business adjustments, as <a href="/learn/databases/relational/data-lifecycle/">History, correction and deletion</a> explains. Restoring the whole database is a wider action: it replaces sound facts alongside the unwanted ones. Recovering a separate copy to inspect or extract the earlier price may avoid that replacement.</p>
+<p>Lost storage needs a surviving copy. An existing live copy may be suitable for a transfer of service, covered by <a href="/learn/databases/relational/failover/">Failover and fencing</a>. A backup gives another route, including earlier states that a live replica has already passed. Choose the route by what was lost and what must be recovered.</p>
+<h3>Recovery point and recovery time</h3>
+<p>A <em>recovery point objective</em>, or RPO, states how much recent work the service can afford to lose, commonly expressed as a time window. An RPO of five minutes requires a recoverable point no more than five minutes behind the relevant loss boundary. “We run a backup every five minutes” does not establish that coverage: the latest job might be incomplete or inaccessible.</p>
+<p>A <em>recovery time objective</em>, or RTO, states how long the service can afford to be interrupted. Count obtaining recovery access and material, restoring and replaying, checking the result, reconciling necessary work and returning callers to service. Starting the database is one stage. A shop that can display orders while payments remain suspended has recovered a different level of service from one accepting purchases.</p>
+<p>These are objectives to design and test against, not properties conferred by naming them. An unwanted change may force an older restore than a storage failure would. Record the chosen point and the omitted operations as well as the time gap; later reconciliation may recover some of that work.</p>
+</section>
+
+<section id="chain">
+<h2>A backup and the history it needs</h2>
+<p>A backup job can succeed while the recovery path you need is incomplete. Some methods restore a complete saved state. Others require an earlier copy and later material that depends on it. Point-in-time recovery needs enough retained history to reach the selected point.</p>
+<p>Figure 1 draws a PostgreSQL-style path: a base backup, its required consistency WAL, then a continuous sequence of later write-ahead log. Order 103, the mistake and the payment lie in successive invented intervals. Remove B and watch what happens to C.</p>
+<RecoveryFigure kind="chain" />
+<p>C’s files still exist, but this path cannot use them to cross the missing B. Taking more backups does not repair that particular chain. Another complete starting copy and its dependencies might provide a different path. Retention must preserve at least one complete path for every point you promise to recover.</p>
+<h3>Logical and physical backups</h3>
+<p>A <em>logical backup</em> exports data and object definitions for reconstruction: rows, tables and the other objects selected by the tool. A <em>physical backup</em> preserves the engine’s stored representation through a supported backup procedure. The choice depends on the recovery task, object scope, compatibility and restoration work.</p>
+<p>A PostgreSQL dump can be useful for restoring selected objects or moving to a compatible newer version. It cannot be advanced using WAL. PostgreSQL physical archive recovery restores a whole database cluster; taking an arbitrary copy of live data files is not a supported substitute for its backup protocol. A supported consistent filesystem snapshot is another method with its own requirements. The <a href="https://www.postgresql.org/docs/18/backup-dump.html">SQL dump</a> and <a href="https://www.postgresql.org/docs/18/backup-file.html">filesystem backup</a> documentation explain those distinctions.</p>
+<p>Check what the selected scope actually includes. A table export may omit its dependencies. PostgreSQL’s single-database dump does not include cluster-wide role definitions. A database that restores correctly can still need compatible extensions, software, configuration and access arrangements before its application can use it.</p>
+<h3>Full backups, increments and retained history</h3>
+<p><em>Full</em> and <em>incremental</em> describe a separate choice. A full backup supplies the complete data for its defined scope. An incremental backup saves changes relative to earlier backups. Restoring it requires the dependencies specified by that method, which may include several increments and a full backup. Physical methods can be incremental too: PostgreSQL’s <a href="https://www.postgresql.org/docs/18/app-pgcombinebackup.html">pg_combinebackup</a> reconstructs a full backup from such a chain.</p>
+<p>More frequent full backups can trade extra copying and storage for less reconstruction or replay. Increments can reduce what each backup copies while increasing the material a restore must obtain. Neither frequency nor the word “incremental” promises arbitrary stopping points. CockroachDB, for example, needs captured revision history to restore arbitrary points within that history, rather than only the available backup points. <a href="/learn/databases/relational/cockroachdb/backup-and-restore/">CockroachDB backup and recovery</a> develops its coverage and scope.</p>
+<h3>Keeping recovery material usable</h3>
+<p>Test the failure against the backup as well as the live database. A second file on the lost disk is lost too. A backup account controlled by the same compromised credentials may allow the same deletion. Choose separate failure boundaries and restrictions appropriate to the loss you intend to survive.</p>
+<p>Keep an inventory of backup identity, source, dependencies, supported restore points, compatible software and the access and decryption material needed to recover. Test that those materials can be obtained when normal service access is unavailable. Encryption protects a backup only while its key remains controlled; losing the key can also make the backup unusable.</p>
+<p>Expire material by the recovery coverage it supports. An old full backup may still be the root of a retained incremental chain. Removing it because of its age can invalidate newer files. When replacing a path, establish and test its replacement before relying on the resulting retention window.</p>
+</section>
+
+<section id="target">
+<h2>Choosing the restore target</h2>
+<p>The latest available point and the desired point answer different questions. After storage loss, the latest sound recoverable state may be the aim. After the price mistake, replaying through all available history would faithfully bring back 2.20.</p>
+<p>In Figure 2, change the restore target while keeping the source history fixed. Watch the catalogue price and the payment separately.</p>
+<RecoveryFigure kind="target" />
+<p>Stopping before the mistake also stops before payment 504. Reaching the payment includes the earlier mistake. Recovery selects a supported state of the chosen history; it does not provide a general instruction to replay everything except one transaction. The later payment needs a separate reconciliation if we choose the earlier state.</p>
+<h3>Finding the boundary</h3>
+<p>Identify the unwanted committed change from evidence. The time someone noticed 2.20 is later than its arrival. An application’s <code>updated_at</code> may be assigned before commit, overwritten by later work or taken from a different clock. Neither alone establishes the correct recovery boundary.</p>
+<p>Use the engine’s supported target mechanism and establish whether the boundary includes the unwanted commit. Check the recovered facts to confirm the result. PostgreSQL supports several target forms and an inclusive or exclusive boundary for some of them; its transaction identifiers are assigned before completion and need not finish in numerical order. Native target syntax, timeline selection and the actual restore drill belong in <a href="/learn/databases/relational/postgresql/backup-and-restore/">Restoring PostgreSQL to a recovery target</a>.</p>
+<p>Record the source history and object scope alongside the target. The same time applied to a different source or branch is not the same recovered state. Preserve the original material for investigation and repeat attempts. Work from copies rather than modifying the only remaining evidence.</p>
+</section>
+
+<section id="proof">
+<h2>Proving a restore works</h2>
+<p>Restore into an isolated destination first. Keep ordinary writers, payment workers, email senders and other external dispatch disabled. A restored outbox can contain work whose effect already happened. Letting workers poll it during a test can turn a rehearsal into a second delivery.</p>
+<div class="table-region" role="region" aria-label="Four different restore checks" tabindex="0">
+<table><caption>What each check establishes</caption><thead><tr><th>Check</th><th>Evidence to keep</th><th>Still unproved</th></tr></thead><tbody>
+<tr><th scope="row">Material integrity</th><td>Required files and dependencies; applicable checksum and manifest results</td><td>That the engine can recover the intended state</td></tr>
+<tr><th scope="row">Engine recovery</th><td>Successful restore/replay and its reported source and stopping point</td><td>That this is the state the shop wanted</td></tr>
+<tr><th scope="row">Recovered facts</th><td>Expected orders, agreements, stock, payments and exceptions</td><td>That the application can use them correctly</td></tr>
+<tr><th scope="row">Service recovery</th><td>Permissions, application reads and controlled readiness checks</td><td>That omitted work and external outcomes are all accounted for</td></tr>
+</tbody></table></div>
+<p>These checks build on one another. PostgreSQL’s <a href="https://www.postgresql.org/docs/18/app-pgverifybackup.html">pg_verifybackup</a> explicitly leaves test restores and checking the resulting data necessary. A green backup job and a server accepting connections are useful observations, but neither proves the shop is ready.</p>
+<h3>Check the recovered facts</h3>
+<p>For the cut before the mistake, expect P7 at 20.00, pending order 103 and agreed line total 29.00, with no payment for that order. Stock stays P3 10, P7 0, P9 4: the original purchase is already included. Check the expected presence or absence of payment 504 for the selected target.</p>
+<Sql code={checkFacts} label="Check catalogue price, agreement and payment separately" />
+<p>The query keeps the line sum and payment sum separate, so joining several payments cannot multiply order lines. Also inspect representative other orders, constraints and application permissions. Exercise an application read under the intended runtime identity with external dispatch still disabled.</p>
+<h3>Measure the whole path</h3>
+<p>Rehearse with representative data size, retained history and recovery access. Keep the achieved point and elapsed stages: access, transfer, reconstruction/replay, validation, necessary reconciliation and return to service. Record unfinished work and any restricted service. Use that result to change the backup design or the objective.</p>
+<p>The small shop example establishes no production restore rate. A fast replay on a tiny fixture cannot show that a large backup can be fetched, decrypted, restored and checked inside an outage budget. Repeat a rehearsal when changes to size, infrastructure or recovery arrangements make its earlier evidence inapplicable.</p>
+</section>
+
+<section id="boundary">
+<h2>Close the source history</h2>
+<p>A restored candidate can be prepared while the source remains live. Reconciliation cannot be declared complete against a source that keeps adding work. Every new payment or purchase can move the boundary again.</p>
+<p>Before final accounting, stop new source writes and external dispatch. Resolve or explicitly account for operations already in flight, including commits whose replies were lost and provider calls still awaiting outcomes. Preserve the final source evidence and prevent stale clients or workers from continuing to use the old authority. <a href="/learn/databases/relational/failover/">Failover and fencing</a> owns the mechanisms that enforce that authority change.</p>
+<figure class="boundary-figure" aria-labelledby="boundary-title"><figcaption id="boundary-title"><span>Figure 3</span> A finite set of later work</figcaption><div class="boundary-scene"><div><strong>Source still accepting work</strong><p>Restore cut → mistake → payment 504 → more writes …</p><p class="boundary-result">Later-work set keeps growing</p></div><div><strong>Source history closed</strong><p>Restore cut → mistake → payment 504 → final boundary │</p><p class="boundary-result">Final evidence → classify → reconcile → verify</p></div><div><strong>Restored candidate</strong><p>Kept isolated from callers and external dispatch while its state and omitted work are checked.</p></div></div><p class="boundary-caption">A controlled boundary includes in-flight outcomes. Turning off a web page alone does not stop an old worker or a transaction already running. No elapsed times are implied.</p></figure>
+<p>Build the omitted-work set from retained source outcomes and independent evidence, not only rows with a recent application timestamp. Deleted rows, related changes and operations whose local records were lost can be absent from that query. Requests may also have been accepted without a commit, or committed without an acknowledgement.</p>
+<p>If the source is destroyed, use the history and independent evidence that actually survived. A caller’s belief that a payment completed is a lead to investigate, not proof of its database or provider outcome. State any gap you cannot establish. Closing an unavailable source means preventing its return as a writer too; it does not make missing evidence appear.</p>
+</section>
+
+<section id="reconcile">
+<h2>Reconcile valid later work</h2>
+<p><em>Reconciliation</em> accounts for the operations that do not simply carry across in the restored history. For each operation, establish its identity, original meaning, known outcome, dependencies and chosen disposition.</p>
+<div class="table-region" role="region" aria-label="Classify work across the restore point" tabindex="0"><table><caption>The shop’s work across the cut</caption><thead><tr><th>Work</th><th>What the earlier restore contains</th><th>Recovery decision</th></tr></thead><tbody>
+<tr><th scope="row">Order 103 purchase</th><td>Order, agreed lines and stock decrement</td><td>Retain; do not place it again</td></tr>
+<tr><th scope="row">Mistaken 2.20 price</th><td>Absent</td><td>Exclude the unwanted change</td></tr>
+<tr><th scope="row">Valid payment 504</th><td>Absent</td><td>Establish provider outcome, then reconcile</td></tr>
+<tr><th scope="row">Any decision based on 2.20</th><td>Outside this example’s supplied work</td><td>Investigate its agreement and validity; do not blindly replay it</td></tr>
+</tbody></table></div>
+<p>The last category matters even when the example has no such purchase. A later order priced using the mistake may be an agreement the shop must honour, a request to decline or a case needing a business adjustment. Restore tools cannot make that decision. Replaying its original SQL against different stock and prices may produce a different operation altogether.</p>
+<h3>Preserve identity and apply once</h3>
+<p>Use the original logical operation identity. In this branch, <code>order-103-part-payment-1</code> identifies the 10.00 partial payment for order 103 and maps to payment 504. The identity must keep that meaning. A new amount under the same identity is a disagreement, not a retry.</p>
+<p>Check whether the accepted operation is already represented in the recovered database. If it is, verify the mapping and the resulting facts. If it is omitted and valid, apply the database repair and record its identity and outcome in one transaction. A failed repair leaves neither a partial result nor a misleading “done” record. A repeat verifies the same outcome instead of adding another payment.</p>
+<p>A uniqueness constraint can refuse a second mapping for an identity. It does not establish that the first mapping was correct. Compare the canonical order, amount, method and resulting payment; stop on a mismatch. A restored absence of an old request record does not prove that the original operation never committed or never caused an external effect.</p>
+<h3>Recheck the business rule</h3>
+<p>Apply accepted repairs in a valid dependency order, with relevant ordinary writers excluded or coordinated. Payment 504 still needs order 103 and its unchanged 29.00 agreement. Under this example’s rule, recorded payments must not exceed that amount. Recording the known 10.00 leaves 19.00 due and the order pending. It does not consume stock: that happened in the retained purchase.</p>
+<p>A later purchase would require its own capacity check and related records. Copying a stock decrement twice or accepting incompatible dependent work would not recover its original meaning. Keep conflicts and unprovable cases open for an explicit decision rather than counting every copied row as recovered.</p>
+</section>
+
+<section id="external">
+<h2>External effects do not roll back</h2>
+<p>The restored database has no payment 504. The provider has still taken 10.00. Query the provider using the retained identity and its actual lookup contract. Figure 4 starts with a matching accepted result. Step through the repair, then change the lookup to an unavailable result.</p>
+<RecoveryFigure kind="payment" />
+<p>A known accepted result supports recording the charge that already occurred. There is no reason to send another charge. An unavailable result leaves uncertainty. An established absence may support carrying out the original operation, but only when the provider’s lookup and safe execution contract make that conclusion sound. A missing local row or a missing reply establishes neither case.</p>
+<p>Check the lifetime and scope of any duplicate protection. A receiver might remember keys only for a limited period; Stripe’s <a href="https://docs.stripe.com/api/idempotent_requests">API v1 idempotency contract</a>, for example, permits pruning keys after at least 24 hours and treats reuse of a pruned key as a new request. Restoring local “sent” records or request mappings can remove the shop’s own protection too. The hypothetical provider here offers a retained queryable result; no such capability is assumed for ordinary email.</p>
+<p>The <a href="/relational-rebuild/backups/reconciliation.sql">worked SQL fixture</a> models the database side after that external outcome has been supplied as evidence. It records payment 504 and its operation mapping together, verifies a repeat, refuses changed meaning and rolls back the payment if recording the mapping fails. It creates temporary example tables and a temporary-session function; use a disposable session. It neither restores a backup nor contacts a provider. Those checks ran in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3.</p>
+<p><a href="/learn/databases/relational/outboxes-and-jobs/">Outboxes and database-backed jobs</a> develops worker delivery and receiver contracts. For recovery, the obligation is to account for earlier effects before those workers resume. Keep unresolved effects visible, with an owner and a decision about which operations can safely return to service.</p>
+</section>
+
+<section id="return">
+<h2>Return one recovered service to use</h2>
+<p>Readiness now has a concrete meaning: the intended source and target have been verified; the old source cannot accept further authoritative work; the finite later-work set has recorded dispositions; and external outcomes are reconciled or explicitly unresolved. For the completed shop branch, P7 is 20.00, order 103 is pending for 29.00, payment 504 is recorded once, 19.00 remains due and stock is still 10/0/4.</p>
+<p>Carry forward still-applicable correction and deletion decisions before returning older data to ordinary use. A restore may bring removed information back. Apply the agreed treatment before rebuilding search copies or documents from it, following <a href="/learn/databases/relational/data-lifecycle/">History, correction and deletion</a>. Rebuild or reconcile derived stores against the chosen recovered authority; they may otherwise retain a different history.</p>
+<p>Route callers and workers to one authority through a controlled handover. Resume external dispatch only after outstanding identities and effects are accounted for. Establish and test backup coverage for the resulting history, retaining the old evidence as required. Record the achieved loss, elapsed recovery time, restricted service and remaining exceptions. The recovery is the service and its obligations brought back into a known state.</p>
+</section>
+
+<section id="sources">
+<h2>Sources and further reading</h2>
+<ul>
+<li><a href="https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/rel_planning_for_recovery_objective_defined_recovery.html">AWS Well-Architected: recovery objectives for downtime and data loss</a> and <a href="https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/plan-for-disaster-recovery-dr.html">planning disaster recovery</a>: objectives, workload dependencies and recovery testing.</li>
+<li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/continuous-archiving.html">Continuous archiving and point-in-time recovery</a>, <a href="https://www.postgresql.org/docs/18/backup-dump.html">SQL dump</a> and <a href="https://www.postgresql.org/docs/18/backup-file.html">Filesystem backup</a>: the material each recovery method needs and its scope.</li>
+<li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/app-pgcombinebackup.html">pg_combinebackup</a>, <a href="https://www.postgresql.org/docs/18/app-pgverifybackup.html">pg_verifybackup</a> and <a href="https://www.postgresql.org/docs/18/runtime-config-wal.html#RUNTIME-CONFIG-WAL-RECOVERY-TARGET">recovery target settings</a>: dependencies, verification limits and exact stopping semantics.</li>
+<li>CockroachDB: <a href="https://docs.cockroachlabs.com/docs/stable/take-full-and-incremental-backups">Full and incremental backups</a> and <a href="https://docs.cockroachlabs.com/docs/stable/take-backups-with-revision-history-and-restore-from-a-point-in-time">revision history and point-in-time restore</a>: why backup points and arbitrary historical points differ.</li>
+<li><a href="https://docs.stripe.com/api/idempotent_requests">Stripe: idempotent requests</a>: an actual receiver contract whose key retention must be checked. The article’s provider is a separate hypothetical contract.</li>
+</ul>
+</section>
+<style>
+.table-region { max-width: 100%; overflow-x: auto; margin: 1.5rem 0; }
+.table-region table { display: table; margin: 0; }
+caption { text-align: left; font: .85rem/1.5 var(--font-sans); color: var(--color-text-secondary); margin-bottom: .6rem; }
+.table-region:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+.boundary-figure { margin: 2rem 0; }
+.boundary-figure figcaption { font: 1.2rem/1.4 var(--font-serif); margin-bottom: .6rem; }
+.boundary-figure figcaption span { font: .7rem/1.4 var(--font-sans); text-transform: uppercase; letter-spacing: .08em; color: var(--color-text-secondary); margin-right: .5rem; }
+.boundary-scene { padding: 1rem; border: 1px solid var(--color-rule-strong); background: var(--color-surface-alt); font: .88rem/1.5 var(--font-sans); display: grid; gap: .75rem; }
+.boundary-scene > div { border: 1px solid var(--color-text-secondary); padding: .75rem; background: var(--color-surface); }
+.boundary-scene p { margin: .4rem 0 0; }
+.boundary-result { color: var(--color-accent-strong); font-weight: 600; }
+.boundary-caption { color: var(--color-text-secondary); font: .8rem/1.5 var(--font-sans); margin: .6rem 0; }
+</style>

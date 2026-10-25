@@ -197,8 +197,14 @@ The example provider contract uses stable operation identity `order-103-part-pay
 
 ## Replica read-routing variation
 
-Reuse the independent P7 price20.00→22.00 replay with one primary and read replicas A/B sharing one identified history. U/C denote symbolic change/commit positions, not native LSNs or measured times. A can have C received and durable before replay, then expose22.00 to a new snapshot. B can remain before C, so routing a later read from A to B can show20.00 again. All core stock/order/payment/line facts remain unchanged.
+Reuse the independent P7 price 20.00→22.00 replay with one primary and read replicas A/B sharing one identified history. U/C denote symbolic change/commit positions, not native LSNs or measured times. A can have C received and durable before replay, then expose 22.00 to a new snapshot. B can remain before C, so routing a later read from A to B can show 20.00 again. All core stock/order/payment/line facts remain unchanged.
 
 An illustrative required-history token C permits a bounded wait followed by primary fallback or an explicit unavailable result. Qualification is checked on the exact read target before establishing the new snapshot; token semantics and available native controls depend on the engine. Topology/history changes invalidate unqualified position comparisons. Write-authority transfer remains the failover owner's responsibility.
 
-Replica catch-up arithmetic may use an independent assumed600MiB backlog,20MiB/s replay capacity and10MiB/s ongoing generation. Net backlog reduction10MiB/s implies an ideal60s; stopping generation gives30s. These are illustrative fixed-rate inputs, not observed times or a recovery guarantee; no new business facts or native positions are implied.
+Replica catch-up arithmetic may use an independent assumed 600MiB backlog, 20MiB/s replay capacity and 10MiB/s ongoing generation. Net backlog reduction 10MiB/s implies an ideal 60s; stopping generation gives 30s. These are illustrative fixed-rate inputs, not observed times or a recovery guarantee; no new business facts or native positions are implied.
+
+## Partitioned-copy variation
+
+Use a separate monthly-partitioned copy of the exact generated 2026 order workload, preserving rows, IDs and statuses. A hypothetical approved retirement boundary at 2026-02-01 UTC makes January wholly eligible; a partial-month boundary does not. No real retention duration or legal policy is implied. Core shop rows and schema stay unchanged.
+
+The comparison retains globally meaningful order_id and explicitly distinguishes it from the different uniqueness/reference contract enforced by (order_id, placed_at). Actual retirement must account for incoming references, related lines and retained recovery copies; dropping the model partition does not establish that all related records or copies disappeared.
