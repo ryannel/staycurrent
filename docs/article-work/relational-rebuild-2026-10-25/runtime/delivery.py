@@ -34,6 +34,7 @@ elif mode=='freeze':
    target=dest/'source'/rel;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(w/rel,target);owned.append(rel)
  shutil.copytree(w/'evidence',dest/'evidence')
  shutil.copytree(w/'input',dest/'input')
+ if (w/'docs/coverage/relational-rebuild-2026-10-25-example.md').exists():shutil.copy2(w/'docs/coverage/relational-rebuild-2026-10-25-example.md',dest/'input/shared-example.md')
  shutil.copy2(r/'latest-build.json',dest/'build.json')
  with gzip.open(dest/'build.log.gz','wb') as f:f.write((r/'latest-build.log').read_bytes())
  allhash={str(p.relative_to(dest)):sha(p) for p in sorted(dest.rglob('*')) if p.is_file()}
