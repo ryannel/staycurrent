@@ -1,0 +1,125 @@
+---
+import Quorum from '../../components/relational-rebuild-placement/Quorum.astro';
+import WriteWait from '../../components/relational-rebuild-placement/WriteWait.astro';
+import Purchase from '../../components/relational-rebuild-placement/Purchase.astro';
+import ReadContract from '../../components/relational-rebuild-placement/ReadContract.astro';
+import '../../components/relational-rebuild-placement/figures.css';
+---
+
+<p>Regional placement decides where a shard’s copies live and where its requests run. Put its voting replicas close together and they can agree quickly. Spread them across regions and a regional outage can leave enough voters to continue, but agreement may have to cross the network between regions.</p>
+
+<p>The number of copies alone does not tell you either result. Three voters in one region can survive a machine failure and all disappear in one regional failure. A customer’s order can sit near the application while its purchase still waits for stock owned elsewhere.</p>
+
+<p>This article gives the shop from <a href="/learn/databases/relational/partitioning-and-sharding/">Sharding and distributed SQL</a> a separate regional layout. North, West and East are invented regions. Mina’s customer shard A has its leader in North; the shared product shard P has its leader in West. We first place the voters for one shard, then follow the work that purchase 103 needs. The drawings and network times are illustrative models, not observations from a running cluster.</p>
+
+<h2 id="failure-domains">Regions and failure domains</h2>
+
+<p>A <strong>failure domain</strong> is a set of resources that one incident can remove together. A failed machine removes the replicas on that machine. A zone outage can remove several machines sharing power or connectivity. A region outage can remove several zones. Placing copies on different machines helps only against failures that leave those machines independent.</p>
+
+<p>These names describe the failures you intend to tolerate. Check the actual dependencies behind them: separate zone labels do not make a shared network or power supply independent. The same applies to the application. Surviving database voters are little use to a request if its only application server has disappeared.</p>
+
+<p>Keep three locations distinct. The <strong>request origin</strong> is where the application sends the request. The <strong>owner’s leader</strong> handles the authoritative work for a shard in this model. Its <strong>voting replicas</strong> participate in agreement on that shard’s history. Moving the request origin does not move either the leader or its voters.</p>
+
+<h2 id="surviving-voters">Counting the surviving voters</h2>
+
+<p>The parent article established a fixed group of three Raft voters whose majority is two. Here we ask which failures leave that majority. Start with three voters in North in Figure 1. Remove one North zone, then the whole of North. Next choose two in North and one in West, and try losing each region.</p>
+
+<Quorum />
+
+<p>Three voters in separate North zones leave two after one zone fails, but none after North fails. Two in North and one in West leave two after West fails and only one after North fails. The surviving West copy still holds data; it cannot make itself a majority by treating the missing voters as removed.</p>
+
+<p>With one voter per region, any one region’s loss leaves two of the configured three. With five voters placed two in North, two in West and one in East, the majority is three. Losing North or West leaves three; losing East leaves four. All three single-region failures pass the count.</p>
+
+<p>For a fixed group of <code>N</code> voters, the majority is <code>floor(N / 2) + 1</code>. If an incident removes <code>F</code> of them, the first test is whether <code>N − F</code> still reaches that majority. Count voters per shard, not machines across the whole cluster. Five healthy machines holding other shards cannot complete P’s majority.</p>
+
+<p>The survivors must also communicate. Isolating North in the one-per-region layout leaves West and East able to form a majority together, while North alone cannot. If West and East cannot communicate either, there is no majority anywhere. An election, working storage and enough capacity remain necessary even when the count passes; the figure establishes a possible path to progress, not a deadline for recovery.</p>
+
+<p>Retaining history and accepting new writes are different promises. A group without a quorum may retain every earlier committed change and still stop new writes. A <strong>non-voting replica</strong> can add a copy, and may support qualified reads, but it does not add a vote to this calculation. A backup is another way to retain recoverable data; it does not answer a live agreement request.</p>
+
+<h2 id="write-wait">What a regional write waits for</h2>
+
+<p>Spreading voters changes the healthy path too. Give P one voter per region, with West already its leader. To form a majority of two, West needs its own durable record and one other voter’s acknowledgement. That other voter must be remote.</p>
+
+<p>Use the separate catalogue change from the parent: P7’s price rises from 20.00 to 22.00. Stock stays at its post-purchase value 0, and order 103 keeps its agreed line prices and total 29.00. Figure 2 starts when the command has reached West. Assume a West–North network round trip of 40 ms and a West–East round trip of 90 ms. Step through the healthy path, then make North unavailable.</p>
+
+<WriteWait />
+
+<p>In the healthy case, North’s acknowledgement completes West’s majority. The agreement path includes at least the assumed 40 ms network round trip. East need not answer first. With North unavailable, West needs East, so that network contribution becomes at least 90 ms. The group survives North’s loss, and the route that lets it survive is slower.</p>
+
+<p>These are network contributions to one established leader’s agreement round. They are not predicted SQL commit latencies. Storage must make the required records durable; the leader must establish commitment and apply the command before replying under this model. Client routing, queues, execution and any transaction protocol add work. After a leader failure, detection and election add a different wait. The drawing’s equal-spaced stages show order, not elapsed time.</p>
+
+<p>A five-voter group placed two–two–one illustrates the same trade. A leader in a two-voter region can count both local voters and still needs a third vote from elsewhere. A larger group changes the required set of acknowledgements; it does not make distant agreement disappear. If the nearest useful voter is slow, a faster alternative may complete the majority instead.</p>
+
+<p>The model follows Raft with fixed membership, an established leader and a new command from that leader’s current term. It inherits the parent’s election and log rules, and assumes non-malicious failures and storage that preserves acknowledged durable state. Merely counting stored copies of an older command is not a substitute for those rules.</p>
+
+<h2 id="purchase">A local order can need remote stock</h2>
+
+<p>Now return to before purchase 103. The North application handles Mina’s request. A must create her pending order and its two lines. P must guard the stock changes: P7 from 1 to 0 and P3 from 12 to 10. Both product rows belong to P in this layout, so there are two data owners.</p>
+
+<p>Figure 3 places those owners at their leaders. Each has one voter in every region. Step through the purchase’s dependencies with the extra order-ID owner left off.</p>
+
+<Purchase />
+
+<p>The application reaches A locally, but A’s local order work is only part of the purchase. P’s stock authority is in West. Coordination between A and P crosses a regional boundary; agreement among A’s copies and among P’s copies can cross regional boundaries as well. The first is work between different owners. The second keeps copies of one owner on one history.</p>
+
+<p>Those waits can overlap or require several rounds, depending on the database’s transaction protocol. Do not add the figure’s arrows and call the sum a commit time. They identify dependencies: a purchase cannot safely claim success while a required owner is unable to complete its work or learn the joint outcome.</p>
+
+<p>A and P agreeing separately does not establish one purchase outcome. Both need to participate in a recoverable atomic decision. <a href="/learn/databases/relational/distributed-transactions/">Transactions across partitions</a> follows that decision and its recovery. Here its consequence is placement: include every required participant when deciding which failures and network trips the purchase depends on.</p>
+
+<h2 id="global-constraints">Global constraints have a location</h2>
+
+<p>The shop’s <code>order_id</code> identifies one order globally. A unique check beside Mina’s rows can reject a second 103 on A. An independent check beside Tariq’s rows can reject a second 103 on B. Without a mechanism joining those checks, each can accept its first 103.</p>
+
+<p>Turn on the hypothetical order-ID owner in Figure 3. In this variation a separate owner G governs the globally unique number and its association with the order. G’s leader is in East, and G has its own three-region voting group. Its work must belong to the complete purchase protocol. Creating an unrelated reservation in East and then hoping the order write succeeds is not enough.</p>
+
+<p>The extra owner is one possible design, not a claim about how every distributed database implements uniqueness. An engine might maintain a distributed unique index, use a specialised regional check, or reject a constraint whose scope it cannot enforce. A global index also has keys and replica placement, so inspect its work alongside the base rows. A duplicate-resistant ID generator reduces accidental collisions; by itself it does not reject an explicit duplicate supplied by another writer.</p>
+
+<p>Changing the key to <code>(region, order_id)</code> changes the rule. It distinguishes <code>(North, 103)</code> from <code>(West, 103)</code>, allowing the number 103 twice. That is regional uniqueness, and references must carry enough information to identify the intended order. It does not preserve the shop’s original ID-only identity.</p>
+
+<p>References add work too. A new order line names P7, whose product identity belongs to P; a maintained local copy may or may not be sufficient for a particular engine’s reference checks. Include foreign-key enforcement and maintained secondary indexes before calling a write local. Copying catalogue details near A may save a read trip under a freshness contract. It does not allocate A an independent last blue mug. A different inventory-allocation protocol would have to preserve the total allowance across regions.</p>
+
+<h2 id="nearby-reads">Reading near the application</h2>
+
+<p>A nearby copy can shorten a read without shortening the path that agrees a write. The read first needs a contract: must it reflect current authority, include a particular earlier write, or show an explicitly permitted past state?</p>
+
+<p>Figure 4 returns to the independent price change. P’s West leader has replied successfully after West and East made the command durable. North’s nearby copy has not applied it yet. Choose each read requirement and follow what the local 20.00 can tell the application.</p>
+
+<ReadContract />
+
+<p>A read claiming current state cannot infer freshness from being close to the application. It needs the engine’s authority and freshness evidence, which may require remote work. Some protocols let a qualified replica serve it locally using previously established evidence; current reads do not universally require a new network round trip for every request.</p>
+
+<p>A read required to include the acknowledged price change must use a target and snapshot qualified for that history. Waiting until a local copy has received a record is insufficient if it has not applied the change. <a href="/learn/databases/relational/replicas-and-read-routing/">Replicas, lag and read routing</a> develops that distinction and the routing choices when a target is behind.</p>
+
+<p>A historical catalogue view may permit 20.00, provided the engine can safely serve the requested past history. Permission to show an older price does not grant permission to sell against older stock. The purchase still checks and changes stock at its authority. A report joining regional owners also needs a compatible observation across them; <a href="/learn/databases/relational/distributed-reads/">Time, snapshots and distributed reads</a> develops the common-snapshot machinery.</p>
+
+<h2 id="checking-placement">Choosing and checking a placement</h2>
+
+<p>Start with a request and a failure promise. For Mina’s purchase, “continue after any one region is lost” requires more than P passing Figure 1. A, P and any required G must each retain a communicating majority. The surviving application must reach them, and the remaining machines must have capacity for their work.</p>
+
+<div class="table-scroll" role="region" aria-label="Placement checks" tabindex="0">
+  <table>
+    <caption>Check the complete request, including its required owners</caption>
+    <thead><tr><th scope="col">Case</th><th scope="col">What to establish</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Healthy operation</th><td>Where the application, leaders, voters, constraints and indexes run; which remote waits the request needs.</td></tr>
+      <tr><th scope="row">One zone lost</th><td>Remove all affected replicas together. Count each owner’s survivors and check the application route.</td></tr>
+      <tr><th scope="row">North, West or East lost</th><td>Test each region separately. Include leader replacement and the workload concentrated on survivors.</td></tr>
+      <tr><th scope="row">Network split</th><td>Identify which voters can communicate with one another and which side the application can reach.</td></tr>
+      <tr><th scope="row">A slow required owner</th><td>Measure the whole request under representative load, including queues, retries and changed acknowledgement paths.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>State the latency target separately for healthy and degraded operation, and measure both. A majority count establishes structural survival under the stated failure model. It does not establish how quickly an election completes, how long transactions wait or how much throughput survives. For example, the one-per-region layout passes North’s loss while Figure 2 changes its network contribution from 40 to 90 ms.</p>
+
+<p>Place copies for the failure you must survive, then place leaders and request work to make the remaining coordination acceptable. Check the actual constraints and replica assignments after configuration. <a href="/learn/databases/relational/cockroachdb/locality/">CockroachDB table locality and region survival</a> takes that reasoning into native settings and verification. <a href="/learn/databases/relational/rebalancing/">Rebalancing and cluster change</a> explains how to reach a new layout safely while copies catch up and membership changes.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 25 October 2026. The layouts, network times and request paths are illustrative. No distributed cluster was run and no commit, election or recovery time was measured. The fixed-group counts describe the stated majority model, rather than a complete database availability guarantee.</p>
+<ul>
+  <li>Diego Ongaro and John Ousterhout, <a href="https://raft.github.io/raft.pdf">In Search of an Understandable Consensus Algorithm</a>, sections 2, 5.3–5.4 and 8: communicating majorities, replicated-log commitment, election restrictions and read authority. The regional counts and assumed network arithmetic here are worked examples.</li>
+  <li>CockroachDB, <a href="https://www.cockroachlabs.com/docs/stable/multiregion-survival-goals">Multi-Region Survival Goals</a>: the distinction between zone and region failure, and the regional write-latency trade.</li>
+  <li>CockroachDB, <a href="https://www.cockroachlabs.com/docs/stable/architecture/replication-layer#non-voting-replicas">Replication Layer: non-voting replicas</a>: copied history without participation in the voting quorum.</li>
+  <li>CockroachDB, <a href="https://www.cockroachlabs.com/docs/stable/follower-reads">Follower Reads</a>: qualified strong and historical reads, including the requirement that applications tolerate the history they request.</li>
+  <li>CockroachDB, <a href="https://www.cockroachlabs.com/docs/stable/unique">Unique Constraint</a>: engine-specific enforcement, indexes and regional qualifications. Owner G is hypothetical, not a drawing of CockroachDB’s implementation.</li>
+</ul>
