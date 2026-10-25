@@ -1,0 +1,161 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import RowFlow from '../../components/relational-rebuild-query-execution/RowFlow.astro';
+import JoinMethods from '../../components/relational-rebuild-query-execution/JoinMethods.astro';
+import '../../components/relational-rebuild-query-execution/figures.css';
+const report = `SELECT o.customer_id,
+       SUM(i.quantity * i.unit_price) AS line_value
+FROM orders AS o
+JOIN order_items AS i ON i.order_id = o.order_id
+WHERE o.status = 'paid'
+  AND o.placed_at >= timestamptz '2026-10-01 00:00+00'
+  AND o.placed_at <  timestamptz '2026-11-01 00:00+00'
+GROUP BY o.customer_id
+ORDER BY line_value DESC, o.customer_id;`;
+const baseline = `SELECT o.customer_id, SUM(v.order_value) AS line_value
+FROM orders AS o
+CROSS JOIN LATERAL (
+  SELECT SUM(i.quantity * i.unit_price) AS order_value
+  FROM order_items AS i
+  WHERE i.order_id = o.order_id
+  HAVING COUNT(*) > 0
+) AS v
+WHERE o.status = 'paid'
+  AND o.placed_at >= timestamptz '2026-10-01 00:00+00'
+  AND o.placed_at <  timestamptz '2026-11-01 00:00+00'
+GROUP BY o.customer_id
+ORDER BY line_value DESC, o.customer_id;`;
+---
+<p>A query specifies the answer a database must produce. An execution plan describes the work it chooses to produce it: where it finds rows, how it matches them, and where it adds or sorts their values. Two plans can return the same two rows while doing very different amounts of work.</p>
+<p>The shop wants October’s paid-order line value by customer, largest first. Mina’s paid order 101 contributes 39.50; Tariq’s paid order 102 contributes 40.00. Pending order 103 contributes nothing, and Edda has no result row. These are the agreed values of order lines on orders marked paid, not a sum of payments received.</p>
+<p>We will follow that report through a small drawing, then investigate an actual execution on a generated history of 120,000 additional orders. The drawings explain mechanisms. The measured plans come from a Linux PostgreSQL 18.6 instance; their counts and timings describe that fixture and environment.</p>
+
+<section id="execution-plan">
+<h2>From SQL to an execution plan</h2>
+<p>The report joins each eligible order to its lines, adds the line values within each customer and requests a final order:</p>
+<Sql code={report} label="October paid-order line value by customer" />
+<p>The result’s grain is one row per customer who has a contributing line. <a href="/learn/databases/relational/query-results/">Joins and the meaning of a result row</a> establishes why each matching line must be counted. Here the question is how the engine obtains those rows.</p>
+<p>Figure 1 follows a possible route. Step through it and watch the grain change at the join and the aggregate.</p>
+<RowFlow />
+<p>Each box is an <em>operator</em>: an operation that consumes rows and supplies rows to another operation. A plan connects these operators into a tree. Its leaves obtain rows; other operators join, calculate, group or sort them. A filter can be part of a scan rather than a separate box.</p>
+<p>SQL’s written order does not prescribe this route. A planner can choose another join method, change a legal join order or combine operations while preserving the required answer. PostgreSQL’s executor asks its child operators for rows as it needs them. Other engines also work in batches or pass rows onwards; the useful question remains what each operation consumes and produces.</p>
+<p>A scan can supply a matching row as it finds it. A full sort must first obtain its input. That makes <em>time to the first row</em> different from the time to finish the whole query. In this report the largest total cannot be known until all contributing line values have been accounted for.</p>
+</section>
+
+<section id="scans">
+<h2>Scans, filters and access paths</h2>
+<p>A full table scan examines the table’s stored data and tests the rows it finds. It can return two orders after examining 120,003. The two are the size of the answer at that step, not the size of the search.</p>
+<p>Stored rows occupy blocks called <em>pages</em>, and one page holds several rows. Reading a page brings its contents into memory; later visits may find it there. Consequently rows examined, rows emitted, page visits and storage reads are different counts. A cached scan still tests rows, and repeated visits to one cached page are still work. <a href="/learn/databases/relational/storage-and-durability/">Storage and durability</a> follows the pages and their cached copies.</p>
+<p>An index supplies another <em>access path</em>. A useful date index can locate a narrow October range, then lead to the matching orders. But finding a large fraction of the table through an index can mean many row fetches, spread over most of its pages, as well as reading the index itself. Scanning those pages once can be cheaper. An index’s existence does not establish that using it saves work.</p>
+<p>The same choice applies inside a join. The primary key on <code>order_items (order_id, line_no)</code> puts one order’s lines together in the index. Looking up the lines for two orders can be cheap. Repeating the lookup for many thousands of orders may cost more than reading the line table once. <a href="/learn/databases/relational/indexes/">Indexes and access paths</a> develops the keys, ordering and write costs behind that choice.</p>
+<h3 id="partition-pruning">Skipping whole pieces of a table</h3>
+<p>Suppose a much larger order history is split into monthly pieces by <code>placed_at</code>. The report’s October bounds can exclude January through September and November through December before scanning any rows in those pieces. This is <em>partition pruning</em>. Within October, the engine still needs a scan or index access and the paid-status test.</p>
+<p>A full-year report excludes none of those monthly pieces. Partitioning has not made its required rows disappear. Nor does dividing a table into partitions imply that they live on different servers. <a href="/learn/databases/relational/partitioning/">Table partitioning and data lifecycle</a> explains how to choose the boundary and what it changes for identity and retention.</p>
+</section>
+
+<section id="join-methods">
+<h2>Join methods</h2>
+<p>The report matches orders to lines by order ID. The join’s meaning stays fixed while the physical method changes. Figure 2 uses the same eligible orders and five stored lines for all three methods. Start with the nested loop, then change the method and follow the keys.</p>
+<JoinMethods />
+<h3 id="nested-loops">Nested-loop joins</h3>
+<p>A nested loop takes one row from an <em>outer</em> input and searches an <em>inner</em> input for its matches. Those names describe their jobs in the plan, not the order in which the tables were written. In the drawing, each eligible order supplies the key for an indexed line lookup.</p>
+<p>The multiplication to watch is outer rows × inner work per repetition. Two lookups are easy to follow. Twenty thousand lookups may touch the same upper index pages twenty thousand times. If the inner input has no suitable lookup, repeatedly scanning it can be much worse. An engine may cache repeated-key results or retain a reusable inner input; check whether it actually does so before multiplying a full scan by every outer row.</p>
+<h3 id="hash-joins">Hash joins</h3>
+<p>A hash join builds a lookup table in memory from one input, then probes it with rows from the other. In the drawing the build contains eligible orders 101 and 102; each stored line probes by its order ID. A matching bucket supplies candidate rows whose keys must still be checked. Hashing does not remove equal-key occurrences.</p>
+<p>The build costs time and memory before it can answer probes. In return, it can replace many separate lookups with a pass over a larger input. A large build can exceed its memory allowance, adding temporary disk work. The size reaching the build matters more than the original table’s name or size.</p>
+<h3 id="merge-joins">Merge joins</h3>
+<p>A merge join advances through two inputs ordered by the join key. It matches the 101 groups, then the 102 groups. When both groups contain several rows, it produces every required pair, rather than silently keeping one.</p>
+<p>Ordering may arrive from an index or require a sort. A merge can be attractive when both inputs already have useful order, but an expensive sort can outweigh the saving. The join’s key order is also different from this report’s descending total: keep the final <code>ORDER BY</code> whichever method is chosen.</p>
+<h3 id="intermediate-rows">Join order and intermediate rows</h3>
+<p>Filtering the three orders first leaves two eligible orders and three matching lines. Joining all three orders to their lines first makes five joined rows, then rejects the two for pending order 103. Both routes produce the same answer here; the first carries fewer rows onwards.</p>
+<p>On a large history that difference can change the size of a hash table, the number of lookups and the amount later sorted. Ask where rows can be reduced without changing the question. Moving a condition across an outer join can change which unmatched rows survive, so a plausible faster route is not enough: the rewrite must preserve the result’s meaning.</p>
+</section>
+
+<section id="grouping-sorting">
+<h2>Grouping, sorting and the first result</h2>
+<p>The report’s three joined rows become two totals. A hash aggregate can keep state keyed by customer ID: start customer 1 at 4.50, add 35.00 to reach 39.50, and keep customer 2 at 40.00. The working state follows the number of groups and what each calculation retains, not just the number of output rows.</p>
+<p>An ordered aggregate instead consumes rows together by customer. Once it passes customer 1, it can finish that group. It needs the input order, supplied by a suitable path or an earlier sort. <a href="/learn/databases/relational/aggregates-and-windows/">Aggregates and window functions</a> explains the calculations and their grain; these are two ways to perform the work.</p>
+<p>Neither method promises descending line value. A separate sort can order the completed groups. If the application adds <code>LIMIT 1</code>, a top-one operation can retain only the best completed candidate seen so far. It still has to consider all customer totals: the last might be the largest. A small limit reduces retained state without necessarily reducing the input examined.</p>
+<p>Compare an order list already read newest first from a matching index. After finding ten eligible rows, that query may stop. Our report cannot use an ordinary date index to stop after ten lines and still know the ten largest customer totals. Early stopping depends on what the ordered input proves about the answer.</p>
+<h3 id="spills">When working data spills to disk</h3>
+<p>A sort or hash operation has a memory allowance. If its working data outgrows that allowance, it can write temporary data to disk and read it back: a <em>spill</em>. A sort may create sorted runs and merge them; a hash operation may divide its input into batches. The plan’s temporary-work or spill fields distinguish this from an in-memory operation.</p>
+<p>First check what feeds the operation. Removing unnecessary rows or wide columns can reduce its working set. Correcting an estimate can lead to a different route. More memory may help a demonstrated spill, but the allowance is not a budget for the whole server: several operations, workers and concurrent queries may each use memory. A setting that helps one isolated report can make a busy service run out.</p>
+</section>
+
+<section id="estimates">
+<h2>How the planner estimates the work</h2>
+<p><em>Cardinality</em> is the number of rows at a plan step. Before running the report, the planner estimates how many orders will pass the date and status tests, how many lines they will match and how many customer groups remain. These estimates help it compare access paths, join orders and working sets.</p>
+<p>Statistics are evidence about the data, not a copy of it. They can include approximate row counts, common values, distinct-value counts and value distributions. Customer 1001, who owns most orders in our generated fixture, is a different input from a customer with a handful. A single average can misdescribe both.</p>
+<p>Related predicates create another trap. The following invented distribution isolates the problem: most October orders are paid, while most orders in other months are pending.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Illustrative date and status correlation"><table><caption>A separate arithmetic model · 10,000 orders, not the measured fixture</caption><thead><tr><th>Period</th><th>Paid</th><th>Pending</th><th>All orders</th></tr></thead><tbody><tr><td>October</td><td>900</td><td>100</td><td>1,000</td></tr><tr><td>Other months</td><td>900</td><td>8,100</td><td>9,000</td></tr><tr><td>Total</td><td>1,800</td><td>8,200</td><td>10,000</td></tr></tbody></table></div>
+<p>October matches 10% of all orders, and paid matches 18%. Treating the conditions as independent predicts 10,000 × 0.10 × 0.18 = 180 paid October orders. There are actually 900. Both individual fractions were right; their combination was wrong.</p>
+<p>Refreshing statistics can repair an obsolete view after a large data change. Better statistics may describe skew or relationships that a basic model misses. Neither guarantees that every combination or join will be estimated correctly. Look for an error that changes the chosen work: an outer input five times larger than expected can make repeated lookups or a hash build much more costly. A large estimate error in a tiny, cheap corner need not be the first repair.</p>
+<p>An accurate estimate can also describe an expensive request accurately. If a report needs every line in five years, a well-chosen plan may still have substantial work to do.</p>
+</section>
+
+<section id="measured-plan">
+<h2>Reading a measured plan</h2>
+<p>The three-order drawing makes the result visible; it is too small to judge a reporting workload. The measured fixture keeps those rows and adds 120,000 generated orders with three lines each. It has 1,000 additional customers, with 70% of generated orders assigned to customer 1001. Dates span 2026; date and paid status are deliberately related. It models reporting data, not the shop’s stock history.</p>
+<p>Consider a version of the report which calculates one order total at a time, then adds those totals by customer. <code>LATERAL</code> lets the inner query use the current order’s ID:</p>
+<Sql code={baseline} label="Calculate each order total before adding by customer" />
+<p><code>HAVING COUNT(*) &gt; 0</code> suppresses the inner aggregate’s row when an order has no lines. Without it, the aggregate would still supply a null total for that order, potentially introducing a customer row absent from the original inner-join report. It matters even though every generated order has lines.</p>
+<p>In PostgreSQL, <code>EXPLAIN</code> shows the estimated plan. Adding <code>ANALYZE</code> executes the statement and records what happened. This is a real execution, including a write’s effects when the statement writes; choose the target and statement accordingly.</p>
+<Sql code={`EXPLAIN (ANALYZE, BUFFERS)
+${baseline}`} label="Run and measure the per-order report" />
+<p>For the full-year comparison, change the bounds to 1 January 2026 inclusive and 1 January 2027 exclusive. The fixture has 20,158 paid orders in that range. Figure 3 extracts the relevant route from its measured plan; the complete plans are in the <a href="/relational-rebuild/query-execution/report-evidence.json">downloadable evidence</a>.</p>
+<figure class="qe-figure" aria-labelledby="measured-title"><figcaption id="measured-title"><span>Figure 3</span> A small inner operation, repeated 20,158 times</figcaption><div class="qe-plan"><div class="qe-plan-node">Scan orders → keep paid orders in 2026<small>120,003 examined · 99,845 rejected · 20,158 emitted<br/>Estimated output: 19,833 · actual output: 20,158</small></div><div class="qe-plan-node qe-indent">For each eligible order: index lookup → order total<small>Index Scan: actual rows = 3, loops = 20,158<br/>Inner Aggregate: actual rows = 1, loops = 20,158</small></div><div class="qe-plan-node">Sort the 20,158 order totals by customer → add by customer<small>1,002 customer groups emitted</small></div><div class="qe-plan-node">Sort the groups by line value descending, then customer ID<small>1,002 result rows · all sorts stayed in memory</small></div></div><p class="qe-caption">Observed Linux PostgreSQL 18.6 execution, full-year parameters. Arrows summarise row flow; intermediate plan lines and costs are omitted. The index scan's displayed 3 is a rounded average per loop, not an exact count for every order: core orders 101 and 102 have two lines and one line.</p></figure>
+<p>The paid-order estimate is close: 19,833 against 20,158. Yet the plan still performs an index search and an aggregate once for every eligible order. Its line lookups account for 80,890 shared-buffer hits, and the whole statement reports 81,655. These are repeated accesses to cached pages, not that many different pages or storage reads. The profiled run reports zero shared reads and zero temporary blocks.</p>
+<p>October exposes a different fact. The order scan estimates 1,614 matches and emits 9,176, about 5.7 times as many. The generated date/status relationship is one reason to question an independence estimate. It makes the repetition larger than predicted; it does not establish that refreshing statistics alone will fix the route. The full-year case shows that repeated work can be worth investigating even when its input estimate is close.</p>
+<p>Start at the inputs and follow the rows into the region doing the work. Compare estimated output with actual output on the same basis. Check how often the operation ran: PostgreSQL’s actual rows are an average per loop, so three rows with thousands of loops means thousands of three-row results, not three rows in total.</p>
+<p>A node’s emitted rows do not include rows it examined and rejected. Nor is a partly consumed node evidence that its full-output estimate was wrong: a parent such as <code>LIMIT</code> can stop asking for rows. These distinctions prevent a small displayed count from hiding either a large scan or deliberate early stopping.</p>
+<p>Estimated cost is a planner comparison unit, not milliseconds. Measured times and page counters can include work in children; adding every line of a tree can count the same work repeatedly. Use the engine’s documented units and inclusions. <a href="/learn/databases/relational/postgresql/query-execution/">Reading and repairing PostgreSQL plans</a> follows the native fields in detail.</p>
+</section>
+
+<section id="repair">
+<h2>Change the cause and measure again</h2>
+<p>The per-order total is an intermediate calculation the report does not need to retain. Each line already belongs to exactly one order, and that order has one customer. Adding its exact numeric line values directly within each customer gives the same sum as adding first within each order and then within the customer.</p>
+<p>The first SQL listing expresses that direct join. The proposed repair is to use it in place of the per-order lateral aggregate. The prediction is specific: remove the inner aggregate repeated for each eligible order and let the planner choose a route over the joined lines. It may still choose indexed nested loops for a small input; the rewrite does not demand a hash join.</p>
+<p>With the full-year bounds, PostgreSQL chose a parallel hash join for the direct form. It scanned all 360,005 line rows across the leader and one worker, rather than starting 20,158 line lookups. Each process separately scanned the orders and built a hash table of the 20,158 eligible keys. The new route therefore added a second order scan and examined more lines; it removed repeated index searches and per-order aggregates.</p>
+<p>The join emitted 60,471 matching lines in total. Local aggregates reduced them to 1,942 partial customer totals, which a gather-and-merge step fed into the final customer aggregate. That produced the same 1,002 result rows. A final sort supplied the requested order. No method was forced.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Observed full-year repair comparison"><table><caption>Full-year report · same fixture and result, PostgreSQL 18.6</caption><thead><tr><th>Observed work</th><th>Per-order form</th><th>Direct join</th></tr></thead><tbody><tr><td>Repeated inner order aggregate</td><td>20,158 executions</td><td>Removed</td></tr><tr><td>Line access</td><td>20,158 index searches</td><td>One parallel scan of 360,005 rows</td></tr><tr><td>Whole-statement shared-buffer hits</td><td>81,655</td><td>3,831</td></tr><tr><td>Shared reads / temporary blocks</td><td>0 / 0</td><td>0 / 0</td></tr><tr><td>Profiled execution time</td><td>44.08 ms</td><td>33.93 ms</td></tr></tbody></table></div>
+<p>The prediction was borne out: the repeated aggregate disappeared, and the new route made far fewer buffer accesses. That is evidence for this full-year repair, not a rule that scanning more lines is always better. Its parallel setup, duplicated build and worker coordination must earn their cost too.</p>
+<p>Result checks come before accepting a speed comparison. Compare customer IDs, exact totals, multiplicity and requested ordering. Include an eligible order with no lines and a customer without any contributing order. Summing distinct line values would change the answer when separate lines happen to have equal values; it is not an equivalent way to remove work.</p>
+<p>The same method applies to other causes. If an estimate sends an unexpectedly large outer input into repeated lookups, test a statistics repair. If rows are fetched only to be thrown away, test an access path that excludes them earlier. If a sort spills, test reducing its input before increasing its allowance. A node name alone is not a diagnosis: scans, nested loops and sorts all perform useful work.</p>
+<p>Forcing another method can help test a hypothesis, but a forced plan is a comparison, not proof of a lasting repair. The choice still needs to survive other parameters, changed data and competing work. And an application that now wants a smaller time window or a retained daily summary has changed the reporting contract: decide its coverage and freshness before treating it as equivalent SQL.</p>
+</section>
+
+<section id="parallel">
+<h2>Parallel work and data movement</h2>
+<p>A large report can divide work among workers. Some operations then gather rows into one process; distributed engines may exchange rows across machines, often by join or group key. The boundary matters because rows have to be copied, queued and sometimes sent over a network.</p>
+<p>Figure 4 models two workers whose inputs each contain lines for two customers. Compare moving every line with adding locally before crossing the boundary.</p>
+<figure class="qe-figure" aria-labelledby="movement-title"><figcaption id="movement-title"><span>Figure 4</span> Add locally before moving the rows</figcaption><div class="qe-motion"><div class="qe-worker">Worker A<br/><strong>1,000 line rows</strong><br/>→ 2 partial customer totals</div><div class="qe-worker">Worker B<br/><strong>1,000 line rows</strong><br/>→ 2 partial customer totals</div><div class="qe-crossing">Gather boundary<br/><strong>2,000 line rows</strong> or <strong>4 partial totals</strong></div><div class="qe-worker">Without local addition<br/>Gather 2,000 lines, then add by customer.</div><div class="qe-worker">With local addition<br/>Gather 4 partial totals, then combine into 2 final totals.</div></div><p class="qe-caption">An illustrative arrangement, not a measured parallel plan. Both workers have lines for the same two customers. Partial sums must be combined; concatenating them would return four rows instead of the required two. Bytes crossing the boundary depend on row width as well as row count.</p></figure>
+<p>The local addition helps because many lines become few groups. If almost every line belonged to a different customer, far fewer rows would disappear. Carrying unused wide values also increases movement, even when the row count stays the same.</p>
+<p>More workers may reduce elapsed time while increasing total work through setup, duplicated inputs, coordination and merging. Uneven inputs can leave one worker doing most of the work while others wait. The slowest required worker and the gathering operation can limit the result. <a href="/learn/databases/relational/partitioning-and-sharding/">Sharding and distributed SQL</a> carries this reasoning across machines; engine-specific articles interpret the actual exchanges and worker measurements.</p>
+</section>
+
+<section id="workload">
+<h2>Testing a repair against the workload</h2>
+<p>A repair for October is a candidate for October. Repeat it for a broad date range, a single day, the common customer and a rare customer. Those inputs can reverse the balance between scanning once and repeating a few cheap lookups. Keep the schema, data and statistics state fixed while comparing the two SQL forms.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Ordinary executions with contrasting parameters"><table><caption>Six ordinary executions per form, alternated after result and plan collection · median, with observed range in brackets</caption><thead><tr><th>Parameters</th><th>Per-order form</th><th>Direct join</th></tr></thead><tbody><tr><td>October · all customers</td><td>18.60 ms [17.48–21.11]</td><td>15.60 ms [15.14–16.76]</td></tr><tr><td>Full year · all customers</td><td>37.09 ms [35.43–39.70]</td><td>23.17 ms [22.01–23.94]</td></tr><tr><td>12 October · all customers</td><td>4.27 ms [3.93–4.98]</td><td>3.91 ms [3.82–4.39]</td></tr><tr><td>October · common customer 1001</td><td>13.08 ms [11.95–14.27]</td><td>16.87 ms [16.43–18.11]</td></tr><tr><td>October · rare customer 1002</td><td>3.77 ms [3.54–4.10]</td><td>4.07 ms [3.77–5.52]</td></tr></tbody></table></div>
+<p>These measurements include the local client round trip and receiving the result. They came from one isolated container with warmed caches, not a production load test. The broad report improved consistently in this small comparison. The common-customer report regressed: the direct form still scanned all lines with a parallel hash join to obtain one customer total. For the one-day and rare-customer cases it chose indexed nested loops instead. The smaller timing differences overlap ordinary variation.</p>
+<p>So the evidence supports a full-year reporting change and rejects a blanket replacement for every request using these tables. It does not yet establish acceptance under realistic concurrent load. Even the October profiled execution was slower for the direct form, 23.27 ms against 20.26 ms, while its ordinary repetitions were faster. A single instrumented time is too weak a basis for the decision.</p>
+<p>Run ordinary executions as well as collecting plans. Profiling adds overhead; sending and consuming the result adds work that a server execution time may exclude. Alternate the two versions and repeat them enough to see ordinary variation. A first read from storage and a later cached read are different experiments: a faster second run has not necessarily removed any work.</p>
+<p>Before deployment, test the representative request mix and concurrency too. Compare request latency and throughput, processor and storage use, temporary work and memory pressure. Include the other queries and writes that share those resources. A new index adds maintenance work to writes; a larger memory allowance multiplies across simultaneous operations. An isolated report cannot establish those costs.</p>
+<p>Retain the query parameters, data-generation rules, engine version, settings, statistics state, result comparison and both plans. They let another reader distinguish a route change from a warmer cache or a smaller input. The <a href="/relational-rebuild/query-execution/fixture.sql">fixture SQL</a> supplies the exact deterministic data model for this example; the <a href="/relational-rebuild/query-execution/report-queries.sql">report queries</a> and <a href="/relational-rebuild/query-execution/report-evidence.json">recorded results and plans</a> give the bounded comparison. The recorded settings include a 4 MiB base working-memory allowance and a 128 MiB shared-buffer pool; neither was tuned for the comparison.</p>
+<h3 id="other-delays">When the plan is not the delay</h3>
+<p>An application request can spend time acquiring a connection, waiting for admission or waiting for a lock before useful execution proceeds. It can also spend time transferring and processing its result afterwards. If its observed delay is elsewhere, another operator repair may leave the request just as slow.</p>
+<p>Measure the request boundary as well as the statement. <a href="/learn/databases/relational/slow-queries/">Diagnosing a database incident</a> separates those delays; <a href="/learn/databases/relational/connections-and-capacity/">Connections, overload and capacity</a> explains the budgets and admission choices. The plan answers how this statement obtains its result. Use it to point to work, predict what a change removes, and check whether that work actually went away.</p>
+</section>
+
+<section id="sources-and-further-reading">
+<h2>Sources and further reading</h2>
+<p>Checked against PostgreSQL 18 documentation on 25 October 2026. The small row traces, correlation table and worker drawing are models. The measured report uses a separate deterministic fixture on Linux PostgreSQL 18.6. No production workload or cross-machine execution was measured.</p>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/executor.html">Executor</a> and <a href="https://www.postgresql.org/docs/18/planner-optimizer.html">Planner/Optimizer</a>: plan trees, row requests, physical join methods and alternative routes.</li>
+<li><a href="https://www.postgresql.org/docs/18/using-explain.html">Using EXPLAIN</a> and <a href="https://www.postgresql.org/docs/18/sql-explain.html">EXPLAIN</a>: output versus examined rows, costs, loops, early stopping, inclusive measurements and actual execution.</li>
+<li><a href="https://www.postgresql.org/docs/18/planner-stats.html">Statistics Used by the Planner</a>: approximate statistics, common values and correlated conditions.</li>
+<li><a href="https://www.postgresql.org/docs/18/indexes-ordering.html">Indexes and ORDER BY</a> and <a href="https://www.postgresql.org/docs/18/ddl-partitioning.html#DDL-PARTITION-PRUNING">Partition Pruning</a>: ordered access, early stopping and excluded partitions.</li>
+<li><a href="https://www.postgresql.org/docs/18/runtime-config-resource.html#GUC-WORK-MEM">Resource Consumption</a>: sort and hash memory, temporary files and simultaneous operations.</li>
+<li><a href="https://www.postgresql.org/docs/18/parallel-plans.html">Parallel Plans</a>: dividing work and combining partial aggregates.</li>
+</ul>
+</section>
