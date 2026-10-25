@@ -9,9 +9,9 @@ Before outlining, study the three fixed references using [staycurrent-write's re
 
 Start with practitioners' decisions, failure cases and practical judgement, checking consequential points against primary sources and standard texts. Record these intended outcomes in the brief. Then read existing articles and surrounding plans for material and neighbouring coverage; they do not set scope. Let subject depth determine length and form; keep a subject as a section when that serves the reader better than another page.
 
-Briefs state what the reader should understand or be able to judge, with essential example facts and scope boundaries. Leave paragraph-level development and visual design to the reference-led writer. For hard-to-picture ideas, identify what needs making visible.
+Keep briefs short: state the reader's intended understanding or judgement and any essential example facts or scope boundary. Put supporting research and secondary cases in context notes. Leave paragraph development and visual design to the reference-led writer; identify only what needs making visible.
 
-Make the parent complete for its own learning outcome. Introduce a child through a question the reader now understands; give it deeper reasoning or practice that serves a distinct outcome. State what the parent establishes and what the child develops in their briefs.
+Make the parent useful without reading its children. For a distinct deeper outcome, give the child ownership of the full formal analysis, detailed comparisons or working procedures. The parent develops the concept through a sufficient example and explains when that deeper work is needed. State the boundary in both briefs; do not require the child's treatment in the parent.
 
 Return `topic`, `title`, `brief` and a recursive singular `heading` list. Under the heading introducing a child, place `nested_article` with only its `topic`, `title` and `brief`; commission that child's headings separately. Titles/headings are reader-facing. Prefer established, searchable industry terms where they fit naturally. Use the collection's [example record](../staycurrent-continuity/SKILL.md), proposing missing extensions; the root proposes the record. The writer polishes final wording.
 
@@ -30,7 +30,7 @@ heading:
         nested_article:
           topic: Index maintenance
           title: Maintaining indexes
-          brief: Choose and verify safe inspection, rebuild and removal procedures, building on the parent's explanation of maintenance needs.
+          brief: Choose and verify safe maintenance procedures; the parent explains their purpose and risks.
 ```
 
 For orchestrator-managed review, return draft YAML. Otherwise arrange breakdown-mode [review](../staycurrent-review/SKILL.md), repair findings and return reviewed YAML.
