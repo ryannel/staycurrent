@@ -1,0 +1,33 @@
+# Opening batch v01: independent editorial and teaching review
+
+Audience: intelligent application engineer with no prior database vocabulary. Review date: 25 October 2026. Review scope: introduction, modelling and query results, including the reader-facing figure labels, comparison alternatives and textual step sequences.
+
+## Initial blind reading notes
+
+Recorded before opening accepted plans, shared starting facts or provenance. Read the three integrated manuscripts and their finished draft rendering; no earlier drafts, author notes or other review reports were consulted.
+
+- **Introduction:** no substantive editorial problem found. The shop purchase carries the progression from identity and questions into atomic changes, competing buyers, connection ownership, query work and durability. The return to the pre-purchase stock state is explicit. The difference between an atomic purchase and a sound concurrent decision receives an actual failing case and a working comparison, rather than just a warning. The after-commit lost reply is similarly explained through two indistinguishable application observations. Later operating and implementation sections are shorter but give useful parent-level distinctions before the planned routes.
+- **Modelling:** no substantive editorial problem found. The argument is unusually broad, but its examples do the explanatory work: repeated line/payment combinations, same product on distinct lines, invented ternary offers, conflicting current names, unsafe reconstruction and historical prices each establish a distinct modelling decision. Definitions are followed by changes that test them. The normalisation passage introduces several formal terms quickly, but explains their practical consequences and explicitly hands formal derivations to the deeper article. It remains one connected argument about what a fact means and which identity determines it.
+- **Query results:** no substantive editorial problem found. The still-due report gives the article a clear destination. The progression from row grain through multiplicity, missing matches, existence and independent summaries earns the final CTE query. The doubled zero balance is a particularly useful demonstration that a plausible final answer can hide incorrect contributing totals. Equal-valued payments/lines and the later partial-payment variation test the proposed reasoning instead of merely restating it.
+- **Reference calibration:** compared the openings, first developed explanations, captions and figure instructions in the fixed Sequence diagrams, Indexes and Storage and durability references. The new pieces use comparable concrete setup, named operations, directed attention and explanation after the figure. Their main distinctions are developed in plain connected sentences, rather than relying on headings or terminology to imply understanding.
+
+Optional polish only: modelling opening paragraph, “A payment settles an order”, briefly suggests that each payment settles the whole order. The later 30.00 + 9.50 example immediately establishes contributions towards an order, so this does not become a substantive misunderstanding. The opening could name that contribution more precisely.
+
+## Teaching review against accepted plans
+
+Read accepted-map/introduction-plan.yaml, modelling-plan.yaml and query-plan.yaml, followed by docs/coverage/relational-rebuild-2026-10-25-example.md. This phase checked the outcomes and ownership already visible in the reading; it was not a second whole-piece reading.
+
+No substantive teaching findings. The delivered pieces meet the relevant promised understanding:
+
+- The introduction leaves the reader able to distinguish identity, enforced state rules, atomic work, concurrent decisions, application responsibility, query work and recoverable commit outcomes. It answers each at a useful introductory level before routing deeper. Its guarded-write SQL is explained one clause at a time; it does not require the planned updates or transactions articles to make the last-mug comparison intelligible.
+- Modelling gives the parent-level answers promised by the plan. The unsafe timestamp split demonstrates lost associations, then the separate customer-name example distinguishes local dependency checking from lossless reconstruction. The independent tag/supplier example is explicitly contrasted with the genuine three-way offer, so superficially similar tables do not become a universal splitting rule. The history/cache and subtype/hierarchy/JSON sections identify what changes the design decision while leaving formal decomposition, enforcement and implementation procedures with their planned owners.
+- Query results can be read after the introduction without first reading modelling. It explains aliases, complete-key match bounds, the null row introduced by an outer join and the difference between existence and amount comparisons. It owns enough SUM, GROUP BY, COALESCE and WITH to finish the promised report. UNION and its neighbours answer a visibly different operation over compatible rows. General aggregates, windows, pagination and execution remain outside this lesson.
+- The overlap is purposeful: the introduction shows two line matches; modelling asks where line/payment facts belong; query results constructs the report. The repeat is brief at the earlier levels and changes the reader's task each time. The delivered core figures and scenarios agree with the shared people, lines, prices, payments and the pre/post-purchase stock states. Added name, offer, independent-set, subtype and hierarchy scenarios are marked as worked variations rather than silently changing the core data.
+
+## Coverage and limits
+
+Version: all 18 files in batches/opening/v01/review-source.json matched their recorded SHA-256 values at the end of this review. No production edits, server launches, builds or commits were made.
+
+Reviewed prose, displayed SQL, headings, article progression, captions and all reader-facing figure alternatives/text sequences for the three articles. Used the finished draft browser rendering and inspected the finished Sequence diagrams opening diagram for reference calibration; the fixed-reference reading helper supplied bounded opening/development passages from all three references. This is editorial/teaching coverage, not a fresh technical proof, execution verification, animation timing test or responsive/theme/accessibility audit. Those checks remain with the assigned practitioner and visual readers. No viewport or theme changes were made.
+
+**Result:** no critical or medium findings in this scope. The opening-payment wording above is optional low-priority polish. Acceptance and any repair decision remain with the coordinator.

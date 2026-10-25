@@ -1,0 +1,11 @@
+# Opening batch accepted
+
+The first independent practitioner, blind editorial/teaching and rendered visual reviews covered the introduction, modelling and query-results. Their reports are retained under v01/. No critical or medium findings were reported. The reports give concrete reader reasoning and reference comparisons: query pair multiplication and independent summaries, modelling permitted-state/decomposition tests and parent-level distinctions, and introduction atomicity versus concurrent decisions. The coordinator accepts the opening approach for continued production.
+
+Three optional precision suggestions were cheap coherent improvements and are now resolved: modelling says a payment contributes towards an order; ordinary column selection no longer makes a universal claim about every SELECT expression; query Figure2 distinguishes NULL result boxes from the removed-order placeholder. No SQL, data, model, state, interaction, article sequence or ownership changed. Frozen first versions remain intact.
+
+Coordinator confirmation reread each changed explanation and its later uses. The modelling opening now agrees with its partial-payment example. The column-selection statement applies to its displayed name-only projection and no longer appears to contradict the later SUM/GROUP BY lesson. Current rendered Figure2 was operated in WHERE mode: order103 displays No result row, and the changed caption agrees with that marker and adjoining ON/WHERE explanation; its desktop layout remains readable. Existing phone/theme/control checks apply because only the explanatory caption text changed, with no structural/style/control change. Main flag-on build/site check confirms the delivered source.
+
+Retain the execution evidence: runtime/scripts/SQL/data unchanged. Its actual limit remains PGlite0.5.8/PostgreSQL18.3WASM and illustrative concurrency; no native PostgreSQL18.6 concurrency/crash observation is claimed. Visual review reused applicable author timing checks under hidden-browser limits and did not conduct exhaustive numerical contrast measurement. No remaining accepted substantive problems. No new whole-batch reading or collection review commissioned.
+
+Next production: fresh values, constraints and aggregation writers; accepted detailed plans already prepared. Replacement remains unpublished.

@@ -39,3 +39,11 @@ Detailed constraints plan is ready at planning/articles/constraints/ (approved t
 ## Opening integration verified
 
 Main preview and normal pnpm build pass all13rules. Preview SQL download matches staged bytes; normal build excludes draft routes/downloads. HTTP200 confirmed all3draft pages/download. Local dev endpoint needs trailing slash under Astro directory router; wrapper now adds it only in DEV, built file links remain unchanged. Main server session36435. Intro integrated metadata type mapped Guide→Introduction. Query figure panel labels changed h3→strong with same styling to keep document outline clean; frozen first source retained unchanged. First independent opening practitioner, blind editorial/teaching and visual readers active, exact handoffs under assignments/. Visual reader holds browser lease. Aggregation plan ready.
+
+## Opening checkpoint pushed
+
+9902c71c pushed to origin/main: introduction and query-results frozen first drafts, preview downloads, integration checks. Live publication untouched. Practitioner and blind editorial/teaching first reviews completed with no substantive findings; each has one optional wording suggestion. Visual review continues and owns browser lease. Ready next author workspaces: values:4614, constraints:4616, aggregation:4618 under /private/tmp/staycurrent-relational-rebuild-<key>-writer-20261025, assignments/<key>-writing.txt. Do not start author viewport checks until lease released. No article repairs accepted or performed yet.
+
+## Opening batch accepted; second batch active
+
+All3first reviews complete with no substantive findings. Three cheap wording clarifications repaired/coordinator-confirmed, no new review round; acceptance and changed-file manifest under batches/opening/. Registry first3reviewed, still unpublished. Fresh writers values, constraints, aggregation active; private servers4614/session33969,4616/session38912,4618/session30654. Browser lease free; authors request it before viewport/theme checks. History, writes, application-sql planning packets prepared but NOT DISPATCHED. Need flag-on build of tiny changes, commit/push reviews+corrections, then continue production.
