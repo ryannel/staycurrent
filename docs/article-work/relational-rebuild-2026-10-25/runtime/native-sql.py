@@ -24,6 +24,9 @@ db = 'sc_' + role.replace('-', '_')
 user = db + '_writer'
 cluster = 'staycurrent-' + role + '-20261025'
 before = hashlib.sha256(source.read_bytes()).hexdigest()
+snapshot = evidence / (prefix + '-executed-verifier.sql')
+assert not snapshot.exists() or snapshot.read_bytes() == source.read_bytes(), 'Do not replace an executed verifier snapshot'
+snapshot.write_bytes(source.read_bytes())
 start = time.time()
 status = {'verifier_sha256_before': before, 'whole_process_timeout_seconds': 180}
 try:
@@ -33,7 +36,7 @@ try:
     assert info['Config']['Labels']['dev.staycurrent.task'] == 'relational-rebuild-2026-10-25'
     assert info['Config']['Labels']['dev.staycurrent.article'] == role
     cid = info['Id']
-    command = cli + ['exec', '-i', cid, 'env', '-i', 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'PGAPPNAME=' + role + '-owned-verifier', 'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', '/var/run/postgresql', '-U', user, '-d', db]
+    command = cli + ['exec', '-i', cid, 'env', '-i', 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'PGAPPNAME=' + role + '-owned-verifier', 'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-v', 'fixture_db=' + db, '-v', 'fixture_admin=' + user, '-h', '/var/run/postgresql', '-p', '5432', '-U', user, '-d', db]
     guard = f"DO $root_guard$ BEGIN IF current_database()<>'{db}' OR current_user<>'{user}' OR current_setting('cluster_name')<>'{cluster}' OR current_setting('server_version_num')<>'180006' OR current_setting('data_directory')<>'/var/lib/postgresql/18/docker' OR current_setting('listen_addresses')<>'' THEN RAISE EXCEPTION 'Refusing unowned fixture'; END IF; END $root_guard$;\n"
     result = subprocess.run(command, input=guard + source.read_text(), capture_output=True, text=True, timeout=180)
     (evidence / (prefix + '-results.txt')).write_text(result.stdout)

@@ -1,0 +1,172 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import PolicyRows from '../../components/relational-rebuild-pg-access/PolicyRows.astro';
+import DefinerPath from '../../components/relational-rebuild-pg-access/DefinerPath.astro';
+import '../../components/relational-rebuild-pg-access/access.css';
+---
+<p>PostgreSQL decides what a statement may do from the role running it, the privileges available to that role and, where enabled, the table’s row policies. A successful query from a migration connection says little about what the application may do: the migration role may own the table and bypass the very policy you meant to test.</p>
+<p>Follow the shop’s three identities from <a href="/learn/databases/relational/access-control/">Database access and least privilege</a>. <code>shop_runtime</code> serves authorised requests, <code>shop_migrate</code> changes the schema, and <code>shop_support</code> reads selected customer and order details. Tenant 10 has Mina Shah, Tariq Aziz and Edda Berg, customers 1–3. Tenant 20 has customer 4, Rowan Vale. A request authorised for tenant 10 must not expose Rowan.</p>
+<p>The examples use PostgreSQL 18. We will first keep the request’s tenant in connection context, then build a support function whose tenant authority comes from a protected login mapping. These are different trust arrangements. The drawings model their checks; the verification section distinguishes the executed tests from the application checks they cannot establish.</p>
+
+<section id="roles">
+<h2>Roles and the identity running a statement</h2>
+<p>A <em>role</em> is PostgreSQL’s named identity for owning objects, receiving privileges and belonging to other roles. A role with <code>LOGIN</code> can be used to establish a connection, subject to the server’s authentication rules. A role without it can still own tables or collect grants for its members. Roles belong to the server’s cluster, rather than one database.</p>
+<p>A membership has separate options for using a role’s privileges automatically, becoming that role and administering its membership. Figure 1 keeps those paths apart. Follow the runtime’s read path before looking at the deployment path.</p>
+<figure class="access-figure" aria-labelledby="access-roles-caption">
+<figcaption id="access-roles-caption"><span class="access-number">Figure 1</span> A grant can be inherited without becoming its role</figcaption>
+<div class="access-panel">
+<div class="access-role-pair">
+<div><div class="access-gate"><b>shop_runtime · LOGIN</b><span>session_user = shop_runtime</span><span>current_user = shop_runtime</span></div><p class="access-arrow">↓ INHERIT TRUE · SET FALSE · ADMIN FALSE</p><div class="access-gate"><b>shop_reader · NOLOGIN</b><span>SELECT on customer columns</span></div><p class="access-arrow">↓ inherited permission</p><div class="access-gate"><b>shop.customers</b><span>The runtime can read granted columns.</span><small>SET ROLE shop_reader is refused.</small></div></div>
+<div><div class="access-gate"><b>shop_deploy · LOGIN</b><span>session_user = shop_deploy</span><span>current_user = shop_deploy</span></div><p class="access-arrow">↓ INHERIT FALSE · SET TRUE · ADMIN FALSE</p><div class="access-gate"><b>SET ROLE shop_migrate</b><span>session_user = shop_deploy</span><span>current_user = shop_migrate</span></div><p class="access-arrow">↓ creates objects as their owner</p><div class="access-gate"><b>shop_migrate · NOLOGIN</b><span>Owns the shop schemas and tables</span><small>Deployment credentials remain outside runtime.</small></div></div>
+</div>
+<div class="access-separation"><b>No runtime or support path to shop_migrate</b>Neither identity inherits its ownership, may SET ROLE to it, or may grant itself that membership.</div>
+</div>
+<p class="access-caption">An illustrative membership design. The deployment login is a separate connection identity introduced for migrations; it is not a customer or a runtime role.</p>
+</figure>
+<Sql label="Give runtime read privileges without SET or membership administration" code={`CREATE ROLE shop_reader NOLOGIN;
+GRANT shop_reader TO shop_runtime
+  WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
+
+-- Deployment may deliberately become the object owner:
+GRANT shop_migrate TO shop_deploy
+  WITH INHERIT FALSE, SET TRUE, ADMIN FALSE;`} />
+<p><code>INHERIT TRUE</code> makes the group’s ordinary privileges available without changing the runtime’s identity. <code>SET TRUE</code> allows <code>SET ROLE</code>. <code>ADMIN TRUE</code> allows administering membership of that role, so it is additional authority rather than a requirement for using a table. Keep it away from runtime and support. Inspect indirect paths too: inheritance follows chains of inheritable memberships; assuming a role requires a chain with <code>SET TRUE</code> on every link.</p>
+<p><code>NOINHERIT</code> alone does not make a membership safe. In PostgreSQL 18 the role attribute supplies the default inheritance option for new membership grants. A membership that does not inherit can still allow <code>SET ROLE</code>. Nor is inheriting an owning role a harmless read grant: ownership can let a member alter the object or replace privileged code. Do not give runtime either route to the migration owner.</p>
+<p><code>session_user</code> normally identifies the role that connected. <code>current_user</code> identifies the effective role whose privileges a statement uses. They initially agree. <code>SET ROLE</code> changes <code>current_user</code>; <code>RESET ROLE</code> restores the login’s ordinary role state. A security-definer function will make another temporary change later. Read both identities when testing:</p>
+<Sql label="Inspect the connection identity and effective role" code={`SELECT session_user, current_user;
+SELECT pg_has_role(current_user, 'shop_reader', 'USAGE');`} />
+<p>The second query asks whether the group’s privileges are immediately usable. It is a useful diagnostic, but still run the actual task. Special role attributes such as <code>SUPERUSER</code> and <code>CREATEROLE</code> are not ordinary inherited object grants; keep application roles without those attributes, without <code>BYPASSRLS</code>, and unable to assume roles that have them.</p>
+</section>
+
+<section id="grants">
+<h2>Grants, ownership and new objects</h2>
+<p>A connection must pass several distinct boundaries. Database <code>CONNECT</code> allows connecting; it does not satisfy authentication. Schema <code>USAGE</code> allows looking up objects there; it does not grant a table read. Schema <code>CREATE</code> allows creating objects there, which runtime and support do not need. A table or column grant then permits the particular operation.</p>
+<p>Suppose <code>shop_migrate</code> owns schema <code>shop</code> and its tables. Support needs customer IDs and names, plus order IDs, customer IDs and status. Give it those columns explicitly:</p>
+<Sql label="Support grants derived from its lookup task" code={`GRANT USAGE ON SCHEMA shop TO shop_support;
+GRANT SELECT (tenant_id, customer_id, name)
+  ON shop.customers TO shop_support;
+GRANT SELECT (tenant_id, order_id, customer_id, status)
+  ON shop.orders TO shop_support;`} />
+<p><code>SELECT *</code> on orders will now fail because it includes the ungranted <code>placed_at</code>. The intended selected-column query succeeds. An <code>UPDATE</code> also needs <code>SELECT</code> on columns it reads in expressions or conditions, so derive grants from the complete SQL, not just its first word. Where a default uses <code>nextval</code> on a separately managed sequence, its sequence privilege needs checking too; a table grant does not grant sequence access.</p>
+<p>Privileges add together. Revoking a direct grant cannot cancel the same privilege inherited from a group or obtained through <code>PUBLIC</code>, the implicit group containing every role. Likewise, a column restriction does not subtract from an existing whole-table grant. Inspect those other paths before calling the support grants narrow.</p>
+<p>Keep the owner separate because it controls the object’s definition and grants. A runtime that owns its table can change its policy. Audit schema creation as well: an upgraded database may retain older <code>PUBLIC</code> privileges on schema <code>public</code>. A schema used to resolve trusted code must not let untrusted callers create replacement objects. The <a href="https://www.postgresql.org/docs/18/ddl-schemas.html">PostgreSQL schema documentation</a> describes the defaults and upgrade differences.</p>
+<h3 id="defaults">Default privileges belong to the creator</h3>
+<p>A grant on existing objects does not decide the permissions of the next migration’s objects. <code>ALTER DEFAULT PRIVILEGES</code> sets rules for future objects created by a named role in the current database. It does not repair existing grants, and a creator does not inherit another role’s defaults.</p>
+<Sql label="Close public routine execution for future migration-owned routines" code={`ALTER DEFAULT PRIVILEGES FOR ROLE shop_migrate
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;`} />
+<p>This command deliberately has no <code>IN SCHEMA</code>: a per-schema default revoke cannot subtract the built-in global <code>PUBLIC</code> execution grant. Existing routines need their own revoke. A migration that first does <code>SET ROLE shop_migrate</code> creates objects owned by that role and uses its defaults; one that remains <code>shop_deploy</code> uses the deployment role’s defaults instead. Test a newly created object under the actual migration path.</p>
+<p>Default table grants can be useful for a deliberately uniform schema. They are a poor substitute for deciding whether a new table is tenant-protected and whether support should read every future column. Keep those decisions in the migration review.</p>
+</section>
+
+<section id="context">
+<h2>Tenant identity in a shared connection</h2>
+<p>All requests through <code>shop_runtime</code> have the same database login. A policy needs another value to distinguish their tenant scope. In this first design, the trusted application checks the person’s right to tenant 10, starts a transaction on one borrowed connection and sets a transaction-local value before any data query:</p>
+<Sql label="Establish context on the same connection as the request" code={`BEGIN;
+SET LOCAL shop.tenant_id = '10';
+SELECT customer_id, name FROM shop.customers;
+COMMIT;`} />
+<p>The production tenant value should come from the application’s authorised choice, bound as a value through its database client. For example, <code>set_config('shop.tenant_id', $1, true)</code> can set it locally within the transaction. Both statements above and the data work must use the same connection. An isolated <code>SET LOCAL</code> outside a transaction has no useful lifetime for the later query.</p>
+<p><code>SET LOCAL</code> ends at commit or rollback and restores the previous session value. That makes an empty baseline essential: setting a local 10 over an old session 20 restores 20 afterwards. Keep pooled connections free of retained tenant settings, and initialise every request before querying. Our policy treats a missing or empty value as no tenant; a malformed integer raises an error.</p>
+<p>The setting is caller-controlled. A holder of the runtime connection can set it to 20 and see tenant-20 rows under this design. Row security catches a forgotten query condition while context is correct; it does not authenticate the person or prevent the service from choosing a false context. A stronger boundary needs authority the caller cannot forge. We will use a protected mapping for the separate support interface below.</p>
+</section>
+
+<section id="row-security">
+<h2>Row-level security</h2>
+<p><em>Row-level security</em>, or RLS, adds per-row policies to ordinary object privileges. A policy does not supply a missing table grant. Enable it on each protected table; until an applicable policy exists, ordinary callers see no rows and cannot create new ones.</p>
+<Sql label="Enable customer row security and allow the current tenant" code={`ALTER TABLE shop.customers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_customers ON shop.customers
+  TO shop_runtime, shop_support
+  USING (
+    tenant_id = nullif(current_setting('shop.tenant_id', true), '')::integer
+  )
+  WITH CHECK (
+    tenant_id = nullif(current_setting('shop.tenant_id', true), '')::integer
+  );`} />
+<p>The <code>true</code> argument makes <code>current_setting</code> return <code>NULL</code> when the setting is absent; <code>nullif</code> also turns an empty value into <code>NULL</code>. A row passes only when the policy expression is true. Comparing a tenant with <code>NULL</code> is unknown, so missing context admits no row.</p>
+<p><code>USING</code> decides which existing rows can be reached. <code>WITH CHECK</code> decides which new row versions may be stored by an insert or update. Put an equivalent tenant policy on <code>shop.orders</code>. Then follow Figure 2, first reading customer 4 and then attempting to move order 103.</p>
+<PolicyRows />
+<p>Figure 2’s name update is a diagnostic probe with an explicit <code>UPDATE (name)</code> grant in the fixture, rather than a new support task. Before RLS, that same harmless statement affects Rowan’s row. The distinction affects error handling. A read of customer 4 returns no rows. An update targeting only hidden or nonexistent rows can report <code>UPDATE 0</code>. But order 103 is reachable with tenant context 10: its proposed tenant 20 fails <code>WITH CHECK</code>, so PostgreSQL rejects the statement with SQLSTATE <code>42501</code>. An insert proposing tenant 20 fails that check too. PostgreSQL checks these proposed-row expressions before ordinary constraints, so a policy error does not establish that the proposal would otherwise be valid.</p>
+<p>An <code>ALL</code> or <code>UPDATE</code> policy with <code>USING</code> and no explicit <code>WITH CHECK</code> reuses its <code>USING</code> expression for proposed rows. Writing both here makes the two questions visible. More elaborate command-specific policies need care: an update that reads columns may also need the applicable <code>SELECT</code> policy. Test the real statement, including its conditions and <code>RETURNING</code>.</p>
+<h3 id="combining-policies">Combining policies</h3>
+<p>Adding a second policy usually widens access. Policies are <em>permissive</em> by default, and applicable permissive policies combine with <code>OR</code>. A restrictive policy supplies an additional <code>AND</code>. It can narrow an existing allowance but cannot grant one on its own.</p>
+<figure class="access-figure" aria-labelledby="access-combine-caption">
+<figcaption id="access-combine-caption"><span class="access-number">Figure 3</span> One broad policy can let Rowan through</figcaption>
+<div class="access-panel access-table-wrap" role="region" aria-label="Policy combination comparison" tabindex="0"><table class="access-matrix"><caption>SELECT as shop_runtime · context 10 · same four customer rows</caption><thead><tr><th scope="col">Applicable policies</th><th scope="col">Tenant 10<br />Customers 1–3</th><th scope="col">Tenant 20<br />Customer 4</th></tr></thead><tbody><tr><th scope="row">Permissive tenant = 10</th><td>Allowed</td><td>Hidden</td></tr><tr><th scope="row">tenant = 10 OR permissive true</th><td>Allowed</td><td>Allowed</td></tr><tr><th scope="row">(tenant = 10 OR true) AND restrictive tenant = 10</th><td>Allowed</td><td>Hidden</td></tr><tr><th scope="row">Restrictive tenant = 10 alone</th><td>Hidden</td><td>Hidden</td></tr></tbody></table></div>
+<p class="access-caption">These are independent policy sets. Only policies applicable to this role and command participate. A restrictive fence can protect tenant scope from a broad permissive read, but it still trusts the supplied context.</p>
+</figure>
+<p>Do not count policy names as layers of protection. Read the combined expression for each command and every effective role, including inherited memberships. A small policy set that you can predict is easier to preserve than several overlapping exceptions. <a href="https://www.postgresql.org/docs/18/sql-createpolicy.html">CREATE POLICY</a> gives the per-command rules.</p>
+</section>
+
+<section id="bypass">
+<h2>Where row policies stop</h2>
+<p>Table owners normally bypass row security. Superusers and roles with <code>BYPASSRLS</code> bypass it too. <code>ALTER TABLE shop.customers FORCE ROW LEVEL SECURITY</code> subjects the owner to policies during ordinary access, but does not constrain a superuser or <code>BYPASSRLS</code> role. It also does not take the owner’s ability to change the table’s policy away. FORCE is useful defence against accidental owner reads, not a reason to make runtime the owner.</p>
+<p>RLS covers row access, rather than every operation or information channel. <code>TRUNCATE</code> is outside its row filtering, so do not grant it merely because deletes are filtered. Uniqueness and foreign-key checks bypass row security to preserve integrity; their success or error can reveal that some otherwise hidden value exists. A tenant policy is not a promise of complete information isolation.</p>
+<p>Keep tenant integrity as well. A permitted tenant-10 order can still propose customer 4, a mismatched association that a tenant-only policy cannot detect. The composite reference in <a href="/learn/databases/relational/constraints/#tenant-integrity">Constraints and data integrity</a> enforces the pair. Policies answer who may reach or create a row; references answer whether its association is valid.</p>
+<h3 id="views">Views and the authority behind them</h3>
+<p>A view adds another privilege path. By default, PostgreSQL checks its base relations using the view owner’s privileges and RLS policies. If that owner also owns the customer table and normally bypasses its policies, granting support access to an unfiltered view can disclose all four customers.</p>
+<figure class="access-figure" aria-labelledby="access-view-caption"><figcaption id="access-view-caption"><span class="access-number">Figure 4</span> The same view query, a different authority path</figcaption><div class="access-panel"><p class="access-kicker">shop_support reads a customer-name view · context 10</p><div class="access-view-pair"><div class="access-gate"><b>Default view</b><p>SELECT grant on view</p><p class="access-arrow">↓ base checks use view owner</p><p>Owner: shop_migrate<br />Also owns customers; no FORCE</p><p class="access-arrow">↓ owner bypasses RLS</p><b>4 rows · includes Rowan</b></div><div class="access-gate"><b>security_invoker view</b><p>SELECT grant on view</p><p class="access-arrow">↓ base checks use shop_support</p><p>Needs its granted base columns<br />Tenant policy applies</p><p class="access-arrow">↓ context 10</p><b>3 rows · Rowan hidden</b></div></div></div><p class="access-caption">Both views select tenant ID, customer ID and name without an extra tenant condition. This changes whose base-table checks apply; a default view does not itself change current_user like a security-definer function.</p></figure>
+<Sql label="Keep base-table checks on the view caller" code={`CREATE VIEW shop.customer_names
+WITH (security_invoker = true) AS
+SELECT tenant_id, customer_id, name
+FROM shop.customers;`} />
+<p>A security-invoker view requires the caller’s relevant base-relation permissions as well as permission on the view. It therefore suits the selected-column grants already given to support. It is not an interface for hiding those base privileges from the caller. If a view supplies its own security filter, analyse that filter and PostgreSQL’s <code>security_barrier</code> rules as well. <code>security_barrier</code> controls evaluation around a view’s filter; it does not select invoker privileges. Functions called from a view also retain their own invoker or definer rules.</p>
+</section>
+
+<section id="definer">
+<h2>SECURITY DEFINER functions</h2>
+<p>A function normally runs with its caller’s privileges: <code>SECURITY INVOKER</code>. Use that default when no extra authority is needed. <code>SECURITY DEFINER</code> temporarily runs the function with its owner’s privileges, changing <code>current_user</code> while retaining <code>session_user</code>. That can expose work callers cannot do directly, including rows allowed to the function owner rather than to the caller.</p>
+<p>For a separate support design, remove support’s raw customer grants and any other customer-reading interfaces, including the example views, then offer one lookup. A protected table <code>shop_private.support_scope(login_name, tenant_id)</code> maps the actual <code>shop_support</code> login to tenant 10. Only the trusted migration authority may change the mapping. This local example fixes one login to one tenant; it is not the runtime’s freely settable context, and does not establish a person’s rights within that tenant.</p>
+<p>The function owner, <code>shop_lookup</code>, is a non-login role with no superuser, role-creation or RLS-bypass authority. It owns no base tables. Give it only schema usage and reads of the mapping and needed customer columns. A customer <code>SELECT</code> policy for this role allows the lookup rows; the function’s join then enforces its tenant scope. Support cannot become this role, edit its mapping or replace its function.</p>
+<DefinerPath />
+<h3 id="search-path">search_path and trusted objects</h3>
+<p><code>search_path</code> is the schema order PostgreSQL searches for an unqualified object name. If privileged code refers to <code>support_scope</code> without its schema, a caller-controlled table can change what the function trusts. Temporary relations are particularly easy to miss: unless explicitly placed later, their schema is searched before the ordinary path for relation names.</p>
+<p>The secured function names both tables and fixes its search path to trusted schemas, with <code>pg_temp</code> explicitly last. This also avoids trusting caller-selected functions, operators or types through an unsafe path. Protect who may create in those trusted schemas and who may replace the referenced objects. Qualification cannot secure a dependency that an attacker may alter.</p>
+<Sql label="A scoped customer lookup with a narrow owner and explicit privileges" code={`-- As a privileged fixture administrator, after provisioning shop_lookup's
+-- narrow reads and SELECT policy; it owns this function only.
+BEGIN;
+GRANT CREATE ON SCHEMA shop TO shop_lookup;
+CREATE FUNCTION shop.customer_name(p_customer_id integer)
+RETURNS TABLE (customer_id integer, name text)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, shop_private, pg_temp
+AS $$
+  SELECT c.customer_id, c.name
+  FROM shop.customers AS c
+  JOIN shop_private.support_scope AS s
+    ON s.tenant_id = c.tenant_id
+  WHERE s.login_name = session_user
+    AND c.customer_id = p_customer_id
+$$;
+ALTER FUNCTION shop.customer_name(integer) OWNER TO shop_lookup;
+REVOKE CREATE ON SCHEMA shop FROM shop_lookup;
+REVOKE ALL ON FUNCTION shop.customer_name(integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION shop.customer_name(integer) TO shop_support;
+COMMIT;`} />
+<p><code>session_user</code> is deliberately used for the protected login mapping. Inside this function, <code>current_user</code> is always <code>shop_lookup</code>, so mapping that value would confuse the function owner with its callers. This pattern assumes support connects as its actual dedicated login. It does not recover a person’s identity from a shared service login or distinguish roles assumed by that login.</p>
+<p>With the mapping to 10, <code>customer_name(1)</code> returns Mina; <code>customer_name(4)</code> returns no row. Setting <code>shop.tenant_id</code> to 20 has no effect on this join. Replacing the mapping reference with a caller-settable tenant argument would surrender that boundary: a valid integer is still no proof of authority.</p>
+<h3 id="callable-interface">A narrow callable interface</h3>
+<p>New functions normally grant execution to <code>PUBLIC</code>. Revoke it and grant the intended caller within the creation transaction so there is no committed public-access window. The earlier default-privilege revoke also helps for future migration-created routines; check the actual creator and existing functions. Callers need schema usage to reach the function as well.</p>
+<p>This interface accepts a customer key and returns two columns. It cannot change payment data, run arbitrary SQL or choose an object name. Keep that small contract. If a routine genuinely needs dynamic SQL, bind data values and quote identifiers correctly, then separately decide which objects and operations that caller is authorised to select. Correct quoting does not make an arbitrary table choice safe.</p>
+<p>A definer function is part of the access boundary, including everything it calls. A trigger or another routine reached from it can add authority or side effects. Its owner’s grants, policies, dependencies and replacement privileges need review together. <a href="/learn/databases/relational/postgresql/extensions/">Types and extensions in PostgreSQL</a> owns the additional installation and lifecycle privileges of extension code.</p>
+</section>
+
+<section id="testing">
+<h2>Testing the application identities</h2>
+<p>Open connections as the actual runtime and support logins, using their intended authentication path. Confirm <code>session_user</code>, <code>current_user</code> and the target database before testing the task. An administrator’s <code>SET ROLE</code> can help diagnose grants but does not test login authentication, and it leaves a different <code>session_user</code> for a function that maps the original login.</p>
+<div class="access-figure access-table-wrap" role="region" aria-label="Access boundary tests" tabindex="0"><table class="access-matrix"><caption>Pair each allowed path with a path the design must forbid</caption><thead><tr><th scope="col">Path</th><th scope="col">Evidence to retain</th></tr></thead><tbody><tr><th scope="row">Runtime · context 10</th><td>Customers 1–3 return; customer 4 and an omitted tenant condition do not expose Rowan.</td></tr><tr><th scope="row">Context lifetime</th><td>Commit and rollback restore an empty baseline; a next request without setup receives no rows. Also demonstrate what a stale session baseline would restore.</td></tr><tr><th scope="row">Write boundary</th><td>Record affected-row count for a hidden target; distinguish it from 42501 for an invalid proposed tenant. Check stored rows afterwards.</td></tr><tr><th scope="row">Roles and ownership</th><td>Runtime cannot assume the owner, administer its membership, alter the table or create objects in trusted schemas.</td></tr><tr><th scope="row">Support · each chosen interface</th><td>Selected details work. Ungranted columns, order changes and alternative raw-table paths fail where the interface promises to exclude them.</td></tr><tr><th scope="row">Indirect and future paths</th><td>Exercise the view and definer function, a caller’s counterfeit object and a newly migrated object. Check execution without an intended grant.</td></tr></tbody></table></div>
+<p>In an owned disposable PostgreSQL 18.6 run, separate login connections tested the narrower customer/order fixture used here. They used a local Unix socket with trust authentication, so this run does not establish password or network authentication. Before RLS, runtime could read all four customers; enabling it without a policy hid them all. With the tenant policy and context 10, it read customers 1–3, hid Rowan and rejected the attempted tenant-20 writes. Both commit and rollback ended the local context. A deliberately retained session setting reappeared after the local override, and freely setting context 20 exposed Rowan.</p>
+<p>The same run checked owner bypass, owner access under FORCE, permissive and restrictive combinations, and the two view authority paths. The secured support routine returned Mina and hid Rowan even with a counterfeit temporary mapping; the unsafe unqualified version returned Rowan. A login without the execution grant could not call the secured routine. Future-object defaults affected a new object and left the earlier object unchanged. All starting customer and order rows remained unchanged.</p>
+<p>Those tests establish mechanisms in this fixture. They do not test the shop’s sign-in service, deployed credentials or production pool. Keep those application paths in the acceptance test, and rerun the affected allowed and forbidden cases when a migration changes roles, policies, views, routines or default privileges. An access design remains useful only while the identity taking each path is the one you intended.</p>
+</section>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>PostgreSQL 18 documentation, checked 26 October 2026. Figures are explanatory models. The execution evidence uses an owned disposable native PostgreSQL 18.6 server and actual non-superuser login connections; it supplies no production authentication or pool evidence.</p>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/role-membership.html">Role membership</a>, <a href="https://www.postgresql.org/docs/18/sql-grant.html">GRANT</a> and <a href="https://www.postgresql.org/docs/18/role-attributes.html">role attributes</a>: membership options, inherited privileges and assuming another role.</li>
+<li><a href="https://www.postgresql.org/docs/18/ddl-priv.html">Privileges</a>, <a href="https://www.postgresql.org/docs/18/ddl-schemas.html">schemas</a> and <a href="https://www.postgresql.org/docs/18/sql-alterdefaultprivileges.html">ALTER DEFAULT PRIVILEGES</a>: object ownership, public grants, trusted schemas and creator-specific defaults.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-set.html">SET</a> and <a href="https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-SET">configuration-setting functions</a>: transaction-local context and its restored baseline.</li>
+<li><a href="https://www.postgresql.org/docs/18/ddl-rowsecurity.html">Row security policies</a> and <a href="https://www.postgresql.org/docs/18/sql-createpolicy.html">CREATE POLICY</a>: existing and proposed rows, policy combinations, owner bypass and information leaks through integrity checks.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-createview.html">CREATE VIEW</a> and <a href="https://www.postgresql.org/docs/18/rules-privileges.html">rules and privileges</a>: view-owner and security-invoker checks, security barriers and called functions.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-createfunction.html#SQL-CREATEFUNCTION-SECURITY">Writing SECURITY DEFINER functions safely</a> and <a href="https://www.postgresql.org/docs/18/functions-info.html">session information functions</a>: effective identity, trusted name resolution and execution grants.</li>
+</ul>

@@ -1,0 +1,1 @@
+Accepted unchanged. Both independent first reviews found no substantive issue. Actual desktop/390px/375px, both-theme and meaningful control checks cover the delivered five drawings; exact native/PGlite provenance and source hashes checked. Optional reader-facing hand-off verb left nonblocking. All stated authentication, pool and browser limits retained; no new run or review.
