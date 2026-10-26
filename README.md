@@ -131,26 +131,10 @@ agents, the limits of human oversight and the editorial disclaimer.
 `AiDisclosure.astro` supplies the footer icon; `AiTextDisclosure.astro` supplies
 the text link through `TitleLine.astro` and directly where there is no title line.
 
-Seven skills in `.agents/skills/`, symlinked from `.claude/skills/`, define production:
-`staycurrent-orchestrate`, `staycurrent-breakdown`, `staycurrent-write`,
-`staycurrent-figures`, `staycurrent-continuity`, `staycurrent-revise` and
-`staycurrent-review`. They take an intelligent newcomer to expert practitioner,
-optimising useful understanding against reader time and effort. The orchestrator
-builds a provisional recursive article tree and reviews the complete learning route
-once, then uses fresh planners and writers for the articles. Independent first
-readers cover technical accuracy, teaching, writing and rendered behaviour.
-Accepted substantive problems are repaired and confirmed in context, retaining
-unaffected checks; later repairs may reuse a worker or be checked by the coordinator.
-The assembled collection receives one coverage and reading-route check using the
-article reviews already completed. The review skill owns the completion rule and
-when a later change invalidates an earlier judgement.
-
-Each collection keeps one running-example record beside its tree in `docs/coverage/`.
-The five perspective files fix their inputs and checks in
-`.agents/skills/staycurrent-review/perspectives/`. Article and heading nodes use
-the singular `heading` list and `nested_article` child stubs. Applicable mechanical
-evidence can be reused; fresh reader judgement and current rendered-media checks
-remain separate. Reviewed drafts require publication authorisation.
+Article commissions define the scope, references and workflow. The former seven
+Stay Current skills and their Claude links were removed on 26 October 2026 for
+a single-agent prompting experiment; they remain recoverable from Git history.
+Reviewed drafts require publication authorisation.
 
 The three chosen writing and teaching examples are fixed at their pre-rewrite
 revision in `src/reference-articles/`: Sequence diagrams, Indexes, and Storage and

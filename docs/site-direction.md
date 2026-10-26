@@ -146,7 +146,8 @@ for every future field now. The earlier wider coverage discussion remains availa
 in the history, and [Reasoning about distributed systems](reasoning-about-distributed-systems.md)
 remains a parked idea.
 
-Preserve the writing, illustration, authoring and review skills and their evidence.
+Preserve existing article and review evidence. Follow the current commission for
+the writing workflow.
 The column-store essay remains a teaching reference alongside the current relational
 work. The text should stand alone; illustrations and interactive tools support the
 explanation where they reduce the reader's work. Use the current technical sketch

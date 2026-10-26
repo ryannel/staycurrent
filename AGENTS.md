@@ -8,23 +8,9 @@ distributed-systems programme remain outside an article commission.
 ## Content work
 
 The goal is to take an intelligent newcomer to expert practitioner, optimising
-useful understanding against reader time and effort. Use the seven skills in
-`.agents/skills/`:
+useful understanding against reader time and effort. Follow the current article
+commission for scope, references and workflow.
 
-- `staycurrent-orchestrate`: manage recursive planning, corpus review and writing.
-- `staycurrent-breakdown`: plan one article and its contextual child stubs.
-- `staycurrent-write`: write one article using the three fixed examples.
-- `staycurrent-figures`: choose, build and check an article's figures, tables and interactive tools.
-- `staycurrent-continuity`: keep the collection's running example and terms consistent; run its pass before returning any draft or repair.
-- `staycurrent-revise`: repair an article from review findings so it still reads as one piece.
-- `staycurrent-review`: arrange independent reviews or perform an assigned perspective.
-
-The orchestrator maintains the shared tree and coordinates review under
-`staycurrent-review`. Use independent readers for first reviews; later repairs
-and confirmations may reuse a worker or be checked by the coordinator. Retain
-unaffected checks and do not repeat collection-wide review after local repairs.
-Standalone assignments arrange proportionate review. Keep briefs and results
-with the work in `docs/`.
 Use plain British English. Check consequential technical claims against primary
 sources and distinguish illustrative models from observed execution. Use the
 existing Astro article components and check rendered figures and controls.
