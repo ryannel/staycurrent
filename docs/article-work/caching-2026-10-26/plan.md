@@ -73,5 +73,6 @@ verification. Distinguish illustrative models from observed Redis execution.
 ## Progress
 
 - Planning and reference interaction complete.
-- Article 1 complete and verified locally; publication commit in progress.
-- Articles 2–14 remain to be written, illustrated, verified and published.
+- Article 1 published in commit 48a88755; deployment succeeded and production interactivity verified.
+- Article 2 complete: three interactive arguments, native worksheet and browser checks; publication in progress.
+- Articles 3–14 remain to be written, illustrated, verified and published.
