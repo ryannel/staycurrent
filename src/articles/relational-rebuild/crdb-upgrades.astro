@@ -1,0 +1,107 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import VersionWalk from '../../components/relational-rebuild-crdb-upgrades/VersionWalk.astro';
+---
+<p>A CockroachDB major-version upgrade changes two things: the software running on each node, then the cluster’s internal compatibility version. The binaries can all be new while the cluster version is still old. That interval gives you a place to test and, on a supported path, return to the previous binaries. Beginning finalisation ends that option.</p>
+<p>The difficult decision is therefore not merely whether the next process starts. It is whether the cluster can spare another node, whether the shop still works through its deployed clients, and whether the evidence justifies beginning an irreversible compatibility change.</p>
+<p>This article follows a self-hosted v26.1.8 → v26.2.8 rehearsal. <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">Inside CockroachDB</a> supplies ranges and replicas; <a href="/learn/databases/relational/cockroachdb/operations/">Operating and securing a CockroachDB cluster</a> supplies secure identity, health and draining. Cloud and operator-managed deployments have their own upgrade controls. The versioned vendor procedure remains the authority for the deployment and release pair you actually run.</p>
+
+<h2 id="versions">Binaries and cluster version</h2>
+<p>A <em>binary version</em> identifies the executable running on a node, including its patch release. The <em>cluster version</em> controls compatibility changes that need coordination across the cluster. During a supported major upgrade, old and new binaries can work together using the old cluster version.</p>
+<p>Figure 1 follows three nodes. Step until all three binaries are new, then watch the cluster-version row. Compare finalising with returning to the previous binaries.</p>
+<VersionWalk />
+<p>The all-new, held state is useful precisely because it is unfinished. You can exercise the new software before enabling changes that older software cannot handle. It does not make the new binary behave exactly like the old one: a bug fix, a planner change or an ungated SQL change may already affect the application. Read the release notes to decide which behaviours can be accepted during the hold and which need finalisation.</p>
+<p>Do not use one gateway’s build as a cluster inventory. <code>SELECT version()</code> describes the node serving that SQL connection. A connection entering A can perform useful work with replicas elsewhere while C still runs the older binary. Check all expected nodes and their identities.</p>
+<Sql label="Inspect the gateway and cluster version" code={`SELECT version();
+SHOW CLUSTER SETTING version;
+SHOW CLUSTER SETTING cluster.auto_upgrade.enabled;
+SHOW CLUSTER SETTING cluster.preserve_downgrade_option;`} />
+<p>The two finalisation settings explain the policy as well as the observed version. Read the complete version value, including any upgrade-step suffix, and the migration state. An old major-version prefix does not establish that the upgrade remains deliberately held.</p>
+
+<h2 id="prepare">Prepare the upgrade and its return path</h2>
+<p>First establish the supported source and target, including any required intermediate release and patch requirements. This article’s adjacent 26.1 → 26.2 path does not establish permission to skip an arbitrary future release. Read the major release changes and the chosen patch notes, including backwards-incompatible behaviour, settings, deprecations and known limitations.</p>
+<p>Make the shop’s current state a baseline before changing software. Keep the exact build inventory, cluster version, finalisation policy, schema and configuration with the acceptance results. A tested backup must cover what recovery would need, with a restore target compatible with that backup. A backup taken by a newer release is not a route to restoring on an older one.</p>
+<p>Next check the cluster that will serve requests while a node is absent. Resolve unavailable and under-replicated ranges before beginning. Confirm the expected live membership, usable storage and resource margin. Three nodes in a list are insufficient if one affected range has already lost a voter. <a href="/learn/databases/relational/rebalancing/">Rebalancing and cluster change</a> develops the redundancy and capacity budget; stopping a node spends that same margin.</p>
+<p>Choose finalisation policy before the first restart. Self-hosted automatic finalisation is enabled by default. With that policy, the last node’s return on the new binary can begin finalisation before you have completed application acceptance. For a deliberate testing interval, the current documentation recommends:</p>
+<Sql label="Hold automatic finalisation before the rollout" code={`SET CLUSTER SETTING cluster.auto_upgrade.enabled = false;`} />
+<p>Run cluster-setting changes as separate requests, with the authorised operator connection. Read the value back and retain the evidence. An existing <code>cluster.preserve_downgrade_option = '26.1'</code> also prevents automatic finalisation; it is the older control used in this rehearsal. Account for both controls when deciding how to begin finalisation later.</p>
+<p>Verify licensing prerequisites as part of preparation. The v26.2 self-hosted procedure requires a valid licence for a major-version upgrade; some licence types also have telemetry requirements for finalisation. A local cluster accepting new binaries does not establish that it qualifies to finish. Discovering a missing prerequisite is a reason to stop at the held boundary.</p>
+
+<h2 id="rollout">Restart one node at a time</h2>
+<p>Remove the chosen node from new application traffic, let active work drain through the deployment’s supported shutdown procedure, then stop its process. A temporary upgrade preserves the node’s store and identity for its return. It is different from permanently decommissioning the node and evacuating its data.</p>
+<p>Replace the executable or container image with the intended build and restart using the same store and the required configuration. The process manager must allow an orderly shutdown and must not start two processes against that store. Inspect the returning node itself, rather than accepting a successful query that a load balancer sent elsewhere.</p>
+<figure class="mechanism-figure paper-surface upgrade-checkpoint" aria-labelledby="checkpoint-title">
+  <figcaption id="checkpoint-title"><span class="plate-number">Figure 2</span> The checkpoint before stopping B</figcaption>
+  <div class="checkpoint-nodes"><div><strong>A · returned</strong><span>New build verified</span><span>Own SQL endpoint ready</span></div><div><strong>B · still serving</strong><span>Keep running</span><span>Until A qualifies</span></div><div><strong>C · still serving</strong><span>Keep running</span><span>Keep its replicas available</span></div></div>
+  <div class="checkpoint-join">↓ Check the cluster and the shop together</div>
+  <div class="checkpoint-evidence"><p><strong>Range protection</strong><br />Affected ranges can make progress and required replication has recovered.</p><p><strong>Useful service</strong><br />Reads and guarded writes complete through intended clients; errors and latency remain acceptable.</p></div>
+  <figcaption>A procedure model. A’s readiness, the ranges’ protection and useful application completion are different observations. A green gateway check supplies only one of them.</figcaption>
+</figure>
+<p>A small query on A establishes SQL readiness:</p>
+<Sql label="Check the restarted node's SQL endpoint" code={`SELECT 1;`} />
+<p>Then verify rejoined membership, the expected build and fresh range health, using node status and the DB Console. Inspect resource pressure and the application’s completions before authorising B’s stop. The native command below shows node builds and range counts; use the same verified operator certificate and cluster settings as the operating procedure:</p>
+<pre class="upgrade-command"><code>cockroach node status --ranges \
+  --host=db-1.shop.example:26257 \
+  --certs-dir=/run/shop-operator/certs</code></pre>
+<p>A fixed pause cannot supply this checkpoint. Waiting a minute does not repair an unavailable range, a failed rejoin or a client pool that never reconnects. If progress or service is unacceptable, leave the other nodes running and investigate. Repeat the complete checkpoint after each node, including the last.</p>
+
+<h2 id="acceptance">Test while the old cluster version is held</h2>
+<p>Once every node runs v26.2.8, confirm that the cluster version remains 26.1 and the hold still exists. Now test the application’s actual contract, including its login, driver, prepared statements and connection pool. A privileged SQL shell cannot establish those client paths.</p>
+<p>The shop gives the checks a concrete answer. After purchase 103, stock is P3 10, P7 0 and P9 4. Order 103 is pending, its agreed lines total 29.00 and it has no payment. In a separate catalogue transaction, raise P7’s current price to 22.00. Its order-line price remains 20.00.</p>
+<Sql label="A separate catalogue change during upgrade acceptance" code={`UPDATE products
+SET price = 22.00
+WHERE product_id = 'P7';
+
+SELECT sum(quantity * unit_price) AS agreed_total
+FROM order_items
+WHERE order_id = 103;
+-- 29.00`} />
+<p>Check a rejected operation as well as a successful one. With no blue mugs left, this guarded decrement must return no rows and leave stock at zero:</p>
+<Sql label="Reject an unavailable mug without changing stock" code={`UPDATE products
+SET stock = stock - 1
+WHERE product_id = 'P7' AND stock >= 1
+RETURNING product_id, stock;`} />
+<p>Run the permitted runtime and support operations and their forbidden counterparts. For the access design in the operations article, support should still read only its selected tenant-scoped views, and still fail to read payments or change orders. Test fresh connections and the pool’s error paths. A disconnect during commit needs the existing retry and uncertain-outcome protocol; do not declare the transaction aborted merely because its gateway restarted.</p>
+<p>Some release changes can only be tested after finalisation. In v26.2, checking the view owner’s underlying privileges and using the owner’s row policies are finalisation-dependent changes. The release notes identify them explicitly. A view that worked during the hold can therefore behave differently after finalisation. Put that view path on both sides of the acceptance plan; passing the first test does not predict the second.</p>
+
+<h2 id="return">Return to the previous binaries</h2>
+<p>Before finalisation has begun, the supported return repeats the rolling replacement with the previous binaries. Keep the old cluster version deliberately held, preserve each node’s store, and pass the same health and service checks between nodes. Confirm the documented return rules for this exact version pair before relying on them.</p>
+<p>The price change makes the meaning visible. Returning A, B and C to v26.1.8 leaves P7 at 22.00. The database keeps the committed shop history; the executable replacement does not undo that transaction. It also does not reverse an application deployment or an independently committed schema change. <a href="/learn/databases/relational/cockroachdb/schema-changes/">CockroachDB schema jobs under load</a> owns those application compatibility changes.</p>
+<p>Rehearse this route on a copy before the live upgrade. Check every returned build, range health and application result. A return procedure that was written down but never exercised supplies less evidence than the successful forward rollout.</p>
+
+<p>The native rehearsal started three v26.1.8 processes on one host. The rolling replacement produced mixed binaries, then three v26.2.8 binaries, while the cluster version stayed held at 26.1. Returning one node at a time reached v26.1.8 on all three again. The run committed the separate 22.00 catalogue price before its first restart; it remained 22.00 after the return.</p>
+<p>Each completed checkpoint verified the expected per-node builds, live and available node status, zero unavailable and under-replicated range counts, and the shop projection through each node. Stock stayed 10/0/4, order 103 stayed pending with lines totalling 29.00 and no payment, and the guarded mug decrement affected zero rows. These are small SQL checks on one host, without production load, secure-client acceptance or independent failure domains.</p>
+
+<h2 id="finalise">Finalise the cluster version</h2>
+<p>Finalisation starts internal migrations that enable the new cluster compatibility. It is a separate decision after every node and the application have qualified. The critical boundary is when finalisation <em>begins</em>, not when the displayed cluster version finally changes.</p>
+<p>For the older preserve control used here, first ensure automatic finalisation is disabled, then clear the preserve setting as its own request. After checking the decision and prerequisites, request the target version:</p>
+<Sql label="Clear the older hold with automatic finalisation still disabled" code={`RESET CLUSTER SETTING cluster.preserve_downgrade_option;`} />
+<p>Then send the version change separately:</p>
+<Sql label="Begin manual finalisation after acceptance" code={`SET CLUSTER SETTING version = '26.2';`} />
+<p>Follow the migration jobs in the DB Console and retain their identifiers, statuses and errors. These are internal upgrade migrations, distinct from the shop’s application schema jobs. During migration, the reported version has not yet reached the final 26.2 value. It can include an intermediate upgrade-step suffix, as the native run below shows. An old major-version prefix does not reopen the binary-return route.</p>
+<p>Completion needs successful migration outcomes and the intended active version, then the post-finalisation application tests. A terminal failed job is not success. The amount of internal work varies with the release and cluster; no elapsed wait substitutes for its result.</p>
+<p>If the request fails a prerequisite, preserve its exact error and determine whether migrations began. Do not label an unchanged version as proof that returning binaries is safe. An uncertain boundary calls for diagnosis, not an experiment with older software against the stores.</p>
+
+<p>The rehearsal then rolled forward again to three v26.2.8 binaries and requested finalisation. Its SQL client reached the test’s request timeout; the cluster continued working. The next version observation was <code>26.1-upgrading-to-26.2-step-016</code>. Migration jobs included completed steps and a running step 018. This establishes that finalisation began, even though the final 26.2 value had not appeared. No older-binary return was attempted after that request.</p>
+<p>The bounded run did not establish finalisation completion or the finalisation-dependent view checks. A client timeout is not a failed server migration, and this observation does not establish a stall. Figure 1’s completed stage remains a model of the documented successful outcome.</p>
+
+<h2 id="cannot-continue">When the upgrade cannot continue</h2>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Choose the next action from the upgrade state"><table><caption>Different failures leave different choices</caption><thead><tr><th>Established state</th><th>Useful next action</th></tr></thead><tbody><tr><td>One node fails to restart</td><td>Keep the other nodes serving. Inspect that process’s build, configuration, store and logs; restore its participation before another stop.</td></tr><tr><td>Old cluster version held; finalisation never began</td><td>Repair and test, or use the documented rolling binary return.</td></tr><tr><td>Finalisation running or stalled</td><td>Keep compatible new binaries. Diagnose the migration and its blocker; retain job IDs and involve vendor support where needed.</td></tr><tr><td>Finalisation complete; new behaviour unacceptable</td><td>Repair forward, or invoke the prepared recovery plan using a compatible earlier backup and a separate destination.</td></tr></tbody></table></div>
+<p>Do not force an older binary onto a store whose compatibility has advanced. Nor is a new-version backup a shortcut around restore compatibility. Recovery to the previous release needs an earlier compatible copy and a controlled transfer of write authority.</p>
+<p>That copy can omit valid later work. If it predates the 22.00 catalogue change, restoring it brings back 20.00 until the intended change is reconciled. Valid orders, stock decisions and external payment effects would need the same attention. <a href="/learn/databases/relational/cockroachdb/backup-and-restore/">CockroachDB backup and recovery</a> owns the restore, fencing and reconciliation procedure. Replacing binaries and restoring business history solve different problems.</p>
+
+<h2 id="patches">Patch upgrades and future releases</h2>
+<p>A patch change within one major release uses rolling binary replacement and the same readiness, health and application checks. It does not add a separate major-version finalisation decision. Still read its patch notes and check its documented return path; a smaller version number change does not remove the need for acceptance.</p>
+<p>For a future major upgrade, repeat the release-path, compatibility and recovery preparation. Settings, prerequisites and eligible version paths can change. The useful distinction remains the one in Figure 1: node software tells you what is running, cluster-version evidence tells you which compatibility boundary has been crossed, and application acceptance tells you whether that state serves the shop.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against the versioned CockroachDB v26.2 documentation and release notes on 26 October 2026. Figures are explanatory models. The native rehearsal used official Linux arm64 v26.1.8 and v26.2.8 binaries on three local processes; its observations and limits are stated above.</p>
+<ul><li>Cockroach Labs, <a href="https://docs.cockroachlabs.com/docs/v26.2/upgrade-cockroach-version">Upgrade CockroachDB self-hosted</a>: supported release paths, binary rollout, finalisation controls, licensing prerequisites and the return boundary.</li><li><a href="https://docs.cockroachlabs.com/docs/v26.2/cluster-settings">Cluster settings</a> and <a href="https://docs.cockroachlabs.com/docs/v26.2/show-cluster-setting">SHOW CLUSTER SETTING</a>: cluster-wide settings and observing their values.</li><li><a href="https://docs.cockroachlabs.com/docs/releases/v26.2">v26.2 release notes</a>: backwards-incompatible changes and the features that require finalisation, including view privilege and row-policy behaviour; v26.2.8 patch details.</li><li><a href="https://docs.cockroachlabs.com/docs/v26.2/node-shutdown">Node shutdown</a> and <a href="https://docs.cockroachlabs.com/docs/v26.2/cockroach-node">cockroach node</a>: temporary draining, permanent removal, node builds and range-health fields.</li><li><a href="https://docs.cockroachlabs.com/docs/v26.2/restore">RESTORE</a>: backup-version compatibility and supported restore scope.</li></ul>
+<style>
+.upgrade-command { overflow-x:auto; padding:1rem; border:1px solid var(--color-rule);background:var(--color-surface-alt);font:.78rem/1.7 var(--font-mono); }
+.checkpoint-nodes { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.7rem;margin:1rem 0; }
+.checkpoint-nodes > div { border-top:3px solid var(--teal);padding:.7rem .4rem; background:var(--color-surface); }
+.checkpoint-nodes span,.checkpoint-nodes strong {display:block;font-size:.8rem;line-height:1.6;}.checkpoint-nodes span {font-size:.75rem;}
+.checkpoint-join {text-align:center;font-size:.8rem;margin:.8rem 0;}.checkpoint-evidence {display:grid;grid-template-columns:1fr 1fr;gap:1rem;border-top:1px solid var(--color-rule-strong);}.checkpoint-evidence p {font:.8rem/1.7 var(--font-sans);}
+@media(max-width:500px){.checkpoint-nodes {grid-template-columns:1fr;gap:.3rem;}.checkpoint-nodes > div {display:grid;grid-template-columns:1fr 1fr;gap:.1rem .5rem;}.checkpoint-nodes strong {grid-row:span 2;}.checkpoint-evidence {grid-template-columns:1fr;gap:0;}}
+</style>
