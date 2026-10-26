@@ -39,7 +39,8 @@ solely on Redis Open Source behaviour.
 ## Delivery ledger
 
 - Planning and reference study: complete.
-- Article 1: complete; model/native/browser checks and full build passed; publication in progress.
-- Articles 2–14: planned, not published.
+- Article 1: published and production interaction verified; see `publication.md`.
+- Article 2: complete; publication in progress.
+- Articles 3–14: planned, not published.
 - Whole collection: in progress; do not mark the goal complete until all articles,
   practical materials, navigation and production checks are complete.

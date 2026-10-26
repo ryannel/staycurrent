@@ -1,7 +1,7 @@
 export const cachingHome = '/learn/databases/caching/';
 export const cachingArticles = [
   { slug: '', title: 'Keeping a copy of the answer', description: 'Follow requests through a cache, discover what reuse saves, and watch a copy fall out of date.', published: true },
-  { slug: 'keys-and-values', title: 'Which answer belongs under this key?', description: 'Request identity, shared answers, serialisation and Redis data types.', published: false },
+  { slug: 'keys-and-values', title: 'Which answer belongs under this key?', description: 'Request identity, shared answers, serialisation and Redis data types.', published: true },
   { slug: 'freshness', title: 'How old is this answer?', description: 'Expiry, invalidation, concurrent fills and the promises a copy can make.', published: false },
   { slug: 'stampedes', title: 'When everyone misses together', description: 'Coalescing requests, refreshes and the limits of leases.', published: false },
   { slug: 'memory', title: 'Making room for useful answers', description: 'Working sets, admission, eviction and the memory Redis really needs.', published: false },
