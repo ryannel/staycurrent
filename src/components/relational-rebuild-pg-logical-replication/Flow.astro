@@ -1,0 +1,87 @@
+---
+interface Props { kind: 'stream' | 'copy' | 'consumer'; }
+const { kind } = Astro.props;
+const content = {
+  stream: { number: 1, title: 'The same product, stored twice', names: ['Publisher · shop', 'WAL sender · pgoutput', 'Subscriber · catalogue'], caption: 'A conceptual schedule after initial synchronisation. The publisher commits before the subscriber makes 22.00 visible. Its application does not wait for this asynchronous copy. The subscriber stores its own tuples and indexes.', alternative: 'Both databases begin with P7 at 20.00. The publisher commits 22.00. Logical decoding produces a row change identified by P7. The subscriber applies and commits it; a fresh target read returns 22.00. With apply paused, the target stays at 20.00 and the slot retains required history.' },
+  copy: { number: 2, title: 'A snapshot and the changes behind it', names: ['Publisher · selected table', 'Table synchronisation worker', 'Subscriber · products'], caption: 'A model of one table’s normal initial copy. The chosen price update happens during copying. Other tables can be at different stages; this is not a simultaneous snapshot of an entire subscription.', alternative: 'The table worker establishes a consistent snapshot containing P7 at 20.00 and copies it. The publisher commits 22.00 while copying continues. The worker follows the changes after its snapshot, brings P7 to 22.00 and hands the table to normal apply. The table is then ready, state r.' },
+  consumer: { number: 5, title: 'What survived the consumer?', names: ['Source transaction C', 'Durable projection', 'Durable restart record'], caption: 'An illustrative consumer, not a trace of PostgreSQL’s built-in subscriber. C names the transaction carrying P7’s 22.00 price; it is not a native LSN. Each option starts independently at 20.00.', alternative: 'Effect first: persist P7 at 22.00, crash before saving progress, then receive C again. Progress first: save C, crash before updating P7, then resume after C and miss the price. Together: commit the projection and restart record in one destination transaction; a crash leaves both or neither.' },
+}[kind];
+---
+<figure class="lr-flow wide" data-lr-flow={kind} aria-labelledby={`lr-${kind}-title`}>
+  <figcaption id={`lr-${kind}-title`} class="lr-title"><span>Figure {content.number}</span><strong>{content.title}</strong></figcaption>
+  {kind === 'stream' && <label class="lr-option">Subscriber <select data-option aria-label="Subscriber in figure 1"><option value="running">Applies the change</option><option value="paused">Apply is paused</option></select></label>}
+  {kind === 'consumer' && <label class="lr-option">Save order <select data-option aria-label="Save order in figure 5"><option value="effect">Projection first</option><option value="progress">Progress first</option><option value="together">One destination transaction</option></select></label>}
+  <div class="lr-stages">
+    {content.names.map((name, index) => <div class="lr-stage"><span class="lr-name">{name}</span><div class="lr-row" data-cell={index} data-live></div><span class="lr-state" data-status={index} data-live></span></div>)}
+  </div>
+  <div class="lr-path" data-path data-live></div>
+  <p class="lr-explanation" data-explanation data-live aria-live="polite"></p>
+  <div class="lr-controls" role="group" aria-label={`Playback for figure ${content.number}`}>
+    <button type="button" data-play>Play</button><button type="button" data-back>Back</button><button type="button" data-next>Next</button><button type="button" data-reset>Reset</button><span data-step></span>
+  </div>
+  <div class="lr-hold" data-hold aria-hidden="true"><span></span></div>
+  <p class="lr-caption">{content.caption}</p>
+  <details><summary>Figure as text</summary><p>{content.alternative}</p></details>
+</figure>
+<script>
+  import { stepper } from '../figures/stepper.mjs';
+  const stream = (paused: boolean) => [
+    [['P7 · 20.00','No price change','P7 · 20.00'],['Committed row','Waiting for WAL','Committed row'],'Both copies begin at 20.00','The products table is already synchronised. Each server has its own heap and primary-key index.'],
+    [['P7 · 22.00','Change and commit in WAL','P7 · 20.00'],['Commit complete','Decoding can follow','Earlier price'],'Publisher commit → available row change','The shop commits the new catalogue price. A target read can still return 20.00: source commit and target apply are different events.'],
+    [['P7 · 22.00','UPDATE · key P7 → 22.00','P7 · 20.00'],['Committed row','Selected by catalogue','Not yet applied'],'WAL → logical decoding → pgoutput → target','The sender extracts the selected row change. The message identifies P7; it does not carry a heap address for the subscriber to reuse.'],
+    [['P7 · 22.00','UPDATE · key P7 → 22.00',paused?'P7 · 20.00':'P7 · 22.00'],['Committed row',paused?'Slot keeps required history':'Change delivered',paused?'Apply paused':'Apply transaction commits'],paused?'Apply paused · source continues':'Find P7 locally → change local tuple → commit',paused?'The subscriber has stopped applying. P7 stays at 20.00 while the publisher can continue writing. Required history remains the publisher’s responsibility.':'The apply worker finds P7 through the target’s identity and commits a new local row version. The target maintains its own storage.'],
+    [['P7 · 22.00',paused?'History still needed':'Progress acknowledged',paused?'Read → 20.00':'Read → 22.00'],['Fresh source read',paused?'Retention continues':'Slot can advance','Fresh target snapshot'],paused?'Stale price + retained history':'Committed target change → fresh target read',paused?'A stale price and an inactive slot are connected symptoms. Resuming needs the old history to remain available.':'A new target snapshot now admits 22.00. A reader holding an earlier Repeatable Read snapshot can still return 20.00.'],
+  ];
+  const copy = [
+    [['P7 · 20.00','Snapshot: P7 · 20.00','Empty table'],['Source table','Consistent starting view','Schema prepared'],'Establish snapshot and stream boundary','The table worker takes a consistent starting view. The target table already exists; replication does not create its definition.'],
+    [['P7 · 22.00','Copying snapshot: 20.00','Copy in progress'],['Later change commits','WAL covers later change','Not ready'],'Copy earlier rows while source writes continue','P7 changes to 22.00 on the publisher during the copy. Copying the earlier value is correct only because the later change remains available.'],
+    [['P7 · 22.00','Follow changes after snapshot','P7 · 20.00'],['Committed row','Catch-up phase','Copy visible; not ready'],'Snapshot copied → catch up with source stream','The copied rows can become visible before synchronisation has finished. Seeing P7 at 20.00 does not establish readiness.'],
+    [['P7 · 22.00','Handover to main apply','P7 · 22.00'],['Committed row','Normal replication','Ready · r'],'Apply the missing update → ready table','The worker catches up and hands the table to the main apply worker. The table enters normal replication, state r. Check each selected table.'],
+  ];
+  const consumer = (order: string) => {
+    const together = order === 'together'; const progress = order === 'progress';
+    return [
+      [['P7 → 22.00','P7 · 20.00','Before C'],['Committed transaction C','Earlier projection','Earlier progress'],'Receive C','The consumer receives the price transaction. Its durable projection and restart record are both still before C.'],
+      [['P7 → 22.00',progress?'P7 · 20.00':'P7 · 22.00',progress||together?'Through C':'Before C'],['Committed transaction C',progress?'Not yet changed':'Saved',progress||together?'Saved':'Not yet saved'],together?'Commit projection + progress together':progress?'Save progress; projection still old':'Save projection; progress still old',together?'A single destination transaction commits both the new price and the fact that C has been applied.':progress?'The restart record says C is complete, but the projection still holds 20.00.': 'The projection has 22.00, but the restart record still asks to resume before C.'],
+      [['P7 → 22.00',progress?'P7 · 20.00':'P7 · 22.00',progress||together?'Through C':'Before C'],['Still in source history','Durable state survives','Durable state survives'],'Consumer stops → restart from durable record',together?'After a crash, the committed transaction leaves both records together. A crash before its commit would leave neither.': 'The process stops between the two saves. Memory is lost; restart must use the surviving durable records.'],
+      [[progress||together?'Resume after C':'Receive C again',progress?'P7 · 20.00':'P7 · 22.00','Through C'],[progress?'C omitted':together?'C already complete':'C handled twice',progress?'Wrong price remains':together?'Correct projection':'Assignment remains 22.00','Saved progress'],progress?'Skipped effect → stale projection':together?'Effect and progress agree':'Redelivery → effect must tolerate repetition',progress?'Resuming after C omits the update. A healthy connection cannot recover an effect it has already acknowledged.':together?'This destination transaction keeps local effect and restart state aligned. An external service needs its own delivery contract.':'Setting a price to 22.00 again is harmless here. Appending a history entry or incrementing a counter twice would need deduplication.'],
+    ];
+  };
+  document.querySelectorAll<HTMLElement>('[data-lr-flow]').forEach(root => {
+    const option = root.querySelector<HTMLSelectElement>('[data-option]');
+    const scenes = () => root.dataset.lrFlow === 'stream' ? stream(option?.value === 'paused') : root.dataset.lrFlow === 'copy' ? copy : consumer(option?.value || 'effect');
+    stepper(root, { steps: () => scenes().length, draw: (step: number) => {
+      const scene = scenes()[step];
+      root.querySelectorAll<HTMLElement>('[data-cell]').forEach((cell,i) => { cell.textContent = scene[0][i]; });
+      root.querySelectorAll<HTMLElement>('[data-status]').forEach((cell,i) => { cell.textContent = scene[1][i]; });
+      root.querySelector('[data-path]')!.textContent = scene[2] as string;
+      root.querySelector('[data-explanation]')!.textContent = scene[3] as string;
+    }});
+    option?.addEventListener('change', () => root.querySelector<HTMLButtonElement>('[data-reset]')!.click());
+  });
+</script>
+<style>
+  .lr-flow { margin-top: 2rem; margin-bottom: 2rem; font: .86rem/1.55 var(--font-sans); }
+  .lr-title { display:flex; flex-wrap:wrap; align-items:baseline; gap:.7rem; border-top:1px solid var(--color-rule-strong); padding:.8rem 0; }
+  .lr-title span { font:.68rem var(--font-mono); text-transform:uppercase; color:var(--color-text-secondary); }
+  .lr-title strong { font:500 1.2rem var(--font-serif); }
+  .lr-stages { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; padding:1.2rem; background:var(--color-surface-alt); border:1px solid var(--color-rule-strong); }
+  .lr-stage { min-width:0; border-top:3px solid var(--color-accent); }
+  .lr-name { display:block; font-size:.75rem; margin:.65rem 0; color:var(--color-text-secondary); }
+  .lr-row { font:500 .95rem/1.5 var(--font-mono); padding:.75rem .6rem; border:1px solid var(--color-rule-strong); background:var(--color-surface); min-height:4.5em; overflow-wrap:anywhere; }
+  .lr-state { display:block; font-size:.76rem; margin-top:.6rem; min-height:3em; }
+  .lr-path { padding:.75rem 1.2rem; border:1px solid var(--color-rule-strong); border-top:0; font-weight:600; color:var(--color-accent-strong); background:var(--color-surface-alt); min-height:3em; }
+  .lr-explanation { border-left:3px solid var(--color-accent); padding:.3rem 1rem; min-height:5em; margin:1rem 0; }
+  .lr-controls { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .lr-controls span { margin-left:auto; font:.75rem var(--font-mono); }
+  button, select { font:inherit; color:var(--color-text); background:var(--color-surface); border:1px solid var(--color-rule-strong); border-radius:4px; min-height:44px; padding:.5rem .75rem; cursor:pointer; }
+  button[aria-disabled="true"] { color:var(--color-text-secondary); border-style:dashed; }
+  button:focus-visible, select:focus-visible, summary:focus-visible { outline:3px solid var(--color-accent); outline-offset:3px; }
+  .lr-option { display:flex; flex-wrap:wrap; align-items:center; gap:.7rem; margin-bottom:1rem; }
+  .lr-hold { height:3px; margin-top:.6rem; background:var(--color-rule); }
+  .lr-hold span { display:block; height:100%; background:var(--color-accent); width:0; }
+  .lr-caption, details { font-size:.78rem; color:var(--color-text-secondary); }
+  details { border-top:1px solid var(--color-rule); padding-top:.6rem; }
+  summary { cursor:pointer; }
+  @media (max-width:580px) { .lr-stages { grid-template-columns:1fr; gap:.7rem; padding:.85rem; } .lr-row { min-height:0; } .lr-state { min-height:0; } .lr-explanation { min-height:0; } select { max-width:100%; } }
+</style>

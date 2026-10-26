@@ -1,0 +1,202 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Flow from '../../components/relational-rebuild-pg-logical-replication/Flow.astro';
+---
+<p>PostgreSQL <strong>logical replication</strong> copies selected table data and follows later changes to it. A shop can publish its products to another database without copying its orders, payments or physical storage layout. When P7’s catalogue price changes from 20.00 to 22.00, the subscriber finds product P7 and changes its own row.</p>
+<p>That makes logical replication useful for a separate catalogue, a reporting copy or a move between PostgreSQL versions. It also creates a contract to maintain: which rows and columns are selected, how an old row is identified, whether the target can accept the next change, and how much history the publisher must retain while the consumer falls behind.</p>
+<p>We will build a one-way products copy in PostgreSQL 18 and follow that price change through it. Application writes stay on the publisher. This is the independent price experiment from <a href="/learn/databases/relational/postgresql/architecture/">Inside PostgreSQL</a>: stock stays P3 10, P7 0 and P9 4. Order 103 remains pending with no payment and agreed line value 29.00. Changing the catalogue price does not reprice its mug line.</p>
+
+<section aria-labelledby="row-stream">
+<h2 id="row-stream">From WAL to a changed row</h2>
+<p>The <strong>publisher</strong> is the database supplying the changes. A WAL sender reads its write-ahead log through <strong>logical decoding</strong>, which reconstructs table changes from the storage records. The built-in output plugin, <code>pgoutput</code>, selects the published data and encodes the row-change protocol. An <strong>apply worker</strong> in the subscriber maps those changes to local tables.</p>
+<p>Figure 1 starts after both copies have P7 at 20.00. Step through the update, watching the two prices separately. Then pause apply and follow the same change again.</p>
+<Flow kind="stream" />
+<p>The publisher has committed while the subscriber still says 20.00. Only after local apply commits can a fresh target snapshot return 22.00. An older Repeatable Read reader can keep seeing 20.00 even after apply catches up. A message received, a transaction applied and a price visible to this reader are three different observations.</p>
+<p>The subscriber stores its own tuples and maintains its own indexes. It can use a different physical layout or PostgreSQL major version because P7 identifies the row, rather than a publisher heap address such as <code>ctid</code>. <a href="/learn/databases/relational/postgresql/replication/">PostgreSQL physical replicas and promotion</a> follows the different contract of a standby replaying the publisher’s storage history. A products-only logical copy is neither that standby nor a backup of the shop.</p>
+<h3 id="three-objects">Publications, subscriptions and slots</h3>
+<p>Three objects make the copy work. A <strong>publication</strong> on the publisher chooses changes from tables in one database. A <strong>subscription</strong> on the subscriber records the publisher connection and the publications to consume. A <strong>logical replication slot</strong> on the publisher keeps the restart state and the history needed to continue that consumer.</p>
+<p>The publication describes the selection; it does not hold a private queue containing only those rows. The slot keeps requirements against the publisher’s WAL and catalogue history. Each independent consumer normally needs its own slot, so one slow consumer can retain history after another has caught up.</p>
+<p>Once selected tables are synchronised, one subscription preserves the publisher’s transaction order for its selected changes. An order and its lines split across unrelated subscriptions do not acquire a shared target commit boundary. Data left out of a publication cannot be made consistent merely by waiting longer.</p>
+</section>
+
+<section aria-labelledby="identity">
+<h2 id="identity">Replica identity</h2>
+<p>An insert brings a new row. An update or delete must also say which earlier row it changes. PostgreSQL calls the identifying old-row information the table’s <strong>replica identity</strong>. By default it uses the primary key.</p>
+<Sql label="P7 has an identity independent of its price" code={`CREATE TABLE public.products (
+  product_id text PRIMARY KEY,
+  name text NOT NULL,
+  price numeric(8,2) NOT NULL CHECK (price >= 0),
+  stock integer NOT NULL CHECK (stock >= 0)
+);`} />
+<p>The price can change while <code>product_id = 'P7'</code> still finds the target. If an update changes the key itself, the subscriber needs the earlier key to find the row before assigning the new one. Identifying the row by its new price would not do that job.</p>
+<p>A table can instead select a qualifying unique index with <code>ALTER TABLE … REPLICA IDENTITY USING INDEX …</code>. The index must be unique, non-partial, non-deferrable and use only columns marked <code>NOT NULL</code>. Choose an identity whose target equivalent can find the same row; for an identity other than <code>FULL</code>, the subscriber needs an identity using the same or fewer columns.</p>
+<p>A table without a suitable identity can still publish inserts. Publishing its updates or deletes is different: attempting one can fail on the <em>publisher</em>, even before a subscriber receives anything. In an isolated PostgreSQL 18.6 check, updating a published keyless P7 row was refused; adding its primary key allowed the update.</p>
+<p><code>REPLICA IDENTITY FULL</code> uses the entire old row as a fallback. That sends more old-row information, and finding it on the target can be expensive without a suitable supporting B-tree or hash index. Types without the required default operator classes add restrictions. It is a deliberate fallback for a table that cannot have a useful key, rather than a general cure for a stopped subscription.</p>
+</section>
+
+<section aria-labelledby="setup">
+<h2 id="setup">Create a publication and subscription</h2>
+<p>The ordinary path starts with a populated publisher and an empty, compatible target table. Run this setup on two separate PostgreSQL 18 instances: database <code>shop</code> on the publisher and <code>catalogue</code> on the subscriber. The connection host and authentication are deployment inputs; run each command on the named side after verifying the connection.</p>
+<h3 id="preparation">Prepare both databases</h3>
+<p>On the publisher, set <code>wal_level = logical</code> and restart if changing it. Allow enough <code>max_replication_slots</code> for the subscriptions and temporary table synchronisation slots, and enough <code>max_wal_senders</code> for them plus physical standbys. On the subscriber, budget <code>max_active_replication_origins</code>, <code>max_logical_replication_workers</code> and <code>max_worker_processes</code> for apply and synchronisation. <code>max_sync_workers_per_subscription</code> controls concurrent table copies. These are shared capacity budgets; a limit sufficient for one steady worker may prevent its initial copy.</p>
+<p>The publisher connection role needs <code>LOGIN</code>, <code>REPLICATION</code>, permission to connect through <code>pg_hba.conf</code> and <code>SELECT</code> for the initial copy. PostgreSQL 18 also requires <code>pgoutput</code> in <code>output_plugin_libraries</code>. Creating the publication needs database <code>CREATE</code> and ownership rights on the named table. Creating the subscription needs database <code>CREATE</code> and the privileges of <code>pg_create_subscription</code>. Under the default apply model, its owner must be able to <code>SET ROLE</code> to the target table owner.</p>
+<p>Keep these roles and the connection credentials deliberate. There are no per-publication access privileges, and a column list is not a security boundary against a malicious subscriber. Other publications can expose more data. Publication selection defines the copy’s behaviour; database access must establish who is trusted to consume it.</p>
+<p>Create <code>public.products</code> from the definition above on both sides. On the publisher only, load the three starting rows and create the publication:</p>
+<Sql label="Publisher: starting products and publication" code={`INSERT INTO public.products VALUES
+  ('P3', 'Green tea, 50 g', 4.50, 10),
+  ('P7', 'Blue mug',       20.00, 0),
+  ('P9', 'Teapot',         35.00, 4);
+
+CREATE PUBLICATION catalogue
+  FOR TABLE public.products;`} />
+<p>On the subscriber, leave the table empty and create the subscription. Replace the example connection information with the verified publisher and feed-role password. A subscription owned by a non-superuser requires password authentication by default.</p>
+<Sql label="Subscriber: connect and copy existing rows" code={`CREATE SUBSCRIPTION catalogue_copy
+  CONNECTION 'host=publisher.example dbname=shop
+              user=catalogue_feed password=REPLACE_WITH_FEED_PASSWORD'
+  PUBLICATION catalogue
+  WITH (streaming = off);`} />
+<p>The normal defaults create a slot named <code>catalogue_copy</code>, enable the subscription and copy existing rows. Here <code>streaming = off</code> keeps in-progress transactions on the publisher until fully decoded, making the small example easier to follow. PostgreSQL 18 otherwise defaults to parallel streaming; it still preserves transaction visibility.</p>
+<h3 id="initial-copy">Copy existing rows, then follow changes</h3>
+<p>The success of <code>CREATE SUBSCRIPTION</code> means the definition was created, not that all rows arrived. Each table synchronisation worker takes a consistent snapshot, copies its table and catches up with changes since that snapshot. Figure 2 puts the price update inside that interval.</p>
+<Flow kind="copy" />
+<p>The snapshot and the following stream fit together. An arbitrary dump followed by a newly created slot does not provide that boundary: a change after the dump’s snapshot but before the slot starts can be absent from both. <code>copy_data = false</code> merely skips the copy; it does not prove a preloaded target is aligned.</p>
+<p>On the subscriber, check every selected table’s state:</p>
+<Sql label="Subscriber: check table readiness" code={`SELECT r.srrelid::regclass AS table_name, r.srsubstate
+FROM pg_subscription_rel AS r
+JOIN pg_subscription AS s ON s.oid = r.srsubid
+WHERE s.subname = 'catalogue_copy';`} />
+<p><code>r</code> means the table is ready for normal replication. Other states describe work still being prepared, copied or synchronised; visible rows alone are insufficient. Once products is ready, update P7 on the publisher:</p>
+<Sql label="Publisher: commit the new catalogue price" code={`UPDATE public.products
+SET price = 22.00
+WHERE product_id = 'P7';`} />
+<p>Then use a fresh subscriber query:</p>
+<Sql label="Subscriber: observe the applied price" code={`SELECT product_id, price
+FROM public.products
+WHERE product_id = 'P7';`} />
+<p>The isolated PostgreSQL 18.6 run copied all three rows and reached <code>r</code>; the later subscriber query reached 22.00. This establishes the small example’s copy and update, not a catch-up time for another workload.</p>
+</section>
+
+<section aria-labelledby="selection">
+<h2 id="selection">Choose which changes to publish</h2>
+<p>The full products copy includes stock. A catalogue may only need product identity, name and price. For a separate copy prepared with that target schema, a publication can select those columns:</p>
+<Sql label="Alternative publisher contract: catalogue columns" code={`CREATE PUBLICATION catalogue_projection
+  FOR TABLE public.products (product_id, name, price);`} />
+<p>The initial copy follows this column list too. Updates and deletes require the identity columns in the list, so P7 remains available to identify the target. With no list, newly added publisher columns become published automatically; explicitly naming today’s columns creates a different future contract.</p>
+<p>Operations are a separate choice. <code>WITH (publish = 'insert, update, delete')</code> excludes later truncates. It does not restrict which existing rows the initial copy includes. <code>TRUNCATE</code> is a table operation, unaffected by row filters or column lists, rather than many filtered deletes.</p>
+<h3 id="filters">Row filters and changing membership</h3>
+<p>A <strong>row filter</strong> selects rows using a publication <code>WHERE</code> clause. For updates and deletes, its columns must be covered by replica identity. A price filter therefore cannot simply be attached to our P7-only identity. Figure 3 uses an independent full-row copy with <code>REPLICA IDENTITY FULL</code> and filter <code>WHERE (price &gt;= 21.00)</code>; it does not modify the working catalogue subscription.</p>
+<figure class="lr-static wide" aria-labelledby="filter-title">
+  <figcaption id="filter-title"><span>Figure 3</span><strong>An update can cross the filter boundary</strong></figcaption>
+  <div class="lr-filter">
+    <div><b>Outside the selection</b><p>P7 · 20.00</p><small>Price is below 21.00</small></div>
+    <div class="lr-cross"><span>20.00 → 22.00</span><strong>Enters: INSERT</strong><span>22.00 → 20.00</span><strong>Leaves: DELETE</strong></div>
+    <div><b>Inside the selection</b><p>P7 · 22.00</p><small>Price is at least 21.00</small></div>
+  </div>
+  <p>Two independent publisher updates, read in their labelled directions. Entering the selection inserts P7 on the subscriber; leaving deletes it. If old and new rows both match, send an update. If neither matches, send nothing. This is a conceptual membership drawing, not an observed execution.</p>
+</figure>
+<p>The subscriber maintains the selected set, so the publisher’s operation name need not be the arriving operation name. In PostgreSQL 18 the initial copy also applies the filter. If several subscribed publications filter the same table for an operation, their filters combine with OR; one unfiltered publication can include everything.</p>
+<p>Changing a filter does not rebuild rows already copied, even after a publication refresh. Expanding a price range can leave newly eligible, unchanged rows missing; narrowing it can leave old target rows behind. Plan reconciliation or resynchronisation for the new selection.</p>
+<p>To add another table, first prepare its compatible target definition, add it to the publication on the publisher, then run <code>ALTER SUBSCRIPTION catalogue_copy REFRESH PUBLICATION</code> on the subscriber. The normal refresh copies newly subscribed tables; check each new table reaches <code>r</code>. Adding publication membership alone does not complete a copy.</p>
+</section>
+
+<section aria-labelledby="compatibility">
+<h2 id="compatibility">Keep the subscriber compatible</h2>
+<p>Tables match by schema and table name; columns match by name. The target need not have identical column order, indexes or types, provided the transferred values can be converted. The ordinary text transfer permits more type differences than binary transfer. Target-only columns need suitable defaults or nullability for incoming inserts.</p>
+<p>Schema definitions and DDL are not replicated. If the publisher begins sending a new column before the target can accept it, apply stops. For a compatible additive change, prepare the target column first, then change the publisher. That order prevents this particular mismatch; it is not permission to reorder arbitrary schema changes. <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a> handles the wider lock and compatibility decisions.</p>
+<p>Other state also stays outside the row stream. Values supplied for serial or identity columns can arrive, but their sequences do not advance with those copied values. Object definitions, roles and large objects need separate treatment. Our text-keyed products example creates no order sequence. Before a target becomes a writer, sequence preparation is part of the migration’s full inventory.</p>
+<h3 id="apply-rules">Constraints, triggers and local writes</h3>
+<p>Apply runs with <code>session_replication_role = replica</code>. Ordinary triggers do not fire by default, including the triggers normally enforcing foreign keys. Replica-enabled or always-enabled triggers can run; ordinary application behaviour is not automatically replayed. Initial copying has COPY-like trigger behaviour and differs from ongoing row apply.</p>
+<p>Other target constraints can stop incoming changes: a duplicate primary key or failed check is enough. Local application writes to replicated tables can also be overwritten by later source updates, or leave a target row missing when an update arrives. A missing update or delete target is counted as a conflict but skipped rather than treated as a stopping error. A running worker therefore does not establish equal data.</p>
+<p>Keep one application write authority for these tables. If truncating related tables, keep the affected relationship within one subscription: a target foreign key to a table outside that subscription can make the truncate fail. Splitting tables is a consistency decision as well as a transport decision.</p>
+</section>
+
+<section aria-labelledby="progress">
+<h2 id="progress">Replication progress and retained WAL</h2>
+<p>A stale P7 price can mean initial copying, a disconnected worker, a stopped apply transaction or a reader’s old snapshot. Start by separating them. On the subscriber, combine table readiness with worker and error evidence:</p>
+<Sql label="Subscriber: worker activity and error counts" code={`SELECT subname, worker_type, pid, relid,
+       received_lsn, latest_end_lsn,
+       last_msg_receipt_time
+FROM pg_stat_subscription
+WHERE subname = 'catalogue_copy';
+
+SELECT subname, apply_error_count, sync_error_count
+FROM pg_stat_subscription_stats
+WHERE subname = 'catalogue_copy';`} />
+<p>The statistics view identifies apply, parallel apply and table synchronisation workers. <code>received_lsn</code> is receipt evidence; <code>latest_end_lsn</code> is the last position reported to the upstream sender. Neither alone proves which price a reader sees. Inspect the subscriber log for an error, inspect <code>pg_replication_origin_status</code> for tracked source apply progress, and make a fresh target read. Message receipt times can show silence, but an idle source with no business changes makes them a poor freshness measure.</p>
+<p>On the publisher, inspect the exact subscription slot:</p>
+<Sql label="Publisher: the slot's restart and retention state" code={`SELECT slot_name, active, restart_lsn, confirmed_flush_lsn,
+       pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)
+         AS wal_distance_bytes,
+       wal_status, safe_wal_size, inactive_since,
+       invalidation_reason, catalog_xmin
+FROM pg_replication_slots
+WHERE slot_name = 'catalogue_copy';`} />
+<p><code>confirmed_flush_lsn</code> records how far this logical consumer has confirmed receipt. <code>restart_lsn</code> is the oldest WAL position it may still require. It can remain earlier because decoding needs more history than the latest acknowledged transaction alone. Figure 4 draws the distinction with symbolic positions.</p>
+<figure class="lr-static wide" aria-labelledby="retention-title">
+  <figcaption id="retention-title"><span>Figure 4</span><strong>Acknowledged progress can leave earlier WAL needed</strong></figcaption>
+  <div class="lr-log"><div><b>R · restart_lsn</b><span>Oldest WAL still required</span></div><div><b>F · confirmed_flush_lsn</b><span>Consumer’s confirmed receipt</span></div><div><b>N · current WAL</b><span>Publisher continues writing →</span></div></div>
+  <div class="lr-bracket"><b>R</b><span>Retained WAL distance →</span><b>N</b></div>
+  <p>Illustrative ordered positions, not native LSNs or a byte scale. Required history begins at R, not F. The distance includes the publisher’s wider WAL activity, not just the selected catalogue rows; actual files are retained at segment granularity and can have other retention requirements.</p>
+</figure>
+<p>An inactive slot can retain WAL and catalogue rows while no consumer is connected. Disabling our subscription left P7 at 22.00 while the source changed back to 20.00; the native run showed its inactive slot still retaining a restart position. Re-enabling it applied the pending price. The experiment bounds the state transition, not how long a production publisher could safely retain history.</p>
+<p>Monitor the WAL distance alongside free storage, <code>wal_status</code>, inactivity, <code>safe_wal_size</code> and invalidation reason. A byte distance is neither feed payload size nor catch-up time. <code>max_slot_wal_keep_size</code> can limit slot retention at checkpoints, but required WAL can then be removed and the slot become unusable. PostgreSQL 18’s <code>idle_replication_slot_timeout</code> can invalidate idle slots at a checkpoint too. A null <code>safe_wal_size</code> can mean unlimited configured retention or a lost slot; read it with the other fields.</p>
+<p>A retention limit protects publisher resources by accepting a possible loss of resumability. It needs a reinitialisation plan, not just an alert when the limit is reached.</p>
+</section>
+
+<section aria-labelledby="repair">
+<h2 id="repair">Repair a stopped subscription</h2>
+<p>Find the failed transaction and its reason before changing progress. A missing target column calls for compatible schema. A permission failure calls for the correct apply identity. A duplicate target key calls for a decision about the conflicting data, rather than repeated worker restarts.</p>
+<p>In a separate native counterexample, we paused apply and inserted P11, Tea strainer at 8.00 with stock 0, locally on the subscriber. Inserting P11 on the publisher then stopped apply at the incoming insert: the target already had that key. After pausing, removing the deliberately introduced target conflict and re-enabling, the incoming source row applied. This is the reason to keep local writers off the copy; removing a real conflicting row requires deciding which facts to preserve.</p>
+<p>The subscriber log identifies the relation, operation and remote transaction; <code>pg_stat_subscription_stats</code> records errors and conflict counts. Check those together with the source transaction’s intended changes. After repair, verify the worker advances and the affected data matches. Since missing-row conflicts can be skipped, include data reconciliation rather than treating the absence of an error as proof.</p>
+<p><code>ALTER SUBSCRIPTION … SKIP</code> can omit a whole remote transaction using its finish LSN. It omits its other changes too, including changes that caused no conflict. Skipping is a decision to replace or forgo those facts, not a routine restart technique. If the slot is lost or the original target alignment is unknown, create a new coordinated copy and reconcile it. A replacement slot starts new history; it cannot recreate changes no longer available.</p>
+<h3 id="retire">Pause and retire deliberately</h3>
+<p><code>ALTER SUBSCRIPTION catalogue_copy DISABLE</code> stops workers but leaves the subscription and its remote slot. If the consumer is being retired, normal <code>DROP SUBSCRIPTION catalogue_copy</code> contacts the publisher and drops the associated slot. Verify that both the local subscription and the publisher’s main and table-sync slots are gone.</p>
+<p>If the publisher is unreachable, disable the subscription and disassociate its slot with <code>ALTER SUBSCRIPTION catalogue_copy SET (slot_name = NONE)</code> before dropping locally. That permits local removal but leaves remote cleanup to do when the publisher returns. A forgotten slot can continue retaining resources long after the consumer was considered removed.</p>
+</section>
+
+<section aria-labelledby="feed">
+<h2 id="feed">Using the stream as a change feed</h2>
+<p>The built-in subscriber applies changes to PostgreSQL tables. A different logical-decoding consumer might update a search projection or transport outbox rows. It takes responsibility for the starting snapshot, transaction boundaries, restart state and acknowledgement of durable work.</p>
+<p>Logical decoding can redeliver recent changes after a publisher crash because slot progress is persisted at checkpoints. A consumer can also stop between applying a change and recording progress. Figure 5 follows both orders, then puts the two durable writes in one destination transaction.</p>
+<Flow kind="consumer" />
+<p>Saving the projection first risks repetition. Saving progress first risks omission. A destination transaction that commits the projection and its restart record together solves this local gap, with acknowledgements tied to that durable outcome. PostgreSQL’s replication origins support crash-safe apply progress; they do not create an atomic transaction with an external service.</p>
+<p>Setting P7’s price to 22.00 twice is harmless for this projection. Appending a history record or sending a notification twice is a different effect. The shop’s <code>order-103-ack</code> outbox record explicitly means “acknowledge the pending order received, total 29.00”. A products update cannot infer that intention. A feed can transport the outbox row, while <a href="/learn/databases/relational/outboxes-and-jobs/">Outboxes and database-backed jobs</a> owns stable work identity, receiver deduplication and recovery of uncertain external outcomes.</p>
+</section>
+
+<section aria-labelledby="handover">
+<h2 id="handover">Changing the publisher or the write authority</h2>
+<p>There are two different transitions. Continuing the same feed after the publisher fails needs its logical restart state on the intended new publisher. Making the logical subscriber the shop’s writer needs acceptance of a different database as the authority.</p>
+<p>For feed continuity, PostgreSQL can synchronise failover-enabled logical slots to a physical standby. The subscription’s <code>failover = true</code> option enables its slot for this; the standby also needs slot synchronisation, a physical slot, <code>hot_standby_feedback</code> and a database name in its primary connection. <code>synchronized_standby_slots</code> can prevent the logical consumer running ahead of the intended standby.</p>
+<p>Configuration alone is insufficient because slot synchronisation is asynchronous. On that exact standby, verify every required slot exists, is synced, persistent and not invalidated, including completed table-sync slots where relevant. Ordinary physical promotion does not by itself preserve a logical consumer’s restart contract. <a href="/learn/databases/relational/postgresql/replication/">PostgreSQL physical replicas and promotion</a> owns fencing, promotion and returning the former primary.</p>
+<p>For a migration, supply evidence that every required table is ready, the target has applied through the final source boundary, schema is compatible and sequences have been prepared. A correct P7 price or zero reported lag cannot authorise target writes: orders, roles or external work may still be missing. <a href="/learn/databases/relational/postgresql/upgrades/">Upgrading and migrating PostgreSQL</a> owns draining source writers, full acceptance, write handover and the point after which a simple return is no longer possible.</p>
+</section>
+
+<section aria-labelledby="sources">
+<h2 id="sources">Sources and further reading</h2>
+<p>PostgreSQL 18 documentation, checked 26 October 2026. The figures are conceptual schedules. The copy, price update, identity refusal, pause/resume and duplicate-key repair were checked on two owned disposable PostgreSQL 18.6 clusters; no timings, publisher failover, slot-loss recovery or external delivery guarantee were measured.</p>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/logical-replication.html">Logical replication</a>, <a href="https://www.postgresql.org/docs/18/logical-replication-architecture.html">Architecture</a> and <a href="https://www.postgresql.org/docs/18/logicaldecoding-explanation.html">Logical decoding concepts</a>: row streams, initial snapshots, retention and redelivery.</li>
+<li><a href="https://www.postgresql.org/docs/18/logical-replication-publication.html">Publication and replica identity</a>, <a href="https://www.postgresql.org/docs/18/sql-altertable.html">ALTER TABLE</a>, <a href="https://www.postgresql.org/docs/18/logical-replication-row-filter.html">Row filters</a> and <a href="https://www.postgresql.org/docs/18/logical-replication-col-lists.html">Column lists</a>: selection and the old row’s identity.</li>
+<li><a href="https://www.postgresql.org/docs/18/logical-replication-subscription.html">Subscription</a>, <a href="https://www.postgresql.org/docs/18/sql-createsubscription.html">CREATE SUBSCRIPTION</a> and <a href="https://www.postgresql.org/docs/18/sql-altersubscription.html">ALTER SUBSCRIPTION</a>: creating, refreshing, pausing and changing progress.</li>
+<li><a href="https://www.postgresql.org/docs/18/logical-replication-config.html">Configuration settings</a>, <a href="https://www.postgresql.org/docs/18/logical-replication-security.html">Security</a> and <a href="https://www.postgresql.org/docs/18/logical-replication-restrictions.html">Restrictions</a>: worker capacity, privileges and state outside the row stream.</li>
+<li><a href="https://www.postgresql.org/docs/18/monitoring-stats.html">Statistics views</a>, <a href="https://www.postgresql.org/docs/18/view-pg-replication-slots.html">pg_replication_slots</a>, <a href="https://www.postgresql.org/docs/18/logical-replication-conflicts.html">Conflicts</a> and <a href="https://www.postgresql.org/docs/18/runtime-config-replication.html">Replication settings</a>: evidence for stopped apply and retained history.</li>
+<li><a href="https://www.postgresql.org/docs/18/replication-origins.html">Replication progress tracking</a> and <a href="https://www.postgresql.org/docs/18/logical-replication-failover.html">Logical replication failover</a>: durable restart state and readiness on a new publisher.</li>
+</ul>
+</section>
+<style>
+  .lr-static { margin-top:2rem; margin-bottom:2rem; font:.83rem/1.6 var(--font-sans); }
+  .lr-static figcaption { display:flex; flex-wrap:wrap; gap:.7rem; align-items:baseline; border-top:1px solid var(--color-rule-strong); padding:.8rem 0; }
+  .lr-static figcaption span { font:.68rem var(--font-mono); text-transform:uppercase; color:var(--color-text-secondary); }
+  .lr-static figcaption strong { font:500 1.2rem var(--font-serif); }
+  .lr-filter { display:grid; grid-template-columns:1fr .85fr 1fr; gap:1rem; border:1px solid var(--color-rule-strong); padding:1.2rem; background:var(--color-surface-alt); align-items:center; }
+  .lr-filter p { font:500 1.15rem var(--font-mono); padding:.7rem; background:var(--color-surface); border:1px solid var(--color-rule-strong); }
+  .lr-cross { display:grid; text-align:center; gap:.6rem; font:.8rem var(--font-mono); color:var(--color-accent-strong); }
+  .lr-filter small { color:var(--color-text-secondary); }
+  .lr-static > p { font:.78rem/1.6 var(--font-sans); color:var(--color-text-secondary); }
+  .lr-log { display:grid; grid-template-columns:1fr 1fr 1fr; border-top:6px solid var(--color-accent); gap:1rem; background:var(--color-surface-alt); padding:1rem; }
+  .lr-log div { border-left:2px solid var(--color-accent); padding-left:.7rem; }
+  .lr-log b,.lr-log span { display:block; overflow-wrap:anywhere; }
+  .lr-log span { color:var(--color-text-secondary); margin-top:.5rem; }
+  .lr-bracket { display:flex; justify-content:space-between; gap:.6rem; padding:.7rem; border:1px solid var(--color-rule-strong); }
+  @media(max-width:580px) { .lr-filter { grid-template-columns:1fr; } .lr-cross { padding:.6rem; } .lr-log { grid-template-columns:1fr; border-top:0; border-left:6px solid var(--color-accent); } .lr-bracket { font-size:.72rem; } }
+</style>

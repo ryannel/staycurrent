@@ -1,0 +1,1 @@
+Accepted after the single substantive setup-prerequisite clarification. Coordinator read complete article/context, checked PG18primarymanual and currentrendering/build; confirmation at articles/pg-logical-replication/repairs/distinct-instances/. Independent reader had no substantive/optional finding. Unaffected native/SQL/media checks retained; no added round.
