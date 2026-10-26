@@ -1,0 +1,11 @@
+# Blind reader notes — crdb-transactions v01
+
+Read the four rendered illustrations (labels, captions and current step explanations) before the full body. These notes precede plans, shared example facts, author records and verdicts; no technical report read.
+
+The illustration sequence establishes two identities (engine T and purchase-103), commitment evidence before cleanup, validation of old reads, and complete-operation retry while retaining purchase identity. Figure 2 changes STAGING alone into STAGING plus successful required writes, then follows coordinator loss without another stock decrement. Figure 3 makes throwing away an invalidated answer explicit. Figure 4 retains customer, key and basket above both attempts and returns only after commit. These are clear conceptual state drawings rather than measured traces. No substantive teaching/editorial problem identified in this first pass.
+
+The body develops the same argument in order: provisional work; commitment evidence; retries; bounded application handling; uncertainty recovery. Established section names such as “Write intents and transaction records”, “Parallel Commits and intent resolution” and “Retry savepoints” are searchable and plain. “The statement returning an order number does not establish success” gives the application consequence at the point it matters. The separate explanation of gateway write buffering and client result buffering prevents an easy confusion without splitting the argument. The ordinary savepoint and cockroach_restart are clearly assigned different jobs.
+
+Calibrated against bounded passages and current finished figures from Storage and durability (write-ahead log), Indexes (scan and index entries) and Sequence diagrams (waiting and replies). The reference drawings make their evidence/ordering concrete; this article achieves that through fixed stock/order identities and paired commitment/read/retry states. Its scope qualifications are longer than the shortest reference captions but prevent plausible mistaken inferences about native timing, ranges and observed failures.
+
+Current desktop System theme resolved dark at 1280×720; representative figure states inspected. Phone, explicit themes and remaining meaningful control checks follow. No plans or author quality notes consulted yet.

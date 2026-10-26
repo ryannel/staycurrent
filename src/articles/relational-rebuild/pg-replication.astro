@@ -1,0 +1,186 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import WalProgress from '../../components/relational-rebuild-pg-replication/WalProgress.astro';
+---
+
+<p>A PostgreSQL <strong>physical standby</strong> starts with a copy of a database cluster and follows its write-ahead log, or WAL. It can answer read-only queries while recovery keeps applying changes. If it must take over writes, the useful question is how much of the chosen history it can recover, alongside whether the former writer has been excluded.</p>
+<p>Follow the shop's independent price change: P7, the blue mug, rises from 20.00 to 22.00. Standby A has its commit durably stored but has not replayed it; B is still before the change. Both can answer 20.00, yet only A has shown that it can recover 22.00. We will make that distinction visible in PostgreSQL's measurements, commit settings and handover.</p>
+<p><a href="/learn/databases/relational/replicas-and-read-routing/">Replicas, lag and read routing</a> establishes the read promises, and <a href="/learn/databases/relational/failover/">Failover and fencing</a> establishes writer exclusion and reconciliation. Here the commands and views are PostgreSQL 18's. Order 103 stays pending with no payment and agreed line prices totalling 29.00; stock remains P3 10, P7 0 and P9 4. U and C in the drawings are symbolic update and commit records, without native addresses or elapsed times.</p>
+
+<h2 id="copy">A standby follows the cluster's WAL</h2>
+<p>The primary's WAL sender streams records to the standby's WAL receiver. The receiver writes them to local WAL; the startup process performs recovery, applying those records to the standby's pages. The application does not send its UPDATE to the standby a second time. A compatible base copy supplies the pages to which later WAL applies.</p>
+<p>Physical replication follows the database cluster, including its databases and roles, rather than a selected products table. Use the same PostgreSQL major version and hardware architecture, with matching minor releases preferred. Unlogged-table contents are not replicated. Selecting rows or tables for a separate destination is the different lifecycle described in <a href="/learn/databases/relational/postgresql/logical-replication/">PostgreSQL logical replication and change feeds</a>.</p>
+
+<h3 id="setup">Create a streaming standby</h3>
+<p>For one direct standby, prepare the primary with <code>wal_level = replica</code> or higher, enough <code>max_wal_senders</code> for the standby and backup connections, and capacity in <code>max_replication_slots</code> for its slot. Permit a dedicated login with <code>REPLICATION</code> through a narrowly scoped <code>pg_hba.conf</code> rule. Use authenticated, protected transport; the replication login can obtain the cluster's contents.</p>
+<p>On A, with its server stopped and a new empty data directory owned by PostgreSQL, take a full base backup. This shell example assumes the connection service <code>shop_primary_replication</code> already names the verified upstream and protected credentials. The destination and slot are deliberately new.</p>
+<pre aria-label="Create the new standby from a full base backup"><code>pg_basebackup --dbname='service=shop_primary_replication application_name=shop_a' \
+  --pgdata=/srv/postgresql/shop-a --format=plain --wal-method=stream \
+  --checkpoint=spread --write-recovery-conf \
+  --create-slot --slot=shop_a</code></pre>
+<p><code>--wal-method=stream</code> includes the WAL needed to make the backup consistent and uses another sender connection. <code>--write-recovery-conf</code>, also called <code>-R</code>, creates <code>standby.signal</code> and records the upstream connection and slot in <code>postgresql.auto.conf</code>. The signal file makes the next start enter standby mode. The slot retains WAL that this consumer still needs after the backup; someone must own its storage cost if A never starts.</p>
+<p>Check the copied configuration before starting A: its listener, paths, tablespaces, recovery connection and any inherited synchronous policy must fit this server. Start it with <code>hot_standby = on</code> for reads. On this exact server, verify its identity and role, then inspect the actual sender connection:</p>
+<Sql label="Inspect the exact standby and its upstream" code={`SELECT current_setting('cluster_name') AS configured_name,
+       inet_server_addr(), inet_server_port(), pg_is_in_recovery();
+SHOW transaction_read_only;
+
+SELECT status, sender_host, sender_port, slot_name,
+       receive_start_tli, received_tli, written_lsn, flushed_lsn
+FROM pg_stat_wal_receiver;`} />
+<p>The configured name is a label, not proof of identity. Match it with the endpoint and deployment inventory. Expect recovery to be true, transactions to be read-only and the receiver to name the intended primary and slot. A consistent standby can answer reads before it has caught up. Keep its replication progress as a separate readiness condition.</p>
+
+<h2 id="progress">Written, flushed and replayed WAL</h2>
+<p>WAL arrival, a filesystem write, a durable flush and replay are separate events. Figure 1 holds replay back while the receiver continues. Step through the flush and watch the price on A.</p>
+<WalProgress />
+<p>At the flush step, A has the committed price in recoverable WAL, while its new read still sees 20.00. At the last step, replay includes C and a new snapshot can see 22.00. A report that established an earlier Repeatable Read snapshot can continue to see 20.00. Catching up the server does not replace that snapshot.</p>
+<p>A separate drill on native PostgreSQL 18.6 reproduced the durable-but-unreplayed distinction. With A's replay deliberately paused, the primary's price transaction completed using <code>synchronous_commit = on</code>. A's synced receive position reached <code>0/40013A8</code>, while replay stayed at <code>0/4000000</code> and a fresh read returned 20.00. A later no-op price update using <code>remote_apply</code> was observed waiting at <code>SyncRep</code>. Resuming A's replay allowed that commit to complete and a new read returned 22.00.</p>
+<p>The drill used a primary and two standby processes with separate directories and Unix sockets inside one isolated Linux container. It checks server behaviour on surviving storage; power loss, independent machine failures and external fencing were outside the test.</p>
+
+<h3 id="measure">Read the progress evidence</h3>
+<p>On the primary, <code>pg_stat_replication</code> has a row for each directly connected WAL sender. Its remote positions come from standby reports, so they can trail the standby's actual progress. A cascading standby's downstream copies need inspection there too.</p>
+<Sql label="Read sender and standby progress on the primary" code={`SELECT application_name, client_addr, state, sync_state,
+       sent_lsn, write_lsn, flush_lsn, replay_lsn,
+       pg_wal_lsn_diff(sent_lsn, write_lsn) AS sent_not_written,
+       pg_wal_lsn_diff(flush_lsn, replay_lsn) AS flushed_not_replayed,
+       write_lag, flush_lag, replay_lag
+FROM pg_stat_replication;`} />
+<div class="table-scroll" role="region" tabindex="0" aria-label="Meaning of standby progress positions"><table><caption>Read positions as stages, within the same compatible history</caption><thead><tr><th>Position</th><th>Evidence it supplies</th></tr></thead><tbody>
+<tr><td><code>sent_lsn</code></td><td>The sender has sent WAL through here; no remote persistence follows from that alone.</td></tr>
+<tr><td><code>write_lsn</code></td><td>The standby reports writing through here; the operating system may still cache it.</td></tr>
+<tr><td><code>flush_lsn</code></td><td>The standby reports a durable WAL flush through here.</td></tr>
+<tr><td><code>replay_lsn</code></td><td>The standby reports applying WAL through here.</td></tr>
+</tbody></table></div>
+<p>On A itself, <code>pg_stat_wal_receiver.written_lsn</code> and <code>flushed_lsn</code> separate receiver writes from flushes. There is a naming trap in the recovery functions:</p>
+<Sql label="Inspect local standby recovery progress" code={`SELECT pg_last_wal_receive_lsn() AS received_and_synced,
+       pg_last_wal_replay_lsn()  AS replayed,
+       pg_is_wal_replay_paused() AS replay_pause_requested;`} />
+<p><code>pg_last_wal_receive_lsn()</code> already includes sync to disk. It is not the first, volatile receipt stage of Figure 1. It can be null before streaming starts; after recovery ends it stays at the last streamed-and-synced position. The replay function similarly retains its recovery position after promotion. Neither frozen value proves that a server is still a standby.</p>
+<p>A growing flush-to-replay gap directs attention to recovery: a deliberate pause, query conflicts, I/O or work competing for capacity. A gap before durable receipt directs attention upstream, through transport and receiver storage. Sample in fresh short transactions and correlate both sides. A byte difference measures backlog, while <code>write_lag</code>, <code>flush_lag</code> and <code>replay_lag</code> describe recent delays including the sender learning about progress. They do not predict catch-up time. Subtracting the last replayed transaction's timestamp from now also makes an idle caught-up server look increasingly late.</p>
+
+<h3 id="qualify">Check the copy that will answer</h3>
+<p>Suppose the price editor must read its confirmed change from A. A primary connection can obtain a conservative required position after the successful commit:</p>
+<Sql label="Obtain a conservative requirement after a successful commit" code={`BEGIN;
+SET LOCAL synchronous_commit = on;
+UPDATE products SET price = 22.00 WHERE product_id = 'P7';
+COMMIT;
+-- Only after the client has received successful COMMIT:
+SELECT pg_current_wal_insert_lsn() AS required_lsn;`} />
+<p>That server-wide insertion position is at or beyond this transaction's commit record; concurrent work may put it further ahead. It is not the exact commit address, and obtaining it does not identify an uncertain commit outcome. Carry it with the cluster system identifier and the relevant timeline ancestry, under a topology protocol that invalidates it when history changes.</p>
+<p>Within that validated history, poll the following condition on the exact connection to A, binding the required position as <code>$1</code>. Give the application loop a finite deadline; a null replay position is not ready.</p>
+<Sql label="Check replay on the exact future read connection" code={`SELECT pg_is_in_recovery()
+       AND coalesce(pg_last_wal_replay_lsn() >= $1::pg_lsn, false)
+         AS ready;`} />
+<p>When it succeeds, run the price query in a subsequent Read Committed statement, or start a new read transaction afterwards. Do not let a pool move the read to B or reuse an earlier Repeatable Read snapshot. On timeout or a changed topology, take the declared primary fallback or return that the freshness promise cannot be met. The general routing choices remain with the prerequisite article.</p>
+<p>A numeric LSN contains no timeline identity. Two branches can pass the same numeric address with different contents. PostgreSQL's replication-protocol <code>IDENTIFY_SYSTEM</code> reports the system identifier and timeline; timeline history records establish ancestry. A connection address or matching system identifier alone cannot prove that a promoted branch contains the required commit.</p>
+
+<h2 id="sync">What synchronous commit waits for</h2>
+<p>Two settings choose the remote promise: <code>synchronous_standby_names</code> selects the required copies, and <code>synchronous_commit</code> selects their required progress. With reliable storage and normal safeguards, all values except <code>off</code> require the primary's own WAL flush. The extra wait differs:</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Synchronous commit levels"><table><caption>Assume A belongs to the required synchronous standby set</caption><thead><tr><th><code>synchronous_commit</code></th><th>Before success returns</th><th>Can A still read 20.00?</th></tr></thead><tbody>
+<tr><td><code>remote_write</code></td><td>Required copies have written C to their filesystems. Their OS failure may lose it.</td><td>Yes.</td></tr>
+<tr><td><code>on</code></td><td>Required copies have durably flushed C.</td><td>Yes, as at Figure 1's flush step.</td></tr>
+<tr><td><code>remote_apply</code></td><td>Required copies have flushed and replayed C.</td><td>A new snapshot on a required copy includes C.</td></tr>
+<tr><td><code>local</code></td><td>Only the primary's local flush is required.</td><td>Yes; no remote promise.</td></tr>
+<tr><td><code>off</code></td><td>Neither local flush nor remote progress is required before the reply.</td><td>Yes; even the primary can lose recent commits after a crash.</td></tr>
+</tbody></table></div>
+<p>With <code>synchronous_standby_names</code> empty, <code>on</code> enables no remote wait. All the non-off values then have the same local flush behaviour. Use <code>SET LOCAL</code> for a deliberate transaction-specific choice so a borrowed application connection does not keep a weaker setting for its next caller. Local durability is developed in <a href="/learn/databases/relational/postgresql/recovery/">PostgreSQL WAL, checkpoints and durability</a>.</p>
+
+<h3 id="required">Choose the required standbys</h3>
+<p>The names match standby <code>application_name</code> values in <code>primary_conninfo</code>. Give each copy a distinct name and inspect <code>sync_state</code>. For the two copies here, compare these policies:</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Compare required standby policies"><table><caption>Assume A and B are connected and streaming; the transaction uses on</caption><thead><tr><th>Primary configuration</th><th>Who must flush C?</th><th>Promotion implication</th></tr></thead><tbody>
+<tr><td><code>FIRST 1 (shop_a, shop_b)</code></td><td>A has priority. B replaces it if A disconnects.</td><td>Do not assume A acknowledged every commit across a change of synchronous copy.</td></tr>
+<tr><td><code>ANY 1 (shop_a, shop_b)</code></td><td>At least one of A or B.</td><td>An arbitrary surviving member may lack C.</td></tr>
+<tr><td><code>ANY 2 (shop_a, shop_b)</code></td><td>Both A and B.</td><td>Either retains C if its promised storage survives.</td></tr>
+</tbody></table></div>
+<p><code>FIRST</code> is priority selection; <code>ANY</code> accepts the specified count from the list. Neither elects a primary or fences the old one. Under ANY 1, C may be on A alone; a later commit may be acknowledged by B after it catches up. Candidate eligibility must cover the actual confirmed history and policy changes, rather than remembering that a server was once synchronous.</p>
+<p>If the required acknowledgements cannot arrive, commits wait. With <code>remote_apply</code>, paused replay can hold a write even while receipt and flush advance. A missing required copy can hold writes while the primary itself remains healthy. Choosing <code>local</code> to release future work accepts a different survival promise; it is an incident decision to record, not a way to retain the old promise for free.</p>
+<p>A commit waiting for a synchronous reply has already passed its local commit work. A client timeout, lost connection or cancelled wait does not establish rollback. Recover the request's outcome using <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a>, preserving its original identity.</p>
+
+<h2 id="retention">Keep the standby able to recover</h2>
+<p>A useful standby needs both a complete WAL chain and enough capacity to apply it. A receiver marked streaming does not prove either future resumability or a bounded time to useful service.</p>
+<h3 id="slots">Slots, archives and missing WAL</h3>
+<p>A physical slot keeps WAL from its <code>restart_lsn</code>, the oldest position its consumer may still need. Inspect retention on the sending server:</p>
+<Sql label="Inspect physical slot retention" code={`SELECT slot_name, active, restart_lsn, wal_status,
+       safe_wal_size, invalidation_reason,
+       pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)
+         AS retained_span_bytes
+FROM pg_replication_slots
+WHERE slot_type = 'physical';`} />
+<p>That span is an approximate history obligation, not an exact directory-size count. Compare its growth with actual WAL storage and free space. A disconnected A with an unlimited slot can keep retaining while the primary writes. <code>max_slot_wal_keep_size</code> caps slot retention at checkpoint time, trading storage protection for the possibility that A loses required segments. It is not a hard whole-directory quota.</p>
+<p><code>wal_status</code> distinguishes reserved or extended retention from <code>unreserved</code>, where required files are liable to removal, and <code>lost</code>, where the slot is unusable. <code>safe_wal_size</code> gives the remaining headroom before the slot risks loss; null also covers unlimited retention or an already lost slot. Read it with the status. Check configured idle-slot invalidation too.</p>
+<p><code>wal_keep_size</code> separately retains a minimum recent amount, without tracking each consumer's needs. If A asks for a segment that is gone, a usable archive can supply it through <code>restore_command</code>. Without a complete chain from its base state, take a fresh base copy. Do not skip the segment or delete files from <code>pg_wal</code>. Before removing an abandoned slot, decide whether its consumer will return, recover from archive or be rebuilt. <a href="/learn/databases/relational/postgresql/backup-and-restore/">Restoring PostgreSQL to a recovery target</a> owns the archive and backup chain.</p>
+
+<h3 id="conflicts">Queries that delay recovery</h3>
+<p>Return to the report whose snapshot includes P7 at 20.00. After A replays C, new snapshots can read 22.00 while that report still needs the old tuple. Later cleanup on the primary can generate WAL that removes it. When this cleanup record reaches recovery, recovery must wait or cancel the conflicting read. The conflict holds subsequent WAL back; it does not hide the already replayed C from new snapshots.</p>
+<figure class="physical-figure"><figcaption><span>Figure 2</span> The report and recovery need incompatible pages</figcaption><div class="conflict-path"><div><strong>Report on A</strong><p>Earlier snapshot → needs 20.00</p></div><div><strong>Incoming cleanup WAL</strong><p>After C → remove the old version</p></div></div><div class="choice-path"><div><strong>Allow the report to finish</strong><p>Delay replay → subsequent WAL waits</p></div><div><strong>Cancel the conflicting report</strong><p>Release its snapshot → recovery can proceed</p></div></div><p class="caption">A conceptual cleanup conflict after C has been replayed. New snapshots already see 22.00 here. The report's earlier snapshot and later cleanup delay are separate from Figure 1's replay pause.</p></figure>
+<p><code>max_standby_streaming_delay</code> and <code>max_standby_archive_delay</code> limit the delay recovery may tolerate for the corresponding WAL source. They are replay-delay budgets, not a fresh timeout for each query. A query can inherit little remaining grace after previous delays. Short budgets favour a ready failover copy; long budgets favour reports at the cost of lag. Inspect <code>pg_stat_database_conflicts</code> and the server logs to identify the actual conflict.</p>
+<p><code>hot_standby_feedback</code> sends a retention horizon upstream so cleanup can preserve tuples needed by standby snapshots. That shifts cost to the primary: dead versions can accumulate. It does not prevent every recovery conflict, such as replay of conflicting DDL locks. A reporting standby and a failover candidate may therefore need different policies. Coordinate the primary's retained horizons with <a href="/learn/databases/relational/postgresql/row-versions/">PostgreSQL vacuum and transaction age</a>.</p>
+
+<h2 id="history">Choose the history to promote</h2>
+<p>Now the primary is unreachable. Before promoting anything, enforce the fencing protocol from the prerequisite: confirm the former writer cannot serve authoritative writes and cannot restart as one. PostgreSQL's promotion command performs neither failure detection nor that exclusion.</p>
+<p>Identify each candidate's system identifier, timeline ancestry, recovery state and recoverable WAL. A's durable C can be replayed even though its last price query said 20.00. B's identical answer hides the missing commit. Under a policy that required A's durable acknowledgement for C, choosing B without obtaining C sacrifices that confirmed edit.</p>
+<figure class="physical-figure"><figcaption><span>Figure 3</span> Promotion chooses a surviving history</figcaption><div class="history-prefix"><strong>Common earlier history</strong><span>P7 20.00 · order 103 retained</span></div><div class="branches"><div><strong>A · C durable</strong><p>Earlier → U → C</p><p>Replay available WAL → 22.00</p><b>Can retain this edit</b></div><div><strong>B · before U</strong><p>Earlier → new timeline</p><p>Without C → starts at 20.00</p><b>Omits the confirmed edit</b></div></div><p class="history-footer">Confirm exclusion → choose and recover history → promote → verify → admit writes</p><p class="caption">The A/B scenario assumes no extra WAL source for B. New timeline is a branch identity, not a higher freshness score. A's possession of this C alone does not prove that it holds every real confirmed commit.</p></figure>
+<p>An emergency may leave only a possible loss boundary. Last-known replay or lag is incomplete evidence if the source continued writing afterwards. Preserve what is known, which commit settings were in use and which surviving histories contain the acknowledged work. If no candidate meets the promise, retaining the promise means waiting for a qualifying source or keeping writes unavailable. Accepting possible loss must be explicit.</p>
+<h3 id="switchover">Switchover with a known boundary</h3>
+<p>A planned transfer can establish more. Stop write admission and drain in-flight work, including workers and other direct writers. After the final committed work, record a final source WAL boundary and its history identity. Confirm a completed source shutdown or fence and keep restart exclusion in force. Confirm the candidate has the required durable WAL and can replay through that boundary before opening the new writer.</p>
+<p>A clean source shutdown can generate additional WAL; obtain or preserve what recovery actually needs rather than treating an earlier application boundary as the end of all server activity. If stopping the source prevents the candidate obtaining missing WAL, keep service closed while retrieving it from an approved surviving source. Reopening writes to “help it catch up” invalidates the final boundary.</p>
+
+<h2 id="promote">Promote and verify the new primary</h2>
+<p>With the authority and history gates satisfied, issue promotion on the verified candidate. These are alternatives, using the server's data directory or an authorised connection to that server:</p>
+<pre aria-label="Promote the identified candidate with pg_ctl"><code>pg_ctl --pgdata=/srv/postgresql/shop-a --wait --timeout=60 promote</code></pre>
+<Sql label="Alternative SQL promotion on the identified standby" code={`SELECT pg_promote(wait => true, wait_seconds => 60);`} />
+<p>Promotion leaves recovery after applying immediately available archive or local WAL; it does not reconnect to the old primary to find missing history. Recovery may therefore advance beyond the last sampled replay position. A successful waited call confirms promotion completion. A timeout needs further inspection: it does not prove that promotion failed or authorise a competing promotion.</p>
+<p>Check this server again with <code>pg_is_in_recovery()</code>, now false, its current timeline through the replication protocol, and a fresh read of expected business facts. Promotion creates a new timeline. Recovery-position functions retain their old values, so do not use them as a new primary's current WAL counters.</p>
+<p>In the drill, the former primary's clean stop completed before A was promoted with a waited <code>pg_ctl</code> call. A then reported recovery false and its current WAL filename began <code>00000002</code>, identifying timeline 2. Its latest completed checkpoint still reported timeline 1 at that moment. Checkpoint metadata describes that checkpoint; promotion completion does not promise an immediate new-timeline checkpoint. Fresh row checks found the retained price and order facts below.</p>
+<Sql label="Verify the promoted server's shop facts" code={`SELECT p.price AS catalogue_price, p.stock AS mug_stock,
+       o.status,
+       (SELECT sum(quantity * unit_price) FROM order_items
+        WHERE order_id = 103) AS line_total,
+       (SELECT count(*) FROM payments WHERE order_id = 103)
+         AS payment_count
+FROM products p CROSS JOIN orders o
+WHERE p.product_id = 'P7' AND o.order_id = 103;
+-- A after recovering C: 22.00 | 0 | pending | 29.00 | 0
+-- B without C:         20.00 | 0 | pending | 29.00 | 0`} />
+<p>The row check complements the history and authority evidence; it cannot prove them. Admit writes only after those checks pass. Replace old pooled connections and direct worker targets, then verify the new endpoint under the intended caller identities. Account for requests whose replies were lost during the transfer. A changed DNS record does not replace an existing connection.</p>
+
+<h2 id="return">Return the former primary as a standby</h2>
+<p>Keep the former primary excluded while preserving its data, WAL and outside request evidence. A rewind or new base copy replaces state. If B omitted C, neither operation merges the confirmed price edit into B's new history. Reconciliation of accepted operations must be resolved separately under <a href="/learn/databases/relational/failover/">Failover and fencing</a>.</p>
+<p><code>pg_rewind</code> can reuse unchanged blocks when source and target share an ancestor. The target is the former primary being replaced; the source is the chosen new primary. The target needs data checksums or <code>wal_log_hints</code> enabled before the divergent work, with <code>full_page_writes = on</code>. Required target WAL back to divergence and source WAL for subsequent recovery must be available. Turning hints on afterwards cannot recreate missing history.</p>
+<p>With the target cleanly shut down, preserved evidence and an authorised source connection, first assess those prerequisites and run the supported rewind procedure. This shell outline names both directions explicitly:</p>
+<pre aria-label="Rewind the stopped former primary towards the chosen new primary"><code>pg_rewind --target-pgdata=/srv/postgresql/former-primary \
+  --source-server='service=shop_new_primary_rewind' \
+  --write-recovery-conf</code></pre>
+<p><code>-R</code> writes standby recovery configuration for the source connection. Recheck it before starting: rewind copies configuration too, so listener settings, paths and upstream credentials may need correction. Configure an appropriate replication login and deliberately owned physical slot for ongoing streaming, plus archive access where needed. Verify <code>standby.signal</code> is present. If rewind's prerequisites fail, or a failed rewind leaves the directory unusable, create a fresh base copy instead.</p>
+<h3 id="protection">Verify the restored protection</h3>
+<p>Start the returned copy in recovery. Verify its endpoint, system identifier and chosen timeline history, then its receiver's actual upstream and slot. On the new primary, verify streaming, flush and replay advancing for the returning copy. Check the intended synchronous policy explicitly: copied settings may refer to a departed standby or to the server itself. A policy waiting for that missing name can leave the promoted server's commits blocked.</p>
+<p>Re-establish the intended slots and required standby set, test the chosen commit promise and check callers' routing. A successful promotion restores a writer. Only a qualified surviving standby, working retention and the intended acknowledgement policy restore the planned protection. Rehearse the return as well as the promotion, with a paused replay, an unavailable required copy and a former primary that tries to return.</p>
+<p>The drill preserved the former primary's directory and returned it using a fresh full base copy of A. The returned process was in recovery, streaming from A on timeline 2 through its new physical slot. After explicitly selecting it as the required standby, a <code>remote_apply</code> commit completed and its fresh read returned <code>22.00 | 0 | pending | 29.00 | 0</code>. This exercised fresh-copy return; the rewind procedure above was checked against the manual.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against PostgreSQL 18 documentation. Figures are conceptual schedules. The native observations used PostgreSQL 18.6 on Linux, with three separately controlled processes inside one disposable container, no network listener and normal durability safeguards. The owned fixture was removed after the drill. The same row query was also checked on constructed states in PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly, in a separate disposable instance. Neither run establishes power-loss survival, external fencing, a recovery-capacity rate or a production failover time.</p>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/warm-standby.html">Log-shipping standby servers</a> and <a href="https://www.postgresql.org/docs/18/app-pgbasebackup.html">pg_basebackup</a>: compatible base copies, streaming, standby configuration and promotion's available WAL.</li>
+<li><a href="https://www.postgresql.org/docs/18/monitoring-stats.html#MONITORING-PG-STAT-REPLICATION-VIEW">Replication statistics</a> and <a href="https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-RECOVERY-INFO">Recovery functions</a>: sender and receiver positions, lag fields and the synced meaning of receive LSN.</li>
+<li><a href="https://www.postgresql.org/docs/18/runtime-config-wal.html#GUC-SYNCHRONOUS-COMMIT">synchronous_commit</a>, <a href="https://www.postgresql.org/docs/18/runtime-config-replication.html">Replication settings</a> and <a href="https://www.postgresql.org/docs/18/view-pg-replication-slots.html">pg_replication_slots</a>: acknowledgement selection, WAL retention and slot state.</li>
+<li><a href="https://www.postgresql.org/docs/18/hot-standby.html">Hot standby</a>: snapshot visibility, recovery conflicts and the cost of feedback.</li>
+<li><a href="https://www.postgresql.org/docs/18/protocol-replication.html">Streaming replication protocol</a>, <a href="https://www.postgresql.org/docs/18/warm-standby-failover.html">Failover</a>, <a href="https://www.postgresql.org/docs/18/app-pg-ctl.html">pg_ctl</a> and <a href="https://www.postgresql.org/docs/18/app-pgrewind.html">pg_rewind</a>: history identity, role transfer and return prerequisites.</li>
+<li><a href="https://www.postgresql.org/docs/18/datatype-pg-lsn.html">The pg_lsn type</a> and <a href="https://www.postgresql.org/docs/18/sql-createtable.html#SQL-CREATETABLE-UNLOGGED">Unlogged tables</a>: byte positions and the physical-replication exception.</li>
+<li><a href="https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/replication/syncrep.c">PostgreSQL's synchronous-replication source</a>: why cancelling the remote wait does not abort an already locally committed transaction.</li>
+</ul>
+
+<style>
+  .physical-figure { margin:2.2rem 0; font:.83rem/1.6 var(--font-sans); }
+  .physical-figure figcaption { font:500 1.2rem/1.4 var(--font-serif); margin-bottom:.7rem; }
+  .physical-figure figcaption > span { font:.65rem var(--font-mono); letter-spacing:.08em; text-transform:uppercase; color:var(--color-text-secondary); margin-right:.7rem; }
+  .physical-figure p { font:inherit; margin:.5rem 0; }
+  .physical-figure .caption { color:var(--color-text-secondary); font:.8rem/1.6 var(--font-sans); margin-top:.8rem; }
+  .conflict-path,.choice-path,.branches { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+  .conflict-path > div,.choice-path > div,.branches > div,.history-prefix { border:1px solid var(--color-rule-strong); padding:1rem; background:var(--color-surface-alt); }
+  .choice-path { margin-top:1rem; }
+  .choice-path > div { border-top:3px solid var(--color-accent); }
+  .history-prefix { text-align:center; margin:0 3rem 1rem; }
+  .history-prefix span { display:block; color:var(--color-text-secondary); }
+  .branches b { display:block; padding-top:.7rem; border-top:1px solid var(--color-rule-strong); }
+  .history-footer { padding:1rem; border-bottom:1px solid var(--color-rule-strong); text-align:center; }
+  @media(max-width:550px) { .conflict-path,.choice-path,.branches { grid-template-columns:1fr; gap:.6rem; }.history-prefix{margin:0 0 .7rem}.physical-figure figcaption{font-size:1.1rem} }
+</style>
