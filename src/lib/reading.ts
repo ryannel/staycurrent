@@ -11,11 +11,10 @@ export const reading: ReadingEntry[] = [
   { href: relationalHome, title: relationalIntroduction.title, description: relationalIntroduction.description, group: 'Start here' },
   { href: `${relationalHome}sandbox/`, title: 'SQL sandbox', description: 'Explore PostgreSQL in your browser, with guided lessons from first queries to migrations, indexes and recovery reasoning.', group: 'Practice', keywords: 'PostgreSQL interactive tutorial transactions rollback' },
   { href: `${relationalHome}practice/`, title: 'Start the SQL practice', description: 'Open a disposable PostgreSQL database and use the independent setup supplied by each article.', group: 'Practice', keywords: 'PostgreSQL psql Docker exercises' },
-  ...relationalCollection.flatMap(group => group.articles.filter(article => !!article.status).map(article => ({
+  ...relationalCollection.flatMap(group => group.articles.filter(article => !!article.status && !!article.slug).map(article => ({
     href: relationalArticleHref(article.slug), title: article.title, description: article.description,
     group: group.title, keywords: article.scope,
   }))),
-  { href: `${relationalHome}checkout/`, title: 'How a relational database keeps an order together', description: 'A worked checkout, from related records to concurrent purchases and recovery.', group: 'A worked example' },
   { href: '/learn/databases/column-stores/', title: 'How a column store works', description: 'Column layouts, sorting, writes and replication, with four experiments.', group: 'Other database and storage approaches', keywords: 'analytics ClickHouse compression' },
   { href: '/learn/databases/documents/', title: 'How document boundaries shape a database', description: 'Nested records, shared details and the consequences of choosing a document boundary.', group: 'Other database and storage approaches' },
   { href: '/learn/databases/partitioned/', title: 'Choosing keys for partitioned data', description: 'Partition keys, sort order and the cost of another access pattern.', group: 'Other database and storage approaches' },

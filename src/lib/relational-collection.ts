@@ -14,7 +14,7 @@ export const relationalCollection: RelationalGroup[] = relationalPublishedGroups
   })),
 }));
 /** Retired article routes resolve to the revised explanation that owns the subject. */
-export const relationalAliases: Record<string, string> = {
+const previousAliases: Record<string, string> = {
   "choosing-indexes": "indexes",
   "join-algorithms": "query-execution",
   "commit-and-recovery": "storage",
@@ -39,6 +39,19 @@ export const relationalAliases: Record<string, string> = {
   "product-comparison": "",
   "adding-another-system": "outboxes-and-jobs"
 };
+// Canonical new articles take precedence over former redirects (e.g. normalisation).
+const currentSlugs = new Set(relationalPublishedEntries.map(entry => entry.slug));
+export const relationalAliases: Record<string, string> = Object.fromEntries([
+  ...Object.entries(previousAliases),
+  ...relationalPublishedEntries.flatMap(entry => (entry.legacySlugs ?? []).map(slug => [slug, entry.slug])),
+].filter(([slug]) => !currentSlugs.has(slug)));
+for (const slug of Object.keys(relationalAliases)) {
+  const seen = new Set([slug]);
+  while (Object.hasOwn(relationalAliases, relationalAliases[slug]) && !seen.has(relationalAliases[slug])) {
+    seen.add(relationalAliases[slug]);
+    relationalAliases[slug] = relationalAliases[relationalAliases[slug]];
+  }
+}
 export const relationalArticleHref = (slug: string) => `/learn/databases/relational/${slug ? `${slug}/` : ''}`;
 export const relationalPublication: Record<string, string> = Object.fromEntries(
   relationalPublishedEntries.map(entry => [entry.id, entry.slug]),

@@ -1,0 +1,53 @@
+import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
+import { resolve, join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
+import { parse } from 'node-html-parser';
+const root = process.cwd();
+const work = 'docs/article-work/relational-rebuild-2026-10-25';
+const collection = JSON.parse(readFileSync('src/articles/relational-rebuild/collection.json'));
+const status = JSON.parse(readFileSync(`${work}/status.json`));
+const home = '/learn/databases/relational/';
+const issues = [];
+const check = (condition, message) => { if (!condition) issues.push(message); };
+const directory = parse(readFileSync('dist/articles/index.html', 'utf8'));
+const routes = [];
+for (const entry of collection.entries) {
+  const route = home + (entry.slug ? `${entry.slug}/` : '');
+  const file = `dist${route}index.html`;
+  check(existsSync(file), `Missing public page: ${route}`);
+  if (!existsSync(file)) continue;
+  const html = readFileSync(file, 'utf8');
+  const page = parse(html);
+  const body = page.querySelector('main');
+  check(!page.querySelector('meta[name="robots"]')?.getAttribute('content')?.includes('noindex'), `Noindex: ${route}`);
+  check(page.querySelector('main[data-pagefind-body]'), `Not search-indexed: ${route}`);
+  check(!page.querySelector('.relational-rebuild')?.hasAttribute('data-pagefind-ignore'), `Search body ignored: ${route}`);
+  check(!page.querySelector('.draft-status'), `Draft status: ${route}`);
+  check(!/Draft collection|Reviewed draft|Working draft/.test(body?.textContent ?? ''), `Draft label: ${route}`);
+  check(!body.querySelectorAll('a').some(a => /^(?:https:\/\/staycurrent.dev)?\/(?:review\/|relational-rebuild\/)/.test(a.getAttribute('href') ?? '')), `Private link: ${route}`);
+  check(directory.querySelectorAll('a').some(a => a.getAttribute('href') === route), `Missing directory link: ${route}`);
+  const sources = page.querySelector('details.article-sources');
+  check(sources && !sources.hasAttribute('open'), `Sources not collapsed: ${route}`);
+  check(!page.querySelectorAll('.subject').some(el => el.hasAttribute('open')), `Subject opened by default: ${route}`);
+  check(page.querySelector('[aria-current="page"] .current-marker'), `Missing current marker: ${route}`);
+  const source = readFileSync(`src/articles/relational-rebuild/${entry.key}.astro`);
+  const sha = createHash('sha256').update(source).digest('hex');
+  check(sha === status.articles[entry.key].source_sha256, `Reviewed source changed: ${entry.key}`);
+  routes.push({ key: entry.key, route, title: page.querySelector('h1')?.textContent, source_sha256: sha });
+}
+const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]);
+const downloads = [];
+const sourceRoot = 'src/article-downloads/relational-rebuild';
+for (const file of walk(sourceRoot)) {
+  const suffix = file.slice(sourceRoot.length + 1);
+  const output = `dist${home}downloads/${suffix}`;
+  check(existsSync(output), `Missing public download: ${suffix}`);
+  if (!existsSync(output)) continue;
+  check(readFileSync(file).equals(readFileSync(output)), `Changed download bytes: ${suffix}`);
+  downloads.push({ path: `${home}downloads/${suffix}`, sha256: createHash('sha256').update(readFileSync(output)).digest('hex') });
+}
+check(!existsSync('dist/review/relational-rebuild'), 'Preview routes included in public build');
+const result = { routes_checked: routes.length, downloads_checked: downloads.length, reviewed_bodies_unchanged: issues.every(i => !i.startsWith('Reviewed source changed')), issues, routes, downloads };
+writeFileSync(`${work}/publication/local-check.json`, JSON.stringify(result, null, 2) + '\n');
+console.log(JSON.stringify({ ...result, routes: undefined, downloads: undefined }));
+if (issues.length) process.exitCode = 1;

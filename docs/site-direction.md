@@ -7,6 +7,18 @@ overview and the database guide's linked reading, while removing obsolete conten
 and unused infrastructure. The [earlier direction](history/site-direction-2026-10-02.md)
 records the wider coverage discussion.
 
+## Relational collection publication, 26 October 2026
+
+The user authorised full publication of all 59 reviewed replacement articles from
+`src/articles/relational-rebuild/`. They replace the normal relational reading,
+with the accepted foundation route, optional depth and both implementation branches.
+The directory, search, current-article tree and downloads use public routes.
+Old article URLs redirect to their replacements. Superseded content and evidence
+endpoints are removed; the SQL sandbox and local practice remain separate tools.
+The reviewed article bodies and interactive teaching are unchanged. Publication
+checks reuse the completed article and assembled reviews; there is no new corpus review.
+See the [publication record](article-work/relational-rebuild-2026-10-25/publication.md).
+
 ## Relational collection publication, 24 October 2026
 
 The user authorised publication of the complete 58-article collection, replacing

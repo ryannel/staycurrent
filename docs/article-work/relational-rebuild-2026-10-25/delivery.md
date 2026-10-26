@@ -1,8 +1,10 @@
 # Relational collection rebuild
 
-Completed 26 October 2026. All 59 articles are written, independently reviewed and accepted. The one assembled collection review found no substantive gaps, ownership problems or broken reading routes. All article checkpoints are committed and pushed; this replacement remains unpublished.
+Completed 26 October 2026. All 59 articles are written, independently reviewed and accepted. The one assembled collection review found no substantive gaps, ownership problems or broken reading routes. All article checkpoints are committed and pushed; the user subsequently authorised full publication.
 
-[Read the collection](http://127.0.0.1:4606/review/relational-rebuild/).
+[Read the published collection](https://staycurrent.dev/learn/databases/relational/).
+
+See [publication.md](publication.md) for the authorised public integration and cleanup.
 
 ## Reading and navigation
 
@@ -19,6 +21,6 @@ The [assembled review](assembly/review.md) reuses completed article checks rathe
 
 ## Remaining scope
 
-No required writing or review work remains. Publication needs separate authorisation. One low-priority template note remains optional: the introduction’s expanded descendant catalogue duplicates its closed subject directory and adds scrolling.
+No required writing or review work remains. Full publication was authorised on 26 October 2026. One low-priority template note remains optional: the introduction’s expanded descendant catalogue duplicates its closed subject directory and adds scrolling.
 
 Exact inputs, frozen first versions, accepted local corrections and review records are retained under articles/, batches/ and assembly/. See [status.json](status.json) for final source hashes and review pointers.

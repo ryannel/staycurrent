@@ -1,3 +1,7 @@
+# Publication authorised and integrated
+
+All 59 reviewed articles now supply the public relational routes. Superseded relational source collections and experiments have been removed at the user’s request. See [publication.md](publication.md) and [status.json](status.json). The completed editorial and assembly checks remain valid. Deployment follows the push to origin/main.
+
 # Relational rebuild: complete, unpublished
 
 All59 articles are independently reviewed and accepted. One assembled coverage/ownership/prerequisite/route review found no substantive collection problems. Required work is complete; publication is not authorised.

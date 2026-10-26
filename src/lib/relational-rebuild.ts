@@ -105,15 +105,15 @@ export function relationalRebuildStates(
 }
 
 /** A raw route builder; use hrefFor when creating links to reading. */
-export function relationalRebuildHref(slug = ''): string {
+export function relationalRebuildHref(slug = '', home = relationalRebuildHome): string {
   if (!safeSlug.test(slug)) return fail(`unsafe slug ${slug}`);
-  return `${relationalRebuildHome}${slug ? `${slug}/` : ''}`;
+  return `${home}${slug ? `${slug}/` : ''}`;
 }
 
 /** Planned and missing articles deliberately have no reading URL. */
-export function relationalRebuildHrefFor(key: string, entries: RelationalRebuildState[]): string | undefined {
+export function relationalRebuildHrefFor(key: string, entries: RelationalRebuildState[], home = relationalRebuildHome): string | undefined {
   const entry = entries.find(item => item.key === key);
-  return entry?.available ? relationalRebuildHref(entry.slug) : undefined;
+  return entry?.available ? relationalRebuildHref(entry.slug, home) : undefined;
 }
 
 export function relationalRebuildTree(entries: RelationalRebuildState[], parent: string | null = null): RelationalRebuildNode[] {
@@ -123,12 +123,12 @@ export function relationalRebuildTree(entries: RelationalRebuildState[], parent:
 const escapeHtml = (value: string) => value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll("'", '&#39;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
 /** Defence for handwritten links: leave in-page anchors intact, remove unavailable preview targets. */
-export function relationalRebuildLinks(html: string, entries: RelationalRebuildState[]): string {
+export function relationalRebuildLinks(html: string, entries: RelationalRebuildState[], home = relationalRebuildHome): string {
   return html.replace(/<a\b([^>]*?)\bhref\s*=\s*(["'])(.*?)\2([^>]*)>([\s\S]*?)<\/a>/gi, (match, before, quote, href, after, label) => {
     if (!href.startsWith('/') && !/^https?:\/\/staycurrent\.dev(?:\/|$)/i.test(href)) return match;
     const target = new URL(href.replaceAll('&amp;', '&'), 'https://staycurrent.dev');
     if (target.hostname !== 'staycurrent.dev') return match;
-    const downloadHome = `${relationalRebuildHome}downloads/`;
+    const downloadHome = `${home}downloads/`;
     // Astro's directory-format dev router requires a slash even for this file endpoint.
     // Built static downloads retain their ordinary filenames.
     if (target.pathname.startsWith(downloadHome)) {
@@ -151,6 +151,6 @@ export function relationalRebuildLinks(html: string, entries: RelationalRebuildS
     // Unknown public destinations may be unrelated retained reading; only known owners are rebased.
     if (!entry && !preview) return match;
     if (!entry?.available) return `<span class="relational-rebuild-unavailable">${label} <small>(${entry?.status === 'planned' || !entry ? 'planned' : 'not yet available'})</small></span>`;
-    return `<a${before}href=${quote}${escapeHtml(`${relationalRebuildHref(entry.slug)}${target.search}${target.hash}`)}${quote}${after}>${label}</a>`;
+    return `<a${before}href=${quote}${escapeHtml(`${relationalRebuildHref(entry.slug, home)}${target.search}${target.hash}`)}${quote}${after}>${label}</a>`;
   });
 }
