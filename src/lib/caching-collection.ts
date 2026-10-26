@@ -4,7 +4,7 @@ export const cachingArticles = [
   { slug: 'keys-and-values', title: 'Cache keys and cached values', description: 'Define which requests can safely share an answer, including tenants, permissions and negative results.', published: true },
   { slug: 'expiration-and-eviction', title: 'Cache expiration and eviction', description: 'Separate freshness from capacity and choose lifetimes and eviction policies from the workload.', published: true },
   { slug: 'invalidation', title: 'Cache invalidation and consistency', description: 'Follow concurrent reads and writes, stale refills and versioned invalidation.', published: true },
-  { slug: 'stampedes', title: 'Cache stampedes', description: 'Control duplicate work with coalescing, jitter, leases and stale-while-revalidate.', published: false },
+  { slug: 'stampedes', title: 'Cache stampedes', description: 'Control duplicate work with coalescing, jitter, leases and stale-while-revalidate.', published: true },
   { slug: 'failure-handling', title: 'Cache failures and graceful degradation', description: 'Bound fallback work, deadlines and retries when Redis is unavailable.', published: false },
   { slug: 'clients-and-latency', title: 'Redis clients, latency and pipelining', description: 'Account for round trips, client queues, batches and uncertain command outcomes.', published: false },
   { slug: 'atomicity', title: 'Redis transactions and Lua scripts', description: 'Compose atomic operations and understand the boundaries of transactions, scripts and leases.', published: false },

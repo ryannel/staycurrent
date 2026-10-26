@@ -31,3 +31,13 @@
   loaded 24 seconds ago, expiry at 30 seconds. No console errors.
 - Three articles are available; eleven remain planned. Article 2 now links directly
   to article 3. Primary working tree still untouched.
+
+## Article 4 — 26 October 2026
+
+- Commit: 4407397d6bba148c3637fd18b0efb40c2a7702c3, pushed to origin/main.
+- Publish run 40411784554 succeeded (tests, build, deployment):
+  https://github.com/ryannel/staycurrent/actions/runs/40411784554
+- Opened https://staycurrent.dev/learn/databases/caching/invalidation/.
+  Guarded stale-refill preset showed source £15, cache empty, held £12, and g1/g2
+  rejection. Shared navigation includes the fourth article.
+- Ten articles remain, with cache stampedes now in preparation.
