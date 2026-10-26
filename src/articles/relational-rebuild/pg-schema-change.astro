@@ -1,0 +1,227 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Scenes from '../../components/relational-rebuild-pg-schema-change/Scenes.astro';
+---
+<p>A live PostgreSQL schema change has three costs to understand: waiting for permission to touch a table, doing the physical work, and establishing that the result is usable. A command can do almost no copying and still stop ordinary reads. An index can occupy space and receive writes while remaining unavailable to queries.</p>
+<p>We will continue the shop’s migration from <code>products.price</code>, a decimal amount, to integer <code>price_hundredths</code>. P7’s 20.00 becomes 2000; a later price of 22.00 must become 2200. The representation changes, while order 103’s agreed line prices still total 29.00. A second example builds the customer-history index while orders continue arriving.</p>
+<p><a href="/learn/databases/relational/schema-changes/">Live schema changes and backfills</a> establishes the caller protocol: expand the schema, deploy bridge callers that write both forms atomically, drain old-only writers and their in-flight transactions, then backfill. It also defines the return window. Here we choose the PostgreSQL 18 operations that carry that protocol through locks, scans, validation and cleanup. The drawings are models of those operations, with observed checks identified separately.</p>
+
+<section aria-labelledby="lock-queue">
+<h2 id="lock-queue">A short change can create a lock queue</h2>
+<p>A plain <code>SELECT</code> acquires an <code>ACCESS SHARE</code> table lock. Adding a nullable column requires <code>ACCESS EXCLUSIVE</code>, which conflicts with every table-lock mode, including that reader’s. These are locks on the table as an object; they are separate from locks protecting an individual product update.</p>
+<p>The reader can finish its query and retain its table lock. Inside an explicit transaction, the lock normally lasts until commit or rollback. Figure 1 leaves that transaction open, then sends a schema change and another reader. Watch the later reader even though the schema change has done no work yet.</p>
+<Scenes kind="locks" number={1} />
+<p>The waiting strong-lock request creates the queue. A later ordinary read cannot simply slip past it, although two ordinary reads could run together. By contrast, an ordinary row update does not stop a plain snapshot-based read of that product. Diagnosing every stalled read as a row-lock problem would lead you to the wrong blocker.</p>
+<h3 id="bound-waits">Bound the attempt before sending it</h3>
+<p>Use a dedicated migration connection and set its limits before the command. This example allows half a second for each lock acquisition and five seconds for the statement as a whole. Those are illustrative budgets for the brief column addition, not settings for a large validation scan.</p>
+<Sql label="Add the new column with bounded lock and statement waits" code={`BEGIN;
+SET LOCAL lock_timeout = '500ms';
+SET LOCAL statement_timeout = '5s';
+SET LOCAL application_name = 'shop_migrate';
+ALTER TABLE public.products
+  ADD COLUMN price_hundredths integer;
+COMMIT;`} />
+<p><code>lock_timeout</code> applies separately to each lock acquisition. <code>statement_timeout</code> includes execution and waiting; giving it a shorter limit can make the lock limit irrelevant. Neither value is a prediction of completion. Choose a longer statement budget for work that legitimately needs a scan, while retaining a deliberate wait policy.</p>
+<p>If the statement fails inside this explicit transaction, issue <code>ROLLBACK</code> before reusing the connection. A client’s cancellation request is also something to confirm at the server. Stop new attempts, establish which statement and transaction remain, and end the failed transaction. Repeated immediate retries can keep recreating the same queue.</p>
+<p>Inspect the waiting session and its blockers from a monitoring connection:</p>
+<Sql label="Find migration sessions and the processes blocking them" code={`SELECT pid, application_name, state,
+       wait_event_type, wait_event,
+       pg_blocking_pids(pid) AS blockers,
+       xact_start, query_start, query
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND (wait_event_type = 'Lock'
+       OR application_name = 'shop_migrate');`} />
+<p>Use the returned PIDs to inspect the blockers, including sessions idle inside a transaction. Suitable monitoring privileges are needed to see other sessions’ details. Ending a real customer transaction can undo work; establish its owner and purpose before choosing that intervention. Often the first useful action is to remove the waiting migration attempt and let the shop recover.</p>
+</section>
+
+<section aria-labelledby="physical-work">
+<h2 id="physical-work">Metadata, scans and rewrites</h2>
+<p>Lock strength and copying work are different properties of a change. Adding our nullable integer column changes metadata without rewriting every product. It still needs the strong lock. Once acquired, keep that transaction short: do not leave it open while deploying callers or copying values.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Physical work and locking for selected PostgreSQL changes"><table><caption>Different work behind a schema command · ordinary unpartitioned tables</caption><thead><tr><th>Operation</th><th>Existing data</th><th>Lock to plan for</th></tr></thead><tbody>
+<tr><td>Add nullable <code>price_hundredths integer</code></td><td>No heap rewrite; existing rows read NULL.</td><td><code>ACCESS EXCLUSIVE</code>.</td></tr>
+<tr><td>Add a column with a non-volatile default</td><td>PostgreSQL can retain the evaluated default in metadata for old rows.</td><td><code>ACCESS EXCLUSIVE</code>, despite avoiding a rewrite.</td></tr>
+<tr><td>Change an existing column’s default</td><td>Changes the default for later writes; old rows are not backfilled.</td><td><code>ACCESS EXCLUSIVE</code>.</td></tr>
+<tr><td>Validate an installed constraint</td><td>Scans existing rows; does not rewrite them.</td><td><code>SHARE UPDATE EXCLUSIVE</code> on the changed table.</td></tr>
+<tr><td>Convert numeric price to integer with <code>USING (price * 100)::integer</code></td><td>Rewrites the stored representation and rebuilds affected indexes.</td><td><code>ACCESS EXCLUSIVE</code> throughout the transaction.</td></tr>
+</tbody></table></div>
+<p>A default cannot derive each product’s hundredths from its own price. Giving the new column a default of zero would turn missing prices into plausible but wrong values. The fast-default facility answers a different question: how to supply one default to existing rows when adding a column. A volatile default, such as <code>clock_timestamp()</code>, requires per-row work and a rewrite.</p>
+<p>A rewrite builds replacement storage while the old storage still exists. Budget table and index copies, WAL, ongoing activity and eventual cleanup, rather than just the final column width. PostgreSQL’s rewriting <code>ALTER TABLE</code> forms also have an unusual snapshot caveat: a transaction using a snapshot taken before the rewrite commits can see the rewritten table as empty if it had not accessed that table before the change. A prior table access would itself retain a lock that prevents the rewrite from passing it. Rehearse the actual command and its reader overlap on a copy.</p>
+<p>If a full blocking rewrite cannot fit the service’s interruption budget, expanding and updating in small transactions gives control over when to pause. It costs a period of carrying both representations and retained row versions. <a href="/learn/databases/relational/postgresql/row-versions/">PostgreSQL vacuum and transaction age</a> develops that retention and space-reuse work. Dropping the old column later hides it from SQL immediately, but does not compact all its old bytes out of the heap file.</p>
+</section>
+
+<section aria-labelledby="backfill">
+<h2 id="backfill">Backfill from the row you protect</h2>
+<p>The bridge writers must be established before this backfill. They read the decimal price and commit both representations together on every insert or price change. Audit existing source values first. The accepted domain is finite, non-negative <code>numeric(8,2)</code>: 0 through 999999.99 becomes 0 through 99999999, which fits an integer. PostgreSQL’s numeric <code>NaN</code> passes the original <code>price &gt;= 0</code> check, so check explicitly for it and resolve it under an agreed rule before converting. There is no implied price for an undefined value.</p>
+<p>Suppose a worker read P7’s 20.00 into application memory. A bridge writer then commits 22.00/2200. Assigning the worker’s earlier 2000 afterwards corrupts the pair. Repeating that assignment safely would only repeat the wrong value.</p>
+<p>Calculate inside the protected update instead. The condition also avoids rewriting an already-correct product:</p>
+<Sql label="Repair one product from its current protected price" code={`UPDATE public.products
+SET price_hundredths = (price * 100)::integer
+WHERE product_id = 'P7'
+  AND price_hundredths IS DISTINCT FROM (price * 100)::integer
+RETURNING product_id, price, price_hundredths;`} />
+<p>Under Read Committed, an update that meets a concurrent update of its target can wait, then recheck its condition against the committed replacement. If that bridge writer commits 22.00/2200, this statement finds nothing left to repair. Under stronger isolation a conflicting attempt may fail instead and need a whole-transaction retry. A transformation performed outside the database needs a source-value or revision guard, as the general migration article shows.</p>
+<p>A bounded batch can first lock a small ordered group, then derive the values from those locked rows. This version deliberately waits within the chosen limits instead of skipping busy rows:</p>
+<Sql label="Commit a bounded group of current-price conversions" code={`BEGIN;
+SET LOCAL lock_timeout = '500ms';
+SET LOCAL statement_timeout = '5s';
+WITH batch AS (
+  SELECT product_id
+  FROM public.products
+  WHERE price_hundredths IS DISTINCT FROM (price * 100)::integer
+  ORDER BY product_id COLLATE "C"
+  LIMIT 100
+  FOR UPDATE
+)
+UPDATE public.products AS p
+SET price_hundredths = (p.price * 100)::integer
+FROM batch AS b
+WHERE p.product_id = b.product_id
+RETURNING p.product_id;
+COMMIT;`} />
+<p>The size 100 is a starting assumption to rehearse. It is not a recommended production rate. Commit each completed batch and retain exceptions. If a batch times out, roll it back; its returned rows alone do not establish a commit. A key cursor may make scanning cheaper, but a late P11 tea strainer would sort before P3 under the stated ordering. A permitted bridge insert must already supply its 8.00/800 pair. Reconcile the whole required population even after the cursor reaches its end. If you choose <code>SKIP LOCKED</code>, skipped rows also need that reconciliation.</p>
+<Sql label="Check missing and unequal representations separately" code={`SELECT count(*) FILTER (
+         WHERE price_hundredths IS NULL) AS missing,
+       count(*) FILTER (
+         WHERE price_hundredths IS DISTINCT FROM
+               (price * 100)::integer) AS different
+FROM public.products;`} />
+<p>Both counts must be zero. The difference count includes missing values; a zero null count alone misses P7 at 22.00/2000. A zero-row batch can mean this pass found no remaining work, while a stopped launcher says nothing about an already-running transaction. Observe the server state before claiming a pause.</p>
+<p>Let useful foreground completions determine whether another batch fits. Watch purchase latency and errors alongside row-lock waits, free space, WAL generation and replica backlog. Updates create version and index work that can outlast the batch. Slow down or stop new batches before that debt consumes the service’s headroom. Keep the bridge write rule in force throughout: the reconciliation query sees one snapshot, and permitted writes are what preserve its result afterwards.</p>
+</section>
+
+<section aria-labelledby="constraints">
+<h2 id="constraints">Enforce the rule, then prove the old rows</h2>
+<p>PostgreSQL can separate installing a rule from checking the entire existing population. An enforced <code>NOT VALID</code> constraint applies to subsequent inserts and updates. It has not yet proved that every old row satisfies it. <code>NOT ENFORCED</code> would make a different promise and is not the procedure here.</p>
+<p>Figure 2 starts with a deliberately stale P7 and no missing values. Follow the not-null and agreement proofs separately.</p>
+<Scenes kind="rules" number={2} />
+<p>PostgreSQL 18 supports a named not-null constraint that can be installed as <code>NOT VALID</code>, then validated separately. For this migration we also preserve the original range and require exact agreement while both representations are maintained:</p>
+<Sql label="Install enforced price constraints without scanning old rows" code={`BEGIN;
+SET LOCAL lock_timeout = '500ms';
+SET LOCAL statement_timeout = '5s';
+SET LOCAL application_name = 'shop_migrate';
+ALTER TABLE public.products
+  ADD CONSTRAINT products_hundredths_nn
+    NOT NULL price_hundredths NOT VALID,
+  ADD CONSTRAINT products_hundredths_range
+    CHECK (price_hundredths BETWEEN 0 AND 99999999) NOT VALID,
+  ADD CONSTRAINT products_price_agrees
+    CHECK (price_hundredths = price * 100) NOT VALID;
+COMMIT;`} />
+<p>The installation needs <code>ACCESS EXCLUSIVE</code>. Commit it before starting validation, so the strong lock does not cover the scan. Then run each validation under its own suitable scan budget:</p>
+<Sql label="Validate the installed price rules in separate transactions" code={`ALTER TABLE public.products
+  VALIDATE CONSTRAINT products_hundredths_nn;
+ALTER TABLE public.products
+  VALIDATE CONSTRAINT products_hundredths_range;
+ALTER TABLE public.products
+  VALIDATE CONSTRAINT products_price_agrees;
+
+SELECT conname, convalidated
+FROM pg_constraint
+WHERE conrelid = 'public.products'::regclass;`} />
+<p>Here each command runs in autocommit. Validation takes <code>SHARE UPDATE EXCLUSIVE</code>, compatible with ordinary reads and writes but conflicting with some other maintenance. A failed validation leaves the installed rule enforced. Repair the old violations and retry validation. Even an update to an unrelated column can be rejected when its resulting row still violates an installed check or not-null rule, so choose the installation boundary with the caller behaviour in mind.</p>
+<p>Foreign keys have a related two-step procedure. Installing <code>FOREIGN KEY … NOT VALID</code> takes <code>SHARE ROW EXCLUSIVE</code> on both the referencing and referenced tables. Validation takes <code>SHARE UPDATE EXCLUSIVE</code> on the referencing table and <code>ROW SHARE</code> on the referenced table. Budget both sides; an idle transaction on the referenced table can matter even when the changed table looks quiet.</p>
+<h3 id="unique-constraints">Uniqueness needs a completed unique index</h3>
+<p><code>UNIQUE</code> is not a <code>NOT VALID</code> shortcut. When adding a new approved uniqueness rule to an ordinary table, build its unique index concurrently, establish that it completed validly, then attach it with <code>ALTER TABLE … ADD CONSTRAINT … UNIQUE USING INDEX …</code>. The attachment still needs a brief strong table lock. The eligible index must be a unique B-tree with default sort ordering, without expressions or a partial predicate. A primary key also needs its columns proved non-null, or attachment can introduce a scan.</p>
+<p>This changes no shop identity or business uniqueness rule. In particular, neither equal prices nor repeated customer IDs in orders are errors. The index must express a rule already required by the data model. Next we will follow the concurrent build itself using the existing, non-unique history key.</p>
+</section>
+
+<section aria-labelledby="concurrent-index">
+<h2 id="concurrent-index">Build an index while writes continue</h2>
+<p>The shop’s history request filters by customer and a lower timestamp, orders by descending timestamp and order ID, then stops at ten. <a href="/learn/databases/relational/postgresql/indexes/">PostgreSQL index methods and operators</a> establishes the B-tree choice. Here its definition stays fixed:</p>
+<Sql label="Build the customer-history access path concurrently" code={`CREATE INDEX CONCURRENTLY orders_history
+ON public.orders (customer_id, placed_at DESC, order_id DESC);`} />
+<p>An ordinary build takes a <code>SHARE</code> table lock: reads can continue, while inserts, updates and deletes wait. A concurrent build uses <code>SHARE UPDATE EXCLUSIVE</code> so those writes can continue. It pays for that overlap with two scans and waits for relevant transactions, including writers before scans and old snapshots before validity. Extra processor and storage work still competes with the application.</p>
+<p>Follow the three properties in Figure 3: a definition exists, writes maintain it, and queries can rely on it.</p>
+<Scenes kind="index" number={3} />
+<p>Run <code>CREATE INDEX CONCURRENTLY</code> outside a transaction block. A migration tool that wraps every change in one transaction needs a separate execution mode for it. Only one concurrent index build can run on a table at a time; conflicting schema work and maintenance still wait. Partitioned parent indexes require their own procedure: PostgreSQL 18 cannot concurrently build the parent index directly. Build eligible leaf indexes concurrently, then assemble the parent definition with its own brief locking boundary.</p>
+<h3 id="index-progress">Read the current phase</h3>
+<Sql label="Observe the phase and its relevant progress counters" code={`SELECT pid, relid::regclass AS table_name,
+       index_relid::regclass AS index_name, phase,
+       blocks_done, blocks_total,
+       lockers_done, lockers_total, current_locker_pid
+FROM pg_stat_progress_create_index
+WHERE datid = (SELECT oid FROM pg_database
+               WHERE datname = current_database());`} />
+<p><code>waiting for writers before build</code> asks you to inspect transactions, not storage throughput. <code>building index</code> reports access-method work. Validation has further scan phases, followed by <code>waiting for old snapshots</code> when applicable. The block and tuple counters describe their current phase. A ratio of blocks done to blocks total is not a percentage of the whole command, and old-snapshot waiters supply no reliable estimated finish time.</p>
+<p>The progress row disappearing is a reason to inspect the outcome. It does not distinguish successful completion from an error. Keep the command result and check the catalogue:</p>
+<Sql label="Inspect exact index definitions and validity" code={`SELECT indexrelid::regclass AS index_name,
+       indisready, indisvalid, indislive,
+       pg_get_indexdef(indexrelid) AS definition
+FROM pg_index
+WHERE indrelid = 'public.orders'::regclass;`} />
+<p><code>indisready</code> says whether inserts and updates should maintain the index. <code>indisvalid</code> records query validity. <code>indislive</code> distinguishes an index still participating in the lifecycle from one being dropped. These flags are evidence to interpret alongside the command, definition and dependencies, not fields to edit by hand. A valid index is eligible for appropriate queries; the planner is still free to choose another route.</p>
+</section>
+
+<section aria-labelledby="failed-index">
+<h2 id="failed-index">Recover the state a failed build left behind</h2>
+<p>A concurrent build can fail after committing intermediate work. Inspect the existing definition and flags before retrying, including when the client lost its reply. <code>IF NOT EXISTS</code> merely accepts an existing name. It proves neither the intended columns nor validity.</p>
+<p>An invalid index cannot supply a complete query answer. If it reached write readiness, it can still add write overhead. A failed unique build deserves particular care: uniqueness enforcement begins before the index becomes query-valid, and a failure during its second scan can leave that enforcement active. “Invalid” does not mean harmless to writers.</p>
+<p>Resolve the error’s cause first: a timeout, deadlock, invalid expression or genuine duplicate needs its corresponding repair. For an unwanted standalone leftover, deliberately drop it and retry the corrected concurrent build. Alternatively, <code>REINDEX INDEX CONCURRENTLY public.orders_history;</code> can rebuild an invalid index while writes continue. Recheck the resulting definition and state, then the supported query. Reissuing an unchanged unique build cannot repair data that violates the intended rule.</p>
+<p>A concurrent rebuild has a replacement boundary of its own. It keeps the working index while building a new one, transfers the index’s role to the valid replacement, then retires the old copy. Failure on either side of that transfer leaves a different cleanup task.</p>
+<figure class="pg-static" aria-labelledby="rebuild-caption">
+<div class="static-title"><span>Figure 4</span><p>Which copy has the working role?</p></div>
+<div class="replacement-branches">
+ <div><p class="diagram-label">Before replacement succeeds</p><div class="object good"><strong>orders_history</strong><span>Original · valid · keep serving</span></div><div class="object caution"><strong>orders_history_ccnew</strong><span>Failed new copy · invalid</span></div><p class="route-note">Remove the failed copy → retry the rebuild.</p></div>
+ <div><p class="diagram-label">After replacement succeeds</p><div class="object good"><strong>orders_history</strong><span>Replacement · valid · keep serving</span></div><div class="object caution"><strong>orders_history_ccold</strong><span>Old copy · invalid · cleanup remains</span></div><p class="route-note">Remove the obsolete copy → keep the replacement.</p></div>
+</div>
+<figcaption id="rebuild-caption">Two documented failure states of a concurrent rebuild, drawn schematically. Suffixes may acquire numbers to avoid name collisions. Confirm catalogue flags, the exact definition and dependencies before choosing a drop; a suffix alone is not a safe target.</figcaption>
+</figure>
+<p>The <code>_ccnew</code> case leaves the original in charge. Dropping the original would remove the route you intended to retain. The <code>_ccold</code> case means the rebuild proper succeeded and retirement remains. Inspect constraints and other dependencies before removing either leftover. Choose the supported drop method for the exact object and confirm it is gone afterwards.</p>
+</section>
+
+<section aria-labelledby="index-upkeep">
+<h2 id="index-upkeep">Choose the work the index actually needs</h2>
+<p>Not every slow index needs rebuilding. A B-tree with persistently sparse leaves, a GIN index carrying pending entries and a BRIN index missing a summary hold different unfinished work. Figure 5 keeps that distinction visible.</p>
+<figure class="pg-static" aria-labelledby="upkeep-caption">
+<div class="static-title"><span>Figure 5</span><p>Three maintenance actions change different structures</p></div>
+<div class="upkeep-row"><p class="diagram-label">B-tree · same live keys</p><div class="pages"><span>1 · □ · □</span><span>4 · □ · □</span><span>7 · □ · □</span></div><p class="route-note">Rebuild ↓</p><div class="pages compact"><span>1 · 4 · 7</span></div><p class="small-note">Pack surviving keys into replacement storage.</p></div>
+<div class="upkeep-row"><p class="diagram-label">GIN · same searchable entries</p><div class="object caution"><strong>Pending entries</strong><span>gift → P7</span></div><p class="route-note">Merge into main structure ↓</p><div class="object good"><strong>Main key / posting list</strong><span>gift → … P7 …</span></div><p class="small-note">Searches include both places until merging finishes.</p></div>
+<div class="upkeep-row"><p class="diagram-label">BRIN · same heap range</p><div class="object caution"><strong>Summary absent</strong><span>Every query must keep this range possible.</span></div><p class="route-note">Summarise ↓</p><div class="object good"><strong>Summary: days 7–8</strong><span>A query for day 20 can exclude this range.</span></div><p class="small-note">Heap rows stay where they were.</p></div>
+<figcaption id="upkeep-caption">Mechanism models, not measured page counts or new shop rows. B-tree boxes stand for three sparse leaf pages. The GIN entry reuses P7’s gift tag. BRIN day numbers are abstract timestamp values on one invented page range.</figcaption>
+</figure>
+<h3 id="btree-upkeep">Sparse B-tree pages</h3>
+<p>Vacuum can remove obsolete index entries and make empty pages reusable. That does not promise a smaller file, and partly full leaves can remain costly to scan and cache. Measure the index’s physical size, live workload and buffer work over time. Where available, the <code>pgstattuple</code> extension’s <code>pgstatindex</code> reports leaf density, empty pages and deleted pages. It needs privileges and performs work; concurrent changes make its page-by-page result something other than one instantaneous snapshot.</p>
+<p>Compare the observed layout with the index’s fill factor and future insert pattern. Space reserved for expected inserts may be useful. Persistent sparsity in key ranges that new inserts never revisit may be wasteful. Neither the index’s age nor one fixed density threshold decides whether a rebuild pays.</p>
+<p><code>REINDEX INDEX</code> blocks writes and locks the index strongly; planning queries can block too. <code>REINDEX INDEX CONCURRENTLY</code> permits ordinary writes but needs the extra scans, waits and simultaneous copies already described. Budget replacement space, WAL and foreground demand. Afterward confirm validity, size and useful query work, and check whether the workload immediately recreates the same problem. Rebuilding an index does not release a vacuum retention horizon.</p>
+<h3 id="gin-upkeep">GIN pending entries</h3>
+<p>GIN’s <code>fastupdate</code> path accumulates entries in a pending list before merging them into its main structure. Queries search the pending list too, so a backlog does not make recently inserted matching rows disappear. It can increase query work, and the insertion that crosses the cleanup limit can inherit a large merge.</p>
+<p>Inspect pending pages and tuples with <code>pgstatginindex</code> where the extension is available. Ordinary vacuum or autovacuum can process pending entries; <code>gin_clean_pending_list</code> requests that cleanup directly. For the tag projection introduced in the access-method article, the targeted command is:</p>
+<Sql label="Request cleanup of a GIN pending list" code={`SELECT gin_clean_pending_list('public.product_tags_gin'::regclass);`} />
+<p>Turning <code>fastupdate</code> off changes where future entries go; it does not flush entries already pending. Choose a cleanup window or adequate background upkeep from the backlog and foreground cost. Afterwards check the pending state and representative search and insert work. A quick insertion benchmark taken before the merge cannot establish the settled cost.</p>
+<h3 id="brin-upkeep">BRIN summaries</h3>
+<p>A new heap range can be unsummarised. It remains a candidate for every relevant BRIN search, preserving correct results while adding heap work. <code>brin_summarize_new_values</code> summarises those missing ranges. Vacuum also performs this work; optional autosummarisation is off by default and is a queued request, not a completion guarantee.</p>
+<Sql label="Summarise missing BRIN ranges, or deliberately refresh one broad summary" code={`-- For the BRIN timestamp index from the access-method article:
+SELECT brin_summarize_new_values('public.orders_time_brin'::regclass);
+
+-- A separate, deliberate refresh of the range containing block 0:
+SELECT brin_desummarize_range('public.orders_time_brin'::regclass, 0);
+SELECT brin_summarize_range('public.orders_time_brin'::regclass, 0);`} />
+<p>The second procedure answers a different problem. An existing min/max summary can remain broad after an outlying value changes or disappears. Ordinary summarisation does not replace an already-present summary; deliberate desummarisation followed by resummarisation can derive it again from current tuples. During that gap, the range cannot be excluded through its missing summary. Use the actual affected block range, rather than copying block 0 without investigation.</p>
+<p>Check the returned summarisation count and the resulting query’s heap ranges and rechecks. If current rows still mix distant timestamps on every page, a fresh summary will remain broad. Maintenance cannot create the physical correlation that the chosen BRIN design needs.</p>
+</section>
+
+<section aria-labelledby="retire">
+<h2 id="retire">Retire the old route after acceptance</h2>
+<p>Keep an old index until the replacement is valid, produces the expected results and removes the intended work across supported requests. Inspect <code>pg_stat_user_indexes</code> alongside the statistics reset period, server restarts and representative workload coverage. Zero recorded scans during a quiet hour cannot account for month-end reports, standby reads or constraints. Check <code>pg_constraint</code>, dependencies and referencing-side lookups; overlapping key prefixes alone do not make two definitions interchangeable.</p>
+<p>For an approved standalone index removal, <code>DROP INDEX CONCURRENTLY</code> avoids locking out ordinary table reads and writes by waiting for conflicting transactions. It accepts one index, cannot use <code>CASCADE</code> or run inside a transaction block, and cannot remove a partitioned parent index this way. An index backing a primary-key or unique constraint needs the constraint’s procedure instead. Removal has a wait and cleanup budget too.</p>
+<p>Contracting the old price has a caller boundary as well. While return to bridge readers is promised, keep both prices current and keep the agreement rule. Before permitting new-only writes, retire that promise and all old consumers, remove transitional cross-form requirements, and handle the old column’s <code>NOT NULL</code> requirement or keep supplying it until its drop. Preserve the new column’s required-value, non-negative and range rules. A column that still exists but is no longer maintained is already unsuitable for a simple return.</p>
+<p>Accept the change through the state left behind: zero missing and unequal prices under the permitted writer protocol; completed constraint validation; exact, valid index definitions; representative application results and query work; and accounted-for leftovers. A command returning establishes one event. The new route working and obsolete physical work being removed are further outcomes to verify.</p>
+<p>On an owned disposable PostgreSQL 18.6 server, three client sessions reproduced Figure 1’s timeout branch: the later reader waited behind the change, then completed after the change timed out while the first reader remained open. An ordinary row update allowed that plain read to complete. In the price race, an unguarded assignment stored 22.00/2000; the guarded current-row update waited for the bridge commit, returned no rows and preserved 22.00/2200.</p>
+<p class="example-note">The same native check completed named not-null and check validation, concurrent index creation and concurrent reindexing. A unique build failing on pre-existing duplicates left an invalid index that had not reached write readiness; that run does not demonstrate the later-phase uniqueness-enforcement case. The twelve displayed SQL listings were also checked in PGlite 0.5.8, PostgreSQL 18.3 compiled to WebAssembly, including the separate failed agreement validation in Figure 2. The drawings remain models; these small checks establish no production duration or headroom.</p>
+</section>
+
+<section aria-labelledby="sources">
+<h2 id="sources">Sources and further reading</h2>
+<ul>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit locking</a> and <a href="https://www.postgresql.org/docs/18/runtime-config-client.html">Client connection defaults</a>: table-lock conflicts, transaction duration and timeout scopes.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-altertable.html">ALTER TABLE</a>, <a href="https://www.postgresql.org/docs/18/ddl-alter.html">Modifying tables</a> and <a href="https://www.postgresql.org/docs/18/mvcc-caveats.html">MVCC caveats</a>: defaults, rewrites, separate constraint validation and old snapshots.</li>
+<li><a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a>, <a href="https://www.postgresql.org/docs/18/sql-update.html">UPDATE</a> and <a href="https://www.postgresql.org/docs/18/datatype-numeric.html">Numeric types</a>: protected current-row updates, exact conversion and numeric NaN.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-createindex.html">CREATE INDEX</a>, <a href="https://www.postgresql.org/docs/18/catalog-pg-index.html">pg_index</a> and <a href="https://www.postgresql.org/docs/18/progress-reporting.html#CREATE-INDEX-PROGRESS-REPORTING">Index progress reporting</a>: concurrent scans, readiness, validity and phase counters.</li>
+<li><a href="https://www.postgresql.org/docs/18/sql-reindex.html">REINDEX</a> and <a href="https://www.postgresql.org/docs/18/sql-dropindex.html">DROP INDEX</a>: replacement stages, failure remnants and removal restrictions.</li>
+<li><a href="https://www.postgresql.org/docs/18/routine-reindex.html">Routine reindexing</a>, <a href="https://www.postgresql.org/docs/18/pgstattuple.html">pgstattuple</a>, <a href="https://www.postgresql.org/docs/18/gin.html">GIN</a>, <a href="https://www.postgresql.org/docs/18/brin.html">BRIN</a> and <a href="https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-INDEX">Index maintenance functions</a>: sparse leaves, pending work and summarisation.</li>
+</ul>
+</section>
+<style is:global>
+.pg-static{margin:2rem 0;border:1px solid var(--color-rule-strong);background:var(--color-surface-alt);border-radius:4px;padding:1rem;font:.85rem/1.6 var(--font-sans);}.pg-static .static-title>span{color:var(--color-text-secondary);font-size:.72rem;text-transform:uppercase;letter-spacing:.09em;}.pg-static .static-title p{font:600 1rem/1.4 var(--font-sans);margin:.3rem 0 1rem;}.pg-static .replacement-branches{display:grid;grid-template-columns:1fr 1fr;gap:1rem;}.pg-static .diagram-label{font:.78rem/1.5 var(--font-sans);color:var(--color-text-secondary);margin:.7rem 0;}.pg-static .object{border:1px solid var(--color-rule-strong);border-left:4px solid var(--teal);background:var(--color-surface);padding:.65rem;margin:.6rem 0;display:flex;flex-direction:column;gap:.2rem;overflow-wrap:anywhere;}.pg-static .object strong{font:.8rem/1.5 var(--font-mono);}.pg-static .object span{font:.76rem/1.5 var(--font-sans);}.pg-static .caution{border-left-color:var(--gold);border-style:dashed;}.pg-static .route-note{font:.78rem/1.6 var(--font-sans);margin:.65rem 0;}.pg-static figcaption{font:.78rem/1.6 var(--font-sans);color:var(--color-text-secondary);margin:1rem 0 0;}.pg-static .upkeep-row{padding:.65rem 0;border-top:1px solid var(--color-rule-strong);}.pg-static .upkeep-row>.object{max-width:26rem;}.pg-static .pages{display:flex;gap:.5rem;flex-wrap:wrap;}.pg-static .pages span{padding:.5rem;border:1px solid var(--teal);background:var(--color-surface);font:.82rem/1.6 var(--font-mono);}.pg-static .small-note{font:.78rem/1.5 var(--font-sans);margin:.7rem 0;color:var(--color-text-secondary);}@media(max-width:550px){.pg-static .replacement-branches{grid-template-columns:1fr;gap:.4rem;}.pg-static .replacement-branches>div+div{border-top:1px solid var(--color-rule-strong);padding-top:.6rem;}}
+</style>

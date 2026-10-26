@@ -1,0 +1,1 @@
+Native clients use a separate nonsuperuser database-owner login. Read-only metadata permissions support identity guards. Bootstrap role could not be made nonsuperuser because PostgreSQL requires its initial role to retain SUPERUSER; it is not the test client. Generated authentication remains only in the private connection file and will be deleted on cleanup.
