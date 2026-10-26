@@ -1,0 +1,11 @@
+# Blind first reading — crdb-backup v01
+
+Saved before plans, example facts, author notes, execution evidence or prior verdicts. Read the three figures as a sequence, exercised the cut, missing-increment and backup-points states and all five reconciliation steps, then read the finished body. The browser's initial accessibility snapshot included the body; the deliberate first pass followed only the figures and captions. Compared bounded reference passages in Indexes (opening and first two figures), Sequences (first two figures) and Storage (crash recovery), plus the rendered Storage recovery drawing.
+
+The figures establish three distinct decisions: which committed facts a cut omits, whether retained material supports that cut, and whether the omitted payment can be re-recorded without another charge. The provider's persistent acceptance alongside changing local state is particularly clear. The final 19.00 due and unchanged stock remain visible. Missing B leaves C visibly blocked; switching off revision history changes the supported points without changing the dependency chain.
+
+The body follows that sequence coherently. “A restore point selects a state … It does not select which transactions were good” is an effective opening for the first section. The full-path/LATEST explanation gives a concrete reason to inspect and pin a path; “Keep the retained purchase” explains why correcting the payment must not replay stock consumption. Headings use established terms and state their subject, comparable with “Crash recovery” and “Checking an index with EXPLAIN” in the references.
+
+No substantive teaching or editorial defect found on the blind reading. The opening is fairly dense, but its facts are used immediately and the prerequisites are linked. The figures and prose distinguish illustrative ordering, a hypothetical provider and native SQL observations. The paragraph reporting a documented revision-history default that differs from the drill is consequential and needs exact provenance checking before accepting its technical account.
+
+Current rendering inspected so far: 1280×720 article in System (visibly dark), readable card labels, dependency arrows, state values, captions and controls. Further required phone/theme/control checking remains to be completed after these notes.
