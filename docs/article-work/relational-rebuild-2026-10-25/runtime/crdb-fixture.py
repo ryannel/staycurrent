@@ -17,6 +17,7 @@ record = runtime / (role + '-fixture.json')
 cli = ['docker', '--config', '/private/tmp/staycurrent-rebuild-docker-public-config', '--host', 'unix:///Users/ryannel/.docker/run/docker.sock']
 image = json.loads((runtime / 'crdb-image.json').read_text())['pinned_image']
 name = 'staycurrent-relational-rebuild-' + role + '-20261025'
+sql_memory = '256MiB' if role == 'crdb-performance' else '64MiB'
 db = 'sc_' + role.replace('-', '_')
 user = db + '_writer'
 
@@ -68,7 +69,7 @@ listen = '127.0.0.1:26257'
 sql_port = 26257 if transport=='network-none' else 26258
 sql_binding=[] if transport=='network-none' else ['--sql-addr=0.0.0.0:26258']
 removal=['--rm'] if transport=='network-none' else []
-result = run(['run']+removal+['-d', '--name', name, '--label', 'dev.staycurrent.task=relational-rebuild-2026-10-25', '--label', 'dev.staycurrent.article=' + role, '--label', 'dev.staycurrent.engine=cockroachdb']+network+['--memory', '1536m', '--cpus', '2', image, 'start-single-node', '--insecure', '--listen-addr='+listen, '--advertise-addr='+listen]+sql_binding+['--http-addr=127.0.0.1:8080', '--store=path=/cockroach/cockroach-data,size=1GiB', '--cache=64MiB', '--max-sql-memory=64MiB', '--max-tsdb-memory=16MiB', '--max-disk-temp-storage=128MiB'])
+result = run(['run']+removal+['-d', '--name', name, '--label', 'dev.staycurrent.task=relational-rebuild-2026-10-25', '--label', 'dev.staycurrent.article=' + role, '--label', 'dev.staycurrent.engine=cockroachdb']+network+['--memory', '1536m', '--cpus', '2', image, 'start-single-node', '--insecure', '--listen-addr='+listen, '--advertise-addr='+listen]+sql_binding+['--http-addr=127.0.0.1:8080', '--store=path=/cockroach/cockroach-data,size=1GiB', '--cache=64MiB', '--max-sql-memory='+sql_memory, '--max-tsdb-memory=16MiB', '--max-disk-temp-storage=128MiB'])
 assert result.returncode == 0, result.stderr
 cid = result.stdout.strip()
 try:
@@ -94,6 +95,7 @@ try:
     assert 'v26.2.8' in rows[0]['version']
     saved = {'container_id': cid, 'name': name, 'article': role, 'pinned_image': image, 'database': db, 'user': user, 'cluster_id': rows[0]['cluster_id'], 'runtime_probe': rows[0], 'network': 'none', 'published_ports': [], 'scope': 'Fresh disposable single-node cluster with replication disabled; isolated loopback-only SQL/HTTP. No credentials or host mounts. SQL/schema/range evidence only, not distributed survival or performance. Fixture-only principal has admin for diagnostic observations.', 'source_docs': ['https://docs.cockroachlabs.com/docs/v26.2/cockroach-start-single-node', 'https://docs.cockroachlabs.com/docs/v26.2/cockroach-sql']}
     saved['transport']=transport
+    saved['limits']={'container_memory':'1536MiB','cpus':2,'sql_memory':sql_memory,'cache':'64MiB','store':'1GiB','disk_temp':'128MiB'}
     if transport=='localhost-tcp':
         binding=owned(cid)['NetworkSettings']['Ports']['26258/tcp'][0]
         saved['published_ports']=[binding]

@@ -1,0 +1,164 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import History from '../../components/relational-rebuild-crdb-performance/History.astro';
+import Keys from '../../components/relational-rebuild-crdb-performance/Keys.astro';
+import '../../components/relational-rebuild-crdb-performance/figures.css';
+---
+<p>A query can return ten rows after reading ten index entries, fetching ten other rows and contacting several range owners. It can also return those same ten rows from one index. The answer is unchanged; the work needed to obtain it is different.</p>
+<p>CockroachDB adds a second question to ordinary query tuning: where does that work land? A good access path can remove unnecessary reads while every new write still reaches one busy index edge. Adding nodes helps only when useful work can reach them.</p>
+<p>We will follow the shop’s customer-history query through its index and primary rows, then distinguish three causes of concentrated demand: an advancing index edge, a busy customer prefix and competing transactions on P7’s stock. <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">Inside CockroachDB</a> establishes ordered keys, ranges and their serving authority. Here we use that understanding to locate work and choose a repair.</p>
+
+<section id="sql-and-kv">
+<h2>SQL work and KV work</h2>
+<p>The history query returns a customer’s ten newest orders since a lower time bound. It needs the status as well as the ordering columns:</p>
+<Sql label="Customer history in CockroachDB" code={`SELECT order_id, placed_at, status
+FROM orders
+WHERE customer_id = 1001
+  AND placed_at >= timestamptz '2026-10-01 00:00+00'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;`} />
+<p>Customer 1001 belongs to the generated history used in <a href="/learn/databases/relational/query-execution/">Query execution and performance</a>. It owns 70% of the 120,000 generated orders. The much smaller drawing uses Mina, customer 1, so every relevant entry remains visible.</p>
+<p>A secondary index on <code>(customer_id, placed_at DESC, order_id DESC)</code> puts one customer’s history together, newest first. Equality fixes the customer prefix; the date bounds the interval inside it. The order ID breaks ties in time. Keep both columns in <code>ORDER BY</code>: an access path makes the requested order cheaper but does not replace the SQL contract.</p>
+<p>The secondary entry contains an order’s primary key. If it lacks status, the engine uses that key to fetch the primary-index row. Step through Figure 1 with key columns only, then switch on <code>STORING (status)</code>.</p>
+<History />
+<p>The scan and primary fetch are two kinds of <strong>KV work</strong>: requests to the key-value layer below SQL. SQL work includes decoding and processing the supplied rows, applying expressions and producing the result. Both consume resources, and a small SQL result does not bound either kind of work.</p>
+<p>Nor does it determine a request count. One key interval can cross several ranges. Several point fetches can be batched, and a request can need more than one lower-level operation. Distinguish result rows, decoded rows, key-value pairs, key spans, range owners and RPCs—a remote procedure call between components. Measure the quantities the native plan actually reports.</p>
+</section>
+
+<section id="covering-indexes">
+<h2>Covering indexes and index joins</h2>
+<p>In Figure 1, status was the only missing value. A covering index stores everything this query needs:</p>
+<Sql label="Two comparison indexes for the history query" code={`CREATE INDEX orders_history
+ON orders (customer_id, placed_at DESC, order_id DESC);
+
+CREATE INDEX orders_history_cover
+ON orders (customer_id, placed_at DESC, order_id DESC)
+STORING (status);`} />
+<p>These are alternatives for a comparison, not a recommendation to keep both. <code>STORING</code> adds a value without making it part of the search key or its ordering. It can remove the primary fetch while leaving the searched interval unchanged. It also adds another maintained copy of status: inserts and relevant updates must write that index data.</p>
+<p>CockroachDB calls the secondary-to-primary operation an <strong>index join</strong>. Both sides belong to the same table. A <strong>lookup join</strong> uses values from one input to search an index for matching rows, commonly in another table—for example, finding an order’s lines by order ID. Both can generate KV work, but covering this history query removes the former. It does not remove all joins elsewhere in the application.</p>
+<p>A paid-only history query adds <code>AND status = 'paid'</code>. Storing status lets the scan test it without fetching primary rows; it does not put all paid entries together. The scan may pass pending entries before it finds ten paid orders. A key beginning <code>(customer_id, status, placed_at DESC, order_id DESC)</code> separates statuses, but an unqualified history now needs histories from several status groups. A partial index with <code>WHERE status = 'paid'</code> serves only queries whose conditions establish that restriction. Choose for the actual mix, including status transitions.</p>
+</section>
+
+<section id="measured-plan">
+<h2>Reading EXPLAIN ANALYZE</h2>
+<p><code>EXPLAIN</code> shows a proposed route without running the statement. <code>EXPLAIN ANALYZE</code> executes it and records what happened, including a write’s effects. For the read above:</p>
+<Sql label="Measure the history query" code={`EXPLAIN ANALYZE (VERBOSE)
+SELECT order_id, placed_at, status
+FROM orders
+WHERE customer_id = 1001
+  AND placed_at >= timestamptz '2026-10-01 00:00+00'
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;`} />
+<p>Start at the scan. Check the named index and <code>spans</code>: did the customer and time condition bound the search, or does it say <code>FULL SCAN</code>? Follow its rows upwards. An index join indicates primary data was still needed; a sort indicates the chosen route did not already supply the required order.</p>
+<p>The disposable v26.2.8 run used a projected orders table with the three core orders and the exact 120,000 generated order IDs, customers, times and statuses. All four comparison indexes were defined before loading rows. For a controlled access-path comparison, the two executions named <code>orders@orders_history</code> and <code>orders@orders_history_cover</code> explicitly.</p>
+<div class="cp-table"><table><caption>Observed history read · customer 1001, since 1 October, limit 10 · native single node</caption><thead><tr><th>Reported work</th><th>Key columns only</th><th>With stored status</th></tr></thead><tbody>
+<tr><td>Result rows</td><td>10</td><td>10 · same result</td></tr>
+<tr><td>Secondary rows decoded</td><td>10</td><td>10</td></tr>
+<tr><td>Primary rows decoded</td><td>10 · index join</td><td>None · index join removed</td></tr>
+<tr><td>Total KV rows / pairs</td><td>20 / 20</td><td>10 / 10</td></tr>
+<tr><td>Total KV bytes</td><td>757 B</td><td>537 B</td></tr>
+<tr><td>KV gRPC calls</td><td>2</td><td>1</td></tr>
+</tbody></table></div>
+<p>Both scans reported the same customer/date span and a scan limit of ten. Neither needed a sort. The uncovered route read 450 B from the secondary index and 307 B from primary rows. Covering widened the secondary read to 537 B but removed the primary read altogether. Ten primary fetches were served by one reported KV call in this run, not ten calls.</p>
+<p>The estimates at the consumed scans and index join were ten, matching their actual output. That does not estimate the customer’s whole history: the limit deliberately stopped consumption. The unhinted optimiser plan also selected the covering index. The eight combinations of common/rare customer, January/October lower bound and paid/all statuses returned equal ordered results through all four indexes. These checks establish the mechanism and result equivalence; they are not a latency or concurrent-write benchmark. The <a href="/relational-rebuild/crdb-performance/native-observations.json">complete native observations</a> retain the plans, schema and checked results.</p>
+<div class="cp-table"><table><caption>Questions to ask of native v26.2 plan fields</caption><thead><tr><th>Field</th><th>What it helps establish</th></tr></thead><tbody>
+<tr><td><code>estimated row count</code> and <code>actual row count</code></td><td>Expected and emitted rows at that operator. An early limit may consume only part of an input.</td></tr>
+<tr><td><code>KV rows decoded</code>, <code>KV pairs read</code>, <code>KV bytes read</code></td><td>Data obtained below SQL. Decoded rows and key-value pairs are different units; neither is a physical disk-read count.</td></tr>
+<tr><td><code>KV gRPC calls</code></td><td>Calls serving KV work, rather than a count of returned rows or distinct remote nodes.</td></tr>
+<tr><td><code>sql nodes</code> and <code>kv nodes</code></td><td>Where SQL processing ran and where its data came from.</td></tr>
+<tr><td>SQL/KV CPU, KV time and contention/admission waits</td><td>Resource work and waiting on different bases. Read their definitions before comparing them.</td></tr>
+</tbody></table></div>
+<p>CPU time is time spent doing processor work. KV elapsed time can include waiting. Cumulative work across concurrent components need not fit inside the statement’s wall-clock duration, and parent/child measurements can overlap. Do not add all the displayed times to reconstruct request latency. The <a href="https://www.cockroachlabs.com/docs/v26.2/explain-analyze">native field reference</a> defines each basis.</p>
+<p>A large estimate error matters when it changes the chosen work. For example, expecting a few eligible orders can make repeated line lookups look cheaper than a broader scan and join; thousands of actual orders change that balance. Check statistics after a large data change, then compare the resulting route and work. A refreshed estimate is useful only if it describes the relevant distribution well enough. Accurate estimates can still describe an expensive request.</p>
+<h3 id="where-delay-occurs">Where the delay occurs</h3>
+<p>Read the wait subtype before naming a blocker. The native output distinguishes lock-table waiting from waiting to acquire latches, which coordinate individual low-level requests. The hashed-index profiles in this run reported latch waits; the P7 experiment below reported a transaction lock wait. A contention summary alone does not identify a blocking transaction. Admission wait instead points to work queued for resources. Find the evidence that explains the delay before choosing another index.</p>
+<p>The application also waits before and after server execution: borrowing a connection, sending the statement, receiving rows and processing them. Compare the same request boundary before and after a change. <a href="/learn/databases/relational/slow-queries/">Diagnosing a database incident</a> separates those delays; <a href="/learn/databases/relational/connections-and-capacity/">Connections, overload and capacity</a> develops the shared resource budget.</p>
+</section>
+
+<section id="distributed-execution">
+<h2>Distributed execution and fan-out</h2>
+<p>A plan marked <code>distribution: local</code> performs SQL processing at the gateway. Its KV requests can still reach remote nodes. A distributed SQL plan instead places processors on several nodes and connects them with streams. Those are separate boundaries. Read <code>DistSQL network usage</code> alongside <code>kv nodes</code> and <code>KV gRPC calls</code>; a local SQL plan does not establish that all its data was local.</p>
+<figure class="cp-figure" aria-labelledby="cp-location-title"><figcaption id="cp-location-title"><span>Figure 2</span> Local SQL can still need remote data</figcaption><div class="cp-scene cp-chain">
+<div class="cp-lane"><strong>Node 1 · SQL gateway</strong>Scan → index join → result<br/>SQL processing stays here.</div><div class="cp-arrow">↓ KV requests · ↑ keys and values</div><div class="cp-grid"><div class="cp-lane"><strong>Node 2 · KV serving owner</strong>Customer-history interval</div><div class="cp-lane"><strong>Node 3 · KV serving owner</strong>Primary rows for selected orders</div></div></div><p class="cp-caption">An illustrative placement with current reads and owners on nodes 2 and 3. Boxes identify roles; they do not promise two ranges, two calls or one sequential round trip per row. Covering can remove the primary-row fetch while leaving the history interval remote.</p></figure>
+<p>Fan-out means one operation reaches several participants. A scan whose spans cross many owners can fan out even before a SQL exchange appears. More participants can supply data concurrently; they also add communication and required responses. Count where requests go and where rows or bytes cross, rather than inferring network cost from the word “distributed”.</p>
+<p>The paid-order report from Query execution and performance gives a larger example. It filters October’s paid orders, joins their lines and sums agreed line values by customer. On the three shop orders it returns Tariq 40.00 and Mina 39.50; pending order 103 contributes nothing. Adding nodes does not change that calculation.</p>
+<figure class="cp-figure" aria-labelledby="cp-report-title"><figcaption id="cp-report-title"><span>Figure 3</span> Partial totals need a final combination</figcaption><div class="cp-scene">
+<div class="cp-grid"><div class="cp-lane"><strong>SQL processor A</strong><p>Joined line values<br/>101 / 1 → customer 1 · 4.50<br/>102 / 1 → customer 2 · 40.00</p><p>↓ Local partial totals<br/>customer 1 · 4.50<br/>customer 2 · 40.00</p></div><div class="cp-lane"><strong>SQL processor B</strong><p>Joined line values<br/>101 / 2 → customer 1 · 35.00</p><p>↓ Local partial total<br/>customer 1 · 35.00</p></div></div><div class="cp-arrow">↓ Streams carry partial totals to the final grouping</div><div class="cp-lane"><strong>Final processor</strong><p>Customer 1: 4.50 + 35.00 = 39.50<br/>Customer 2: 40.00</p><p>↓ Sort by value descending, then customer ID<br/>2 · 40.00<br/>1 · 39.50</p></div></div><p class="cp-caption">A hand model of a possible distributed join and aggregation, not an observed DistSQL plan. Each line is processed once; both processors can match the eligible orders to their customers. The pending order’s lines are excluded. Partial totals for customer 1 must be combined. This tiny case sends three partials for three contributing lines; the larger history can collapse many lines into each partial.</p></figure>
+<p>Use <code>EXPLAIN ANALYZE (DISTSQL)</code> to obtain the native physical plan diagram and its measurements. Follow scans, lookup processors and stream endpoints. Check where the date/status filter reduces orders, whether line lookups repeat, and whether local aggregation reduces rows before an exchange. Moving partial totals can save bytes when many lines collapse into few customers; wide rows or many distinct customers change the saving.</p>
+<p>Then inspect imbalance. A hash exchange by customer sends equal customer keys together. In the generated model, customer 1001 owns most orders; a processor responsible for that key may have much more work. Local partial aggregation can reduce what reaches it, but the final total still requires all contributing parts. A busy required participant can hold up the answer while other nodes are quiet.</p>
+<p>The single-node observations in this article cannot demonstrate these placements or regional latency. They establish native access paths and counters. <a href="/learn/databases/relational/cockroachdb/locality/">CockroachDB table locality and region survival</a> develops policies for placing data and leases; changing the key or query is a different choice.</p>
+</section>
+
+<section id="hot-range">
+<h2>Finding the hot range</h2>
+<p>A busy node identifies a place to investigate, not the key that caused it. Match the affected request interval to node CPU and storage demand, statement activity and the DB Console’s Hot Ranges view. Record the view’s sampling or averaging window. A short statement sample and a long range average need not describe the same burst.</p>
+<p>For a hot range, follow its range ID to its key bounds, database, table and index. Then connect the bounds to the schema and the statements reading or changing those keys. A high read rate, a high write rate and time spent waiting on a lock suggest different causes. High activity alone does not establish a harmful bottleneck.</p>
+<Sql label="Map the history index to native range owners" code={`SELECT range_id, start_key, end_key,
+       lease_holder, replicas
+FROM [SHOW RANGES FROM INDEX orders@orders_history_cover
+      WITH DETAILS]
+ORDER BY start_key;`} />
+<p><code>SHOW RANGES</code> supplies the ownership snapshot. It does not measure range demand or prove lock contention. An index can share a covering range with other key intervals, and ownership changes over time. Combine the snapshot with demand evidence and resource pressure from the same period; retain the range bounds as well as its ID.</p>
+<p>In this run the covering index’s listing returned range 83, with node 1 as leaseholder and its only replica. Its bounds covered a much larger interval than this one index. That is useful ownership evidence, but neither a per-index load measurement nor evidence of a hotspot. The optional <code>crdb_internal.hot_ranges</code> probe was unavailable in v26.2.8; no native range-demand rate is claimed here.</p>
+<div class="cp-table"><table><caption>Three concentrations that can make a range hot</caption><thead><tr><th>Observed pattern to investigate</th><th>Key-space explanation</th><th>Candidate change</th></tr></thead><tbody>
+<tr><td>Writes follow the newest interval after splits</td><td>A time-leading or increasing key keeps advancing at an edge.</td><td>Disperse independent new keys; examine every maintained index.</td></tr>
+<tr><td>Demand remains inside customer 1001’s prefix</td><td>Many different order keys share one busy prefix.</td><td>Reduce repeated reads; consider whether that customer’s keys need further distribution.</td></tr>
+<tr><td>Waiting transactions identify the same P7 key</td><td>Several decisions need the same stock authority.</td><td>Shorten protected work and preserve the guard; distributing unrelated keys does not remove the conflict.</td></tr>
+</tbody></table></div>
+<p>For range activity without a clear statement cause, return to <a href="/learn/databases/relational/cockroachdb/operations/">Operating and securing a CockroachDB cluster</a>. Background jobs and wider cluster health can consume the same resources. Do not turn an unexplained node graph into a primary-key migration.</p>
+</section>
+
+<section id="sequential-keys">
+<h2>Sequential keys and hash-sharded indexes</h2>
+<p>Increasing IDs or timestamps put successive inserts near one index edge. After a split, later keys continue into the newest interval. Moving older ranges spreads stored data while the new demand follows the edge.</p>
+<p>A random primary key can disperse primary writes, but an added <code>(placed_at)</code> secondary index still receives sequential time keys. Inspect the whole index set. The customer-leading history key creates separate customer prefixes; skew can keep one of them dominant.</p>
+<p>Figure 4 compares these choices. A, B and C are symbolic new orders for the same customer. Watch which design can separate their writes and what a history read must search.</p>
+<Keys />
+<p>A hash-sharded index prefixes its ordered key with a computed bucket. CockroachDB v26.2 can hash every key column or a specified leading prefix. These two declarations make that choice explicit:</p>
+<Sql label="Full-key and customer-prefix hash alternatives" code={`CREATE INDEX orders_history_hash
+ON orders (customer_id, placed_at DESC, order_id DESC)
+USING HASH STORING (status)
+WITH (bucket_count = 4);
+
+CREATE INDEX orders_history_prefix
+ON orders (customer_id, placed_at DESC, order_id DESC)
+USING HASH STORING (status)
+WITH (bucket_count = 4,
+      shard_columns = (customer_id));`} />
+<p>With full-key hashing, a customer/time interval can occupy every bucket. The ordered answer needs bucket searches and combination. Prefix hashing makes the customer determine a bucket, preserving that customer’s ordered interval there. It also preserves the customer’s concentrated writes. The <a href="https://www.cockroachlabs.com/docs/v26.2/hash-sharded-indexes">hash-sharding reference</a> describes that trade and the bucket setting.</p>
+<p>The native full-key plan scanned each of four bucket/customer intervals with a local limit of ten, decoded 40 rows and combined the ordered streams before the final limit returned ten. It reported four KV calls and about 2.1 KiB. Prefix hashing selected bucket 3 for customer 1001: one bounded scan decoded ten rows, reported one call and read 547 B. Both returned the same ten orders. No extra sort appeared in either plan.</p>
+<p>Those counts show the additional searches; they do not isolate their latency cost. The hashed profiles also reported many more MVCC iterator steps beneath the decoded rows and nonzero latch waits. Their single profiled durations cannot establish a production speed comparison. One node supplied every bucket, so this run demonstrates neither write dispersion across nodes nor increased throughput.</p>
+<p>The drawing makes the choice concrete. Full-key hashing separates A, B and C, so their order has to be recovered across buckets. Customer-only hashing leaves C, B and A adjacent: convenient for the history request, less useful if those writes were the bottleneck. A bucket is a key prefix, not a promise of a dedicated node. Useful boundaries, placement and available capacity still determine where the work runs.</p>
+<p>More buckets add opportunities to separate keys and can add searches to reads. They cannot make one stock decision independent of itself. Accept the design only when the write benefit survives the history queries and the other indexes’ costs.</p>
+</section>
+
+<section id="one-row">
+<h2>Contention on one row</h2>
+<p>Return independently to P7 with stock 1, before the purchase replay. Two transactions want the same stock authority. This problem remains even if every order ID is dispersed across the cluster.</p>
+<figure class="cp-figure" aria-labelledby="cp-stock-title"><figcaption id="cp-stock-title"><span>Figure 5</span> One P7 decision is still one P7 decision</figcaption><div class="cp-scene cp-chain"><div class="cp-lane"><strong>1 · Transaction A locks P7</strong>It keeps the transaction open. Stock remains 1.</div><div class="cp-lane"><strong>2 · Transaction B attempts the guarded decrement</strong><code>stock = stock − 1 WHERE stock &gt;= 1</code><br/>B waits for A’s conflicting lock.</div><div class="cp-lane"><strong>3 · A ends its lock-only transaction</strong>B can continue and reduce stock to 0.</div><div class="cp-lane"><strong>Same key, any bucket count</strong>Hash(P7) is the same for both attempts. Splitting around it does not create another stock value.</div></div><p class="cp-caption">A lock-only holder and one updater, kept separate from the purchase’s multi-row work. This sequence isolates waiting; it does not assert that two complete purchases both succeed.</p></figure>
+<p>The native snapshot found two transaction IDs on the same <code>/Table/108/1/"P7"/0</code> key. A’s exclusive lock had <code>granted = true</code>; B’s waiting entry had <code>granted = false</code>. Both were marked contended. After A committed its lock-only transaction, B’s update completed and P7 had stock 0. P3 and P9 remained at 12 and 4.</p>
+<p>B’s profile reported 317 ms execution time, 313 ms in KV, 313 ms due to contention and 313 ms in the lock table, with 522 µs of KV CPU and zero reported admission wait. The deliberate hold caused this wait; these are not normal shop latencies. The three 313 ms fields describe overlapping aspects of the same delay, not three waits to add together.</p>
+<p>Connect the waiter to the blocker and the contended key. CockroachDB’s lock views and contention events can identify transactions, statements and key intervals; inspect them while waiting occurs or retain the corresponding event. A statement’s own wait tells only part of the story: a blocker may be idle inside an open transaction while the waiter consumes the request budget.</p>
+<p>Keep validation and remote calls that do not require the protected value outside the locked interval. Use a direct guarded update where it expresses the decision, and keep all changes that must commit together inside the transaction. Moving a stock decrement out of an atomic purchase would change correctness to obtain a shorter measurement.</p>
+<p>Hashing the product ID sends both P7 attempts to the same bucket. Adding nodes or splitting between neighbouring products can help independent product work, but it cannot create two independent authorities for “one mug left”. Dividing inventory into separately allocated stock pools is a different business protocol with its own capacity and reconciliation rules, not an index trick.</p>
+<p>Waiting and Serializable retries are related operational signals, but a wait count is not a retry count. The <a href="https://www.cockroachlabs.com/docs/v26.2/monitor-and-analyze-transaction-contention">contention guide</a> distinguishes lock-wait duration from Serializable conflicts. <a href="/learn/databases/relational/cockroachdb/transactions/">CockroachDB transactions and retries</a> follows the native retry protocol; <a href="/learn/databases/relational/cockroachdb/follower-reads/">CockroachDB isolation and follower reads</a> develops historical-read choices. An old stock value is not authority for a new purchase.</p>
+</section>
+
+<section id="testing-repair">
+<h2>Testing the repair against the workload</h2>
+<p>Write the prediction before changing the schema. Covering should remove the history query’s primary fetch. Full-key sharding should make independent writes separable and make customer-history reads search across buckets. A shorter P7 transaction should reduce how long another attempt waits. These are different predictions and need different evidence.</p>
+<p>First compare results: IDs, statuses, multiplicity and the complete requested ordering. Test common customer 1001 and rare customer 1002, a broad history and an October bound, and paid-only as well as all statuses. An index hint can isolate access-path mechanics; remove it when testing the optimiser’s normal choice.</p>
+<p>Then collect plans and ordinary request measurements. Compare latency distributions, throughput, SQL/KV CPU, bytes, requests and waiting under the representative request mix and competing writes. Alternate variants, allow for cache state and repeat enough to see variation. A faster profiled execution does not establish a production latency improvement.</p>
+<p>Record the engine version, topology, data distribution, statistics, parameters, settings and concurrency. An idle single-node experiment can show that primary fetches disappeared. It cannot establish that the new index distributes load across a cluster or meets a regional latency target. A production acceptance test must exercise the part of the prediction that needs those conditions.</p>
+<p>Creating or replacing an index also needs a rollout that preserves application compatibility and budgets for backfill work. <a href="/learn/databases/relational/cockroachdb/schema-changes/">CockroachDB schema jobs under load</a> follows that procedure. The index earns its place when it removes demonstrated work without moving an unacceptable cost into the rest of the workload.</p>
+</section>
+
+<h2>Sources and further reading</h2>
+<p>The key and placement drawings are conceptual models. Native observations come from a disposable Linux CockroachDB v26.2.8 single-node fixture with a two-CPU limit, a 1,536 MiB container limit, 256 MiB SQL memory and 64 MiB cache. They establish the recorded SQL paths and controlled lock wait, not distributed survival, regional timing or workload acceptance. Indexes were declared before loading; online build behaviour was not measured. Primary documentation checked 26 October 2026.</p>
+<ul>
+<li>CockroachDB v26.2: <a href="https://www.cockroachlabs.com/docs/v26.2/explain-analyze">EXPLAIN ANALYZE</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/explain">EXPLAIN</a>, for native plan fields and execution modes.</li>
+<li><a href="https://www.cockroachlabs.com/docs/v26.2/indexes">Secondary indexes</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/joins">Joins</a>, for covering, stored columns and lookup work.</li>
+<li><a href="https://www.cockroachlabs.com/docs/v26.2/hash-sharded-indexes">Hash-sharded indexes</a>, including v26.2’s <code>shard_columns</code> prefix selection, and <a href="https://www.cockroachlabs.com/docs/v26.2/create-index">CREATE INDEX</a> for clause ordering.</li>
+<li><a href="https://www.cockroachlabs.com/docs/v26.2/understand-hotspots">Understand hotspots</a>, <a href="https://www.cockroachlabs.com/docs/v26.2/show-ranges">SHOW RANGES</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/load-based-splitting">Load-based splitting</a>, for relating demand to key bounds and owners.</li>
+<li><a href="https://www.cockroachlabs.com/docs/v26.2/monitor-and-analyze-transaction-contention">Monitor and analyse transaction contention</a>, for connecting waiting work to blockers and keys, and the <a href="https://www.cockroachlabs.com/docs/v26.2/architecture/transaction-layer#latch-manager">latch manager</a> for request-level coordination.</li>
+</ul>
