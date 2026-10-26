@@ -1,5 +1,16 @@
 # The current site
 
+## Application caching commission, 26 October 2026
+
+The user authorised a complete collection on application caching, using Redis,
+and publication of each article as it is completed. The introduction at
+`/learn/databases/caching/` replaces the former working draft. Future articles
+remain planned until their explanations, interactive illustrations, examples and
+rendered pages have been checked. The collection's plan and delivery record live
+in `article-work/redis-caching-2026-10-26/`.
+
+## Publication context
+
 Consolidated on 4 October 2026 at the operator's request. Stay Current remains a
 publication covering many engineering fields. **Databases and storage is the first
 field**, not the scope of the whole website. The cleanup retains the site-wide

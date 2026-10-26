@@ -1,5 +1,6 @@
 import { relationalCollection, relationalArticleHref, relationalIntroduction } from './relational-collection';
 import { objectArticles, objectHome } from './object-storage-collection';
+import { cachingArticles, cachingHome, cachingHref } from './caching-collection';
 import { drawingCollection, drawingHref } from './drawing-collection';
 
 export const databaseGuide = '/learn/databases/choosing/';
@@ -19,7 +20,7 @@ export const reading: ReadingEntry[] = [
   { href: '/learn/databases/documents/', title: 'How document boundaries shape a database', description: 'Nested records, shared details and the consequences of choosing a document boundary.', group: 'Other database and storage approaches' },
   { href: '/learn/databases/partitioned/', title: 'Choosing keys for partitioned data', description: 'Partition keys, sort order and the cost of another access pattern.', group: 'Other database and storage approaches' },
   { href: '/learn/databases/distributed-sql/', title: 'Keeping a transaction together across machines', description: 'Partitions, replicas and coordination in a distributed SQL database.', group: 'Other database and storage approaches' },
-  { href: '/learn/databases/caching/', title: 'Keeping a copy of the answer', description: 'Cache hits, invalidation, expiry and eviction.', group: 'Other database and storage approaches' },
+  ...cachingArticles.filter(article => article.published).map(article => ({ href: cachingHref(article.slug), title: article.title, description: article.description, group: 'Application caching · Redis', keywords: 'Redis cache TTL latency invalidation memory' })),
   { href: '/learn/databases/search/', title: 'Finding the blue mug', description: 'Search indexes, tokenisation, ranking and vector filtering.', group: 'Other database and storage approaches' },
   { href: '/learn/databases/graphs/', title: 'How a graph database follows relationships', description: 'Traversing connections, handling cycles and updating a graph.', group: 'Other database and storage approaches' },
   { href: objectHome, title: 'Object storage: an introduction', description: 'Objects, keys and requests, with a complete Amazon S3 learning collection.', group: 'Object storage' },
@@ -40,6 +41,10 @@ export function breadcrumbs(path: string, title: string) {
   if (path.startsWith('/learn/databases/') || path.startsWith('/assessments/')) {
     trail.push({ href: databaseGuide, title: 'Databases and storage' });
     if (path === databaseGuide) return trail;
+    if (path.startsWith(cachingHome)) {
+      trail.push({ href: cachingHome, title: 'Application caching' });
+      if (path === cachingHome) return trail;
+    }
     if (path.startsWith(objectHome)) {
       trail.push({ href: objectHome, title: 'Object storage' });
       if (path === objectHome) return trail;
