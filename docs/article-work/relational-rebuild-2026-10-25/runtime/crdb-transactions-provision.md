@@ -1,0 +1,5 @@
+# Transactions fixture provenance
+
+The single-node command requires its cluster listener to remain 127.0.0.1:26257. The initial attempt to bind that listener to all container interfaces failed immediately; a second attempt to use cluster port26258 also failed immediately. No article SQL ran on those instances. The owned failed containers were removed. The final instance retained the required cluster listener and supplied a separate SQL listener on container port26258, published only to host127.0.0.1:61508. No HTTP port or host data mount was published. The helper now retains startup diagnostics on failure.
+
+Final CID and cluster UUID are in crdb-transactions-fixture.json. The bounded author verifier ran once in3.21seconds, with its source hash unchanged before/after. It passed all assertions; execution, connection guards and actual observations are in article41's retained evidence. The fixture and its disposable volume were removed afterwards. No distributed failure, lost reply or physical intent trace was measured.

@@ -1,0 +1,1 @@
+Accepted after the single substantive Figure1 target-placement clarification. Coordinator confirmed surrounding explanation, both current selector states and build; see articles/pg-backup/repairs/target-location/confirmation.md. Technical review had no substantive finding; unaffected reader/native checks retained. No additional full review or execution.

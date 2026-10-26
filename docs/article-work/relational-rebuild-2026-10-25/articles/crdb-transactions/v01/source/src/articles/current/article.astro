@@ -1,0 +1,169 @@
+---
+import { Code } from 'astro:components';
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Walk from '../../components/relational-rebuild-crdb-transactions/Walk.astro';
+const retryLoop = `request = validated_request_from_caller()  # fixed across all attempts
+budget = bounded_attempts_and_deadline()
+
+while budget.allows_attempt():
+    conn = usable_connection()
+    commit_sent = False
+    try:
+        conn.exec("BEGIN ISOLATION LEVEL SERIALIZABLE")
+        answer = claim_and_purchase(conn, request)
+        commit_sent = True
+        conn.exec("COMMIT")
+        release_clean_connection(conn)
+        return answer
+    except error as err:
+        if err.sqlstate == "40003" or missing_commit_reply(err, commit_sent):
+            discard_connection(conn)
+            # Unknown outcome: recover through the SAME protected protocol.
+        elif err.sqlstate == "40001":
+            rollback_or_discard(conn)
+            # Known failure: discard this attempt's reads and answer.
+        else:
+            rollback_or_discard(conn)
+            raise
+        # Neither branch returns the provisional answer.
+        budget.backoff_with_jitter_if_time_remains()
+
+return no_confirmed_result_yet(request.identity)`;
+---
+<p>CockroachDB can commit one transaction across keys held by different ranges. It does so by keeping provisional writes tied to recoverable transaction state. A range can have stored its part of a purchase while the purchase itself is still unfinished; another operation must know the difference before using that work.</p>
+<p>That machinery also shapes application code. A Serializable transaction may need another attempt. A commit whose answer cannot be established needs recovery. Both paths must preserve the identity of the purchase, even though they say different things about the failed attempt.</p>
+<p>We will follow Mina’s purchase of one blue mug, P7 at 20.00, and two packs of green tea, P3 at 4.50 each. Before order 103 exists, stock is P7 = 1 and P3 = 12. Success creates the pending order and its two lines, leaves stock 0 and 10, and records no payment. <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">Inside CockroachDB</a> supplies the key, range and replica model; <a href="/learn/databases/relational/distributed-transactions/">Transactions across partitions</a> establishes why the purchase needs one outcome.</p>
+<p>The native contract here is self-hosted CockroachDB v26.2, with SQL checks on v26.2.8. The distributed drawings are models of the documented protocol, not traces from those checks.</p>
+
+<h2 id="intents">Write intents and transaction records</h2>
+<p>A <strong>write intent</strong> is a provisional value associated with a transaction. Suppose the stock work for the purchase has reached the KV layer. The proposed P7 value is stock 0, but the transaction has not committed. Replicating that intent protects unfinished work; it does not make the mug’s allocation an ordinary committed fact.</p>
+<p>The intent identifies its transaction and the location of its <strong>transaction record</strong>. That native record lets the engine establish the transaction’s status. Figure 1 places it below two groups of purchase writes. Follow the references from either group, then compare it with the application’s request row.</p>
+<figure class="intent-figure" aria-labelledby="intent-caption">
+  <figcaption id="intent-caption"><span>Figure 1</span> Two records with different jobs</figcaption>
+  <div class="intent-grid">
+    <div class="intent-box"><p class="intent-label">Product keys · provisional work</p><p>P3 stock: 12 → <strong>intent 10</strong><br/>P7 stock: 1 → <strong>intent 0</strong></p><p>Transaction T ↓</p></div>
+    <div class="intent-box"><p class="intent-label">Order and line keys · provisional work</p><p><strong>Intents for pending order 103</strong><br/>Line 1: P7 × 1 at 20.00<br/>Line 2: P3 × 2 at 4.50</p><p>Transaction T ↓</p></div>
+    <div class="intent-box native"><p class="intent-label">Native transaction record · engine state</p><p><strong>T · PENDING</strong></p><p>Are T’s provisional writes committed, still running or aborted?</p></div>
+    <div class="intent-box request"><p class="intent-label">purchase_requests row · application data</p><p><strong>Customer 1 · purchase-103</strong><br/>Canonical basket + terminal result</p><p>Which logical request created order 103?</p></div>
+  </div>
+  <p class="intent-note">The request row is itself part of T’s database work. Its terminal result commits with the stock, order and lines.</p>
+  <p class="intent-caption">A conceptual KV view once these writes have been sent. T is a symbolic transaction identity. Boxes group related keys; they are not a count of actual ranges, replicas or SQL statements. Supporting index and reference work is omitted.</p>
+</figure>
+<p>These records answer different questions. CockroachDB uses T to finish one native transaction. The service uses <code>purchase-103</code> to recognise the same logical purchase across several native transactions. Retrying after an abort creates a fresh native attempt while retaining the application identity. The engine’s eventual cleanup of T must not erase the application’s ability to recognise a repeat.</p>
+<p>When an operation meets a relevant unresolved intent, it cannot simply accept the provisional value or ignore the allocation and sell the mug again. It establishes the transaction’s status through the engine’s conflict and recovery machinery. A running transaction can make it wait; a committed one makes the write usable under the reader’s visibility rules; an aborted one allows the provisional write to be discarded. This does not mean every read waits: read timestamp and isolation matter, as <a href="/learn/databases/relational/cockroachdb/follower-reads/">CockroachDB isolation and follower reads</a> develops.</p>
+<p>There is also a boundary before Figure 1. In v26.2, explicit Serializable transactions buffer writes on the gateway by default. SQL can therefore have executed work which has not yet been sent as intents to the ranges. Buffering can combine repeated writes and make a one-phase commit possible when the complete work fits one range. The drawing explains the intent mechanism once work reaches KV; it is not a promise of an intent or a network round trip after every <code>UPDATE</code>. The transaction record can also be created lazily rather than at <code>BEGIN</code>.</p>
+
+<h2 id="parallel-commits">Parallel Commits and intent resolution</h2>
+<p>For a transaction using <strong>Parallel Commits</strong>, the coordinator need not finish all the writes and then make a separate journey to record commit. It can send the remaining writes alongside a transaction record in <code>STAGING</code> state. That record lists the in-flight writes needed to establish the outcome.</p>
+<p>Step through Figure 2. Stop at <code>STAGING</code>, then advance once and compare the evidence. Finally choose <em>Coordinator disappears</em> and follow the same committed purchase through recovery.</p>
+<Walk kind="commit" number={2} title="Commitment comes before every intent is resolved">
+  A successful Parallel Commits model. The required writes include the whole transaction, with related keys grouped for readability. Success means the required range replication work has completed, not that every replica has applied every write. No elapsed time, fixed message count or observed failure-survival result is implied.
+</Walk>
+<p><code>STAGING</code> alone is insufficient. The additional evidence is that all the writes named by its in-flight list succeeded. Together they establish <strong>implicit commitment</strong>: the purchase is committed even though the stored state still says <code>STAGING</code>. An explicit <code>COMMITTED</code> record establishes that outcome without requiring a later operation to re-prove those writes.</p>
+<p>The successful SQL reply can precede the remaining cleanup. <strong>Intent resolution</strong> turns the provisional writes into ordinary committed versions, or removes an aborted attempt’s writes. It finishes work already performed; it does not rerun the stock decrement. Readers must respect the transaction outcome while this physical cleanup is incomplete.</p>
+<p>A coordinator disappearing does not choose an outcome. If it leaves a staging transaction behind, status recovery can inspect the listed writes and finalise the existing outcome. A missing write cannot be treated as a casual absence check: recovery must also prevent it from arriving later and contradicting an abort. That coordination belongs to CockroachDB’s native protocol. The Parallel Commits design describes the conditional recovery checks.</p>
+<p>Recovery still needs access to the relevant record and write authorities. Replication can preserve them when the coordinating process is lost; it cannot guarantee progress through every loss of quorum or network split. Nor is Parallel Commits a fixed SQL latency. Read work, conflicts, batching, placement and commit-path eligibility all affect what the caller waits for.</p>
+
+<h2 id="refresh">Why Serializable transactions need retries</h2>
+<p>CockroachDB’s default isolation is Serializable. The committed decisions must fit a serial ordering, even though attempts overlap. One way the engine preserves that ordering is to advance a transaction’s timestamp when other activity requires its work to come later.</p>
+<p>A later timestamp raises a question about its earlier reads. If an attempt read stock 1, can it still rely on that answer at the new timestamp? <strong>Read refreshing</strong> checks the earlier read spans for invalidating writes in the intervening interval. It includes the spans searched by a query, not just the rows returned: a newly inserted matching row can invalidate a decision too.</p>
+<p>Figure 3 isolates one P7 read. First keep the earlier read unchanged. Then invalidate it and compare what must happen to the attempt’s decision.</p>
+<Walk kind="refresh" number={3} title="Validate the old answer, or make the decision again">
+  An independent read-refresh model using symbolic timestamps t₁ and t₂. The 1 → 0 branch stands for a conflicting stock change, not another committed order added to the shop’s starting rows. It isolates validation; it does not predict which transaction is pushed or where a real error appears.
+</Walk>
+<p>Successful refreshing validates the answers the attempt already has. It does not execute the SQL again. An <strong>automatic retry</strong> is different: CockroachDB re-executes eligible SQL while it still controls the operation and its results. An implicit single-statement transaction, or a transaction sent as one suitable batch, can benefit from this while results remain buffered. The result-buffer limit is configurable. Once results stream out, the server cannot silently substitute a new run. This buffer holds answers for the client; it is separate from the gateway’s buffer of writes.</p>
+<p>The purchase is interactive. The application receives the result of claiming the request key, chooses a branch, then checks each stock allocation. Once returned results have guided that application code, the server cannot repair the entire decision by rerunning only its next statement. Client handling remains necessary.</p>
+<p>A native retry error has SQLSTATE <code>40001</code>, with a message beginning <code>restart transaction</code>. It can surface during a statement or when the attempt tries to commit. The statement returning an order number does not establish success. The application must check the commit too.</p>
+
+<h2 id="complete-retry">Retry the complete purchase</h2>
+<p>Keep the logical request outside the retry loop. For Mina it is customer 1’s purchase operation, token <code>purchase-103</code>, with the canonical basket P7 × 1 at 20.00 and P3 × 2 at 4.50. The caller retains that identity through timeouts and later recovery. A fresh token would describe a new purchase.</p>
+<p>Inside each attempt, use the unique request key before changing stock. The <code>purchase_requests</code> table and its payload/result contract are established in <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a>. Its existing PostgreSQL examples do not establish CockroachDB’s snapshot or retry behaviour; the following attempt explicitly uses CockroachDB Serializable.</p>
+<Sql label="Start a Serializable attempt and claim the request" code={`BEGIN ISOLATION LEVEL SERIALIZABLE;
+INSERT INTO purchase_requests (customer_id, request_key, payload)
+VALUES (1, 'purchase-103', $1::JSONB)
+ON CONFLICT (customer_id, request_key) DO NOTHING
+RETURNING request_key;`} />
+<p><code>$1</code> is the validated canonical payload supplied as a parameter. A returned row permits the purchase branch. No returned row takes the duplicate branch: read the retained payload and result, reject a mismatch and return the result only after finishing the transaction successfully. Under Serializable, a competing attempt may instead cause <code>40001</code>. Do not assume a later statement in the same attempt gives a fresh snapshot.</p>
+<Sql label="Read the result when the key was already claimed" code={`SELECT payload, result
+FROM purchase_requests
+WHERE customer_id = 1 AND request_key = 'purchase-103';`} />
+<p>If this attempt cannot obtain the retained row, end it and re-enter the protected protocol in a fresh transaction, within the budget. Absence never permits skipping the unique claim. A committed row with no terminal result is a protocol error: the service must never commit its temporary unfinished request row.</p>
+<p>For a new claim, make the complete purchase in that same transaction. An ordinary savepoint after the claim allows a stock refusal to undo all purchase changes while retaining the request key.</p>
+<Sql label="Guard both stock changes after claiming the request" code={`SAVEPOINT purchase_work;
+UPDATE products SET stock = stock - 2
+WHERE product_id = 'P3' AND stock >= 2
+RETURNING stock;
+UPDATE products SET stock = stock - 1
+WHERE product_id = 'P7' AND stock >= 1
+RETURNING stock;`} />
+<p>The application checks each result and stops at the first allocation returning no row. On that business refusal, it rolls back to <code>purchase_work</code>, records an insufficient-stock result and commits it. If both allocations succeed, it creates pending order 103, inserts P7 on line 1 and P3 on line 2 at the agreed prices, and stores the accepted result before commit. Neither branch creates a payment.</p>
+<p>An unexpected SQL error takes the whole attempt back to rollback. A <code>40001</code> also restarts the complete operation, including the claim and decisions. The ordinary purchase savepoint is not a way to keep an earlier stock answer across a serialization failure.</p>
+<Walk kind="retry" number={4} title="One purchase across two native attempts">
+  A selected retry path, with the first attempt failing and no other transaction consuming stock before the second. It is not a prediction of contention or the number of attempts required. The same claim, guards, order and retained-result work belong to every new attempt.
+</Walk>
+<p>The loop below shows the error boundary. It is pseudocode: <code>claim_and_purchase</code> performs the entire protocol just described, including payload comparison, ordinary savepoint handling and recording the terminal result. Every new iteration begins a fresh transaction. Connection helpers either leave a known clean connection or discard it; <code>missing_commit_reply</code> recognises a transport failure after commit may have been sent.</p>
+<Code code={retryLoop} lang="python" theme="css-variables" />
+<p>The budget limits both attempts and elapsed time. Pass the remaining deadline to connection acquisition and SQL execution; a loop limit alone does not bound a blocked call. Backoff with jitter spreads competing retries instead of sending them back together. A library’s retry callback must have the same boundary: all database decisions inside it, the stable request identity outside it. Avoid stacking an application loop over an unnoticed driver loop and multiplying the work. Persistent retry errors also deserve contention or cluster-health diagnosis; a loop does not repair their cause.</p>
+<p>Do not call a payment provider or send an email inside replayed work. An aborted database attempt cannot reverse an outside call, and replay can send it again. If acceptance must create durable external work, record that intention with the purchase and follow <a href="/learn/databases/relational/outboxes-and-jobs/">Outboxes and database-backed jobs</a> for delivery. This purchase still means a pending order received, not a payment taken.</p>
+
+<h3 id="retry-savepoints">Retry savepoints</h3>
+<p>Some drivers use CockroachDB’s alternative retry-savepoint protocol. <code>cockroach_restart</code> must be the outermost savepoint, established before data work. On <code>40001</code>, rolling back to it restarts the transaction’s work; the caller must reissue the complete operation and discard earlier answers.</p>
+<Sql label="The alternative retry-savepoint protocol" code={`BEGIN ISOLATION LEVEL SERIALIZABLE;
+SAVEPOINT cockroach_restart;
+-- Claim request, read, decide, write and retain the result.
+-- On 40001: ROLLBACK TO SAVEPOINT cockroach_restart;
+-- Then repeat ALL of that operation, within a bound.
+RELEASE SAVEPOINT cockroach_restart;
+COMMIT;`} />
+<p><code>RELEASE SAVEPOINT cockroach_restart</code> attempts commitment and can itself return <code>40001</code>. Successful release commits the changes; the following <code>COMMIT</code> clears the connection. Do not execute more purchase work between those commands. Losing confirmation around this boundary still requires outcome recovery. An ordinary <code>purchase_work</code> savepoint has a different job: undoing a partial basket before recording a business refusal.</p>
+
+<h2 id="ambiguous">Recover an ambiguous result</h2>
+<p>SQLSTATE <code>40003</code> means CockroachDB cannot establish the transaction’s outcome for the caller. Unlike <code>40001</code>, it does not establish that the purchase failed. A connection lost while commit is in flight can leave the same uncertainty without delivering any SQLSTATE at all.</p>
+<p>Discard the unusable connection and re-enter the unique-request protocol with the same customer, token and canonical basket. If the earlier attempt committed, its retained answer leads back to order 103. If it aborted, another attempt may claim the key and perform the purchase. If it is still unresolved, recovery may wait or encounter another retryable failure. This is what the ambiguity branch in the loop does; it never sends an unprotected second purchase.</p>
+<div class="outcome-table" role="region" tabindex="0" aria-label="Native outcomes and the purchase response">
+<table>
+<caption>What the application can conclude</caption>
+<thead><tr><th scope="col">Evidence</th><th scope="col">Meaning</th><th scope="col">Next action</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>40001</code></th><td>This native attempt must restart.</td><td>End it; repeat the complete protocol with the same request identity.</td></tr>
+<tr><th scope="row"><code>40003</code> or a missing commit reply</th><td>The caller does not know the outcome.</td><td>Recover through the same unique claim and payload comparison on a usable connection.</td></tr>
+<tr><th scope="row">Confirmed commit of acceptance or refusal</th><td>A terminal business result was retained.</td><td>Return that result. Insufficient stock is not a serialization error.</td></tr>
+<tr><th scope="row">Payload mismatch or persistent SQL error</th><td>Repetition does not repair the request or code.</td><td>Stop and correct it. Do not replace the key to conceal a mismatch.</td></tr>
+</tbody>
+</table>
+</div>
+<p>In the committed case, recovering <code>purchase-103</code> returns accepted order 103 and leaves P3 stock 10, P7 stock 0, two lines worth 29.00 and no payment. Using a new token could instead return “insufficient stock” for a purchase which Mina already obtained. Serializable isolation does not connect those two tokens.</p>
+<p>An observation of “absent” does not prove that the earlier attempt aborted. Nor does exhausting the waiting budget. Keep the identity recoverable and report that no result has yet been confirmed; do not invite the caller to buy again under a new key. The general retry article develops result retention and authorisation. Current versus historical read choices belong to the read article; an old snapshot is not a recovery authority.</p>
+
+<h2 id="native-checks">What the native checks establish</h2>
+<p>In the disposable v26.2.8 single-node run, an injected <code>40001</code> after the tea decrement was followed by full rollback. The request row disappeared and stock returned to 12/1/4. A fresh attempt accepted order 103; repeating its key returned the same answer with unchanged stock 10/0/4, two lines worth 29.00 and no payment. A changed quantity under that key was rejected. A separate two-session conflict also returned <code>40001</code>, this time from a real write against a newer P7 version.</p>
+<p>In an independently initialised shortage with P7 stock 0, rolling back partial basket work preserved P3 stock 12. Omitting that rollback left P3 at 10 despite no order. Replacing the accepted purchase’s key instead produced a stock refusal rather than recovering its success. The retry-savepoint check made the accepted purchase visible to a second connection after successful release, before the first connection’s final <code>COMMIT</code>. These are correctness observations, not throughput or latency measurements.</p>
+<p>A single node cannot demonstrate the survival of distributed transaction state after losing its coordinator’s machine. The Parallel Commits drawings explain the documented protocol and its evidence; they do not report a measured multi-node failure. Likewise, an injected retry checks an error path, not the frequency of natural contention. An actual <code>40003</code> or lost commit reply was not induced.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<ul>
+  <li>CockroachDB v26.2, <a href="https://www.cockroachlabs.com/docs/v26.2/architecture/transaction-layer">Transaction Layer</a>: intents, transaction records, read refreshing, Parallel Commits, resolution and the v26.2 buffered-write boundary.</li>
+  <li>CockroachDB’s <a href="https://github.com/cockroachdb/cockroach/blob/master/docs/RFCS/20180324_parallel_commit.md">Parallel Commit design</a>: why the staging record needs its listed writes, and how status recovery prevents a late write from contradicting an abort. The design’s earlier state name <code>STAGED</code> is <code>STAGING</code> in the current documentation.</li>
+  <li>CockroachDB v26.2, <a href="https://www.cockroachlabs.com/docs/v26.2/transactions">Transactions</a>: native <code>40001</code>/<code>40003</code> contracts, result buffering and the limits of automatic retry.</li>
+  <li><a href="https://www.cockroachlabs.com/docs/v26.2/transaction-retry-error-reference">Transaction Retry Error Reference</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/transaction-retry-error-example">Transaction Retry Error Example</a>: client intervention, complete-attempt retry, backoff and testing retry handling.</li>
+  <li><a href="https://www.cockroachlabs.com/docs/v26.2/advanced-client-side-transaction-retries">Advanced Client-side Transaction Retries</a>: the outer retry savepoint, successful release as commitment and the final connection-clearing <code>COMMIT</code>.</li>
+  <li>On this site: <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a> for the logical request protocol, and <a href="/learn/databases/relational/application-sql/">SQL at the application boundary</a> for error transport and connection ownership.</li>
+</ul>
+<style>
+.intent-figure { margin: 2rem 0; font: .9rem/1.55 var(--font-sans); }
+.intent-figure figcaption { font: 500 1.1rem/1.4 var(--font-serif); margin-bottom: .7rem; }
+.intent-figure figcaption span { font: .68rem var(--font-sans); text-transform: uppercase; letter-spacing: .07em; color: var(--color-text-secondary); margin-right: .5rem; }
+.intent-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .8rem; background: var(--color-surface-alt); border: 1px solid var(--color-rule-strong); padding: 1rem; }
+.intent-box { padding: .8rem; border: 1px solid var(--color-text-secondary); background: var(--color-surface); overflow-wrap: anywhere; }
+.intent-box p { margin: .25rem 0; }
+.intent-label { font-size: .78rem; color: var(--color-text-secondary); }
+.native { grid-column: 1 / -1; border-left: 4px solid var(--color-accent); }
+.request { grid-column: 1 / -1; }
+.intent-note { padding: .8rem; border: 1px solid var(--color-rule-strong); border-top: 0; margin: 0; }
+.intent-caption { color: var(--color-text-secondary); font-size: .8rem; margin-top: .7rem; }
+.outcome-table { overflow-x: auto; margin: 1.5rem 0; }
+.outcome-table table { display: table; min-width: 34rem; }
+.outcome-table caption { text-align: left; font-weight: 600; padding-bottom: .6rem; }
+.outcome-table:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+@media(max-width:500px) { .intent-grid { grid-template-columns: 1fr; padding: .7rem; } }
+</style>
