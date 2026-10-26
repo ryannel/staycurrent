@@ -1,0 +1,174 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import RangeFigure from '../../components/relational-rebuild-pg-extensions/RangeFigure.astro';
+import SpatialFigure from '../../components/relational-rebuild-pg-extensions/SpatialFigure.astro';
+import RestoreFigure from '../../components/relational-rebuild-pg-extensions/RestoreFigure.astro';
+import '../../components/relational-rebuild-pg-extensions/figures.css';
+---
+<p>A PostgreSQL type gives a value its meaning, and an operator asks a question about that value. A reservation can be one time range, with an operator for overlap. A location can be a spatial value, with a predicate for distance. An appropriate index can then help answer that same question without examining every row.</p>
+<p>Some of that support is built in. Extensions add related objects such as types, functions, operators and index operator classes. Once an application stores their values or relies on their rules, those objects become part of what it must recover. Keeping the rows is insufficient if the replacement server cannot read them or enforce the same constraint.</p>
+<p>Follow room R1’s reservation 7001, from its time boundaries to the extension supporting its non-overlap rule. A separate mathematical drawing develops spatial distance. Then follow the reservation’s dependencies through installation, restore, updating and removal. <a href="/learn/databases/relational/postgresql/indexes/">PostgreSQL index methods and operators</a> explains the index structures; here the question is which meaning and software the application depends on.</p>
+
+<h2 id="ranges">Ranges, bounds and overlap</h2>
+<p>A range represents the values between two bounds. <code>tstzrange</code> is PostgreSQL’s built-in range of timestamp-with-time-zone values: instants, rather than unqualified wall-clock readings. Reservation 7001 occupies R1 on 2 November 2026 from 10:00 up to 11:00 UTC:</p>
+<Sql label="Construct the reservation range" code={`SELECT tstzrange(
+  '2026-11-02 10:00+00', '2026-11-02 11:00+00', '[)');`} />
+<p>The <code>[)</code> argument includes the start and excludes the end. At exactly 11:00, this reservation has finished. That lets the next reservation begin at 11:00 without sharing an instant. The type also permits other bounds and empty ranges, so choosing <code>tstzrange</code> does not by itself enforce this booking policy.</p>
+<p>Attempt 7002 starts at 10:30 and ends at 11:30. Attempt 7003 starts at 11:00 and ends at 12:00. Figure 1 compares each independently with 7001. Step through 7002, then select 7003 and watch the shared time disappear.</p>
+<RangeFigure />
+<p><code>&amp;&amp;</code> asks whether two ranges overlap: whether they have any value in common. <code>@&gt;</code> asks whether a range contains a value or another range. <code>-|-</code> asks whether two ranges are adjacent. Adjacency and overlap are different predicates. The boundary policy explains why 7003 adjoins 7001 while <code>&amp;&amp;</code> returns false.</p>
+<Sql label="Find reservations overlapping attempt 7002" code={`SELECT reservation_id
+FROM reservations
+WHERE room = 'R1'
+  AND during && tstzrange(
+    '2026-11-02 10:30+00', '2026-11-02 11:30+00', '[)');
+-- 7001`} />
+<p>This is a search. It does not prevent another caller from inserting an overlap after the search. To enforce non-overlap, the reservation table needs an exclusion constraint: no pair of rows may have both equal rooms and overlapping times. <a href="/learn/databases/relational/constraints/">Constraints and data integrity</a> develops that integrity argument, including why checking in application code is insufficient.</p>
+
+<h3 id="room-equality">Combining room equality with time overlap</h3>
+<p>The constraint uses GiST support for both comparisons. PostgreSQL already supplies the range operator class. A text room identifier needs a GiST class for text equality; the supplied <code>btree_gist</code> extension adds it. Despite its name, this is GiST support with B-tree-like comparisons, rather than a B-tree index alongside the range index.</p>
+<Sql label="The extension-backed reservation rule" code={`-- After deliberately installing btree_gist, as below:
+CREATE TABLE reservations (
+  reservation_id integer PRIMARY KEY,
+  room text NOT NULL,
+  during tstzrange NOT NULL,
+  CHECK (
+    NOT isempty(during)
+    AND NOT lower_inf(during) AND NOT upper_inf(during)
+    AND lower_inc(during) AND NOT upper_inc(during)
+    AND isfinite(lower(during)) AND isfinite(upper(during))
+  ),
+  CONSTRAINT room_free
+    EXCLUDE USING gist (room WITH =, during WITH &&)
+);`} />
+<p>The check requires a non-empty range with finite, present bounds and the chosen half-open policy. The exclusion rejects the pair only when both comparisons are true; another room can use the same interval. Adding a plain GiST search index would supply an access path without supplying this rule. Nor does <code>btree_gist</code> make GiST a general replacement for B-tree uniqueness.</p>
+<p>In the native reservation check, creating this kind of exclusion without the extension failed because text had no default GiST operator class. With <code>btree_gist</code> installed, 7002 was refused with an exclusion violation and 7003 was permitted. The range type and its overlap meaning were present before the extension; the missing part was the text index support needed to combine them.</p>
+
+<h2 id="spatial">Spatial types and predicates</h2>
+<p>PostgreSQL’s built-in <code>point</code>, <code>box</code>, <code>polygon</code> and related geometric types represent two-dimensional Cartesian objects. They suit questions on a plane whose coordinate meaning the application already controls. For example, <code>point(3,4) &lt;-&gt; point(0,0)</code> gives distance 5. Nothing in that value declares metres, longitude or a map projection.</p>
+<p>PostGIS adds <code>geometry</code>, <code>geography</code> and spatial operations. A geometry’s spatial reference identifier, or SRID, identifies its coordinate reference system. Planar geometry distances use that system’s units. A WGS 84 longitude/latitude geometry has angular coordinates, so asking for distance 500 does not ask for 500 metres. A suitable projected coordinate system can provide metre-based planar calculations, within its intended area and accuracy.</p>
+<p>Geography instead supports Earth-distance calculations with distances in metres; <code>ST_DWithin</code> uses a spheroid by default. That choice affects meaning and cost. Choose from the extent and accuracy of the actual question, rather than casting until a query accepts the operands.</p>
+<p>Assigning an SRID is also different from transforming coordinates. <code>ST_SetSRID</code> labels the existing numbers. <code>ST_Transform</code> calculates coordinates in another reference system. Labelling longitude/latitude numbers as a projected metre system does not convert them into metres.</p>
+
+<h3 id="distance">Finding points within a distance</h3>
+<p>Before choosing a coordinate system, look at the distance question itself. Figure 2 asks for points at most 5 coordinate units from the origin. The enclosing square is a cheap way to exclude impossible matches. Watch point B survive the square and fail the circle.</p>
+<SpatialFigure />
+<p>The distance test is what defines the answer. A and B both pass the box, but B is too far away. PostGIS’s <code>ST_DWithin</code> includes an index-aware bounding-box comparison and the distance test; the application keeps the complete predicate in its SQL.</p>
+<Sql label="PostGIS geography distance query" code={`-- In a PostGIS-enabled database; locations are a separate application table.
+CREATE TABLE locations (
+  location_id integer PRIMARY KEY,
+  position geography(Point, 4326) NOT NULL
+);
+CREATE INDEX locations_position_gist
+  ON locations USING gist (position);
+
+-- $1 = longitude, $2 = latitude; distance is in metres.
+SELECT location_id
+FROM locations
+WHERE ST_DWithin(
+  position,
+  ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+  500
+);`} />
+<p>This query stores geography, builds its GiST support and queries that same column as geography. Its coordinates must actually be WGS 84 longitude then latitude. The square-and-circle drawing explains candidate filtering in a plane; it is not an Earth-distance calculation or a trace of this query.</p>
+<p>Changing the query to a transformed or cast expression changes what an index must support. An index on a geometry column does not automatically supply an index on every transformation or geography cast of it. Match the stored type, operator, expression and class, then inspect the actual plan on representative data. An eligible index can still lose to a scan, especially for a broad radius or a tiny table. The PostGIS example is documentation-based here; no PostGIS execution or speed measurement is claimed.</p>
+
+<h2 id="installing">Installing an extension</h2>
+<p>There are two installations to keep separate. The server needs the extension’s supporting files: its control file, SQL scripts and, for compiled functions, the appropriate library and supporting libraries. A package, server image or managed-service capability supplies those files. <code>CREATE EXTENSION</code> then runs an installation script in one database and records the resulting objects as members of that extension.</p>
+<p>Provisioning files does not install the extension in every database. Conversely, an application’s <code>CREATE EXTENSION</code> cannot download a missing server library. Inspect both available software and the current database before choosing a version:</p>
+<Sql label="Inspect available and installed extensions" code={`SELECT name, default_version, installed_version
+FROM pg_available_extensions
+WHERE name IN ('btree_gist', 'postgis');
+
+SELECT version, installed, superuser, trusted,
+       relocatable, schema, requires
+FROM pg_available_extension_versions
+WHERE name = 'btree_gist'
+ORDER BY version;
+
+SELECT extname, extversion, extowner::regrole,
+       extnamespace::regnamespace
+FROM pg_extension;`} />
+<p><code>default_version</code> is the server files’ default choice; <code>extversion</code> is what this database has installed. The version rows also expose prerequisites, trusted-installation eligibility and schema restrictions. A supplied extension can require other extensions first. Inspect those versions and schemas too; a convenient <code>CASCADE</code> installation can choose prerequisite defaults you did not explicitly select.</p>
+<p>The extension name is database-wide, even when its exported objects live in a schema. <code>SCHEMA</code> chooses an allowed destination for those objects; it cannot override a fixed schema required by the extension. Relocatability is another property to inspect before planning to move them.</p>
+
+<h3 id="installation-authority">Installation authority and application access</h3>
+<p>Use the collection’s separate <code>shop_migrate</code> and <code>shop_runtime</code> authorities. Provisioning server software belongs to the server operator or service administrator. Installing its database objects belongs to a deliberate migration or extension administrator. Runtime needs only the operations that use them.</p>
+<p><code>btree_gist</code> is trusted: a non-superuser with <code>CREATE</code> on the database can install it. Trusted is permission to use that installation path, rather than a claim that every extension is safe for every application. Many other extensions need superuser authority. Check the chosen version’s requirements and the service’s supported procedure.</p>
+<Sql label="Deliberate installation in a protected schema" code={`-- Administrator prepares the authority and protected destination:
+GRANT CREATE ON DATABASE shop_database TO shop_migrate;
+CREATE SCHEMA extensions AUTHORIZATION shop_migrate;
+
+-- Separate deployment connection assumes shop_migrate.
+-- Substitute the version approved from the inspection above.
+CREATE EXTENSION btree_gist
+  WITH SCHEMA extensions VERSION '1.8';
+
+-- Runtime may resolve granted objects, but cannot create in this schema:
+GRANT USAGE ON SCHEMA extensions TO shop_runtime;`} />
+<p>Version 1.8 is the choice observed in the PostgreSQL 18.6 fixture, not a universal version to paste into a migration. Keep database <code>CREATE</code>, schema creation rights and ownership away from runtime. For trusted installation, the caller owns the extension while its member objects are normally owned by the bootstrap superuser. Owning the extension does not mean owning each function or operator class.</p>
+<p>Protect the installation schema and prerequisite schemas from untrusted object creation. Installation scripts resolve names, so a hostile object on their search path can change what privileged code calls. Ordinary callers also need suitable schema <code>USAGE</code> and any required function or type privileges; inspect the extension’s actual grants rather than assuming installation granted the intended access. <a href="/learn/databases/relational/postgresql/access-control/">PostgreSQL roles, policies and privileged code</a> develops membership, ownership and safe name resolution.</p>
+<p>For the reservation DDL, include the protected <code>extensions</code> schema in the migration’s deliberate search path so the text operator class can be resolved. Keep untrusted schemas out of privileged paths. <code>CREATE EXTENSION IF NOT EXISTS</code> is not a compatibility test: an existing extension with that name can have another version or history.</p>
+
+<h2 id="dependencies">Extension objects and application dependencies</h2>
+<p>The reservation table is an application object. It does not become a member of <code>btree_gist</code> merely by using it. Its exclusion constraint has a supporting GiST index; the text key uses the extension’s operator class. Figure 3 follows that reliance towards the files that implement it.</p>
+<figure class="pgx-figure" aria-label="The reservation rule depends on extension support"><figcaption><span>Figure 3</span> The reservation rule depends on extension support</figcaption><ol class="pgx-chain"><li><strong>Application · reservations</strong><small>↓ exclusion constraint · same room and overlapping time</small></li><li><strong>room_free · supporting GiST index</strong><small>↓ index uses text equality class + built-in range class</small></li><li><strong class="pgx-member">gist_text_ops · extension member</strong><small>↓ membership recorded in PostgreSQL</small></li><li><strong class="pgx-member">btree_gist · installed extension</strong><small>↓ implementation supplied outside the database catalogue</small></li><li><strong class="pgx-outside">Server control file · SQL scripts · compiled library</strong></li></ol><p class="pgx-caption">A dependency map, not an execution path. Solid boxes describe database objects and recorded relationships; the dashed box is server software which a database dump does not contain. The application table and rule remain separately owned objects.</p></figure>
+<p>There are three relationships to distinguish. Membership groups an extension’s own objects. A declared prerequisite makes one extension require another. An application dependency connects an object such as this index to a type or class the extension provides. <code>pg_depend</code> records these catalogue relationships; <code>pg_describe_object</code> turns its object addresses into readable descriptions.</p>
+<Sql label="Inspect members of btree_gist" code={`SELECT pg_describe_object(d.classid, d.objid, d.objsubid)
+       AS member
+FROM pg_depend AS d
+JOIN pg_extension AS e ON e.oid = d.refobjid
+WHERE d.refclassid = 'pg_extension'::regclass
+  AND d.deptype = 'e'
+  AND e.extname = 'btree_gist';`} />
+<p>This lists members, not the complete application inventory. Catalogue tracking cannot discover a client query stored outside the database. It also need not record references hidden inside dynamic SQL or a routine body supplied as a string. Inventory callers, migrations, generated expressions, stored values and operational tools as well as catalogue dependants. An extension used only by a report still has a caller even when dropping it meets no catalogue objection.</p>
+
+<h2 id="restoring">Restoring extension data and behaviour</h2>
+<p>A logical dump normally requests extension creation instead of dumping each member’s definition. The installation script reconstructs those objects. The dump carries the application table, its rows, its constraint and its grants, but the destination must already have compatible extension files.</p>
+<p>Follow those two routes in Figure 4. Switch the destination to missing software and see where copying the dump stops helping.</p>
+<RestoreFigure />
+<p>A dump’s extension creation need not pin the source’s exact version. Inspect the emitted command and prepare the intended target version under the extension’s documented restore procedure. A changed default can reconstruct different objects. The extension name and a successful row load therefore establish less than a recovered application. In this dump the command selected the target default, with no <code>VERSION</code> clause.</p>
+<p>The reservation rehearsal restored a logical dump into a separate PostgreSQL 18.6 cluster. Under the runtime role’s grants, 7001 remained readable, its range contained 10:30, an overlapping 7002 was refused and adjoining 7003 was permitted. The check used the same provisioned extension files at both ends. It establishes that bounded reconstruction, rather than cross-version compatibility or recovery on an unprepared host. Ownership also needed checking: the restored extension belonged to the restoring administrator, while the application table returned to its migration owner. Do not assume the original extension’s owner followed the dump.</p>
+
+<h3 id="recovery-contract">The extension in the recovery contract</h3>
+<p>Retain a reproducible way to supply compatible extension software for every recovery and standby target: PostgreSQL major version and platform support, extension libraries and scripts, supporting libraries, required configuration and any external data the extension uses. A file-level backup or archived WAL does not package all software outside the data directory. A standby which needs a library must have that library available too.</p>
+<p>There are special data cases. An extension can register configuration-table contents for inclusion in a dump, possibly with a row filter; ordinary member definitions remain reconstructed by installation. Conversely, a hand-edited member function definition is generally omitted by <code>pg_dump</code>, so it can disappear on restore. Use the extension’s supported update mechanism for such changes and test configuration data explicitly.</p>
+<p>The acceptance question is whether the recovered service preserves the relevant values and decisions. Check representative stored values, predicates, constraints, indexes and actual caller access. For a spatial extension, include reference-system handling and required transformation resources. For a search extension, include expected matches. <a href="/learn/databases/relational/backup-and-restore/">Backup, restore and reconciliation</a> develops the wider recovery chain and valid work outside the restored history.</p>
+
+<h2 id="updating">Updating extension software and database objects</h2>
+<p>Replacing a server package changes available software. It does not by itself run the update scripts for every database using the extension. <code>ALTER EXTENSION … UPDATE</code> changes one database’s extension objects along an available script path. The extension’s release procedure must say which software and SQL steps belong together, including any restart, stored-data conversion or index rebuild.</p>
+<Sql label="Inspect supported extension updates" code={`SELECT extversion FROM pg_extension
+WHERE extname = 'btree_gist';
+
+SELECT source, target, path
+FROM pg_extension_update_paths('btree_gist')
+WHERE source = '1.2' AND target = '1.8';
+
+-- Only after accepting this supported path on a recoverable copy:
+ALTER EXTENSION btree_gist UPDATE TO '1.8';`} />
+<p>The path reports scripts available to this server, not a guarantee that the application accepts their effect. A path may traverse intermediate versions. Its source can also be an older installed version that these files cannot create afresh; check installation availability separately when preparing a test copy. Version labels are supplied by the extension; do not infer a usable transition by comparing their spelling. A successful <code>ALTER EXTENSION</code> also does not perform every external maintenance task an extension’s release requires.</p>
+<p>Rehearse with the stored data and the real callers’ authority. Check that operator results still express the same business question, old values remain readable, constraints still refuse forbidden writes and indexes meet the release’s validity and rebuild requirements. Check allowed writes too: a rule that refuses everything is not a successful update. Preserve a tested recovery route before admitting new application work under the changed representation.</p>
+<p>The native rehearsal updated <code>btree_gist</code> from 1.2 to 1.8 through the advertised intermediate scripts. The stored range still contained 10:30, the exclusion still rejected 7002 and adjoining 7003 was still permitted. The files advertised no reverse path from 1.8 to 1.2. That small check is evidence about that path and rule, not an acceptance suite for PostGIS or another extension. A reverse script is not guaranteed, and replacing an old library over newly changed objects is not a downgrade procedure. <a href="/learn/databases/relational/postgresql/upgrades/">Upgrading and migrating PostgreSQL</a> handles the whole-server transfer and write handover.</p>
+
+<h2 id="removing">Removing an extension</h2>
+<p><code>DROP EXTENSION</code> removes its database objects. The default <code>RESTRICT</code> refuses when recorded outside dependencies still need them. In the reservation example, that refusal protects the exclusion rule’s reliance on the text class. It is a useful inventory signal, not proof that every application caller has been found.</p>
+<p><code>CASCADE</code> permits removal of dependants too. In the disposable reservation test it removed the exclusion constraint and its supporting index while leaving row 7001 in the table. A new overlapping 7002 could then be inserted. The rows survived, but the booking rule did not.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Removal outcomes in the reservation experiment"><table><caption>Independent removal attempts · the destructive branch was rolled back</caption><thead><tr><th>Attempt</th><th>Observed result</th><th>Reservation service</th></tr></thead><tbody><tr><td><code>DROP EXTENSION btree_gist RESTRICT</code></td><td>Refused: outside dependency</td><td>Rule and stored row retained</td></tr><tr><td><code>DROP EXTENSION btree_gist CASCADE</code></td><td>Extension, rule and index removed; row retained</td><td>Overlapping insert accepted</td></tr></tbody></table></div>
+<p>Another extension can have a different loss boundary. If a table column uses an extension-defined type, a cascade can remove that column and its values. Establish the complete effect on a recoverable copy before choosing a drop. First remove caller reliance and migrate any values that need a replacement representation. Supply replacement enforcement before reopening writes that depended on the old rule.</p>
+<p>Dropping an extension does not uninstall its server files and is not an update method. Keep those files while any database or retained recovery history still needs them. The decision reaches beyond the currently connected database: the software can serve other databases, standbys and restores of older backups.</p>
+
+<h2 id="verification">What was checked</h2>
+<p>The displayed reservation definition, range predicates and built-in point calculations were checked in PGlite 0.5.8, PostgreSQL 18.3 in WebAssembly. Installation, catalogue dependencies, exclusion outcomes, logical restore and the available update path were checked separately on an owned disposable PostgreSQL 18.6 Linux server, using isolated source and restore clusters and explicit Unix sockets. Role checks used administrator <code>SET ROLE</code> under local trust authentication; they establish effective grants here, rather than deployed login authentication. The adjoining attempts and destructive removal branch were rolled back. Each fixture retained only its starting reservation.</p>
+<p>The drawings explain value semantics and dependencies. They are not page layouts, planner traces or concurrent schedules. The spatial SQL follows PostGIS’s documented interface; the square-and-circle arithmetic was checked, but no PostGIS runtime was available. No observation establishes production speed. Keep the same distinction in an application rehearsal: a completed command, a correct result and a recoverable service are separate things to demonstrate.</p>
+
+<h2>Sources and further reading</h2>
+<p>Checked against primary documentation on 26 October 2026. SQL observations identify their runtimes above.</p>
+<ul>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/rangetypes.html">Range types</a> and <a href="https://www.postgresql.org/docs/18/functions-range.html">Range functions and operators</a>: bounds, overlap, adjacency and exclusion constraints.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/btree-gist.html">btree_gist</a> and <a href="https://www.postgresql.org/docs/18/datatype-geometric.html">Geometric types</a>: supplied text GiST support and built-in planar values.</li>
+<li>PostGIS, <a href="https://postgis.net/docs/ST_DWithin.html">ST_DWithin</a>, <a href="https://postgis.net/docs/ST_SetSRID.html">ST_SetSRID</a> and <a href="https://postgis.net/docs/ST_Transform.html">ST_Transform</a>: distance units, bounding-box filtering and the difference between assigning and transforming a reference system.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/sql-createextension.html">CREATE EXTENSION</a>, <a href="https://www.postgresql.org/docs/18/view-pg-available-extension-versions.html">pg_available_extension_versions</a> and <a href="https://www.postgresql.org/docs/18/catalog-pg-extension.html">pg_extension</a>: versions, authority, prerequisites and schemas.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/extend-extensions.html">Packaging related objects into an extension</a>: server files, membership, logical dumps, registered configuration data and update scripts.</li>
+<li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/ddl-depend.html">Dependency tracking</a>, <a href="https://www.postgresql.org/docs/18/catalog-pg-depend.html">pg_depend</a>, <a href="https://www.postgresql.org/docs/18/sql-alterextension.html">ALTER EXTENSION</a>, <a href="https://www.postgresql.org/docs/18/app-pgdump.html">pg_dump</a> and <a href="https://www.postgresql.org/docs/18/sql-dropextension.html">DROP EXTENSION</a>: recorded reliance, update paths and removal.</li>
+<li>PostGIS, <a href="https://postgis.net/docs/postgis_administration.html">Administration</a>: provisioning and extension-specific upgrade procedures.</li>
+</ul>

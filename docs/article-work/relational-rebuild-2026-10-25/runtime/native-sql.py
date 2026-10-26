@@ -38,7 +38,12 @@ try:
     cid = info['Id']
     command = cli + ['exec', '-i', cid, 'env', '-i', 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'PGAPPNAME=' + role + '-owned-verifier', 'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-v', 'fixture_db=' + db, '-v', 'fixture_admin=' + user, '-h', '/var/run/postgresql', '-p', '5432', '-U', user, '-d', db]
     guard = f"DO $root_guard$ BEGIN IF current_database()<>'{db}' OR current_user<>'{user}' OR current_setting('cluster_name')<>'{cluster}' OR current_setting('server_version_num')<>'180006' OR current_setting('data_directory')<>'/var/lib/postgresql/18/docker' OR current_setting('listen_addresses')<>'' THEN RAISE EXCEPTION 'Refusing unowned fixture'; END IF; END $root_guard$;\n"
-    result = subprocess.run(command, input=guard + source.read_text(), capture_output=True, text=True, timeout=180)
+    full_input = guard + source.read_text()
+    stdin_snapshot = evidence / (prefix + '-stdin.sql')
+    assert not stdin_snapshot.exists() or stdin_snapshot.read_text() == full_input, 'Do not replace a captured complete stdin'
+    stdin_snapshot.write_text(full_input)
+    status.update(stdin_snapshot=stdin_snapshot.name, stdin_sha256=hashlib.sha256(full_input.encode()).hexdigest())
+    result = subprocess.run(command, input=full_input, capture_output=True, text=True, timeout=180)
     (evidence / (prefix + '-results.txt')).write_text(result.stdout)
     (evidence / (prefix + '-stderr.txt')).write_text(result.stderr)
     status.update(exit_code=result.returncode, container_id=cid, configured_image=image, image_id=info['Image'], network='none', port_bindings=info['HostConfig'].get('PortBindings'), command=command, execution='Coordinator inspected author SQL separately; executor adds same-session runtime guard before supplied SQL. Exit0 establishes execution, not unasserted model conclusions.')
