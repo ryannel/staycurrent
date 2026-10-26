@@ -1,0 +1,146 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import RecoveryFigures from '../../components/relational-rebuild-crdb-backup/RecoveryFigures.astro';
+---
+<p>CockroachDB’s <code>BACKUP</code> preserves a consistent state of selected tables, databases or a cluster. <code>RESTORE</code> builds new objects from that material. To recover an earlier moment between backups, the backup must also contain the revisions needed for that moment. A live cluster retaining old versions and a backup retaining those versions are two different promises.</p>
+
+<p>This article follows the recovery branch from <a href="/learn/databases/relational/backup-and-restore/">Backup, restore and reconciliation</a>. Order 103 has already bought one blue mug at 20.00 and two packets of tea at 4.50, total 29.00. Stock is now P3 10, P7 0, P9 4. A mistake changes P7’s catalogue price to 2.20. Later, a provider accepts a 10.00 card charge and the shop records payment 504. Restoring before the mistake also omits that valid payment record.</p>
+
+<p>We will find a complete backup path, restore the earlier shop into a separate database, then account for the accepted charge without charging again or repeating the purchase. The SQL uses CockroachDB v26.2 syntax; a small native drill ran on v26.2.8. The drawings show illustrative ordering, with no invented commit times or recovery-rate measurements.</p>
+
+<section id="target">
+<h2>Choosing the restore point</h2>
+<p>A restore point selects a state of the backed-up history. It does not select which transactions were good. Figure 1 keeps the source events fixed while you move the cut. Watch P7’s catalogue price and payment 504 separately.</p>
+<RecoveryFigures kind="cut" />
+<p>The cut before the mistake recovers 20.00 and loses the payment record. Moving through payment 504 recovers the payment and the earlier 2.20 mistake. Neither cut rewinds the provider. The later charge therefore needs reconciliation against the earlier database.</p>
+<p>The purchase itself lies before every cut shown. Its agreed lines still total 29.00 and its stock consumption is already present. A repair that creates order 103 again would repeat work we retained. If the only problem were this one catalogue value, restoring an isolated copy to inspect the old price and correcting the live database might be sufficient. Here we follow the wider restore to make its obligations visible.</p>
+<p>Identify the unwanted commit from retained database and application evidence. The time someone noticed the price is not its commit time, and an application’s <code>updated_at</code> need not mark that boundary. Choose a supported timestamp before the unwanted change, record the source and object scope, then verify the resulting facts. The engine accepting a timestamp does not establish that it is the right business cut.</p>
+</section>
+
+<section id="chain">
+<h2>Full backups and incremental chains</h2>
+<p>A <em>full backup</em> supplies a complete starting copy for its selected scope. An <em>incremental backup</em> supplies changes since the preceding backup in its chain. A backup collection can contain several full backups, each with its following increments. The collection URI identifies the container of those paths; it is not itself one recoverable point.</p>
+<p>These two commands do different work. The first starts a new full backup. Run the second later to append an increment to the latest full-backup path. Here <code>external://shop_recovery</code> stands for an already configured external storage connection, with suitable SQL and storage access.</p>
+<Sql label="Start a full backup, then append an incremental backup" code={`BACKUP DATABASE shop
+INTO 'external://shop_recovery'
+WITH revision_history = true;
+
+-- Run later, against the same collection and object scope.
+BACKUP DATABASE shop
+INTO LATEST IN 'external://shop_recovery'
+WITH revision_history = true;`} />
+<p>Both commands explicitly request revision history; the next section explains what that adds. First follow the files. Figure 2 has one full copy and two increments. Remove B while keeping C.</p>
+<RecoveryFigures kind="chain" />
+<p>C cannot replace B. A usable route to C needs the starting full backup and the required increments through C, all readable with their necessary keys. A new full backup supplies another starting route, but it does not repair the missing files in the earlier one. Keep material by the recovery points it supports, rather than deleting an old full merely because newer increments exist.</p>
+<h3>Finding the backup to restore</h3>
+<p>List the collection’s full-backup paths, then inspect the selected path and its increments:</p>
+<Sql label="List full paths and inspect a selected backup chain" code={`SHOW BACKUPS IN 'external://shop_recovery';
+
+-- Replace <full-path> with a path returned above.
+SHOW BACKUP FROM '<full-path>'
+IN 'external://shop_recovery';`} />
+<p>Read <code>database_name</code>, <code>object_name</code> and <code>object_type</code> for scope; <code>backup_type</code>, <code>start_time</code> and <code>end_time</code> for the full copy and later intervals. Check that the intended database and related objects are there and that the chain reaches the target. Keep the source identity and the selected full path with that evidence.</p>
+<p><code>LATEST</code> is convenient when creating increments. During an incident, make its choice explicit: it selects the most recent full-backup path, with that path’s increments available to the restore. A newer full can begin after the state you need. Inspect the paths before relying on <code>LATEST</code>, and pin the chosen path in the recovery record and restore command.</p>
+</section>
+
+<section id="history">
+<h2>Revision history and interior restore points</h2>
+<p>Without captured <em>revision history</em>, the chain supports its saved backup points. Having A and B does not make every moment between them restorable. With captured revisions, a restore can select an interior point within the history actually saved. Switch Figure 2 to <em>Backup points only</em>: the dependency chain stays the same, but its stopping points change.</p>
+<p>A full backup with revision history can include retained revisions from before its backup timestamp. An increment with revision history captures the changes since its preceding backup within the available revision window. An increment can add revision history even if an earlier backup omitted it; that does not fill older gaps. Neither can recreate versions already collected before capture. Inspect the actual captured bounds and test the desired target; the source’s garbage-collection period alone does not establish the backup’s coverage. Scheduled backups protect the revisions they still need to capture, as the <a href="https://docs.cockroachlabs.com/docs/v26.2/take-backups-with-revision-history-and-restore-from-a-point-in-time">revision-history documentation</a> explains.</p>
+<p>Request the option explicitly when interior recovery is required. In the v26.2.8 drill, an unqualified <code>BACKUP</code> chain rejected an interior restore because revision history had not been captured. An explicit <code>revision_history = false</code> chain rejected it too. A separate full-and-increment chain using <code>revision_history = true</code> restored the intended interior cut. The current <a href="https://docs.cockroachlabs.com/docs/v26.2/backup#options">BACKUP option reference</a> describes a true default; that differs from this observed run. Do not base recoverability on an assumed default.</p>
+<p>Use <code>AS OF SYSTEM TIME</code> on <code>RESTORE</code> for the chosen point. This command’s path and timestamp are placeholders to replace with the inspected backup path and established cut:</p>
+<Sql label="Restore the selected shop state under a new database name" code={`RESTORE DATABASE shop
+FROM '<full-path>' IN 'external://shop_recovery'
+AS OF SYSTEM TIME '<chosen-timestamp>'
+WITH new_db_name = 'shop_recovered';`} />
+<p>The restore creates the selected state. It does not install all the backup’s old versions as queryable history in <code>shop_recovered</code>. To examine another earlier point, restore another candidate from the retained backup material. Keep the original evidence while deciding which candidate to use.</p>
+</section>
+
+<section id="scope">
+<h2>Choosing the restore scope</h2>
+<p>Choose the unit whose facts must agree. Restoring only <code>payments</code> would leave its references and the order agreement to be accounted for separately. This shop candidate uses a database restore so that products, orders, order lines, payments and operation mappings share the same cut.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Restore scope choices"><table><caption>What each scope recovers</caption><thead><tr><th>Scope</th><th>Useful for</th><th>Destination question</th></tr></thead><tbody><tr><td>Table</td><td>Inspecting selected objects and their indexes</td><td>Are referenced tables, types, sequences and views included or otherwise compatible?</td></tr><tr><td>Database</td><td>Recovering the shop’s related objects together</td><td>Use a new name for a separate candidate; the whole database must have been backed up.</td></tr><tr><td>Full cluster</td><td>Recovering user data with relevant system state, including identities</td><td>Requires a destination with no user-created databases or tables.</td></tr></tbody></table></div>
+<p>A table restore is not an automatic dependency collector. Include the needed related objects deliberately. Options such as <code>skip_missing_foreign_keys</code> remove the missing constraint; they do not recover the referenced facts. A successful restore after skipping it has a different integrity contract. The <a href="https://docs.cockroachlabs.com/docs/v26.2/restore#object-dependencies">restore dependency rules</a> cover the supported combinations.</p>
+<p>A database restore also does not recreate cluster users. By default, the restore operator owns the restored objects. Establish the intended runtime identities and grants, and check application access using those identities. The <code>GRANTS</code> option can restore backed-up privileges for corresponding destination usernames; it is not a substitute for verifying who those users are or what the service should now access.</p>
+<p>Check the destination’s supported source version, capacity, required regions and storage access before starting. CockroachDB cannot restore a newer-version backup into an older engine; the documented forward path is the same or the next major version. Encrypted backups need the correct passphrase or usable KMS key. An operator able to list a bucket today has not established that a recovery cluster can read and decrypt every required object during an outage. The <a href="https://docs.cockroachlabs.com/docs/v26.2/restore">RESTORE reference</a> specifies version, region, privilege and destination restrictions.</p>
+</section>
+
+<section id="prove">
+<h2>Proving the restored state</h2>
+<p>Metadata describes a path; validation tests progressively more of it. Keep the candidate isolated from ordinary callers and external workers while checking it. Restored dispatch records can describe effects that already happened.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Native backup validation checks"><table><caption>What CockroachDB’s validation stages establish</caption><thead><tr><th>Check</th><th>What it does</th><th>What remains</th></tr></thead><tbody><tr><td><code>SHOW BACKUP … WITH check_files</code></td><td>Checks that expected backup files are present in storage</td><td>Restore and recovered facts</td></tr><tr><td><code>RESTORE … WITH schema_only</code></td><td>Restores schema without user rows</td><td>Reading the data files and recovering rows</td></tr><tr><td><code>schema_only, verify_backup_table_data</code></td><td>Reads backup data, verifies checksums, then discards the rows</td><td>A populated, usable candidate</td></tr><tr><td>Complete <code>RESTORE</code></td><td>Reconstructs the selected objects and rows</td><td>The intended business state and application behaviour</td></tr></tbody></table></div>
+<p><code>verify_backup_table_data</code> must accompany <code>schema_only</code>. Give each validation restore its own destination name. A successful checksum check is useful evidence, but still leaves the business assertions to make. The <a href="https://docs.cockroachlabs.com/docs/v26.2/backup-validation">backup-validation guide</a> describes these native checks.</p>
+<p>Wait for job completion. Ordinary <code>RESTORE</code> blocks; with <code>DETACHED</code>, the returned job identifier only identifies the asynchronous job. Inspect that job with <code>SHOW JOBS</code> and retain its terminal status and any errors. Neither a job ID nor a file check means the shop has recovered.</p>
+<h3>Check both sides of the cut</h3>
+<p>For the earlier candidate, expect P7 at 20.00, pending order 103 and its agreed 29.00 total, with payment 504 and its operation mapping absent. Stock must remain 10/0/4. Keep agreement and payment sums separate so a join cannot multiply the line values:</p>
+<Sql label="Check the candidate price, agreement and payment independently" code={`SELECT
+  (SELECT price FROM shop_recovered.products
+   WHERE product_id = 'P7') AS p7_price,
+  o.status,
+  (SELECT sum(quantity * unit_price)
+   FROM shop_recovered.order_items
+   WHERE order_id = o.order_id) AS agreed_total,
+  (SELECT coalesce(sum(amount), 0)
+   FROM shop_recovered.payments
+   WHERE order_id = o.order_id) AS recorded_paid
+FROM shop_recovered.orders AS o
+WHERE o.order_id = 103;
+-- Before reconciliation: 20.00 | pending | 29.00 | 0.00
+
+SELECT product_id, stock
+FROM shop_recovered.products
+ORDER BY product_id;
+-- P3 10; P7 0; P9 4`} />
+<p>Inspect constraints and representative other records as well. Read the recovered order through the application under its intended runtime identity, with dispatch still disabled. Check derived stores and still-applicable correction or deletion decisions before older data returns to ordinary use.</p>
+<p>The small native drill restored only a projection of this shop: three products, order 103, two lines and the payment-operation tables. Its interior restore produced the expected earlier facts; a latest restore produced 2.20 and payment 504. This establishes those SQL outcomes on one disposable node with local backup storage. It does not measure production recovery time, test cloud credentials, demonstrate node survival or prove application runtime access. Rehearse the whole recovery path with representative size and access arrangements before relying on an outage budget.</p>
+</section>
+
+<section id="reconcile">
+<h2>Reconcile the later payment</h2>
+<p>The candidate can be prepared while the source is still serving traffic. Final reconciliation needs a finite source history. Stop new source writes and external dispatch, account for transactions and provider calls already in flight, and prevent stale callers or workers from adding authoritative work there. Preserve the final source evidence. <a href="/learn/databases/relational/cockroachdb/migration/">Moving a SQL application to CockroachDB</a> owns the complete application handover; these are the conditions the recovery depends on.</p>
+<p>If the source was destroyed, work from the evidence that survived and retain any gaps explicitly. A missing local payment row does not establish that the charge failed. In this branch, the hypothetical provider offers a retained, queryable result for <code>order-103-part-payment-1</code>. Its immutable meaning is order 103, 10.00 by card, with local result payment 504. Query and compare that result before repairing the database.</p>
+<p>Figure 3 starts with a matching accepted result. Step through the repair and its repeat, then change the provider evidence.</p>
+<RecoveryFigures kind="payment" />
+<h3>Record the result once</h3>
+<p>With ordinary writers excluded, first read the recovered operation mapping and any payment 504. If both already represent the original accepted operation, verify the order, amount, method and payment identity, and return that result. A changed amount under the same operation identity is a mismatch, not another partial payment.</p>
+<p>If both are absent and the evidence matches, record the payment and its immutable operation mapping in one transaction. This is the insertion branch after those checks, using the example’s additional <code>payment_operations</code> table:</p>
+<Sql label="Insert a known accepted payment and its operation mapping atomically" code={`BEGIN;
+SELECT order_id, status
+FROM shop_recovered.orders
+WHERE order_id = 103 FOR UPDATE;
+
+-- After verifying the retained agreement and accepted evidence:
+INSERT INTO shop_recovered.payments
+  (payment_id, order_id, amount, method)
+VALUES (504, 103, 10.00, 'card');
+
+INSERT INTO shop_recovered.payment_operations
+  (operation_id, order_id, amount, method, payment_id)
+VALUES ('order-103-part-payment-1', 103, 10.00, 'card', 504);
+COMMIT;`} />
+<p>The mapping’s operation identifier is a primary key, and its payment identifier is unique and references the payment. Keep the mapping immutable. A constraint can reject a second identity or payment; the recovery procedure must still compare the stored payload and result. Plain <code>ON CONFLICT DO NOTHING</code> would hide whether the existing record means the same thing.</p>
+<p>Before insertion, verify that order 103’s agreed lines still total 29.00, its state permits the payment, and the known 10.00 fits the remaining balance. Stop on partial or inconsistent local evidence. If the transaction aborts, retry the whole database decision using the same operation identity; if its commit result is uncertain, look up that identity before choosing the next action. <a href="/learn/databases/relational/cockroachdb/transactions/">CockroachDB transactions and retries</a> develops those native retry paths.</p>
+<p>The native drill inserted the payment and mapping, then read back the same mapping on a repeat. A blind duplicate insert was rejected with <code>23505</code>. Payload comparison was performed by the verifier; no constraint was claimed to decide whether a changed amount was a valid retry. No provider request ran: the accepted outcome was supplied evidence.</p>
+<h3>Keep the retained purchase</h3>
+<p>The repaired database records 10.00 against 29.00, leaving 19.00 due and order 103 pending. P7’s agreed unit price remains 20.00. Its recovered catalogue price does not reprice the order. Stock remains P3 10, P7 0, P9 4 because the purchase already consumed it before the restore point.</p>
+<p>Do not send another charge or call the purchase routine to recover this payment. An unavailable provider outcome remains unresolved. A mismatched order or amount requires investigation. If other later work depended on the 2.20 price, assess its original agreement and dependencies separately; restoring a database cannot decide its business treatment.</p>
+</section>
+
+<section id="return">
+<h2>Return the recovered service to use</h2>
+<p>For this branch, the completed result is concrete: P7 at 20.00; order 103 pending for 29.00; payment 504 and its original operation mapping recorded once; 19.00 due; stock still 10/0/4. The old source can add no more authoritative work, and the finite set of later operations has dispositions, including named unresolved cases.</p>
+<p>Verify runtime access and application reads, route callers to one recovered authority, and resume external dispatch only after its earlier effects are accounted for. <a href="/learn/databases/relational/cockroachdb/operations/">Operating and securing a CockroachDB cluster</a> covers cluster health and access in more detail.</p>
+<p>Establish and test backup coverage for the recovered history before relying on it. Keep the original recovery material and evidence according to the agreed retention decision. Record the achieved recovery point, elapsed stages, restricted service and remaining exceptions. A restored database becomes a recovered service when its facts, authority and external obligations agree.</p>
+</section>
+
+<section id="sources">
+<h2>Sources and further reading</h2>
+<p>Checked on 26 October 2026 against the CockroachDB v26.2 documentation and a pinned v26.2.8 native SQL drill. The provider contract and event ordering are illustrative. The observed option-default discrepancy is identified in the revision-history section.</p>
+<ul>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/backup">BACKUP</a> and <a href="https://docs.cockroachlabs.com/docs/v26.2/show-backup">SHOW BACKUP</a>: option syntax, object scope, backup paths and metadata.</li>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/take-full-and-incremental-backups">Full and incremental backups</a>: collections and dependencies; <a href="https://docs.cockroachlabs.com/docs/v26.2/take-backups-with-revision-history-and-restore-from-a-point-in-time">revision history and point-in-time restore</a>: captured windows and the restored state.</li>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/restore">RESTORE</a>: alternate database names, dependencies, identity and grants, compatible versions and destination restrictions.</li>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/backup-validation">Backup validation</a> and <a href="https://docs.cockroachlabs.com/docs/v26.2/backup-and-restore-monitoring">backup and restore monitoring</a>: file checks, schema and checksum validation, and evidence about running jobs.</li>
+<li>On this site: <a href="/learn/databases/relational/backup-and-restore/">Backup, restore and reconciliation</a>, for recovery objectives and the general reconciliation method, and <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">Inside CockroachDB</a>, for versioned keys, ranges and replicated history.</li>
+</ul>
+</section>

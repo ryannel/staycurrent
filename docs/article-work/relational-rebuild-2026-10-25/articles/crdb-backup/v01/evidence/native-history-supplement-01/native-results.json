@@ -1,0 +1,114 @@
+[
+  {
+    "label": "guard",
+    "sql": "SET allow_unsafe_internals=true; SELECT crdb_internal.cluster_id()::STRING AS cluster_id, current_database() AS db, current_user AS usr, version() AS version;",
+    "exit": 0,
+    "stdout": "SET\ncluster_id,db,usr,version\n8c349890-5715-4138-bbd3-55d168d40441,sc_crdb_backup,sc_crdb_backup_writer,\"CockroachDB CCL v26.2.8 (aarch64-unknown-linux-gnu, built 2026/10/14 21:48:18, go1.25.13)\"\n",
+    "stderr": ""
+  },
+  {
+    "label": "empty fixture",
+    "sql": "SELECT table_name FROM information_schema.tables WHERE table_catalog='sc_crdb_backup' AND table_schema='public';",
+    "exit": 0,
+    "stdout": "table_name\n",
+    "stderr": ""
+  },
+  {
+    "label": "setup",
+    "sql": "\nCREATE TABLE products(product_id STRING PRIMARY KEY, price DECIMAL(8,2) NOT NULL CHECK(price>=0), stock INT NOT NULL CHECK(stock>=0));\nCREATE TABLE orders(order_id INT PRIMARY KEY, status STRING NOT NULL CHECK(status IN ('pending','paid','cancelled')));\nCREATE TABLE order_items(order_id INT REFERENCES orders(order_id), line_no INT, product_id STRING REFERENCES products(product_id), quantity INT NOT NULL CHECK(quantity>0), unit_price DECIMAL(8,2) NOT NULL, PRIMARY KEY(order_id,line_no));\nCREATE TABLE payments(payment_id INT PRIMARY KEY, order_id INT NOT NULL REFERENCES orders(order_id), amount DECIMAL(8,2) NOT NULL CHECK(amount>0), method STRING NOT NULL);\nCREATE TABLE payment_operations(operation_id STRING PRIMARY KEY, order_id INT NOT NULL, amount DECIMAL(8,2) NOT NULL, method STRING NOT NULL, payment_id INT NOT NULL UNIQUE REFERENCES payments(payment_id));\nINSERT INTO products VALUES ('P3',4.50,10),('P7',20.00,0),('P9',35.00,4);\nINSERT INTO orders VALUES (103,'pending');\nINSERT INTO order_items VALUES (103,1,'P7',1,20.00),(103,2,'P3',2,4.50);\n",
+    "exit": 0,
+    "stdout": "CREATE TABLE\nCREATE TABLE\nCREATE TABLE\nCREATE TABLE\nCREATE TABLE\nINSERT 0 3\nINSERT 0 1\nINSERT 0 2\n",
+    "stderr": "NOTICE: waiting for job(s) to complete: 1222079941717360641, 1222079941717393409, 1222079941717917697\nIf the statement is canceled, jobs will continue in the background.\nNOTICE: waiting for job(s) to complete: 1222079941957091329, 1222079941957124097\nIf the statement is canceled, jobs will continue in the background.\nNOTICE: waiting for job(s) to complete: 1222079942168281089, 1222079942168313857\nIf the statement is canceled, jobs will continue in the background.\n"
+  },
+  {
+    "label": "full explicit history",
+    "sql": "BACKUP DATABASE sc_crdb_backup INTO 'nodelocal://1/sc-rebuild-backup-20261025/history-supplement-01' WITH revision_history=true;",
+    "exit": 0,
+    "stdout": "job_id,status,fraction_completed,rows\n1222079943017365505,succeeded,1,6\n",
+    "stderr": ""
+  },
+  {
+    "label": "before mistake",
+    "sql": "SELECT cluster_logical_timestamp()::STRING AS cut;",
+    "exit": 0,
+    "stdout": "cut\n1793019602766409792.0000000000\n",
+    "stderr": ""
+  },
+  {
+    "label": "mistake",
+    "sql": "UPDATE products SET price=2.20 WHERE product_id='P7';",
+    "exit": 0,
+    "stdout": "UPDATE 1\n",
+    "stderr": ""
+  },
+  {
+    "label": "accepted payment source",
+    "sql": "BEGIN;\nINSERT INTO payments VALUES (504,103,10.00,'card');\nINSERT INTO payment_operations VALUES ('order-103-part-payment-1',103,10.00,'card',504);\nCOMMIT;",
+    "exit": 0,
+    "stdout": "BEGIN\nINSERT 0 1\nINSERT 0 1\nCOMMIT\n",
+    "stderr": ""
+  },
+  {
+    "label": "increment explicit history",
+    "sql": "BACKUP DATABASE sc_crdb_backup INTO LATEST IN 'nodelocal://1/sc-rebuild-backup-20261025/history-supplement-01' WITH revision_history=true;",
+    "exit": 0,
+    "stdout": "job_id,status,fraction_completed,rows\n1222079949472169985,succeeded,1,3\n",
+    "stderr": ""
+  },
+  {
+    "label": "schema plus checksums",
+    "sql": "RESTORE DATABASE sc_crdb_backup FROM LATEST IN 'nodelocal://1/sc-rebuild-backup-20261025/history-supplement-01' AS OF SYSTEM TIME '1793019602766409792.0000000000' WITH new_db_name='sc_crdb_backup_schema', schema_only, verify_backup_table_data;",
+    "exit": 0,
+    "stdout": "job_id,status,fraction_completed,rows\n1222079950976843777,succeeded,1,6\n",
+    "stderr": ""
+  },
+  {
+    "label": "restore candidate",
+    "sql": "RESTORE DATABASE sc_crdb_backup FROM LATEST IN 'nodelocal://1/sc-rebuild-backup-20261025/history-supplement-01' AS OF SYSTEM TIME '1793019602766409792.0000000000' WITH new_db_name='sc_crdb_backup_candidate';",
+    "exit": 0,
+    "stdout": "job_id,status,fraction_completed,rows\n1222079952262955009,succeeded,1,6\n",
+    "stderr": ""
+  },
+  {
+    "label": "restore latest counterexample",
+    "sql": "RESTORE DATABASE sc_crdb_backup FROM LATEST IN 'nodelocal://1/sc-rebuild-backup-20261025/history-supplement-01' WITH new_db_name='sc_crdb_backup_latest';",
+    "exit": 0,
+    "stdout": "job_id,status,fraction_completed,rows\n1222079953627578369,succeeded,1,8\n",
+    "stderr": ""
+  },
+  {
+    "label": "cut facts",
+    "sql": "SELECT product_id,price,stock FROM sc_crdb_backup_candidate.products ORDER BY product_id;\nSELECT order_id,sum(quantity*unit_price) AS agreed_total FROM sc_crdb_backup_candidate.order_items GROUP BY order_id;\nSELECT * FROM sc_crdb_backup_candidate.orders;\nSELECT * FROM sc_crdb_backup_candidate.payments;\nSELECT * FROM sc_crdb_backup_candidate.payment_operations;\nSHOW CONSTRAINTS FROM sc_crdb_backup_candidate.order_items;\nSELECT product_id,price FROM sc_crdb_backup_latest.products WHERE product_id='P7';\nSELECT * FROM sc_crdb_backup_latest.payments;",
+    "exit": 0,
+    "stdout": "product_id,price,stock\nP3,4.50,10\nP7,20.00,0\nP9,35.00,4\norder_id,agreed_total\n103,29.00\norder_id,status\n103,pending\npayment_id,order_id,amount,method\noperation_id,order_id,amount,method,payment_id\ntable_name,constraint_name,constraint_type,details,validated\norder_items,check_quantity,CHECK,CHECK ((quantity > 0)),t\norder_items,order_items_order_id_fkey,FOREIGN KEY,FOREIGN KEY (order_id) REFERENCES orders(order_id),t\norder_items,order_items_pkey,PRIMARY KEY,\"PRIMARY KEY (order_id ASC, line_no ASC)\",t\norder_items,order_items_product_id_fkey,FOREIGN KEY,FOREIGN KEY (product_id) REFERENCES products(product_id),t\nproduct_id,price\nP7,2.20\npayment_id,order_id,amount,method\n504,103,10.00,card\n",
+    "stderr": ""
+  },
+  {
+    "label": "reconcile known accepted result",
+    "sql": "BEGIN;\nSELECT order_id,status FROM sc_crdb_backup_candidate.orders WHERE order_id=103 FOR UPDATE;\nINSERT INTO sc_crdb_backup_candidate.payments VALUES (504,103,10.00,'card');\nINSERT INTO sc_crdb_backup_candidate.payment_operations VALUES ('order-103-part-payment-1',103,10.00,'card',504);\nCOMMIT;",
+    "exit": 0,
+    "stdout": "BEGIN\norder_id,status\n103,pending\nINSERT 0 1\nINSERT 0 1\nCOMMIT\n",
+    "stderr": ""
+  },
+  {
+    "label": "repeat lookup",
+    "sql": "SELECT order_id,amount,method,payment_id FROM sc_crdb_backup_candidate.payment_operations WHERE operation_id='order-103-part-payment-1';",
+    "exit": 0,
+    "stdout": "order_id,amount,method,payment_id\n103,10.00,card,504\n",
+    "stderr": ""
+  },
+  {
+    "label": "duplicate without lookup counterexample",
+    "sql": "BEGIN;\nSELECT order_id,status FROM sc_crdb_backup_candidate.orders WHERE order_id=103 FOR UPDATE;\nINSERT INTO sc_crdb_backup_candidate.payments VALUES (504,103,10.00,'card');\nINSERT INTO sc_crdb_backup_candidate.payment_operations VALUES ('order-103-part-payment-1',103,10.00,'card',504);\nCOMMIT;",
+    "exit": 1,
+    "stdout": "BEGIN\norder_id,status\n103,pending\n",
+    "stderr": "ERROR: duplicate key value violates unique constraint \"payments_pkey\"\nSQLSTATE: 23505\nDETAIL: Key (payment_id)=(504) already exists.\nCONSTRAINT: payments_pkey\nERROR: duplicate key value violates unique constraint \"payments_pkey\"\nSQLSTATE: 23505\nDETAIL: Key (payment_id)=(504) already exists.\nCONSTRAINT: payments_pkey\nFailed running \"sql\"\n"
+  },
+  {
+    "label": "final facts",
+    "sql": "SELECT product_id,price,stock FROM sc_crdb_backup_candidate.products ORDER BY product_id;\nSELECT o.order_id,o.status,(SELECT sum(quantity*unit_price) FROM sc_crdb_backup_candidate.order_items WHERE order_id=o.order_id) AS agreed_total,(SELECT sum(amount) FROM sc_crdb_backup_candidate.payments WHERE order_id=o.order_id) AS paid FROM sc_crdb_backup_candidate.orders o;\nSELECT count(*) AS payment_rows FROM sc_crdb_backup_candidate.payments;\nSELECT * FROM sc_crdb_backup_candidate.payment_operations;",
+    "exit": 0,
+    "stdout": "product_id,price,stock\nP3,4.50,10\nP7,20.00,0\nP9,35.00,4\norder_id,status,agreed_total,paid\n103,pending,29.00,10.00\npayment_rows\n1\noperation_id,order_id,amount,method,payment_id\norder-103-part-payment-1,103,10.00,card,504\n",
+    "stderr": ""
+  }
+]

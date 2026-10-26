@@ -1,0 +1,9 @@
+# Scenario and continuity
+
+Uses the shared recovery reconciliation branch only. Retains purchase103 (Mina), agreed P7×1 at20 plus P3×2 at4.50,total29, pendingstatus; post-purchase stockP3/P7/P9=10/0/4. Separate mistake sets catalogueP7=2.20. Later payment504=10 bycard for103 leaves19due,pending. External provider acceptance is hypothetical supplied evidence, not a real request.
+
+Original operation order-103-part-payment-1 maps immutably to order103,10.00,card,payment504. Earlier cut lacks payment and mapping while retaining purchase/stock. Reconcile payment+mapping only, never call purchase/charge again. Unknown provider result stays unresolved; mismatched meaning stops. Other later work requires separate business assessment.
+
+Local illustrative additions: database names shop/shop_recovered; configured external connection shop_recovery; symbolic backupsA/B/C and separate laterfullD; payment_operations(operation_id PK,order_id,amount,method,payment_id UNIQUE REFERENCES payments). No currency/geography/timing invented. SQL snippets use canonical order_items. First native experiment accidentally named projected table order_lines; preserved as executed with no implication that canonical schema changed. Fresh explicit-history supplement uses order_items. Native projection omits customers and other orders/payments, labelled in article; cannot prove full production integrity/access.
+
+Continuity pass: read full article/figures/captions/controls in teaching order. Distinguishes source retained MVCC revisions, exported backup revisions and new restored current state. Figure1 assumes coverage established separately; Figure2 isolates coverage; Figure3 assumes closed source and known provider contract. Latest restores badprice as well as504. No business effective dates assigned to commit timestamps. General RPO/RTO and full app handover remain with neighbours. Exact canonical links checked from input/reading-links.json.

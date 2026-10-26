@@ -14,7 +14,7 @@ A shop sells tea and tea things. Customers place orders, each order has numbered
 | Tariq Aziz | Customer 2 | Places order 102. Loses the race for the last mug with order 104. |
 | Edda Berg | Customer 3 | Has no orders in the core example. Available as a third buyer or for a customer without orders. |
 
-Customers are always customers. Staff, instructors, managers and other roles get their own names (see the class-booking extension).
+Customers remain customers in each variation. Staff and other distinct roles have their own identities.
 
 ### Tables, keys and starting rows
 
