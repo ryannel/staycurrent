@@ -1,0 +1,123 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import ReadHistory from '../../components/relational-rebuild-crdb-reads/ReadHistory.astro';
+import SafeFollower from '../../components/relational-rebuild-crdb-reads/SafeFollower.astro';
+---
+<p>A current price, a price from a few seconds ago and a price read twice inside one transaction answer different questions. CockroachDB can provide each. Choosing between them starts with what the application will do with the answer.</p>
+<p>The shop’s catalogue changes the blue mug, P7, from 20.00 to 22.00. A catalogue page might be allowed to show a price up to ten seconds old. A purchase must check its current conditions together with its writes. A report might need several queries to agree about one earlier state. All three can return correct committed data, yet the same read choice will not suit all three.</p>
+<p>Two controls decide which history the reader sees: the transaction’s <strong>isolation level</strong> and, for a deliberate historical read, its <strong>AS OF SYSTEM TIME</strong> timestamp. A third question is where that read can run. A nearby replica saves a remote trip only when it has the evidence needed to answer at the chosen time.</p>
+<p>This article follows CockroachDB v26.2. The price replay is independent of the purchase: order 103 remains pending, with no payment, agreed line prices totalling 29.00 and post-purchase stock P3 10, P7 0, P9 4. Database timestamps below describe committed history; they do not give the price a business effective date.</p>
+
+<h2 id="isolation">Serializable and Read Committed</h2>
+<p>CockroachDB’s default isolation level is <strong>Serializable</strong>. Successful transactions must fit an order in which each ran as a whole. A transaction can read several rows, make a decision and write its result without another successful Serializable transaction slipping into the middle of that decision in a way that breaks that ordering. Conflicts can require the application to retry the transaction.</p>
+<p><strong>Read Committed</strong> gives each statement a fresh committed snapshot. The statements of one transaction can therefore observe different states. It reduces the need to retry whole transactions, at the cost of allowing anomalies across statements. CockroachDB’s implementation protects consistency within one statement more strongly than PostgreSQL’s Read Committed; the shared connection protocol does not make the engines’ isolation identical.</p>
+<p>Figure 1 reads P7, lets a separate transaction commit the new price, then reads P7 again. Step through Serializable first, then change the read choice.</p>
+<ReadHistory />
+<p>Under Serializable, the two reads return 20.00. Under Read Committed, the first returns 20.00 and the second 22.00. Both Read Committed answers were correct when their statements took their snapshots. The transaction did not keep one view between them.</p>
+<p>A Serializable read timestamp can move internally if CockroachDB can validate the earlier reads at the later time. The promise is a coherent transaction history, rather than a timestamp the application should assume is immovable. Figure 1 has already observed the old P7 value, so this transaction cannot simply switch to the new value on its second read.</p>
+<p>Neither level makes a statement keep absorbing later commits while it runs. A long current read can still be showing an earlier snapshot when it finishes. Read Committed’s advancing snapshots also do not make it a historical follower-read mode.</p>
+<Sql label="Request and inspect Read Committed in the same transaction" code={`BEGIN ISOLATION LEVEL READ COMMITTED;
+SHOW transaction_isolation;
+SELECT price FROM products WHERE product_id = 'P7';
+-- Other session commits the independent price update here.
+SELECT price FROM products WHERE product_id = 'P7';
+COMMIT;`} />
+<p>Check <code>SHOW transaction_isolation</code> inside the transaction. <code>SHOW default_transaction_isolation</code> describes the session’s default, which may differ from this transaction’s setting. In v26.2, disabling the cluster setting <code>sql.txn.<wbr />read_committed_isolation.<wbr />enabled</code> upgrades requests for Read Committed to Serializable, another reason to inspect the effective level.</p>
+
+<h3 id="payment-limit">Decisions across rows</h3>
+<p>Seeing committed data does not by itself protect a rule that spans statements. In a separate experiment, order 103 has a line value of 29.00 and no payments. The application accepts a proposed payment of 20.00 only if the recorded total plus 20.00 is no more than 29.00.</p>
+<p>Two attempts, 601 and 602, each read the total before either inserts. Follow both columns down Figure 2. The payment IDs differ, so a unique key on payment ID does not make the attempts conflict.</p>
+<figure class="payment-figure" aria-labelledby="payment-title">
+ <figcaption><span>Figure 2</span><span id="payment-title">Two checks against the same unpaid order</span></figcaption>
+ <div class="payment-frame">
+  <p class="rule">Order 103 · maximum recorded payment total <strong>29.00</strong></p>
+  <div class="attempts"><div><p class="attempt-title">Attempt 601</p><p>Read total <strong>0.00</strong></p><p>0.00 + 20.00 ≤ 29.00</p><p>Insert payment <strong>20.00</strong></p></div><div><p class="attempt-title">Attempt 602</p><p>Read total <strong>0.00</strong></p><p>0.00 + 20.00 ≤ 29.00</p><p>Insert payment <strong>20.00</strong></p></div></div>
+  <div class="outcome"><strong>Read Committed</strong><span>Both can commit → <b>40.00</b>, above the limit.</span></div>
+  <div class="outcome"><strong>Serializable</strong><span>This pair cannot both commit from those reads. One attempt must fail or be retried.</span></div>
+ </div>
+ <p class="figure-caption">A conceptual schedule, with both sums read before either payment insert. A native v26.2.8 run of this ordering committed both under Read Committed. Under Serializable, 601 committed and 602 received 40001; the total stayed 20.00. Another execution need not choose the same victim.</p>
+</figure>
+<p>There is no serial order that produces both successful checks against zero: whichever payment ran second would see 20.00 already recorded and decline another 20.00. Serializable rejects that combined execution. After a retry starts from a fresh view, the application must repeat the check and act on the new total.</p>
+<p>Choose Read Committed only when the complete operation tolerates its weaker guarantee or supplies another complete protection protocol. Locking an authority row can help, but every competing operation that changes the rule’s inputs must participate. <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> develops that protocol. Error handling still matters: Read Committed transactions can abort on deadlocks or constraint failures, and some streamed-result failures cannot be retried transparently. <a href="/learn/databases/relational/cockroachdb/transactions/">CockroachDB transactions and retries</a> covers the retry and uncertain-outcome procedures.</p>
+
+<h2 id="historical">Reading as of one timestamp</h2>
+<p>Sometimes the reader wants an earlier state on purpose. <code>AS OF SYSTEM TIME</code> selects the database’s committed contents at a historical timestamp. P7 can return 20.00 after the update to 22.00 has committed because the requested time lies before that commit.</p>
+<p>That is different from asking which price the shop intended to apply on a particular business date. A price entered today but effective tomorrow, or corrected retrospectively, needs a model of effective and recorded time. <a href="/learn/databases/relational/data-lifecycle/">History, correction and deletion</a> explains that model. The database’s version history answers what was committed at its timestamp.</p>
+<p>For several related queries, choose the timestamp once. This transaction fixes its view before either SELECT, then reads the catalogue price and the order’s agreed lines from that same history:</p>
+<Sql label="Several queries sharing one historical view" code={`BEGIN;
+SET TRANSACTION AS OF SYSTEM TIME follower_read_timestamp();
+SELECT price FROM products WHERE product_id = 'P7';
+SELECT line_no, product_id, quantity, unit_price
+FROM order_items WHERE order_id = 103 ORDER BY line_no;
+COMMIT;`} />
+<p>The historical transaction is read-only. It cannot lock old stock and then allocate it, and an UPDATE is rejected. The time must also be one at which the tables and required history exist.</p>
+<p>The convenience function <code>follower_read_timestamp()</code> chooses a recent historical time intended to make follower service likely. It selects an exact time for this transaction; it is not a rolling allowance that advances between these two SELECTs. Two separate statements that each recompute a relative time such as <code>'-10s'</code> choose different instants as the clock advances. A commit between them can appear in the second result only.</p>
+<p>The same-time requirement applies when data spans several ranges. A coherent old catalogue and a coherent old order list can still disagree if they are old at different times. <a href="/learn/databases/relational/distributed-reads/">Time, snapshots and distributed reads</a> builds that reasoning. <code>AS OF SYSTEM TIME</code> supplies the native timestamp choice; it does not prove which replica answered.</p>
+
+<h2 id="followers">Closed timestamps and follower reads</h2>
+<p>In <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">Inside CockroachDB</a>, a range is a replicated interval of keys, with a leaseholder coordinating ordinary access. Each replica can hold multiple committed versions of P7. Having 20.00 in storage is still insufficient evidence that 20.00 is the right answer at the requested time.</p>
+<p>A follower could be missing a command that changes P7 before that time. It needs to know both that no more writes can enter the relevant past and that it has applied the history already assigned there. CockroachDB’s <strong>closed timestamp</strong> supplies the first promise, tied to a replication position that supplies the second test. Step through the two tests in Figure 3.</p>
+<SafeFollower />
+<p>The leaseholder closes a range through a timestamp: no new writes will be introduced at or below it. The follower can serve that time after it has applied the Raft commands through the associated position. Closing a time does not mean that every follower has caught up to it.</p>
+<p>For a query that needs several ranges, each must be able to answer at the same requested timestamp. One range’s progress cannot qualify another. A nearby SQL gateway is only where the SQL entered the cluster; its key-value requests can still travel elsewhere.</p>
+<p>Follower reads can reduce remote trips and leaseholder work. They do not promise a response time: replica placement, catch-up, contention, query work and failures still matter. A very recent exact timestamp may require leaseholder access. Even a timestamp chosen by <code>follower_read_timestamp()</code> gives a probability of nearby service, rather than a guarantee, and an unresolved write intent can still make an exact historical read wait.</p>
+
+<h3 id="strong-followers">Current reads from nearby replicas</h3>
+<p>The name <em>follower read</em> describes the serving path, so it does not always mean deliberately stale data. CockroachDB’s <code>GLOBAL</code> table locality supports strong reads from nearby replicas. The placement and write protocol make current reads cheap across regions by making writes more expensive.</p>
+<p>A rarely updated catalogue shared across regions may be a candidate for that trade. A table with frequent writes has a different cost. <a href="/learn/databases/relational/cockroachdb/locality/">CockroachDB table locality and region survival</a> develops the native locality design and failure goals. Adding an AS OF clause and choosing GLOBAL locality are separate application and schema decisions.</p>
+
+<h2 id="staleness">Exact and bounded staleness</h2>
+<p>An <strong>exact staleness</strong> read fixes one historical timestamp, whether written explicitly or produced by <code>follower_read_timestamp()</code>. Use it when the identity of the snapshot matters, especially for several statements that must agree. Once chosen, that instant stays fixed even while the report runs.</p>
+<p>A <strong>bounded staleness</strong> read gives CockroachDB room to choose a timestamp within a requirement. If the catalogue permits data at most ten seconds old, it can ask for that bound instead of insisting on one particular instant:</p>
+<Sql label="One primary-key lookup with an age allowance" code={`SELECT price
+FROM products AS OF SYSTEM TIME with_max_staleness('10s')
+WHERE product_id = 'P7';`} />
+<p>The bound limits how old the chosen snapshot may be when the read chooses it. It does not promise that the snapshot will be exactly ten seconds old, nor that the response will arrive within ten seconds. Time spent running the query and displaying or caching the result can add to the age the user eventually sees.</p>
+<p>A minimum timestamp expresses the other side of the same choice. With <code>with_min_timestamp(T)</code>, the chosen snapshot must be T or later. It need not equal T. The application must obtain T from a trustworthy relationship to the history it requires; an arbitrary client clock reading is not proof that a particular database commit is included.</p>
+<p>Both bounded functions accept an optional <code>nearest_only</code> boolean. Passing <code>true</code> asks for an error if a nearby replica cannot satisfy the bound. Without that restriction CockroachDB can seek service elsewhere. The choice is whether to accept another serving location or an unavailable result, rather than silently relaxing the freshness requirement.</p>
+<p>In v26.2 the documented bounded-staleness path is an implicit single-statement transaction reading one row, through a primary index or another index that covers the query without an index join. The P7 primary-key lookup fits. A multi-query report does not, and adding <code>LIMIT 1</code> to a scan does not establish an eligible point lookup. Use one exact historical transaction for a shared report snapshot.</p>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Choosing a read for the shop">
+<table><caption>What must this read support?</caption><thead><tr><th>Application need</th><th>Read choice</th><th>What still needs checking</th></tr></thead><tbody>
+<tr><td>Check conditions and create a purchase</td><td>A current transaction, normally Serializable</td><td>The whole invariant and retry protocol</td></tr>
+<tr><td>Read the newly confirmed purchase</td><td>A fresh current transaction after confirmation</td><td>That historical defaults are not being applied</td></tr>
+<tr><td>Several report queries sharing a past state</td><td>One exact AS OF transaction</td><td>Retained history throughout the job</td></tr>
+<tr><td>One P7 lookup with a ten-second age allowance</td><td>Bounded staleness</td><td>Query eligibility and unavailable-read policy</td></tr>
+<tr><td>Current reads from several regions</td><td>Consider GLOBAL locality</td><td>Write cost, placement and survival design</td></tr>
+</tbody></table></div>
+
+<h2 id="after-write">Freshness after a write</h2>
+<p>Once Mina’s purchase has been confirmed, her next page needs the resulting order. A fresh current transaction started after that confirmation can read the committed result. A historical snapshot from before the purchase cannot, however safely a nearby follower serves it.</p>
+<p>“At most ten seconds old” does not mean “includes my write”. If the purchase committed one second ago, a permitted five-second-old snapshot precedes it. A minimum-history bound can express a dependency when the application has a valid timestamp covering that write, but choosing and propagating that bound is part of the protocol. Starting a fresh current transaction is the direct choice when the next read requires the newly confirmed state.</p>
+<p>If the purchase’s outcome is uncertain, an absent row in a historical result proves only that the row was absent at that earlier time. It cannot establish that the purchase failed. Recover the protected request identity, such as <code>purchase-103</code>, through <a href="/learn/databases/relational/cockroachdb/transactions/">CockroachDB transactions and retries</a>. Do not turn historical absence into permission to create another purchase.</p>
+
+<h2 id="retention">Retained history</h2>
+<p>A safe timestamp must also be available in storage. CockroachDB garbage-collects old versions, controlled by <code>gc.ttlseconds</code> in replication zone configuration. A request can be old enough for follower service and too old for the history that remains.</p>
+<Sql label="Inspect the retention inherited by products" code={`SHOW ZONE CONFIGURATION FROM TABLE products;`} />
+<p>Read the returned target as well as <code>gc.ttlseconds</code>. A table can inherit its settings; the answer may name the parent zone rather than the table itself. Inspect the relevant tables, indexes and any more specific configurations used by the read, rather than assuming one cluster-wide value.</p>
+<p>A fixed report snapshot gets older for as long as the report runs. Budget its starting age, execution time, pauses and any need to resume against the retained-history window. Do not assume an open historical transaction grants unlimited retention. If the required history is unavailable, fail or restart the whole report at a new agreed timestamp; silently switching just the next query would mix histories.</p>
+<p>Keeping versions longer costs storage. Increasing retention cannot restore versions already removed. It also does not create permanent business audit history or a recoverable copy after data loss. Those needs belong to an explicit history model and <a href="/learn/databases/relational/cockroachdb/backup-and-restore/">CockroachDB backup and recovery</a>.</p>
+
+<h2 id="checking">Checking the read that actually ran</h2>
+<p>Successful SQL establishes that CockroachDB returned an answer, but does not establish that a follower served it. Run <code>EXPLAIN ANALYZE</code> on the read whose path matters. It executes the statement, so use a representative, bounded query.</p>
+<Sql label="Inspect an executed bounded-staleness lookup" code={`EXPLAIN ANALYZE
+SELECT price
+FROM products AS OF SYSTEM TIME with_max_staleness('10s')
+WHERE product_id = 'P7';`} />
+<p>The <code>historical</code> field reports the chosen AS OF timestamp and whether bounded staleness was used. The plan’s <code>sql nodes</code> and <code>kv nodes</code> distinguish SQL processing from the nodes supplying the data; <code>regions</code> adds locality when available. <code>used follower read</code> is the query-level evidence for follower service. <code>distribution: local</code> alone is not that evidence.</p>
+<p>The SQL examples and two-session schedules here were checked on owned, disposable single-node CockroachDB v26.2.8 fixtures. The executed bounded lookup reported a historical timestamp and SQL/KV node n1, with no <code>used follower read</code> annotation. It verifies historical SQL and isolation behaviour. It supplies no observation of a remote leaseholder, nearby follower, regional latency or failure availability.</p>
+<p>On the real topology, check the effective isolation, the actual timestamp and the serving path separately. Then compare them with the decision the answer will support. A safe follower can answer the past correctly; the application must still decide whether that past is recent enough for its next action.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against CockroachDB v26.2 documentation and native v26.2.8 single-node fixtures on 26 October 2026. Figures are conceptual models. The native observations concern SQL behaviour, with no distributed timing or availability measurement.</p>
+<ul>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/transactions">Transactions</a> and <a href="https://docs.cockroachlabs.com/docs/v26.2/read-committed">Read Committed transactions</a>: effective isolation, statement snapshots, anomalies and remaining abort cases.</li>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/architecture/transaction-layer#read-snapshots">Transaction layer</a>: read refreshing, snapshots and closed timestamps tied to applied replication history.</li>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/as-of-system-time">AS OF SYSTEM TIME</a>: exact historical views, supported timestamp forms, read-only restrictions and minimum/maximum bounds.</li>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/follower-reads">Follower reads</a>: exact and bounded staleness, query restrictions, nearest-only behaviour, intents and serving-path verification.</li>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/global-tables">Global tables</a>: strong reads across regions and the write-latency trade.</li>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/configure-replication-zones">Replication controls</a> and <a href="https://docs.cockroachlabs.com/docs/v26.2/show-zone-configurations">SHOW ZONE CONFIGURATIONS</a>: retention settings and inheritance.</li>
+<li><a href="https://docs.cockroachlabs.com/docs/v26.2/explain-analyze">EXPLAIN ANALYZE</a>: historical timestamps, SQL/KV nodes, regions and follower-read annotations.</li>
+</ul>
+<style>
+.payment-figure{margin:2rem 0;font:.86rem/1.5 var(--font-sans)}.payment-figure figcaption{display:flex;gap:.8rem;align-items:baseline;margin-bottom:.6rem;font:1.15rem/1.35 var(--font-serif)}.payment-figure figcaption>span:first-child{font:.65rem var(--font-sans);text-transform:uppercase;letter-spacing:.09em;color:var(--color-text-secondary);white-space:nowrap}.payment-frame{background:var(--color-surface-alt);border:1px solid var(--color-rule-strong);padding:1rem}.payment-frame p{margin:0}.rule{padding-bottom:.8rem;border-bottom:1px solid var(--color-rule-strong)}.attempts{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1rem 0}.attempts>div{border-left:2px solid var(--color-accent);padding-left:.8rem}.attempts p{margin:.35rem 0}.attempts .attempt-title{font-weight:600;margin-bottom:.8rem}.outcome{display:grid;grid-template-columns:1fr 2fr;gap:1rem;border-top:1px solid var(--color-rule-strong);padding-top:.8rem;margin-top:.8rem}.figure-caption{font:.8rem/1.5 var(--font-sans);color:var(--color-text-secondary);margin:.65rem 0}.table-wrap{overflow-x:auto;margin:1.5rem 0}.table-wrap:focus-visible{outline:2px solid var(--color-accent);outline-offset:3px}table caption{text-align:left;margin-bottom:.6rem;font-weight:600}table{display:table;min-width:530px}th{font-size:.8rem}td{font-size:.8rem}@media(max-width:450px){.payment-frame{padding:.8rem}.attempts{gap:.6rem}.attempts>div{padding-left:.6rem}.outcome{grid-template-columns:1fr;gap:.2rem}}
+</style>

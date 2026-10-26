@@ -1,0 +1,290 @@
+Rendered current prerequisite: http://127.0.0.1:4606/review/relational-rebuild/distributed-reads/
+Home
+Draft collection
+Time, snapshots and distributed reads
+Relational databases: collection tree
+
+RELATIONAL DATABASES · DRAFT COLLECTION
+
+Time, snapshots and distributed reads
+Deep dive
+About 9 minutes
+AI-generated
+
+Reviewed draft · this collection is not yet published.
+
+A distributed snapshot gives a read one compatible view of data owned by several shards. The requests can reach different machines at different moments, yet their answers describe the same committed history. Without that agreement, a report can combine two individually correct answers into a shop state that never existed.
+
+The shop’s purchase 103 crosses customer shard A and product shard P. A creates Mina’s pending order and its two lines, worth 29.00. P reduces blue mug P7’s stock from 1 to 0 and tea P3’s from 12 to 10. Assume this purchase commits atomically: both parts belong to the committed history, or neither does. No payment is created.
+
+Sharding and distributed SQL established why the read needs a common view. Here we follow how a timestamp selects that view, how clocks order it, and what evidence a replica needs before answering. All clock values, log positions and schedules in the drawings are illustrative, rather than observations from a running cluster.
+
+One snapshot across shards
+Timestamps and logical clocks
+Clock uncertainty and real-time order
+When a replica can answer
+Choosing a historical snapshot
+A report is not a stock reservation
+One snapshot across shards
+
+Start with a report that checks whether order 103 exists, then reads P7’s stock. If the purchase commits between those checks, A can answer “no order” and P “stock 0”. Each answer was current when made. Taken together, they miss both the state before the purchase and the state after it.
+
+Give the purchase a shared commit timestamp, 40. These numbers identify positions in the example’s history; they are not seconds or order dates. Figure 1 first lets each shard choose a time. Then choose one snapshot at 35 and one at 45. Follow the outlined cells across the commit boundary.
+
+FIGURE 1 One time chooses both sides of the purchase
+Read contract
+Each shard chooses its time
+One snapshot at 35
+One snapshot at 45
+History ↓
+A · order 103
+P · stock
+35 · before
+Absent
+P7: 1
+P3: 12
+40 · One atomic purchase commits at both owners
+45 · after
+Pending · 29.00
+Two lines
+P7: 0
+P3: 10
+Combined answer
+No 103 · P7 stock 0
+
+A answers at 35; P answers at 45. No order 103, but its stock has gone: the two answers cross commit 40.
+
+An illustrative timestamped history, assuming one atomic commit at 40. Outlined cells are selected. A holds Mina’s order and lines; P holds both stock rows. Requests may arrive at different times.
+
+Figure as text
+
+At 35, neither part appears. At 45, both do. Reading at 45 does not require the two machines to respond simultaneously. A can answer first and P later, provided both select versions for 45 and can prove those versions form the required history.
+
+In this timestamped model, the read takes the latest committed version of each key whose timestamp is at or below its chosen time. A transaction’s related writes share the commit boundary, so a snapshot cannot include its stock decrement while excluding its order. A missing row is an answer too: A must know that order 103 was absent at 35, rather than simply not having received it yet.
+
+The timestamp is part of a transaction protocol. Independently stamping rows with local clocks does not create atomic visibility. Transactions across partitions follows the joint commit decision and its recovery. Here we assume that decision and ask when a reader can safely observe it.
+
+Timestamps and logical clocks
+
+A’s local log entry 8 and P’s local log entry 8 need not describe the same point in the purchase. The logs contain different work. Their positions order each shard’s own history; comparing the numbers across shards supplies no common snapshot.
+
+A shared timestamp system needs an ordering rule. A logical clock is a counter advanced at local events and carried in messages. Before sending, a node increments its counter. On receiving a message, it sets the counter above both its own value and the received value. The logical clock trace in Figure 2 starts A at 7 and P at 3.
+
+FIGURE 2 A message carries an order to another node
+
+Logical clock · a counter
+
+A: 7 → 8
+Send message carrying 8
+8 travels from A to P ↓
+P: 3 → 9
+Receive: max(3, 8) + 1
+P: 9 → 10
+Next local event
+
+Hybrid logical clock · (physical, logical)
+
+A: (100, 0)
+Send message carrying (100, 0)
+(100, 0) travels from A to P ↓
+P: (100, 1)
+P starts at (98, 0); physical clock 98
+P: (103, 0)
+Later, physical time reaches 103
+
+The receiver moves beyond the message in both traces. The hybrid clock keeps the physical part at 100 until its own clock catches up. Numbers are invented; these are clock events, not transaction commits.
+
+Two separate clock traces. The arrows carry time information; increasing numbers alone do not prove a causal link between other events.
+
+A sends 8. P receives it and advances to 9, then to 10 at its next local event. The message and everything following it at P now have timestamps greater than the send. This preserves causal order: when an event can influence another through local order and messages, its timestamp is smaller.
+
+The reverse inference does not hold. An unrelated node can reach 20 without hearing from A or P. Its larger number proves no causal connection, and a counter reaching 45 says nothing about whether the data needed for snapshot 45 has arrived.
+
+A hybrid logical clock, or HLC, combines a physical time component with a logical counter. Compare the pair by physical component first, then logical component. In the HLC trace, P starts at (98, 0) and its physical clock still reads 98 when it receives (100, 0). It moves to (100, 1), beyond the message. When its physical clock later reaches 103, it can move to (103, 0).
+
+The physical component keeps the timestamp related to clock time while the logical component distinguishes events without making time run backwards. It still needs the database’s version, concurrency and commit rules. HLC is useful ordering machinery; it is not by itself a proof of serializable execution, a real-time freshness promise or a ready replica.
+
+Clock uncertainty and real-time order
+
+A consistent view can be older than the caller expects. Suppose a write finishes on one node before a read starts on another, but the writer’s clock is ahead. The upper strip of Figure 3 shows the actual order separately from the readings on the two clocks.
+
+FIGURE 3 A completed write can have a larger clock reading
+
+Actual order in the model →
+
+Write completes
+Actual time: 1,000 ms
+Writer’s clock: 1,008
+→
+Read begins
+Actual time: 1,002 ms
+Reader’s clock: 998
+
+The write is already complete, yet 1,008 is greater than the reader’s 998. Treating every larger timestamp as “a write from the future” could omit it.
+
+Choose commit timestamp
+s = 1,010
+Time interval [1,000, 1,010]
+→
+Wait before success
+earliest time > s
+Later interval [1,011, 1,021]
+
+Separate bounded-time illustration: once even the earliest possible current time is past s, the commit timestamp is certainly in the past. Intervals assume honest bounds; no measured wait is shown.
+
+Two independent illustrations of clock uncertainty. Milliseconds are relative model coordinates, unrelated to order 103’s business timestamp. The lower strip explains waiting, not a complete commit protocol.
+
+The write completes at actual time 1,000 ms, with the writer’s clock at 1,008. Two milliseconds later, the reader’s clock says 998. If those local readings alone chose the versions, a read at 998 could omit the completed write. The resulting past view might be internally consistent while failing a promise to include transactions completed before the read began.
+
+Strict serializability adds this real-time order to serializable transactions: when one finishes before another starts, their serial order must agree. A deliberately historical read instead asks for an earlier point. It can be entirely correct to omit the recent write under that contract. Choosing a consistent past and promising a current observation are different requests.
+
+Spanner’s published design uses TrueTime, which reports an interval containing the current time. Its commit protocol chooses a timestamp and waits until even the earliest possible current time has passed it before reporting success. The lower strip illustrates that wait. A later operation can then be ordered after the acknowledged timestamp. This relies on the bounds being valid, alongside the transaction and replication protocol; the interval alone does not commit anything.
+
+An HLC system can handle uncertainty at reads as well. CockroachDB detects values above a read’s timestamp that could have been written earlier because of clock skew. It may move the transaction forward, validate earlier reads, or retry when validation fails. A larger timestamp cannot simply be dismissed as a future write. The exact isolation and retry behaviour belongs to CockroachDB isolation and follower reads (planned).
+
+Neither approach makes clock assumptions free. Wider uncertainty can add waiting or retries; violating an assumed bound can invalidate guarantees that depend on it. The useful question is what the database promises for this operation, and how it establishes that promise.
+
+When a replica can answer
+
+Return to snapshot 45. P’s follower has a new clock reading and an older copy of the data. It cannot infer that the absence of a write means no write belongs before 45. A delayed message or an unresolved transaction may still change the answer.
+
+To serve the chosen time, the target needs a complete relevant history through it and the state needed to read that history. One way to establish completeness is a closed timestamp: an authority’s promise that no new write will be introduced at or below a bound. The promise must be tied to the history that the follower has to apply.
+
+Figure 4 asks P’s follower to read at 45. Step through the closure arriving, the required log becoming durable, and application catching up. Watch how long “Cannot answer” stays on the page.
+
+FIGURE 4 Closure and application prove different things
+Requested snapshot
+45
+P’s follower must qualify
+Closed through
+35
+No later arrival may add a write at or below this bound.
+Applied / required
+n6 / n8
+Durable through n6
+n5
+Applied
+n6
+Applied
+n7
+Missing
+n8
+Missing
+Cannot answer at 45
+The chosen time is still open
+
+The read asks for 45. This target knows history is closed only through 35. A transaction provisionally at 38 could still affect the answer. Its outcome or timestamp must be resolved before a complete frontier can pass it.
+
+Play
+Back
+Next
+Reset
+1 / 4
+
+A conceptual closure-and-application protocol for one follower. n5–n8 are local log positions; 35 and 45 are shared timestamps. This model’s closure includes resolution of relevant uncertain outcomes.
+
+Figure as text
+
+When closure reaches 45, the follower knows where the boundary belongs but is still missing the required state. When n8 is durable, it can recover those entries under its storage promise, yet application remains at n6. Only the final step establishes both facts. A must meet the same requirement for its own portion; P qualifying does not qualify A.
+
+The drawing uses a complete frontier that also accounts for relevant unresolved outcomes. A provisional write at 38 cannot be guessed absent just because its commit decision is missing. A system may wait for that decision, resolve it through transaction records, or move the write beyond the read boundary under its protocol. A raw closure notification need not mean every intent has already been cleaned up.
+
+CockroachDB’s closed timestamp is associated with a required position in the replicated log. A follower can use the promise after applying the required commands. Spanner’s published safe-time design similarly accounts for replication progress and prepared transactions. These are concrete ways of proving completeness, rather than properties obtained from reading a clock.
+
+A historical read can therefore wait or fail on a reachable machine. Its required state or outcome may be unavailable. Choose a bounded wait, a route to another qualified replica, or an explicit unavailable result. Returning whatever state happens to be local would change the read’s promise. Replicas, lag and read routing follows the routing and session requirements for one copied history.
+
+Choosing a historical snapshot
+
+An older snapshot can be easier to serve because more replicas have caught up to it. It also requires older versions. A replica’s serviceable history therefore has two ends: the oldest history still available for the read, and the newest history it can prove safe and apply.
+
+In Figure 5, A can serve 20 through 60 and P 30 through 50. Their overlap is 30 through 50. Try times inside and outside it, then move A’s retention boundary to 52.
+
+FIGURE 5 The usable snapshot lies in every owner’s interval
+Requested time
+35 · before the purchase
+45 · after the purchase
+55 · beyond P’s safe frontier
+25 · before P’s retained history
+A’s retained history
+Begins at 20
+Begins at 52
+0
+30
+60
+A
+20–60
+P
+30–50
+Both
+30–50
+Common serviceable history
+30 ≤ t ≤ 50
+
+Both targets can answer at 45. Order 103 is pending; P7 stock is 0.
+
+Illustrative serviceable intervals on one shared timestamp scale: retained history at the left, safe applied history at the right. Every required owner must use the same t.
+
+Figure as text
+
+Both 35 and 45 fit the original overlap, though they give different purchase states. Time 55 asks P to go beyond its proof. Waiting or rerouting might make that time available. Time 25 asks P for history it may already have collected. Applying newer log entries cannot bring those collected versions back. Another retained copy or recovery source would be a separate operation, rather than a replay wait.
+
+When A retains only from 52, the two targets have no common time: A starts after P ends. Choosing A’s oldest time and P’s newest time separately would hide that failure by mixing snapshots. The correct result is to find other qualified targets, wait where waiting can help, or report that this request cannot be met.
+
+An exact historical read fixes one timestamp for the whole observation. A bounded-staleness read permits the system to choose within a freshness limit. Suppose the task allows only timestamps at or after 48. The original overlap narrows to 48–50. Requiring at least 55 leaves no eligible point on these targets.
+
+Those last numbers are positions in this model, not a seconds-based lag limit. A time-based bound such as “at most five seconds old” additionally needs a trustworthy relationship between timestamps and current time. Native APIs also differ in which queries and transaction scopes support each choice. Fix the shared observation before assuming that separate requests using the same relative age will pick the same timestamp.
+
+A report split into several queries or pages must retain its chosen snapshot across that whole unit of work. Recomputing “a few seconds ago” at every page advances the history. A retention policy must leave the required versions available for as long as that read contract needs them; indefinite historical access is a storage commitment, not an automatic consequence of keeping versions.
+
+A report is not a stock reservation
+
+Snapshot 35 correctly reports one blue mug left. Purchase 103 can already have committed by the time the report arrives. Even a current stock read can be followed immediately by another buyer’s purchase. Seeing 1 establishes an observation, not an allowance to sell another mug.
+
+The purchase must check and change stock together at its authority. The guarded decrement from Transactions and isolation expresses the condition in the write:
+
+UPDATE products
+SET stock = stock - 1
+WHERE product_id = 'P7' AND stock >= 1
+RETURNING stock;
+
+If current stock is 0, this statement returns no row. If it is 1, a successful decrement returns 0. The complete purchase still needs the isolation and atomic transaction protocol covering both products, the order and its lines, with any required retry handling. A historical report cannot supply that protocol’s current authority.
+
+Choose the observation from what the caller will do with it
+Task	Required history	If it cannot be served
+A report about a declared past point	One exact snapshot across every query and owner.	Wait, find qualified copies, or report the missing history.
+A dashboard allowed a stated age	One common snapshot within the permitted freshness bound.	Use an agreed fallback or show that the freshness requirement is unavailable.
+Accept another purchase	A guarded current change under the purchase transaction’s isolation rules.	Decline, wait or retry according to its outcome; an older stock value cannot authorise it.
+
+The read contract names the snapshot’s scope, its permitted age and what happens when no copy qualifies. Those choices explain why a nearby follower can suit a report while the next purchase still needs coordination. For the concrete isolation modes, historical SQL and follower-read controls, continue with CockroachDB isolation and follower reads (planned).
+
+The relational databases collection
+
+Draft collection. Available drafts link to reading; planned articles show the intended route.
+
+Relational databases
+
+Understand shared relational facts, questions and guarded changes through one shop purchase. Distinguish schema rules, atomicity, concurrent decisions, query work and durability, judge relational fit and choose a practical next route.
+
+Facts and schema
+6 drafts
+Reading and changing data
+5 drafts
+Concurrency and external work
+4 drafts
+Work and storage
+4 drafts
+Recovery and operation
+7 drafts
+Distributed SQL
+5 drafts
+PostgreSQL
+8 drafts · 6 planned
+PostgreSQL specialist capabilities
+0 drafts · 3 planned
+CockroachDB
+2 drafts · 8 planned
+PREVIOUS
+Transactions across partitions
+NEXT
+Regional placement and survival
+Sources and further reading

@@ -1,0 +1,431 @@
+Rendered current prerequisite: http://127.0.0.1:4606/review/relational-rebuild/cockroachdb/keys-and-ranges/
+Home
+Draft collection
+Inside CockroachDB
+Relational databases: collection tree
+
+RELATIONAL DATABASES · DRAFT COLLECTION
+
+Inside CockroachDB
+Deep dive
+About 10 minutes
+AI-generated
+
+Reviewed draft · this collection is not yet published.
+
+CockroachDB stores a SQL table as ordered keys, divides those keys into ranges and keeps copies of each range on several machines. A connection can enter through one node while the requested row is served by another. The range is the unit that joins those two views: a portion of stored data with its own replicas and serving authority.
+
+That boundary explains both how a cluster can grow and why growth can disappoint. Independent product keys can be split into ranges and served on different nodes. Repeated purchases of the same last blue mug still meet at P7’s stock. More copies of that fact do not create more stock, or independent permission to sell it.
+
+This article follows a self-hosted CockroachDB v26.2 deployment, with SQL observations from v26.2.8. The shop is the one introduced in Relational databases; Sharding and distributed SQL supplies the distinction between partitions, replicas and agreement. First we read P7 after purchase 103. Later we change its catalogue price in a separate experiment, then return to before the purchase. The multi-node drawings are models of documented behaviour.
+
+SQL on any node
+Rows and indexes become keys
+Ranges and routing
+Replicas, Raft and the leaseholder
+What each replica stores
+One transaction across ranges
+Splits, movement and hotspots
+Reading the cluster’s range evidence
+Changing the cluster version
+SQL on any node
+
+The application asks for the blue mug’s catalogue price:
+
+SELECT price FROM products WHERE product_id = 'P7';
+
+The node accepting the connection is the SQL gateway. It parses the statement, plans its execution and returns the result. SQL execution turns the lookup into key-value work. A key identifies an entry; its value holds the associated data. Follow the request through Figure 1, watching which node has each role.
+
+FIGURE 1 One SQL lookup, two node roles
+
+SQL connection
+
+Application
+SELECT price for P7
+Node 4 · gateway
+Plans the lookup
+
+↓ Primary-index key for P7
+
+One range · three voting replicas
+
+Node 1 · follower
+Another copy
+Node 2 · leaseholder / leader
+Serves the range
+Node 3 · follower
+Another copy
+
+Node 4 accepts the SQL connection and plans a lookup by product_id. It is the gateway for this request.
+
+Play
+Back
+Next
+Reset
+1 / 4
+
+A model of one current primary-key lookup, with usable cached routing and an established lease. Placement is invented; schema lookup, transaction checks and internal messages are omitted. No elapsed time is implied.
+
+Figure as text
+
+Node 4 owns the connection. Node 2 serves the range containing P7. They can be the same node, but nothing about accepting the SQL connection requires that. Larger queries can distribute SQL execution too, so a gateway is not necessarily where every join or aggregation runs. The SQL-layer documentation describes that planning boundary.
+
+CockroachDB accepts the PostgreSQL client protocol, allowing familiar drivers and tools to connect. It is a different engine: supported SQL, types, isolation and errors need their own checks. Moving a SQL application to CockroachDB (planned) follows that application contract. A successful connection alone has tested very little of it.
+
+Rows and indexes become keys
+
+The primary index holds the table’s row data in primary-key order. Conceptually, P7’s key reads products / primary / P7 / family 0. The stored encoding uses table and index identifiers and encoded column values; the words here make the parts readable. The table prefix separates products from orders. The index prefix separates two orderings of the same table.
+
+A column family groups columns of one row into a key-value pair. Our product table uses the default single family, so its name, price and stock travel together in the value. A row does not mean one independent key per column. Splitting columns into families can change what an update rewrites; it does not divide one stock value into several authorities. The column-family documentation explains the choices.
+
+For Mina’s order history, suppose we add a secondary index on customer identifier, called orders_customer. It puts her entries together for this query:
+
+SELECT order_id, status
+FROM orders
+WHERE customer_id = 1
+ORDER BY order_id;
+
+Figure 2 draws that secondary index above the primary index. Start with the two entries for customer 1, then step to the row lookups.
+
+FIGURE 2 Mina’s entries lead to two primary keys
+
+orders_customer · ordered by customer_id, then order_id
+
+1 / 101
+Primary key: 101
+1 / 103
+Primary key: 103
+2 / 102
+Primary key: 102
+
+↓ customer_id = 1 selects two entries
+
+orders · primary index · ordered by order_id
+
+101
+customer 1 · paid
+102
+customer 2 · paid
+103
+customer 1 · pending
+
+Mina’s secondary-index entries sit together at 1 / 101 and 1 / 103. Each carries the order’s primary key.
+
+Play
+Back
+Next
+Reset
+1 / 2
+
+A conceptual added customer index after purchase 103. Labels stand for encoded keys, with table/index prefixes, family suffixes and version timestamps omitted. This illustrates an index access path, not a claimed optimiser choice for three rows.
+
+Figure as text
+
+The secondary entries carry 101 and 103, rather than a machine address or a fixed slot in a file. Moving a range therefore need not rewrite every secondary entry that leads to it. The lookup uses the primary keys to find the row data wherever the ranges now live. This index lacks status; a covering index can hold returned columns too, as CockroachDB’s index documentation explains.
+
+Another index is another set of stored keys. Creating it after rows exist must build entries for those rows while accommodating ongoing changes. “Online” does not mean free of processor, storage or network work. CockroachDB schema jobs under load (planned) develops the job and application-compatibility questions; here the extra representation explains why a backfill has work to do.
+
+Ranges and routing
+
+A range covers a continuous interval of the encoded keyspace, including its start and excluding its end. A key belongs to one range. A large primary index can occupy many ranges; a small range can cover data from more than one index. A range is therefore neither a table nor an index, and its replicas need not stay on the same machines.
+
+The gateway’s KV routing uses a range descriptor: boundaries and replica locations. Cached descriptors spare repeated metadata lookups. A missing or outdated entry can require a lookup or refreshed routing after a split or move. It does not require asking every node whether it has P7. The distribution layer supplies this view of one ordered map over changing owners.
+
+The same SQL result can cross several such intervals. Reading Mina’s customer-index span and then fetching 101 and 103 can involve different range owners. “One query”, “two returned rows” and “one range request” are different counts.
+
+Replicas, Raft and the leaseholder
+
+Each range has its own Raft group. Its voting replicas agree an ordered history of commands; the group’s elected leader coordinates replication. The leaseholder has authority to serve the range’s ordinary current reads and coordinate its writes. In v26.2, leader leases keep these roles on the same replica, except briefly during transfer. This is a role per range, so one node can lead some ranges and follow others.
+
+A lease allows a current read to use local data without running a new Raft agreement round for every read. Its validity is maintained by the protocol; possessing a copy of P7 does not give another replica the same permission. The leader-leases paper explains why serving authority and leadership must stay aligned.
+
+Now change P7’s catalogue price from 20.00 to 22.00. This is independent of the purchase: stock stays 0, order 103 stays pending, its agreed lines still total 29.00 and it has no payment. Figure 3 isolates the range’s agreement. Watch the durable command separately from the applied price.
+
+FIGURE 3 Agreement comes before every copy has applied it
+
+Range A · U means “install the proposed P7 change”
+
+Node 1 · follower
+U: absent
+Applied price: 20.00
+Node 2 · leader / leaseholder
+U: absent
+Applied price: 20.00
+Node 3 · follower
+U: absent
+Applied price: 20.00
+
+Agreement not yet established by the leader
+
+Separate transaction question
+
+SQL transaction
+The complete transaction still needs a commit outcome
+
+All three replicas have applied the earlier history: P7 costs 20.00. Node 2 is the established leader and leaseholder.
+
+Play
+Back
+Next
+Reset
+1 / 6
+
+A fixed-membership three-voter model, using a new command from the current leader’s current term, non-malicious replicas and storage that honours durable acknowledgements. U compresses the range’s work for the separate 20.00 → 22.00 price transaction. Intents and transaction state are omitted; these are not six native SQL commit events.
+
+Figure as text
+
+The range has three voters, so its majority is two. Once the established leader has the required agreement, it need not wait for the slowest copy to apply the command. A non-voting replica can follow the history without contributing a vote. Count voters in this range, not healthy nodes across the whole cluster. The replication-layer documentation describes both kinds of replica.
+
+If this range loses two of its three voters, healthy nodes holding unrelated ranges cannot supply its missing votes. If it loses only its leader, the remaining majority can establish a suitable replacement, subject to detection, election, communication and storage. That is a possibility of progress, not a completion-time promise. The drawing assumes fixed membership, surviving durable histories and storage that keeps acknowledged writes.
+
+Replica placement and lease placement
+
+Suppose these three voters occupy separate regions A, B and C, with the lease in A. A current read entering in B normally needs A; a new write in A needs at least one remote voter for a majority. Moving the lease to B changes the read path, while the copies remain in all three regions. Adding a non-voting copy in B would not replace either remote vote.
+
+These are consequences of a stated placement, not latency measurements or a complete region-survival design. Table locality and survival policies place these owners; CockroachDB table locality and region survival (planned) develops and verifies those policies.
+
+What each replica stores
+
+On each node, a store contains replicas of many ranges. CockroachDB uses Pebble, an embedded storage engine, to keep their data on local storage. Pebble organises keys in a log-structured merge tree, or LSM. New writes enter an in-memory structure called a memtable; a local write-ahead log protects writes before they reach sorted files.
+
+Figure 4 separates two logs that otherwise sound interchangeable. Raft’s log orders replicated commands for a range. Pebble’s WAL supports crash recovery for one store. Raft state itself is data that the local engine must store.
+
+FIGURE 4 Replicated history and local recovery have different jobs
+
+One store on one node · local view
+
+Raft history
+Proposed and agreed commands for each range
+MVCC data
+Versioned keys for the store’s replicas
+
+↓ Pebble stores both kinds of data
+
+Memory · lost in a crash
+
+Memtable
+Earlier data
+
+Durable storage · not a second replica
+
+Pebble WAL
+Earlier writes
+Sorted files · SSTs
+Earlier sorted data
+
+Logs have different jobs: replicated agreement and local crash recovery.
+
+The range’s Raft log holds proposed and agreed commands. Pebble’s WAL protects one store’s local writes. A replica stores both Raft state and versioned application data.
+
+Play
+Back
+Next
+Reset
+1 / 4
+
+A local storage model, not the full ordering of Raft persistence, state-machine application or transaction commit. Boxes represent classes of data, not one file per range. Value separation, caches and level counts are omitted.
+
+Figure as text
+
+A memtable flush produces a sorted string table, or SST, file. These files are immutable. Compaction reads sorted contents and writes replacement files, retiring old files when safe. The application’s one update can therefore cause later storage work too. Files and levels belong to the store’s LSM; a range boundary is not a promise of one file per range. See the storage layer and Pebble’s value-separation explanation for how files and value storage interact.
+
+Versions of the same key
+
+CockroachDB keeps timestamped versions of values using multi-version concurrency control, or MVCC. After the separate price change commits, retained history can include both 20.00 and 22.00. Those are two versions of P7 on a replica, not two replicas that independently chose a price.
+
+FIGURE 5 Two versions on each replica
+
+Replica on node 2
+
+P7 · earlier timestamp t₁
+20.00
+P7 · later timestamp t₂
+22.00
+
+Replica on node 1 · after catch-up
+
+P7 · earlier timestamp t₁
+20.00
+P7 · later timestamp t₂
+22.00
+
+A model after the price transaction and replica catch-up, while the earlier version is retained. t₁ and t₂ are symbolic version timestamps, not observed commit times or the shop’s business effective dates.
+
+A historical read needs both the required retained version and evidence that its target replica can safely serve that history. A current read needs the appropriate current authority. Neither follows just from finding 20.00 or 22.00 on disk. CockroachDB isolation and follower reads (planned) develops those choices and their retention limits.
+
+Replication protects surviving copies, but also preserves an unwanted committed change. Setting the price to 2.20 by mistake is still a change the replicas must copy. A backup preserves recoverable earlier history under a separate contract. CockroachDB backup and recovery (planned) follows the restore and reconciliation work.
+
+One transaction across ranges
+
+Return to before purchase 103, separately from the price experiment. P7 costs 20.00 and has stock 1; P3 has stock 12. The purchase must create a pending order and two lines, and guard both stock decrements. Its stored work includes more than the visible rows.
+
+FIGURE 6 One purchase reaches several kinds of key
+
+Keys the purchase changes
+
+products · primary
+P7 stock 1 → 0
+P3 stock 12 → 10
+orders + order_items · primary
+103 · pending
+P7 × 1 at 20.00
+P3 × 2 at 4.50
+Secondary index
+orders_customer
+1 / 103
+
+↓ Route each key span to its range replicas
+
+Each range agrees its own commands. One transaction outcome covers the whole purchase.
+
+Reference checks and other supporting keys can add work. No payment is created.
+
+An independent purchase replay. Boxes group SQL responsibilities, not a fixed number of native ranges or messages. Boundaries, indexes and constraint work determine actual participants.
+
+Agreement inside a range makes its commands durable and ordered. It does not tell another range whether the whole purchase committed. CockroachDB’s transaction layer supplies the shared outcome and handles provisional writes across ranges. The first range cannot simply call its own stock work committed because its voters agreed it.
+
+A committed purchase leaves stock 0 and 10, the pending order and two lines totalling 29.00. An aborted attempt keeps none of that attempt’s changes. CockroachDB transactions and retries follows native intents, commit, retries and uncertain replies; the transaction-layer documentation specifies the engine’s machinery.
+
+Splits, movement and hotspots
+
+A split divides an ownership interval into two. Moving a replica changes where a copy lives. Transferring a lease changes who serves the range. They can work together to distribute demand, but each changes something different.
+
+Figure 7 starts with one range containing the three product keys. Step through its split, replica movement and lease transfer. Then put all demand on P7 and replay the same changes.
+
+FIGURE 7 A boundary can separate keys, but cannot divide P7
+
+Range A · one interval · lease node 2
+
+P3
+busy
+P7
+busy
+P9
+busy
+
+Placement
+
+Range A
+Copies: nodes 1, 2, 3
+
+One range covers P3, P7 and P9. Node 4 may be available elsewhere, but this range still has its three copies and its lease on node 2.
+
+Demand
+Demand across P3, P7 and P9
+All demand on P7
+Play
+Back
+Next
+Reset
+1 / 4
+
+Invented product-key intervals and demand categories, not a native placement schedule or measured load. Split, replica movement and lease transfer are shown separately. Real rebalancing preserves membership safety and can interleave these actions.
+
+Figure as text
+
+With independent demand on both sides of the boundary, separate leases can spread active work. With all demand on P7, the left range becomes quiet and the right keeps the bottleneck. Repeating the split cannot put halves of that single stock decision under independent ownership.
+
+CockroachDB splits growing ranges and can also consider load when choosing a useful boundary. A load-based split needs a key distribution it can separate; a high request count alone does not guarantee one. The load-based splitting documentation describes that distinction.
+
+An advancing index edge creates a related problem. If new keys arrive in increasing order, subsequent writes can keep following the newest range after each split. Old ranges spread while new demand remains concentrated. This differs from repeatedly updating P7, but both can leave added machines with little useful work. CockroachDB query work and hot ranges (planned) uses native evidence to distinguish these patterns and weigh alternative keys and indexes.
+
+Reading the cluster’s range evidence
+
+A native range listing connects the model to an actual deployment:
+
+SELECT start_key, end_key, range_id, lease_holder,
+       replicas, voting_replicas, non_voting_replicas
+FROM [SHOW RANGES FROM TABLE products WITH DETAILS]
+ORDER BY start_key;
+
+The key bounds say which interval is covered. The range identifier names that ownership unit; replicas lists its node locations. The voting and non-voting lists distinguish participation in agreement, and lease_holder identifies serving authority at the observation. The SHOW RANGES reference defines the fields and required access.
+
+In the disposable v26.2.8 single-node run, the products listing first showed one covering range, 82. A deliberate manual split at P7 produced ranges 82 and 83. Both still had node 1 as their only replica, voter and leaseholder; neither had a non-voting replica.
+
+Selected products after the manual split · native v26.2.8 observation
+Range	Product keys shown	Voting nodes	Leaseholder
+82	P3 · below P7	1	1
+83	P7, P9 · P7 and above	1	1
+
+The split created a boundary without creating another machine or another copy. This fixture used single-node mode with replication disabled, so it cannot establish the three-voter model’s survival behaviour or regional timing.
+
+The same run returned price 20.00 for the initial lookup and orders 101 and 103 for Mina. After the separate price update, it returned 22.00 for P7, with stock still 10/0/4, order 103 pending, its line value 29.00 and zero payments. Its orders schema had only the primary index: Figure 2’s added customer index is illustrative, not a measured access path from this run.
+
+A placement snapshot changes as the cluster works. It does not measure demand, prove that a range can currently make progress or validate a maintenance plan. The per-range majority matters even if most of the cluster is healthy. Operating and securing a CockroachDB cluster (planned) develops identity, access, health and node-removal procedures from this evidence.
+
+Changing the cluster version
+
+A rolling binary change temporarily removes one node’s resources. The affected ranges still need enough usable replicas to make progress. Counting live machines without checking those ranges can hide a loss of redundancy.
+
+For a major-version upgrade, replacing binaries and finalising the cluster version are separate transitions. Finalisation enables changes that can close the route back to the previous major version; self-hosted deployments enable automatic finalisation by default. The versioned upgrade documentation defines the release rules. Upgrading a CockroachDB cluster (planned) turns them into a rehearsed rollout and return procedure.
+
+The range remains the useful unit to follow: which keys it covers, which copies survive and which replica can serve it. Those answers explain where a request goes, what agreement it needs and whether adding or changing machines can help its actual work.
+
+Explore this subject
+CockroachDB transactions and retries
+
+Relate intents and transaction state to atomic visibility, then handle native transaction retry and ambiguous-result paths for one logical purchase. Preserve the request identity and keep external work outside a replayed transaction.
+
+CockroachDB isolation and follower reads Planned
+
+Choose Serializable, Read Committed and historical reads from the decision they must support. Explain safe follower reads, freshness and retention limits without treating a historical observation as current authority.
+
+CockroachDB query work and hot ranges Planned
+
+Locate lookups, fan-out, SQL/KV work, network movement and contention from native evidence. Weigh covering and distributed keys against write and ordering costs, and separate less work from a hot-key bottleneck.
+
+CockroachDB table locality and region survival Planned
+
+Choose regional-by-table, regional-by-row or GLOBAL tables and survival goals from actual access and failure requirements. Verify placement and survival, and distinguish structural reasoning from measured regional latency.
+
+Operating and securing a CockroachDB cluster Planned
+
+Verify secure runtime identity, least privilege and tenant isolation. Use native evidence to diagnose under-replication and range health, then remove a node without consuming the cluster’s survival budget.
+
+CockroachDB backup and recovery Planned
+
+Validate full and incremental backup coverage and restore scope. Restore the intended history, close source writes, and reconcile a later valid booking by identity, capacity and external effects without consuming capacity twice.
+
+CockroachDB schema jobs under load Planned
+
+Treat schema changes as observable jobs inside an application compatibility protocol. Interpret progress, failure and cleanup, and accept a backfill or unique index only after semantic checks.
+
+Upgrading a CockroachDB cluster Planned
+
+Rehearse binary rollout and the cluster-version boundary. Distinguish mixed binaries from finalised compatibility, and verify application acceptance, rollback eligibility and recovery choices.
+
+Moving a SQL application to CockroachDB Planned
+
+Find semantic incompatibilities behind similar SQL, then port the application contract. Validate a consistent copy, transfer one write authority and reconcile a return path with explicit limits once new writes are accepted.
+
+The relational databases collection
+
+Draft collection. Available drafts link to reading; planned articles show the intended route.
+
+Relational databases
+
+Understand shared relational facts, questions and guarded changes through one shop purchase. Distinguish schema rules, atomicity, concurrent decisions, query work and durability, judge relational fit and choose a practical next route.
+
+Facts and schema
+6 drafts
+Reading and changing data
+5 drafts
+Concurrency and external work
+4 drafts
+Work and storage
+4 drafts
+Recovery and operation
+7 drafts
+Distributed SQL
+5 drafts
+PostgreSQL
+8 drafts · 6 planned
+PostgreSQL specialist capabilities
+0 drafts · 3 planned
+CockroachDB
+2 drafts · 8 planned
+PREVIOUS
+PostgreSQL physical replicas and promotion
+NEXT
+CockroachDB transactions and retries
+Sources and further reading
