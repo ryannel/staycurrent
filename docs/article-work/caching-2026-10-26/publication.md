@@ -51,3 +51,15 @@
   Shared coordination and Next completion produced one load, all12callers
   answered at500ms. No console errors. Article4 links directly to article5.
 - Five articles available; nine remain. Article6 design and model work started.
+
+## Article 6 — 26 October 2026
+
+- Commit: 5d7ce0aab9f74cc735fc5c2ccd16d437a3b2395c, pushed to origin/main.
+- Publish run40415631873 succeeded (tests, build, deployment):
+  https://github.com/ryannel/staycurrent/actions/runs/40415631873
+- Opened https://staycurrent.dev/learn/databases/caching/failure-handling/.
+  KeyboardEnd on time plus bounded-admission checkbox:20,000arrivals accounted
+  for as11,500cacheanswers+1,500sourceanswers+0waiting+7,000refused.
+  No consoleerrors. Article5 links directly to article6.
+- Sixarticles available; eightremain plus finalapplication/load/failurelab.
+  Article7 design/research started; see article-07-plan.md.

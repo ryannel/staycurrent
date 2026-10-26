@@ -1,52 +1,50 @@
 # Working state
 
 Use /private/tmp/staycurrent-caching-20261026 explicitly for every command.
-Branch codex/application-caching. Do not touch/switch/reset the primary checkout
-/Users/ryannel/Workspace/staycurrent: it has unrelated user modelling edits.
+Branch codex/application-caching. Do not touch, switch or reset the primary
+checkout /Users/ryannel/Workspace/staycurrent: it has unrelated user edits.
 
-Active goal is NOT complete. Articles1–5 published; article6 complete, checked and
-being committed/pushed. Article5 commitfc04fb305da4845b0f9953fbcfe14317b5bb0f5a,
-deployment40413919275 succeeded and live shared coalescing control verified.
-Article6 has four interactive figures, complete prose, six model tests and native
-Redis failure evidence. All27collection tests and all13build rules pass.
+Active goal is NOT complete. Articles 1–6 published and verified. Article 7 is
+complete and publication is underway: 33 model tests pass, production build passes
+all 13 site-check rules, native client lab and desktop/phone controls checked.
+Seven later articles plus final runnable reference application/load/failure lab
+remain. Full plan/gates in plan.md. Both teaching references already read and
+interacted with; observations in plan.md. Continue alone; no subagents requested.
 
-Eight later articles plus final runnable reference application/load/failure lab
-remain. Full plan/gates in plan.md. Both Gears and Load Balancing references
-already read and interacted with; observations recorded. No subagents requested;
-continue alone. Completed reviews/evidence in article-01..06-review.md/evidence.
+Article 7 adds three figures, complete prose and a downloadable, pinned native
+node-redis 6.3.0 / Redis 8.2.2 client lab. See article-07-plan.md,
+article-07-review.md and evidence/clients.txt. Manifest is available and article 6
+links to it. Commit, push and verify live controls next, then record publication.
+Next article: Redis transactions and Lua scripts (atomicity). Cover lost updates,
+MULTI/EXEC, WATCH, bounded atomic scripts and limits beyond one Redis instance.
 
-Next: Redis clients, latency and pipelining (article7). Cover round-trip vs server
-execution, sequential vs bounded pipeline, response bytes and head-of-line waiting,
-client connection/queue/deadline lifecycle and uncertain outcomes. Keep pipeline
-separate from atomic transactions (article8). Needs primary docs, native execution,
-meaningful causal figures, prose and full article gate. No work started on7yet.
+Serena manual read. Isolated checkout mutations use ordinary file tools because
+Serena restricts them to the original root. Local Node 24.16 / pnpm 11.4 installed.
+Dev server at 127.0.0.1:4341, session 47442. Checks: pnpm build and
+node --test src/lib/caching/*.test.mjs. Primary checkout remains untouched.
 
-Article6 source/numerical assumptions: failures.mjs fluid one-second homogeneous
-load model, externally prescribed warming schedule; deadline strips share200ms;
-retry tree counts attempts rather than retries; breaker five simultaneous calls,
-one outstanding half-open probe, per-batch source allowance explicitly illustrative.
-A later burst replaces visible rows but pending probe/source allowance remains.
-Native failures.py runs isolated Redis8.2.2; Python communicate timeout leaves child
-running, later GET/SET succeed. INFO command special raw output handled. Output in
-evidence/failures.txt. Not a throughput benchmark or native client cancellation API.
+Docker became unavailable after a host disk-space failure. Do not depend on its
+old container or reset/prune Docker. Official Redis 8.2.2 source was downloaded and
+compiled at /private/tmp/redis-8.2.2; redis-server and redis-cli are under src/.
+Native client lab starts/stops an isolated Unix-socket server with persistence off:
+REDIS_SERVER=/private/tmp/redis-8.2.2/src/redis-server node examples/caching/client-lab/run.mjs
+Its temporary readiness peer binds only localhost. Scoped process/socket approvals
+were granted. This is real Redis execution, not a model or throughput benchmark.
 
-Serena manual read previously. Absolute symbol overview works in isolated checkout
-but mutation tools reject outside original root; ordinary file edits are used.
-Local Node24/pnpm11.4 dependencies installed. Devserver127.0.0.1:4341 session31217.
-pnpm build required; models node --test src/lib/caching/*.test.mjs.
-Task-owned container staycurrent-cache-lab-20261026 remains available, no network,
-ports or persistence. Worksheets independently create/remove isolated containers.
-Scoped Docker/git/gh escalations approved by auto-review. Publishing each completed
-article is explicitly authorised by user; no additional confirmation needed.
+To recover space, only this isolated worktree's regenerable dist and checked-out
+historical documents were removed. Sparse checkout retains .github, examples,
+public, scripts, src, docs/article-work/caching-2026-10-26,
+docs/article-work/indexes and docs/article-work/designing-data. The latter two are
+needed by existing Astro imports. Do not change the primary checkout's sparsity.
 
 Browser via cua_repl only. previewBrowser is iab browser3; productionTab tab4,
-keysTab tab5 localarticle6, failurePhone tab7 and narrowFailure temp tab (close or
-allow cleanup). Viewport override reset. To perform phone checks use viewport.set
-in SAME tool call as screenshot/evaluate; override appeared to revert across calls.
-Use tab.screenshot plus emitImage for responsive captures, not nativegetScreenshot.
-Current browserdocs and viewport docs read. Restore docs after compaction.
+keysTab tab9 is local article7. Old tab5 ended on an internal error page and was
+replaced after restarting dev server. Viewport reset. For phone checks set viewport
+in SAME tool call as tab.screenshot/evaluate; use emitImage. Restore browser docs
+after compaction. Mark useful local/live tabs as handoff/deliverable before ending.
 
-Before delivery: native evidence, model invariants, prose/teaching self-review,
-desktop light/dark and phone controls/keyboard, build. Manifest flag and prior link;
-fetch/reconcilemain; stage intended files only; commit/pushHEAD:main; check exact
-GHrun and livecontrols. Keep goal active until all14articles and finalapp delivered.
+Before each publication: primary/native evidence, invariants, teaching review,
+desktop light/dark and phone/keyboard controls, build; manifest and prior link;
+fetch/reconcile main; stage intended files; commit/push HEAD:main; exact GH run and
+live controls. Publication is explicitly authorised. Keep goal active until all
+14 articles and final reference application are delivered.

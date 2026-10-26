@@ -6,7 +6,7 @@ export const cachingArticles = [
   { slug: 'invalidation', title: 'Cache invalidation and consistency', description: 'Follow concurrent reads and writes, stale refills and versioned invalidation.', published: true },
   { slug: 'stampedes', title: 'Cache stampedes', description: 'Control duplicate work with coalescing, jitter, leases and stale-while-revalidate.', published: true },
   { slug: 'failure-handling', title: 'Cache failures and graceful degradation', description: 'Bound fallback work, deadlines and retries when Redis is unavailable.', published: true },
-  { slug: 'clients-and-latency', title: 'Redis clients, latency and pipelining', description: 'Account for round trips, client queues, batches and uncertain command outcomes.', published: false },
+  { slug: 'clients-and-latency', title: 'Redis clients, latency and pipelining', description: 'Account for round trips, client queues, batches and uncertain command outcomes.', published: true },
   { slug: 'atomicity', title: 'Redis transactions and Lua scripts', description: 'Compose atomic operations and understand the boundaries of transactions, scripts and leases.', published: false },
   { slug: 'memory-and-performance', title: 'Redis memory and performance', description: 'Size memory, find expensive commands and reserve headroom for Redis operations.', published: false },
   { slug: 'replication-and-failover', title: 'Redis replication, persistence and failover', description: 'Reason about replication lag, recovery, promotion and acknowledged-write loss.', published: false },
