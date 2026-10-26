@@ -1,0 +1,180 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import WorkRouting from '../../components/relational-rebuild-pg-distribution/WorkRouting.astro';
+import Move from '../../components/relational-rebuild-pg-distribution/Move.astro';
+import '../../components/relational-rebuild-pg-distribution/distribution.css';
+---
+<p>PostgreSQL can divide a table into partitions, expose another server’s tables through SQL, or run as one of several databases that own different customers. Citus adds distributed planning and shard management to PostgreSQL. These choices move different work and leave different responsibilities with the application.</p>
+<p>Start with one request. Mina’s order history needs her orders and their lines. Keeping those records together lets one database answer it. A purchase also changes the stock shared with Tariq, so distributing their histories does not make their purchases independent.</p>
+<p><a href="/learn/databases/relational/partitioning-and-sharding/">Sharding and distributed SQL</a> established that boundary. Here we follow it through PostgreSQL mechanisms: find an owner, run local work, inspect what crosses a foreign-table connection, and move a customer group without letting both copies accept writes. The placement drawings are illustrative. The SQL checks and the deliberately paused native experiment have narrower, stated limits.</p>
+
+<h2 id="partitions">Native table partitioning</h2>
+<p>A native partitioned table remains one logical table. With monthly order partitions, an October predicate can exclude other months before looking for rows. That can reduce work inside one PostgreSQL instance; it does not give the instance another server’s processor or memory.</p>
+<p>Figure 1 separates that choice from two ways of putting work on another server. Follow where order 103 appears in each drawing.</p>
+<figure class="pg-figure" aria-labelledby="pg-boundaries-title">
+ <figcaption id="pg-boundaries-title"><span class="figure-number">Figure 1</span> Pieces, copies and owners</figcaption>
+ <div class="stack">
+  <div><strong>Table partitions · one PostgreSQL instance</strong><div class="pair"><div>October<br/><span class="key">103 · Mina</span></div><div>November<br/>Another time range</div></div><p class="join">A month predicate can exclude a piece. Both pieces use this instance’s resources.</p></div>
+  <div><strong>Read replica · another copy of a history</strong><div class="pair"><div>Primary<br/><span class="key">101 · 102 · 103</span></div><div>Replica<br/><span class="key">101 · 102 · 103</span><br/>once replayed</div></div><p class="join">Eligible reads can move to a copy. The copy does not own a disjoint set of customers.</p></div>
+  <div><strong>Shards · different PostgreSQL owners</strong><div class="pair"><div>Owner A<br/><span class="key">Mina · 101 · 103</span></div><div>Owner B<br/><span class="key">Tariq · 102</span></div></div><p class="join">Independent customer work can run on different owners. Shared stock still needs its authority.</p></div>
+ </div>
+ <p class="pg-caption">Three separate arrangements of the shop, not a combined deployment. Only the relevant order records are drawn. Replica progress is conditional; a copied history is not necessarily ready for a current read.</p>
+</figure>
+<p>If the problem is excluding old months or retiring a whole eligible month, begin with <a href="/learn/databases/relational/partitioning/">Table partitioning and data lifecycle</a>. If it is read traffic, consider the freshness contract and routing in <a href="/learn/databases/relational/replicas-and-read-routing/">Replicas, lag and read routing</a>. Sharding becomes useful when independent stored data or work needs more than one server.</p>
+<p>There is an exception to the local drawing: PostgreSQL permits foreign tables as partitions. Their data can live elsewhere. That requires care with partition bounds and brings the foreign wrapper’s execution and transaction behaviour. Declaring a remote partition does not supply automatic shard balancing or a distributed purchase protocol.</p>
+
+<h2 id="application-shards">Application-managed shards</h2>
+<p>With application-managed shards, the application chooses the database connection. Reuse the parent article’s placement: customer group A contains Mina, B contains Tariq and C contains Edda. Each group keeps its customers, orders, lines and payments together. P owns the shared products. Groups can contain many customers; these letters are illustrative assignments, not a hash function.</p>
+<p>The router might consult a durable directory or compute a bucket from a customer key and look up that bucket’s current owner. A hash that changes whenever a server is added would remap data the application has not moved. Keep the logical group separate from its current database address.</p>
+<h3 id="finding-owner">Finding the right owner</h3>
+<p>Mina’s history request carries <code>customer_id = 1</code>, which selects A. The query can then find her newest orders through A’s local indexes. Routing finds the database; an index finds rows inside it.</p>
+<p>Step through Figure 2, then choose the request that knows only order 103. Finally choose the purchase.</p>
+<WorkRouting />
+<p>An order number alone need not reveal the customer group. A maintained directory can map 103 to A, but its entries must be created consistently with orders and updated with movement. A stale or missing entry needs a defined response. Searching every owner is another design: each can use its own order-ID index, but the application must combine the answers and handle an unavailable owner. A local index on each database does not create a global routing index.</p>
+<p>Each database also brings connection limits, schema versions, statistics, backups and a recovery procedure. A rollout that upgrades A’s schema but leaves B’s behind must still serve compatible application requests. Restoring rows without the matching routing and request-outcome records can recover a different application state from the one customers were told about.</p>
+<h3 id="rules">Keeping rules within reach</h3>
+<p>Return independently to before purchase 103. A must create Mina’s pending order, its P7 and P3 lines, and the durable result for request <code>purchase-103</code>. P must guard the last mug, reducing P7 from 1 to 0, and reduce P3 from 12 to 10. The line value is 29.00 and no payment is created.</p>
+<p>Committing A, then P, permits a failure between them. Reversing the order permits the opposite partial result. A transaction on each connection is insufficient to give the purchase one atomic outcome. The design must also preserve global order identity and the references from lines and payments, wherever those checks live.</p>
+<p>PostgreSQL’s <code>PREPARE TRANSACTION</code> can retain prepared work for a later commit or rollback. It is a building block for an external transaction manager that durably records and recovers the joint decision. It is not a replacement for that manager. Prepared transactions can keep locks while the decision is unresolved. <a href="/learn/databases/relational/distributed-transactions/">Transactions across partitions</a> develops this protocol and its failure cases; the placement here tells us why it is needed.</p>
+
+<h2 id="citus">Co-location in Citus</h2>
+<p>Citus supplies a SQL entry point that uses distribution metadata to plan work on PostgreSQL workers. For a customer-distributed layout, a distribution column chooses each row’s shard. <em>Co-location</em> keeps corresponding shards of related tables together, so matching customer records can be joined on a worker.</p>
+<p>Figure 3 draws a candidate customer-distributed copy. An added customer column on lines gives the planner the routing key and participates in the reference. The corresponding shard ranges and placements must agree; matching column names alone cannot establish locality.</p>
+<figure class="pg-figure" aria-labelledby="pg-citus-title">
+ <figcaption id="pg-citus-title"><span class="figure-number">Figure 3</span> A join stays with its customer</figcaption>
+ <div class="entry"><strong>Citus SQL entry point</strong><span>customer_id = 1 → distribution metadata → worker W1</span></div>
+ <div class="arrow" aria-hidden="true">↓ compatible co-located customer shards ↓</div>
+ <div class="pair">
+  <div><strong>Worker W1 · customer 1</strong><div class="row">orders_dist<br/><span class="key">(1, 103)</span> · pending</div><div class="row">order_items_dist<br/><span class="key">(1, 103)</span> · line 1 · P7 × 1<br/><span class="key">(1, 103)</span> · line 2 · P3 × 2</div><p class="join">Join on customer_id <em>and</em> order_id → 29.00</p></div>
+  <div><strong>Worker W2 · customer 2</strong><div class="row">orders_dist<br/><span class="key">(2, 102)</span> · paid</div><div class="row">order_items_dist<br/><span class="key">(2, 102)</span> · line 1 · P7 × 2</div><p class="join">Excluded by customer_id = 1</p></div>
+ </div>
+ <p class="pg-caption">An illustrative Citus hash-distributed placement, described from the Citus 13.0.1 documentation. The actual hashes, shard IDs and worker placement are not shown or observed. The copy’s composite identity is considered below before it could become transactional authority.</p>
+</figure>
+<p>The corresponding local join includes the distribution column:</p>
+<Sql label="Customer-scoped join in the candidate distributed copy" code={`SELECT o.order_id, SUM(i.quantity * i.unit_price) AS line_value
+FROM orders_dist AS o
+JOIN order_items_dist AS i
+  ON i.customer_id = o.customer_id
+ AND i.order_id = o.order_id
+WHERE o.customer_id = 1
+GROUP BY o.order_id;`} />
+<p>For separately prepared candidate tables, the documented distribution calls make that intended co-location explicit. This is Citus SQL, not ordinary PostgreSQL, and was not executed in the article’s SQL fixture:</p>
+<Sql label="Documented Citus distribution calls for candidate tables" code={`SELECT create_distributed_table(
+  'orders_dist', 'customer_id', colocate_with => 'none');
+SELECT create_distributed_table(
+  'order_items_dist', 'customer_id',
+  colocate_with => 'orders_dist');`} />
+<p>Compared with application routing, Citus takes responsibility for finding shards and distributing supported query work. The worker still runs PostgreSQL plans. SQL that crosses unrelated shard boundaries can require data movement, multiple tasks or encounter feature restrictions. Check the actual query on the selected Citus release rather than inferring unrestricted distributed PostgreSQL from a local join.</p>
+<h3 id="citus-constraints">Distribution keys and constraints</h3>
+<p>For the hash-distributed tables considered here, Citus requires primary and unique keys to include the distribution column. Foreign keys between co-located distributed tables must include it too. A distributed table may also reference a reference table; a reference table cannot reference a distributed table in the reverse direction.</p>
+<p>That makes these candidate keys natural for local enforcement:</p>
+<Sql label="Candidate keys for customer-distributed orders and lines" code={`-- Parts of a candidate schema, not an accepted shop migration:
+-- orders_dist:
+PRIMARY KEY (customer_id, order_id)
+
+-- order_items_dist:
+PRIMARY KEY (customer_id, order_id, line_no)
+FOREIGN KEY (customer_id, order_id)
+  REFERENCES orders_dist (customer_id, order_id)`} />
+<p>But the shop’s existing rule is stronger: <code>order_id</code> alone identifies an order globally. A pair key accepts both <code>(1, 103)</code> and <code>(2, 103)</code>. These are a counterexample, not two valid shop orders. Repeating <code>(1, 103)</code> is rejected; repeating only 103 under another customer is not. An ID-only foreign key also lacks a unique parent to reference.</p>
+<p>Choose an actual enforcement design for that global rule, or deliberately change the identity contract and every dependant. An ID generator alone does not reject an explicit duplicate. The candidate copy demonstrates locality; it has not settled the shop’s migration. Payments, request identities and any order directory need the same scrutiny as lines.</p>
+<h3 id="reference-tables">Shared reference tables</h3>
+<p>A small product catalogue projection containing IDs and names can be useful on every worker. Citus reference tables are managed replicated tables for such shared data. A worker can join its local customer rows to a catalogue copy without fetching each name from a separate owner. Maintaining those copies makes writes a coordinated operation; the documentation describes two-phase commit for reference-table modifications.</p>
+<p>A copied catalogue is different from an independent stock allowance. Keeping the original shared stock authority means a purchase can still cross owners even when its history and catalogue-name join are local. Putting stock into a managed reference table would still require coordinated updates. Giving each worker stock 1 would instead create several opportunities to sell the same last mug.</p>
+
+<h2 id="foreign-tables">Foreign tables and remote work</h2>
+<p><code>postgres_fdw</code> lets a PostgreSQL database expose another PostgreSQL server’s tables as foreign tables. The caller writes local SQL; the wrapper sends suitable work to the configured remote server and brings results back. The server definition and user mapping identify the remote connection. They do not decide which owner ought to hold customer 1.</p>
+<p>Figure 4 follows a history query against <code>remote.orders</code>, a foreign table mapped to S’s <code>public.orders</code>. Follow the filtering separately from the rows returned.</p>
+<figure class="pg-figure" aria-labelledby="pg-fdw-title">
+ <figcaption id="pg-fdw-title"><span class="figure-number">Figure 4</span> Read the SQL at the connection boundary</figcaption>
+ <div class="entry"><strong>Local PostgreSQL C</strong><span>SELECT order_id, status FROM remote.orders<br/>WHERE customer_id = 1 ORDER BY order_id</span></div>
+ <div class="arrow">↓ remote SQL: filter and projection on S ↓</div>
+ <div class="scene"><strong>Remote PostgreSQL S</strong><div class="row">Apply customer_id = 1<br/>Return only order_id and status</div><div class="row">101 · paid<br/>103 · pending</div></div>
+ <div class="arrow">↑ two result rows cross the connection ↑</div>
+ <div class="entry"><strong>Local sort and result</strong><span>101 · paid<br/>103 · pending</span></div>
+ <p class="pg-caption">The native PostgreSQL 18.6 fixture has only Mina’s two orders on S. Its EXPLAIN VERBOSE shows the customer filter and selected columns in Remote SQL; sorting stays in C. The drawing identifies the execution boundary; it is not a measurement of network packets or bytes.</p>
+</figure>
+<Sql label="Inspect the query sent by postgres_fdw" code={`EXPLAIN (VERBOSE, COSTS OFF)
+SELECT order_id, status
+FROM remote.orders
+WHERE customer_id = 1
+ORDER BY order_id;`} />
+<p>The native plan shows a local sort above the foreign scan. The customer filter travels; the requested ordering is done after the rows return:</p>
+<pre aria-label="Excerpt from the native foreign-table plan"><code>{`Sort
+  Sort Key: orders.order_id
+  → Foreign Scan on remote.orders
+      Remote SQL: SELECT order_id, status FROM public.orders
+                  WHERE ((customer_id = 1))`}</code></pre>
+<p>A second native query joins S’s orders and lines and sums their values. Its plan instead contains <code>Relations: Aggregate on ((remote.orders o) INNER JOIN (remote.order_items i))</code>: both join and grouping ran on S, returning 101: 39.50 and 103: 29.00 before C’s sort. The input tables did not have to cross the connection to be joined in C.</p>
+<p>Filtering before transfer can save rows crossing the connection; selecting only needed columns can save width. A join between compatible foreign tables on the same foreign server can also run remotely when the planner chooses it. A local function it cannot send, different user mappings or tables on different servers can change that boundary. Read the actual <code>Remote SQL</code> and the local plan, rather than assuming every SQL operation travels.</p>
+<p>This is useful for accessing separately owned data, gradual integration or a deliberately bounded remote query. It does not maintain an order directory, allocate stock or move a shard when a worker fills.</p>
+<h3 id="fdw-transactions">The transaction boundary</h3>
+<p>The wrapper opens corresponding remote transactions and ends them with the local transaction. In PostgreSQL 18, their isolation is Repeatable Read unless the local transaction is Serializable, in which case it is Serializable. Repeated scans on one such remote connection can therefore share its snapshot even under a local Read Committed transaction.</p>
+<p>Separate remote servers do not thereby acquire one common snapshot. Nor does a local <code>BEGIN</code> prove an atomic purchase across them: PostgreSQL 18’s <code>postgres_fdw</code> cannot prepare its remote transactions for two-phase commit. Its transaction handling is insufficient evidence for the original all-or-nothing order-and-stock contract. Test the complete failure protocol before making that promise.</p>
+
+<h2 id="skew">Skew and queries across workers</h2>
+<p>A customer key can exclude owners from one history lookup. The October paid-order report has no such equality. It needs every customer owner that can contribute. Co-location still helps: each owner joins its orders and lines locally and can reduce them before sending results.</p>
+<p>Figure 5 uses only the small starting rows for the result. Read from each owner down to the final sort.</p>
+<figure class="pg-figure" aria-labelledby="pg-report-title">
+ <figcaption id="pg-report-title"><span class="figure-number">Figure 5</span> Local joins, a shared report</figcaption>
+ <div class="scene">
+ <div class="pair"><div><strong>A · Mina</strong>101 paid → 39.50<br/>103 pending → excluded</div><div><strong>B · Tariq</strong>102 paid → 40.00</div></div>
+ <p class="join"><strong>C · Edda</strong>No order group to return</p>
+ <div class="arrow">↓ partial customer totals ↓</div>
+ <div class="entry"><strong>Combine and sort at the entry point</strong>2 · Tariq · 40.00<br/>1 · Mina · 39.50</div>
+ </div>
+ <p class="pg-caption">A conceptual report plan over the starting shop. Values use agreed line prices; no current product data or payment rows are needed. The ordinary SQL result was checked in PGlite 0.5.8 / PostgreSQL 18.3. No distributed report timing is asserted.</p>
+</figure>
+<p>Because one owner contains all of each customer’s orders, its grouped result is complete for that customer. If the layout splits a customer across owners, the entry point must sum that customer’s partials before sorting. Sending every qualifying line instead would move more rows. A different join key can require moving inputs before the join as well.</p>
+<p>Fan-out can reduce elapsed time through parallel execution while adding messages and combining work. A complete report waits for every required owner. One slow or unavailable owner can determine its outcome; silently omitting that owner produces a different report. The snapshot contract remains a separate question, developed in <a href="/learn/databases/relational/distributed-reads/">Time, snapshots and distributed reads</a>.</p>
+<p>The collection’s separate generated workload makes another limit visible. Customer 1001 has 84,000 of 120,000 generated orders:</p>
+<div class="pg-figure" role="img" aria-label="Generated order counts: customer 1001 has 84,000, 70 percent. All other generated customers together have 36,000, 30 percent.">
+ <div class="bar" aria-hidden="true"><span></span><span></span></div><p><strong>1001: 84,000 · 70%</strong> &nbsp; All others: 36,000 · 30%</p>
+</div>
+<p>Hashing the customer key keeps all 84,000 together. More buckets do not divide equal key values. Moving that group to another worker can move its stored data and load, but cannot split the group. Distributing by order instead could spread its independent order work while making the customer history fan out.</p>
+<p>Those counts establish data skew, not measured traffic or elapsed time. A customer with much old history may be quiet; one P7 stock row can be busy. Measure bytes, requests, writes and contention by key. Dividing the stock row’s callers across workers does not give them independent authority over the same stock.</p>
+
+<h2 id="moving">Moving a shard safely</h2>
+<p>Suppose group A is to move from PostgreSQL S to D. Its customer, order, line, payment and durable request-outcome records must arrive together. Product stock remains with P. A maintained order directory and other incoming references must continue to lead to the same group at its new owner.</p>
+<p>First take a deliberately paused approach. A pause makes the copy’s boundary easier to establish; it does not remove the authority problem. Figure 6 keeps the destination closed until the source is closed and the routing decision is recorded.</p>
+<Move />
+<h3 id="close-source">Close the source before handing over</h3>
+<p>The admission gate must cover every mutation of A: application calls, jobs, imports, administrative paths and new references that could change the copied scope. Stopping the main router alone does not stop an old connection or an already admitted transaction.</p>
+<p>One bounded implementation uses a group gate row. Every admitted mutation checks that row while holding a shared row lock until its transaction ends. Closing takes a conflicting update lock, waits for admitted work, then commits the closed state. Later attempts must observe the closed gate before doing group work. The runtime role must be unable to bypass the guarded path. Isolation, function boundaries and lock order are part of this protocol, so substituting an earlier cached flag would not preserve it.</p>
+<p>After drain, copy and compare the complete closed group. Counts alone can match while values differ. Validate keys, relationships, exact request payloads and terminal results, plus any sequences, large objects or external records the actual design requires. A source write after this check would invalidate the copy, which is why the gate stays closed.</p>
+<p>Persist the route to D before admitting its writes. The controller must recover from each recorded stage. Before closure, S remains the owner and D stays closed. After closure but before the routing decision, it can resume copying from the closed source. After the decision, it completes or repairs the D handover while keeping S closed. A timeout or controller restart must not guess that both may reopen. Protect and recover the routing authority itself; a lost or independently writable directory would undermine the handover.</p>
+<p>The native experiment uses three disposable PostgreSQL 18.6 instances, each with a separate data directory and Unix socket inside one isolated container. It observes an admitted transaction holding the shared gate lock while closure waits, then compares the closed-source copy exactly. After recording D as owner and opening it, the tested source path rejects a stale request. D recovers <code>purchase-103 → 103</code>; a changed payload under that identity is rejected.</p>
+<p>This verifies that bounded gate and retry path. It does not test a complete purchase, bypass-proof production administration, controller crash recovery or independent-machine failure. The fixture’s runtime has only the guarded result-recovery function. The illustrated full handover also requires the wider scope and recovery rules described above.</p>
+<p>The counterexample is direct: change routing while S remains open, and an old client can still pass S’s gate. A successful copy and a new route do not close the old authority. At cutover, fail or pause affected work when ownership cannot be established; availability does not justify allowing both owners to proceed.</p>
+<h3 id="catch-up">Catch-up, return and managed movement</h3>
+<p>An online variant keeps the source accepting writes during most of the transfer. It additionally needs a consistent snapshot aligned with a change stream, enough retained history to catch up, and an apply process that preserves the relevant schema and transaction semantics. It still needs a final protected boundary to drain old writes, finish applying them and transfer authority.</p>
+<p>Native logical replication can supply parts of that machinery, but its supported objects and limits must match the group. <a href="/learn/databases/relational/postgresql/logical-replication/">PostgreSQL logical replication and change feeds</a> examines that mechanism; <a href="/learn/databases/relational/rebalancing/">Rebalancing and cluster change</a> develops catch-up and the capacity it consumes. A whole-system or version migration has a different scope in <a href="/learn/databases/relational/postgresql/upgrades/">Upgrading and migrating PostgreSQL</a>.</p>
+<p>Citus provides supported shard-movement and rebalancing functions that move co-located shards together and update placement metadata. Its documented transfer modes include logical movement and blocking writes. Use the chosen release’s machinery and prerequisites, inspect completion and final placements, then exercise real requests. A submitted rebalance request or finished base copy is not the same evidence. No Citus move was run for this article.</p>
+<p>Once D accepts new writes, returning is another transfer. Reconcile those writes or send them back through an equally protected reverse handover. Changing the route back to the old S copy would discard the very work that made D the owner.</p>
+
+<h2 id="choosing">Choosing and checking the design</h2>
+<p>Choose from the limiting work and the rules it must preserve. Several mechanisms can coexist, but each should earn a particular job.</p>
+<table>
+ <caption>What each PostgreSQL choice contributes</caption>
+ <thead><tr><th>Choice</th><th>Useful when</th><th>Responsibility to establish</th></tr></thead>
+ <tbody>
+  <tr><td>Native partitions</td><td>Bounds exclude work or match lifecycle units inside an instance.</td><td>Key/reference scope, future ranges and safe retirement.</td></tr>
+  <tr><td>Application shards</td><td>The application can route independent groups and own their operation.</td><td>Routing, cross-owner rules, schema rollout, connection budgets and handover.</td></tr>
+  <tr><td>Citus</td><td>A supported distributed layout fits frequent SQL and co-location.</td><td>Distribution keys, constraints, broad-query costs and supported movement.</td></tr>
+  <tr><td>Foreign tables</td><td>SQL needs access to independently located PostgreSQL data.</td><td>Remote execution, connection/transaction limits and explicit ownership.</td></tr>
+ </tbody>
+</table>
+<p>Compare the same history, report and purchase contract in each candidate. Include an order-ID-only request, the frequent customer key, a missing worker and a stale route during movement. Check correct rows and ordering before measuring latency. Inspect local plans, remote SQL or distributed tasks to see which work was excluded, which stayed local and which rows crossed connections.</p>
+<p>Then rehearse operation: compatible schema changes on every owner, backups of data and metadata, restoration to a coherent application state, route recovery and the return boundary after new writes. The useful result is a design that places independent work where capacity is available while preserving its declared rules. More PostgreSQL processes alone establish neither.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against PostgreSQL 18 and Citus 13.0.1 documentation in October 2026. Citus placement and movement are documentation-based illustrations, not runtime observations. Ordinary SQL checks used PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. The bounded FDW and gate experiment used PostgreSQL 18.6; its three instances shared one isolated container, not independent failure domains.</p>
+<ul>
+ <li><a href="https://www.postgresql.org/docs/18/ddl-partitioning.html">PostgreSQL 18: Table partitioning</a>: local partitioning, bounds and the foreign-partition exception.</li>
+ <li><a href="https://www.postgresql.org/docs/18/explicit-locking.html">PostgreSQL 18: Explicit locking</a>: row-lock conflicts and transaction-held gates. <a href="https://www.postgresql.org/docs/18/logical-replication-restrictions.html">Logical replication restrictions</a>: schema, sequences and object scope.</li>
+ <li><a href="https://www.postgresql.org/docs/18/sql-prepare-transaction.html">PREPARE TRANSACTION</a>: retained prepared work, locks and the need for a transaction manager.</li>
+ <li><a href="https://docs.citusdata.com/en/v13.0/sharding/data_modeling.html">Citus: Choosing a distribution column</a> and <a href="https://docs.citusdata.com/en/v13.0/develop/api_udf.html#create-distributed-table">create_distributed_table</a>: distribution, compatible co-location and query locality.</li>
+ <li><a href="https://docs.citusdata.com/en/v13.0/develop/reference_ddl.html">Citus: Creating and modifying distributed objects</a>: distributed key and reference restrictions, and managed reference tables.</li>
+ <li><a href="https://www.postgresql.org/docs/18/postgres-fdw.html">PostgreSQL 18: postgres_fdw</a>: remote SQL, pushdown, connections, remote snapshots and the absence of remote prepare support.</li>
+ <li><a href="https://docs.citusdata.com/en/v13.0/admin_guide/cluster_management.html">Citus: Cluster management</a> and <a href="https://docs.citusdata.com/en/v13.0/develop/api_udf.html#citus-move-shard-placement">shard movement functions</a>: co-located movement, transfer modes and operational completion.</li>
+</ul>
