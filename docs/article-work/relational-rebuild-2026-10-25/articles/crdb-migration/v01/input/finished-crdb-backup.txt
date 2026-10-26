@@ -1,0 +1,205 @@
+http://127.0.0.1:4606/review/relational-rebuild/cockroachdb/backup-and-restore/
+
+ CockroachDB’s BACKUP preserves a consistent state of selected tables, databases or a cluster. RESTORE builds new objects from that material. To recover an earlier moment between backups, the backup must also contain the revisions needed for that moment. A live cluster retaining old versions and a backup retaining those versions are two different promises.
+ This article follows the recovery branch from Backup, restore and reconciliation. Order 103 has already bought one blue mug at 20.00 and two packets of tea at 4.50, total 29.00. Stock is now P3 10, P7 0, P9 4. A mistake changes P7’s catalogue price to 2.20. Later, a provider accepts a 10.00 card charge and the shop records payment 504. Restoring before the mistake also omits that valid payment record.
+ We will find a complete backup path, restore the earlier shop into a separate database, then account for the accepted charge without charging again or repeating the purchase. The SQL uses CockroachDB v26.2 syntax; a small native drill ran on v26.2.8. The drawings show illustrative ordering, with no invented commit times or recovery-rate measurements.
+ Choosing the restore point
+ A restore point selects a state of the backed-up history. It does not select which transactions were good. Figure 1 keeps the source events fixed while you move the cut. Watch P7’s catalogue price and payment 504 separately.
+ Figure 1 One restore point, two omitted changes
+Restore to Before the mistakeThrough the mistakeThrough the payment
+Original committed history →
+Order 103Agreement 29.00
+Stock → 10 / 0 / 4Retained
+Price mistakeP7 catalogue
+20.00 → 2.20Omitted
+Payment 50410.00 by card
+Order still pendingOmitted
+Restored database
+P7 catalogue
+20.00
+Order 103
+Pending · 29.00
+Payment 504
+Absent
+Recorded due
+29.00
+Stock: P3 10 · P7 0 · P9 4
+Provider · outside the restore
+Accepted 10.00order-103-part-payment-1
+The charge stays accepted at every cut.
+The earlier state keeps the purchase. It omits the mistake and the valid later payment record.
+A model of the recovery branch, assuming the selected point is covered. Order is shown without invented commit times. The provider is hypothetical and its accepted result is an input.
+Figure as text
+The order and its stock decrement commit before the mistaken catalogue price, which commits before payment 504. A cut before the mistake excludes both later changes. A cut through the payment retains both. The external charge is unaffected.
+ The cut before the mistake recovers 20.00 and loses the payment record. Moving through payment 504 recovers the payment and the earlier 2.20 mistake. Neither cut rewinds the provider. The later charge therefore needs reconciliation against the earlier database.
+ The purchase itself lies before every cut shown. Its agreed lines still total 29.00 and its stock consumption is already present. A repair that creates order 103 again would repeat work we retained. If the only problem were this one catalogue value, restoring an isolated copy to inspect the old price and correcting the live database might be sufficient. Here we follow the wider restore to make its obligations visible.
+ Identify the unwanted commit from retained database and application evidence. The time someone noticed the price is not its commit time, and an application’s updated_at need not mark that boundary. Choose a supported timestamp before the unwanted change, record the source and object scope, then verify the resulting facts. The engine accepting a timestamp does not establish that it is the right business cut.
+ Full backups and incremental chains
+ A full backup supplies a complete starting copy for its selected scope. An incremental backup supplies changes since the preceding backup in its chain. A backup collection can contain several full backups, each with its following increments. The collection URI identifies the container of those paths; it is not itself one recoverable point.
+ These two commands do different work. The first starts a new full backup. Run the second later to append an increment to the latest full-backup path. Here external://shop_recovery stands for an already configured external storage connection, with suitable SQL and storage access.
+ <code><span class="line"><span style="color:var(--astro-code-token-keyword)">BACKUP</span><span style="color:var(--astro-code-token-keyword)"> DATABASE</span><span style="color:var(--astro-code-foreground)"> shop</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">INTO</span><span style="color:var(--astro-code-token-string-expression)"> 'external://shop_recovery'</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">WITH</span><span style="color:var(--astro-code-foreground)"> revision_history </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-foreground)"> true;</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:var(--astro-code-token-comment)">-- Run later, against the same collection and object scope.</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">BACKUP</span><span style="color:var(--astro-code-token-keyword)"> DATABASE</span><span style="color:var(--astro-code-foreground)"> shop</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">INTO</span><span style="color:var(--astro-code-foreground)"> LATEST </span><span style="color:var(--astro-code-token-keyword)">IN</span><span style="color:var(--astro-code-token-string-expression)"> 'external://shop_recovery'</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">WITH</span><span style="color:var(--astro-code-foreground)"> revision_history </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-foreground)"> true;</span></span></code>
+ Both commands explicitly request revision history; the next section explains what that adds. First follow the files. Figure 2 has one full copy and two increments. Remove B while keeping C.
+ Figure 2 Which points does this chain cover?
+Captured history Revision history in all threeBackup points onlyRetained material Full + B + CIncrement B missing
+One full-backup path · dependency order →
+Full AComplete shop
+at point AAvailable
+Increment BChanges A → B
+includes mistakeAvailable
+Increment CChanges B → C
+includes paymentReachable
+Abefore mistakeBafter mistakeC
+Captured interior history
+With the complete path and captured revisions, an interior cut before the mistake can be restored.
+A later full D starts another pathLATEST selects that newer full path. It does not choose A because A contains the state you want.
+A, B, C and D are symbolic backup points, not native paths, equal durations or file sizes. The history band starts at A for clarity; a full backup with revision history can also capture retained revisions before A.
+Figure as text
+Reaching C requires full A and increments B and C. Without B, C remains a file but this path cannot reach it. Without revision history, only backup points are supported. Captured history permits interior points within its actual bounds. A newer full D is a separate starting copy.
+ C cannot replace B. A usable route to C needs the starting full backup and the required increments through C, all readable with their necessary keys. A new full backup supplies another starting route, but it does not repair the missing files in the earlier one. Keep material by the recovery points it supports, rather than deleting an old full merely because newer increments exist.
+ Finding the backup to restore
+ List the collection’s full-backup paths, then inspect the selected path and its increments:
+ <code><span class="line"><span style="color:var(--astro-code-foreground)">SHOW BACKUPS </span><span style="color:var(--astro-code-token-keyword)">IN</span><span style="color:var(--astro-code-token-string-expression)"> 'external://shop_recovery'</span><span style="color:var(--astro-code-foreground)">;</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:var(--astro-code-token-comment)">-- Replace <full-path> with a path returned above.</span></span>
+<span class="line"><span style="color:var(--astro-code-foreground)">SHOW </span><span style="color:var(--astro-code-token-keyword)">BACKUP</span><span style="color:var(--astro-code-token-keyword)"> FROM</span><span style="color:var(--astro-code-token-string-expression)"> '<full-path>'</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">IN</span><span style="color:var(--astro-code-token-string-expression)"> 'external://shop_recovery'</span><span style="color:var(--astro-code-foreground)">;</span></span></code>
+ Read database_name, object_name and object_type for scope; backup_type, start_time and end_time for the full copy and later intervals. Check that the intended database and related objects are there and that the chain reaches the target. Keep the source identity and the selected full path with that evidence.
+ LATEST is convenient when creating increments. During an incident, make its choice explicit: it selects the most recent full-backup path, with that path’s increments available to the restore. A newer full can begin after the state you need. Inspect the paths before relying on LATEST, and pin the chosen path in the recovery record and restore command.
+ Revision history and interior restore points
+ Without captured revision history, the chain supports its saved backup points. Having A and B does not make every moment between them restorable. With captured revisions, a restore can select an interior point within the history actually saved. Switch Figure 2 to Backup points only: the dependency chain stays the same, but its stopping points change.
+ A full backup with revision history can include retained revisions from before its backup timestamp. An increment with revision history captures the changes since its preceding backup within the available revision window. An increment can add revision history even if an earlier backup omitted it; that does not fill older gaps. Neither can recreate versions already collected before capture. Inspect the actual captured bounds and test the desired target; the source’s garbage-collection period alone does not establish the backup’s coverage. Scheduled backups protect the revisions they still need to capture, as the revision-history documentation explains.
+ Request the option explicitly when interior recovery is required. In the v26.2.8 drill, an unqualified BACKUP chain rejected an interior restore because revision history had not been captured. An explicit revision_history = false chain rejected it too. A separate full-and-increment chain using revision_history = true restored the intended interior cut. The current BACKUP option reference describes a true default; that differs from this observed run. Do not base recoverability on an assumed default.
+ Use AS OF SYSTEM TIME on RESTORE for the chosen point. This command’s path and timestamp are placeholders to replace with the inspected backup path and established cut:
+ <code><span class="line"><span style="color:var(--astro-code-token-keyword)">RESTORE</span><span style="color:var(--astro-code-token-keyword)"> DATABASE</span><span style="color:var(--astro-code-foreground)"> shop</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">FROM</span><span style="color:var(--astro-code-token-string-expression)"> '<full-path>'</span><span style="color:var(--astro-code-token-keyword)"> IN</span><span style="color:var(--astro-code-token-string-expression)"> 'external://shop_recovery'</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">AS</span><span style="color:var(--astro-code-foreground)"> OF </span><span style="color:var(--astro-code-token-keyword)">SYSTEM</span><span style="color:var(--astro-code-token-keyword)"> TIME</span><span style="color:var(--astro-code-token-string-expression)"> '<chosen-timestamp>'</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">WITH</span><span style="color:var(--astro-code-foreground)"> new_db_name </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-token-string-expression)"> 'shop_recovered'</span><span style="color:var(--astro-code-foreground)">;</span></span></code>
+ The restore creates the selected state. It does not install all the backup’s old versions as queryable history in shop_recovered. To examine another earlier point, restore another candidate from the retained backup material. Keep the original evidence while deciding which candidate to use.
+ Choosing the restore scope
+ Choose the unit whose facts must agree. Restoring only payments would leave its references and the order agreement to be accounted for separately. This shop candidate uses a database restore so that products, orders, order lines, payments and operation mappings share the same cut.
+ What each scope recovers
+ScopeUseful forDestination question
+Table
+Inspecting selected objects and their indexes
+Are referenced tables, types, sequences and views included or otherwise compatible?
+Database
+Recovering the shop’s related objects together
+Use a new name for a separate candidate; the whole database must have been backed up.
+Full cluster
+Recovering user data with relevant system state, including identities
+Requires a destination with no user-created databases or tables.
+ A table restore is not an automatic dependency collector. Include the needed related objects deliberately. Options such as skip_missing_foreign_keys remove the missing constraint; they do not recover the referenced facts. A successful restore after skipping it has a different integrity contract. The restore dependency rules cover the supported combinations.
+ A database restore also does not recreate cluster users. By default, the restore operator owns the restored objects. Establish the intended runtime identities and grants, and check application access using those identities. The GRANTS option can restore backed-up privileges for corresponding destination usernames; it is not a substitute for verifying who those users are or what the service should now access.
+ Check the destination’s supported source version, capacity, required regions and storage access before starting. CockroachDB cannot restore a newer-version backup into an older engine; the documented forward path is the same or the next major version. Encrypted backups need the correct passphrase or usable KMS key. An operator able to list a bucket today has not established that a recovery cluster can read and decrypt every required object during an outage. The RESTORE reference specifies version, region, privilege and destination restrictions.
+ Proving the restored state
+ Metadata describes a path; validation tests progressively more of it. Keep the candidate isolated from ordinary callers and external workers while checking it. Restored dispatch records can describe effects that already happened.
+ What CockroachDB’s validation stages establish
+CheckWhat it doesWhat remains
+SHOW BACKUP … WITH check_files
+Checks that expected backup files are present in storage
+Restore and recovered facts
+RESTORE … WITH schema_only
+Restores schema without user rows
+Reading the data files and recovering rows
+schema_only, verify_backup_table_data
+Reads backup data, verifies checksums, then discards the rows
+A populated, usable candidate
+Complete RESTORE
+Reconstructs the selected objects and rows
+The intended business state and application behaviour
+ verify_backup_table_data must accompany schema_only. Give each validation restore its own destination name. A successful checksum check is useful evidence, but still leaves the business assertions to make. The backup-validation guide describes these native checks.
+ Wait for job completion. Ordinary RESTORE blocks; with DETACHED, the returned job identifier only identifies the asynchronous job. Inspect that job with SHOW JOBS and retain its terminal status and any errors. Neither a job ID nor a file check means the shop has recovered.
+ Check both sides of the cut
+ For the earlier candidate, expect P7 at 20.00, pending order 103 and its agreed 29.00 total, with payment 504 and its operation mapping absent. Stock must remain 10/0/4. Keep agreement and payment sums separate so a join cannot multiply the line values:
+ <code><span class="line"><span style="color:var(--astro-code-token-keyword)">SELECT</span></span>
+<span class="line"><span style="color:var(--astro-code-foreground)"> (</span><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-foreground)"> price </span><span style="color:var(--astro-code-token-keyword)">FROM</span><span style="color:var(--astro-code-foreground)"> shop_recovered.products</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> WHERE</span><span style="color:var(--astro-code-foreground)"> product_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-token-string-expression)"> 'P7'</span><span style="color:var(--astro-code-foreground)">) </span><span style="color:var(--astro-code-token-keyword)">AS</span><span style="color:var(--astro-code-foreground)"> p7_price,</span></span>
+<span class="line"><span style="color:var(--astro-code-foreground)"> o.status,</span></span>
+<span class="line"><span style="color:var(--astro-code-foreground)"> (</span><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-token-function)"> sum</span><span style="color:var(--astro-code-foreground)">(quantity </span><span style="color:var(--astro-code-token-keyword)">*</span><span style="color:var(--astro-code-foreground)"> unit_price)</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> FROM</span><span style="color:var(--astro-code-foreground)"> shop_recovered.order_items</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> WHERE</span><span style="color:var(--astro-code-foreground)"> order_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-foreground)"> o.order_id) </span><span style="color:var(--astro-code-token-keyword)">AS</span><span style="color:var(--astro-code-foreground)"> agreed_total,</span></span>
+<span class="line"><span style="color:var(--astro-code-foreground)"> (</span><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-token-function)"> coalesce</span><span style="color:var(--astro-code-foreground)">(</span><span style="color:var(--astro-code-token-function)">sum</span><span style="color:var(--astro-code-foreground)">(amount), </span><span style="color:var(--astro-code-token-constant)">0</span><span style="color:var(--astro-code-foreground)">)</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> FROM</span><span style="color:var(--astro-code-foreground)"> shop_recovered.payments</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> WHERE</span><span style="color:var(--astro-code-foreground)"> order_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-foreground)"> o.order_id) </span><span style="color:var(--astro-code-token-keyword)">AS</span><span style="color:var(--astro-code-foreground)"> recorded_paid</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">FROM</span><span style="color:var(--astro-code-foreground)"> shop_recovered.orders </span><span style="color:var(--astro-code-token-keyword)">AS</span><span style="color:var(--astro-code-foreground)"> o</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">WHERE</span><span style="color:var(--astro-code-foreground)"> o.order_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-token-constant)"> 103</span><span style="color:var(--astro-code-foreground)">;</span></span>
+<span class="line"><span style="color:var(--astro-code-token-comment)">-- Before reconciliation: 20.00 | pending | 29.00 | 0.00</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-foreground)"> product_id, stock</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">FROM</span><span style="color:var(--astro-code-foreground)"> shop_recovered.products</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">ORDER BY</span><span style="color:var(--astro-code-foreground)"> product_id;</span></span>
+<span class="line"><span style="color:var(--astro-code-token-comment)">-- P3 10; P7 0; P9 4</span></span></code>
+ Inspect constraints and representative other records as well. Read the recovered order through the application under its intended runtime identity, with dispatch still disabled. Check derived stores and still-applicable correction or deletion decisions before older data returns to ordinary use.
+ The small native drill restored only a projection of this shop: three products, order 103, two lines and the payment-operation tables. Its interior restore produced the expected earlier facts; a latest restore produced 2.20 and payment 504. This establishes those SQL outcomes on one disposable node with local backup storage. It does not measure production recovery time, test cloud credentials, demonstrate node survival or prove application runtime access. Rehearse the whole recovery path with representative size and access arrangements before relying on an outage budget.
+ Reconcile the later payment
+ The candidate can be prepared while the source is still serving traffic. Final reconciliation needs a finite source history. Stop new source writes and external dispatch, account for transactions and provider calls already in flight, and prevent stale callers or workers from adding authoritative work there. Preserve the final source evidence. Moving a SQL application to CockroachDB (planned) owns the complete application handover; these are the conditions the recovery depends on.
+ If the source was destroyed, work from the evidence that survived and retain any gaps explicitly. A missing local payment row does not establish that the charge failed. In this branch, the hypothetical provider offers a retained, queryable result for order-103-part-payment-1. Its immutable meaning is order 103, 10.00 by card, with local result payment 504. Query and compare that result before repairing the database.
+ Figure 3 starts with a matching accepted result. Step through the repair and its repeat, then change the provider evidence.
+ Figure 3 Restore the record of an accepted charge
+Provider evidence Accepted · matching order and amountOutcome unavailableOrder or amount disagrees
+Source writes closed · candidate isolated · external dispatch disabled
+order-103-part-payment-1Order 103 · payment 504 · 10.00 by card
+Recovered CockroachDB
+Payment rows for 504
+0
+Operation mapping
+Absent
+Recorded due
+29.00
+Pending order · agreed total 29.00
+Stock stays 10 / 0 / 4
+Provider lookup
+Accepted · matching 10.00
+No new charge is sent.
+The restored purchase is present. Its later payment and operation mapping are absent.
+PlayBackNextReset1 / 5
+A controlled reconciliation model using the provider contract stated in the text. Only its database changes are exercised by the native drill. An unavailable or mismatched result stops before the repair.
+Figure as text
+Restore the earlier shop with its purchase intact.
+Look up the original operation at the provider and compare its immutable meaning.
+For a matching accepted result, commit payment 504 and its operation mapping together.
+On a repeat, verify the mapping and payment instead of inserting again.
+Check 10.00 recorded, 19.00 due, pending status and stock 10/0/4. Unknown or mismatched evidence leaves the repair unresolved.
+ Record the result once
+ With ordinary writers excluded, first read the recovered operation mapping and any payment 504. If both already represent the original accepted operation, verify the order, amount, method and payment identity, and return that result. A changed amount under the same operation identity is a mismatch, not another partial payment.
+ If both are absent and the evidence matches, record the payment and its immutable operation mapping in one transaction. This is the insertion branch after those checks, using the example’s additional payment_operations table:
+ <code><span class="line"><span style="color:var(--astro-code-token-keyword)">BEGIN</span><span style="color:var(--astro-code-foreground)">;</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-foreground)"> order_id, </span><span style="color:var(--astro-code-token-keyword)">status</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">FROM</span><span style="color:var(--astro-code-foreground)"> shop_recovered.orders</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">WHERE</span><span style="color:var(--astro-code-foreground)"> order_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-token-constant)"> 103</span><span style="color:var(--astro-code-token-keyword)"> FOR</span><span style="color:var(--astro-code-token-keyword)"> UPDATE</span><span style="color:var(--astro-code-foreground)">;</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:var(--astro-code-token-comment)">-- After verifying the retained agreement and accepted evidence:</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">INSERT INTO</span><span style="color:var(--astro-code-foreground)"> shop_recovered.payments</span></span>
+<span class="line"><span style="color:var(--astro-code-foreground)"> (payment_id, order_id, amount, method)</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">VALUES</span><span style="color:var(--astro-code-foreground)"> (</span><span style="color:var(--astro-code-token-constant)">504</span><span style="color:var(--astro-code-foreground)">, </span><span style="color:var(--astro-code-token-constant)">103</span><span style="color:var(--astro-code-foreground)">, </span><span style="color:var(--astro-code-token-constant)">10</span><span style="color:var(--astro-code-foreground)">.</span><span style="color:var(--astro-code-token-constant)">00</span><span style="color:var(--astro-code-foreground)">, </span><span style="color:var(--astro-code-token-string-expression)">'card'</span><span style="color:var(--astro-code-foreground)">);</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">INSERT INTO</span><span style="color:var(--astro-code-foreground)"> shop_recovered.payment_operations</span></span>
+<span class="line"><span style="color:var(--astro-code-foreground)"> (operation_id, order_id, amount, method, payment_id)</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">VALUES</span><span style="color:var(--astro-code-foreground)"> (</span><span style="color:var(--astro-code-token-string-expression)">'order-103-part-payment-1'</span><span style="color:var(--astro-code-foreground)">, </span><span style="color:var(--astro-code-token-constant)">103</span><span style="color:var(--astro-code-foreground)">, </span><span style="color:var(--astro-code-token-constant)">10</span><span style="color:var(--astro-code-foreground)">.</span><span style="color:var(--astro-code-token-constant)">00</span><span style="color:var(--astro-code-foreground)">, </span><span style="color:var(--astro-code-token-string-expression)">'card'</span><span style="color:var(--astro-code-foreground)">, </span><span style="color:var(--astro-code-token-constant)">504</span><span style="color:var(--astro-code-foreground)">);</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">COMMIT</span><span style="color:var(--astro-code-foreground)">;</span></span></code>
+ The mapping’s operation identifier is a primary key, and its payment identifier is unique and references the payment. Keep the mapping immutable. A constraint can reject a second identity or payment; the recovery procedure must still compare the stored payload and result. Plain ON CONFLICT DO NOTHING would hide whether the existing record means the same thing.
+ Before insertion, verify that order 103’s agreed lines still total 29.00, its state permits the payment, and the known 10.00 fits the remaining balance. Stop on partial or inconsistent local evidence. If the transaction aborts, retry the whole database decision using the same operation identity; if its commit result is uncertain, look up that identity before choosing the next action. CockroachDB transactions and retries develops those native retry paths.
+ The native drill inserted the payment and mapping, then read back the same mapping on a repeat. A blind duplicate insert was rejected with 23505. Payload comparison was performed by the verifier; no constraint was claimed to decide whether a changed amount was a valid retry. No provider request ran: the accepted outcome was supplied evidence.
+ Keep the retained purchase
+ The repaired database records 10.00 against 29.00, leaving 19.00 due and order 103 pending. P7’s agreed unit price remains 20.00. Its recovered catalogue price does not reprice the order. Stock remains P3 10, P7 0, P9 4 because the purchase already consumed it before the restore point.
+ Do not send another charge or call the purchase routine to recover this payment. An unavailable provider outcome remains unresolved. A mismatched order or amount requires investigation. If other later work depended on the 2.20 price, assess its original agreement and dependencies separately; restoring a database cannot decide its business treatment.
+ Return the recovered service to use
+ For this branch, the completed result is concrete: P7 at 20.00; order 103 pending for 29.00; payment 504 and its original operation mapping recorded once; 19.00 due; stock still 10/0/4. The old source can add no more authoritative work, and the finite set of later operations has dispositions, including named unresolved cases.
+ Verify runtime access and application reads, route callers to one recovered authority, and resume external dispatch only after its earlier effects are accounted for. Operating and securing a CockroachDB cluster covers cluster health and access in more detail.
+ Establish and test backup coverage for the recovered history before relying on it. Keep the original recovery material and evidence according to the agreed retention decision. Record the achieved recovery point, elapsed stages, restricted service and remaining exceptions. A restored database becomes a recovered service when its facts, authority and external obligations agree.
+
+ Sources and further reading
+ Checked on 26 October 2026 against the CockroachDB v26.2 documentation and a pinned v26.2.8 native SQL drill. The provider contract and event ordering are illustrative. The observed option-default discrepancy is identified in the revision-history section.
+ BACKUP and SHOW BACKUP: option syntax, object scope, backup paths and metadata.
+ Full and incremental backups: collections and dependencies; revision history and point-in-time restore: captured windows and the restored state.
+ RESTORE: alternate database names, dependencies, identity and grants, compatible versions and destination restrictions.
+ Backup validation and backup and restore monitoring: file checks, schema and checksum validation, and evidence about running jobs.
+ On this site: Backup, restore and reconciliation, for recovery objectives and the general reconciliation method, and Inside CockroachDB, for versioned keys, ranges and replicated history.
+END FINISHED crdb-backup

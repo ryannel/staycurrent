@@ -18,6 +18,7 @@ export interface RelationalRebuildCollection {
   title: string;
   description: string;
   entries: RelationalRebuildEntry[];
+  readingOrder: string[];
 }
 export interface RelationalRebuildState extends RelationalRebuildEntry {
   description: string;
@@ -37,7 +38,7 @@ const safeSlug = /^(?:[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*)?$
 
 /** Validate editorial data before it can create routes or a recursive tree. */
 export function parseRelationalRebuildCollection(value: unknown): RelationalRebuildCollection {
-  if (!record(value) || !text(value.title) || !text(value.description) || !Array.isArray(value.entries)) return fail('invalid collection header');
+  if (!record(value) || !text(value.title) || !text(value.description) || !Array.isArray(value.entries) || !Array.isArray(value.readingOrder) || !value.readingOrder.every(text)) return fail('invalid collection header');
   const keys = new Set<string>();
   const slugs = new Set<string>();
   const entries = value.entries.map((item: unknown): RelationalRebuildEntry => {
@@ -61,6 +62,8 @@ export function parseRelationalRebuildCollection(value: unknown): RelationalRebu
   const roots = entries.filter(entry => entry.parent === null);
   if (roots.length !== 1 || roots[0].slug !== '') return fail('exactly one root with an empty slug is required');
   const byKey = new Map(entries.map(entry => [entry.key, entry]));
+  const readingOrder = value.readingOrder as string[];
+  if (new Set(readingOrder).size !== readingOrder.length || readingOrder.some(key => !byKey.has(key)) || readingOrder[0] !== roots[0].key) return fail('invalid foundation reading order');
   for (const entry of entries) {
     const seen = new Set([entry.key]);
     let parent = entry.parent;
@@ -72,7 +75,7 @@ export function parseRelationalRebuildCollection(value: unknown): RelationalRebu
       parent = ancestor.parent;
     }
   }
-  return { title: value.title.trim(), description: value.description.trim(), entries };
+  return { title: value.title.trim(), description: value.description.trim(), entries, readingOrder: [...readingOrder] };
 }
 
 export const relationalRebuildCollection = parseRelationalRebuildCollection(rawCollection);

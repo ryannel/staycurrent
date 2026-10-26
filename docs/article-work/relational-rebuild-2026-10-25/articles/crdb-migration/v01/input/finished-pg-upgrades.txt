@@ -1,0 +1,167 @@
+http://127.0.0.1:4606/review/relational-rebuild/postgresql/upgrades/
+
+ A PostgreSQL upgrade moves a database to a new server version. A migration can also move it to different hardware, storage or a managed service. In both cases, the shop must emerge with the same accepted orders, payments and stock, and with exactly one place allowed to accept new work.
+ Copying the data is only part of that move. The application needs its schema, access identities, extensions and sequence state. Its workers need to know which database now owns their work. And the last accepted source change must reach the target before the target accepts new shop work.
+ We will move the small shop after order 103. P7’s catalogue price is 20.00; stock is P3 10, P7 0 and P9 4. Order 103 is pending, has no payment and contains agreed lines totalling 29.00. After the handover, a target-only change raises P7 to 22.00. Following those two prices will show when returning to the old server stops being a simple switch.
+ Choose an upgrade method
+ A minor update, such as 18.5 to 18.6, stays within one major release. PostgreSQL keeps its storage format compatible: stop the server, replace its executables and restart, following the package and release instructions. A major upgrade, such as 17 to 18, needs a supported transfer. Starting version 18 on version 17’s data directory is not that transfer.
+ Read the Migration notes for every major release crossed, even when skipping directly to a later one. The question is whether your clients, SQL, extensions and operating tools remain compatible. Promoting a physical standby also stays within its compatible server version; it does not turn that standby into a new major release.
+ There are three ordinary transfer routes. Figure 1 puts their work on either side of the write pause. Compare where the large copy happens, then look at what must still happen before callers return.
+ Figure 1Where the work falls
+ Before the write pauseInside the write pause
+ pg_upgrade
+Before the write pauseInstall, check and rehearse a separate copy
+Inside the write pauseStop → transfer files → follow-up work → accept
+ Dump and restore
+Before the write pausePrepare target software; rehearse reconstruction
+Inside the write pauseClose source writes → dump final state → restore → accept
+ Logical replication
+Before the write pausePrepare schema → copy tables → follow changes
+Inside the write pauseClose source writes → apply final changes → complete service → accept
+ A work map, not a time scale. Every route includes draining writers and moving callers. The logical route moves the bulk copy earlier; it adds a stream whose coverage and final applied state must be established.
+ pg_upgrade creates the new version’s system catalogues and transfers the user data files. It avoids reconstructing every row and index through SQL. It suits a compatible cluster when you can stop it for the transfer and acceptance, and can provide both versions’ software and the required storage access.
+ Dump and restore reconstructs definitions and data in an independent target. A final dump taken after closing source writes gives the target a finite state to reproduce. The pause includes exporting and restoring that state, so the simplicity can be expensive for a large database. It is useful when changing the physical environment or when the application can tolerate the measured interruption.
+ Logical replication copies selected table data while the source remains in service, then follows changes. This moves much of the copying before the pause. In exchange, you must maintain a compatible target and stream, account for state outside that stream, and prove final catch-up. Choose it when those obligations are worth the shorter final copying interval, rather than because a worker reports zero lag.
+ A provider may wrap these routes in its own migration service. Check its actual scope, supported versions, extension restrictions and return procedure. A button labelled Upgrade still has to satisfy the same data and authority conditions.
+ Define what must survive the move
+ Begin with the service the target must provide. A catalogue copy with three correct products cannot take over the shop: it lacks customers, orders, order lines and payments. The products-only publication in PostgreSQL logical replication and change feeds deliberately serves a narrower purpose.
+ The migration inventory joins each required thing to a way of transferring and checking it. This small shop fits in one database. If your service spans several databases, include them all and establish a coordinated final state across them; independent live exports do not create a shared business boundary.
+ The target must be a usable shop
+Required partWhat acceptance must establish
+ Customers, products, orders, lines and payments
+Required keys, values and relationships agree with the final source state, including rows that were deleted.
+ Schema and database objects
+Constraints, indexes, functions, triggers and required extensions exist with the intended behaviour.
+ Identities and allocation
+Owners, roles, grants and policies let the actual callers do their work; sequences allocate safe new values.
+ The surrounding service
+Connection settings, jobs, external consumers, monitoring, backups and required replicas now belong to the accepted target.
+ A single-database pg_dump does not export cluster-wide roles or tablespaces. A reviewed pg_dumpall --globals-only export can supply required globals, with destinations and access deliberately adapted. Neither tool moves an email worker’s configuration or proves that the application’s password works at the target.
+ Rehearse using the intended target server, extension versions, driver and application build. Run representative requests through the runtime identity, including transaction boundaries and error handling. Exercise migration and monitoring tools too: a tool reading system catalogues can break even when the shop’s ordinary SQL still works.
+ Include the operating system and collation libraries in that rehearsal. A collation defines text comparison and ordering. A changed library version can require rebuilding affected indexes; merely refreshing the recorded collation version does not rebuild them. Test the text comparisons and uniqueness rules the application depends on, alongside the required maintenance.
+ Rehearse pg_upgrade
+ Use the new version’s pg_upgrade. Install compatible extension software and initialise an empty target with compatible cluster settings. For a 17-to-18 move, check checksums explicitly: version 18’s initdb enables them by default, while an older cluster may have them disabled. The rehearsal here used --no-data-checksums for the new cluster to match its source.
+ Run --check with explicit old and new binary and data directories, then perform a complete upgrade on a separate rehearsal copy. These command shapes assume verified, stopped clusters and a server-owned socket directory; the variables name those deliberately chosen resources.
+ <code data-astro-cid-icivsvxv data-astro-source-file="/Users/ryannel/Workspace/staycurrent/src/articles/relational-rebuild/pg-upgrades.astro" data-astro-source-loc="41:33">"$NEW_BIN/pg_upgrade" \ --old-bindir="$OLD_BIN" --new-bindir="$NEW_BIN" \ --old-datadir="$OLD_DATA" --new-datadir="$NEW_DATA" \ --socketdir="$UPGRADE_SOCKET" --check # In the separate rehearsal, repeat with the intended transfer mode
+# and without --check. The default transfer mode is copy.</code>
+ The check establishes compatibility conditions the tool can inspect. It does not run the new application, complete the transfer or demonstrate your available interruption. Keep the reports from the full run. Complete its required repair and extension work before using affected objects, and its recommended statistics work before judging representative plans. PostgreSQL 18 can preserve planner statistics; that does not mean every needed statistic from an older source is available.
+ The transfer mode also chooses what happens to the old files. Step through Copy in Figure 2, then select Link. Watch what changes when the new server starts, before any shop request arrives.
+ Figure 2Which files can the old server use?
+ Transfer mode CopyCloneLink
+ Old cluster · 17
+P7 20.00
+Original files · stopped
+pg_upgrade
+Copy mode
+No application writers
+New cluster · 18
+Empty
+New catalogue files
+ Old files are still independent
+ Stop both clusters
+The source has the shop. The new cluster is empty and uses compatible settings. Neither server accepts ordinary callers.
+ PlayBackNextReset1 / 3
+ A model of pg_upgrade file ownership. Starting the link-mode target crosses a file-safety boundary before any shop request writes. Clone mode requires a supported filesystem; it was not exercised in this article’s native fixture.
+ Figure as text
+Copy
+Stop both clusters. The source has the shop. The new cluster is empty and uses compatible settings. Neither server accepts ordinary callers. Source: P7 20.00; Original files · stopped. Target: Empty; New catalogue files. Old files are still independent.
+Transfer the user files. pg_upgrade builds the new system catalogues and copies the user data files. The two names lead to different files. Source: P7 20.00; Original files · kept. Target: P7 20.00; Copied user files. A stopped target can be discarded.
+Start the candidate. The new server can read its own files. The preserved old server is still a possible return only while it also contains every accepted shop change. Source: P7 20.00; Independent files. Target: P7 20.00; Independent files. File independence survives target startup.
+Clone
+Stop both clusters. Clone mode needs a filesystem that supports the required copy-on-write operation. Check that mode on the intended storage. Source: P7 20.00; Original files · stopped. Target: Empty; New catalogue files. Check the intended storage.
+Clone the user files. The filesystem initially shares storage blocks, but changes to a cloned file are separated by copy-on-write. This differs from two hard links to one file. Source: P7 20.00; Old file identity. Target: P7 20.00; New file identity. Later file changes are separated.
+Start the candidate. The target can change its files without changing the old files. A return still requires complete accepted history, just as in copy mode. Source: P7 20.00; Old files preserved. Target: P7 20.00; New files. File independence survives target startup.
+Link
+Stop both clusters. Link mode avoids copying user files. The old and new data directories must be on the same filesystem. Source: P7 20.00; Original files · stopped. Target: Empty; New catalogue files. Plan recovery before linking.
+Link the user files. The two directories now name the same underlying user files. pg_upgrade protects the old cluster from an accidental start by renaming its control file. Source: P7 20.00; Name of shared files. Target: P7 20.00; Name of shared files. Before target startup: special return procedure.
+Start the candidate. Starting the new server makes the linked old cluster unsafe to start. This is true even before public traffic or the first new shop write. Source: Do not start; Linked files no longer safe. Target: P7 20.00; Uses the linked files. Old directory is not a usable fallback.
+ In the isolated PostgreSQL 17.11-to-18.6 rehearsal, --check and the full upgrade completed in both copy and link modes. The order table’s files had different underlying file identities in copy mode and the same identity in link mode. The copy-mode source restarted separately; the link-mode source was never started after its target. Both targets retained pending order 103, total 29.00 and stock 10/0/4.
+ Keep an independent, tested recovery copy whichever mode you choose. Copy needs space for independent user files. Clone uses copy-on-write where the filesystem supports it. Link needs both data directories on the same filesystem and shares user files; once the new server starts, the linked old cluster is unsafe to use. Before that start, returning requires the documented control-file procedure. An old directory still being present is not sufficient evidence that it can be started.
+ Measure the complete rehearsal: stopping and draining, the transfer, required follow-up work, acceptance and reconnecting callers. A small fixture checks mechanics, not a production duration. Changes in data size, extension work, storage throughput or the chosen mode invalidate a duration borrowed from another rehearsal.
+ Prepare an independent logical target
+ A dump is a consistent saved view, even when the source is live. It does not include commits made after that view. For a stopped-writer migration, close and drain source writes before taking the final dump, then keep the source closed while reconstructing and accepting the target. Restoring PostgreSQL to a recovery target gives the restore procedure and its checks.
+ A streaming move needs its initial copy and following changes to fit together. An arbitrary dump followed by a new stream can miss a transaction committed between their starting points. Use a coordinated copy protocol, such as native table synchronisation, and check every required table reaches its ready state. The logical replication article develops publication selection, replica identity, setup and repair.
+ Keep application writes and external dispatch off the candidate while it is being prepared. Coordinate DDL on both sides. Native logical replication transfers table changes, not schema changes, sequence state or large objects. Prepare those separately where required, and check relationships explicitly: normal logical apply does not provide the same foreign-key enforcement as ordinary application writes.
+ The whole-shop rehearsal used one subscription for customers, products, orders, order lines and payments, plus a fixture-only migration marker. All six tables reached ready state. The five business tables then matched exactly. Yet the target’s separate demonstration sequence still held 1, is_called = false, while the source’s demonstration sequence had been set to 103. Correct rows had not made the target ready to allocate order numbers.
+ After source allocation stopped, the rehearsal transferred that sequence’s final state. Its next target value was 104, without creating an order. In a real migration, handle every sequence’s actual increment, bounds, cycling and allocation policy; max(id) alone can miss reserved values or a sequence used elsewhere. Sequence state must be final before any target allocator starts.
+ Close the source history
+ The final source boundary is the point after which no more accepted source work can appear. A connection address does not establish it. Old pools can keep existing connections, and an import worker or scheduled task can wake later using its saved settings.
+ Figure 3 separates admission, final applied history and service acceptance. Follow Excluded to its end, then switch to Address changed only. The second branch leaves one old import worker able to extend the source history after an apparently correct comparison.
+ Figure 3Close one history before opening another
+ Old writers ExcludedAddress changed only
+ Source · authority
+P7 20.00
+Orders, lines and payments
+Copy + changes →
+Tables synchronising
+Target callers excluded
+Candidate · no authority
+Copy incomplete
+No application writes
+ One writer: the source
+ Copy while the source serves the shop
+The source remains the only application writer. Target application writers and external dispatch are excluded while every required table synchronises.
+ PlayBackNextReset1 / 6
+ An illustrative whole-shop handover using a logical copy. B is a symbolic source boundary, not a native LSN or elapsed time. Each option starts from the same post-103 shop. Target-only price changes never reprice order 103.
+ Figure as text
+Excluded
+Copy while the source serves the shop. The source remains the only application writer. Target application writers and external dispatch are excluded while every required table synchronises. Source: P7 20.00; Orders, lines and payments. Target: Copy incomplete; No application writes. One writer: the source.
+Close admission and drain. Stop new purchases, imports and jobs. Resolve in-flight commits and external calls. Exclude old writers and their restart paths before declaring the source final. Source: P7 20.00; In-flight outcomes resolved. Target: Apply continues; Dispatch remains stopped. Neither side admits new shop work.
+Cover the final source history. Record B after the last required source change. Wait for durable applied progress on the exact target stream to cover it, with every required table ready. Source: Final shop history ≤ B; P7 20.00. Target: 103 pending · 29.00; Stock P3/P7/P9: 10/0/4. Rows agree; service acceptance is still needed.
+Accept under controlled access. Compare all required keys, values and relationships. Prepare sequences, identities and dependent services; test the actual application while external dispatch remains stopped. Source: P7 20.00; Complete preserved history. Target: 103 pending · no payment; Sequence and access prepared. Return is still possible if old files are usable.
+Move callers to one authority. Replace old pooled connections and check where each caller connects. Admit target writers only after acceptance; the source remains excluded. Source: P7 20.00; Old callers cannot write. Target: P7 20.00; No new change in this step. The target now owns new work.
+Accept the first target-only change. The target commits P7 at 22.00. The source still has 20.00. Switching callers back would discard an accepted change, even with independent old files. Source: P7 20.00; Does not contain new work. Target: P7 22.00; 103 still pending · 29.00. Simple return has ended.
+Address changed only
+Copy while the source serves the shop. Both copies begin as in the safe handover. The target is not yet a writer. Source: P7 20.00; Orders, lines and payments. Target: Copy incomplete; No application writes. One writer: the source.
+Change the connection address. New connections are directed away from the source. An import worker still holds its old connection, and its restart settings still name the source. Source: P7 20.00; Old import connection open. Target: Apply continues; Dispatch remains stopped. Admission routing has not closed the source.
+Observe an apparently final copy. At this instant both sides agree. The last source history is not finite while the import worker can still commit. Source: P7 20.00; More writes remain possible. Target: 103 pending · 29.00; Stock P3/P7/P9: 10/0/4. Matching values do not exclude a future writer.
+The old import worker returns. The stale worker commits P7 at 22.00 on the source after the supposed final comparison. The candidate still has 20.00 in this chosen schedule. Source: P7 22.00; Import committed after comparison. Target: P7 20.00; 103 still pending · 29.00. Stop: source closure has not been proved.
+Keep the candidate closed. Do not admit target writers on the strength of the earlier match. Exclude the stale worker, account for its change and establish a new final boundary. Source: P7 22.00; Preserve the late change. Target: Not accepted as final; No new application writes. A failed condition stops the handover.
+Return to the closure step. This branch has not transferred authority. It demonstrates why a new address, zero reported lag or one matching price cannot replace exclusion of old writers. Source: Late change accounted for; Still needs closure. Target: Needs a new final comparison; External dispatch stopped. Fix the missing condition before proceeding.
+ First stop new work at every entry point, then drain work already admitted. Include application pools, imports, jobs, administrators and automatic restarts. Establish the outcome of transactions whose commit reply was lost, using retained request identities rather than blindly repeating them. Stop external dispatch and account for calls already in flight: a database pause cannot cancel an accepted provider operation.
+ Next prevent the former source from accepting more authoritative work. The mechanism depends on the deployment: access revocation, connection termination, isolation, stopping the server and controlling its restart may each cover different paths. Merely setting the application’s new address, or changing a default that existing privileged sessions can override, leaves those paths open. Test a stale caller and the restart path in the rehearsal.
+ Only with that closure can you identify a finite required source history, B in the drawing. For a logical move, wait for durable applied progress in the exact target’s source stream to cover B. Check all required tables are ready as well. Received messages, an active apply process and a displayed lag of zero answer different questions.
+ In the native rehearsal, the only application writing role lost its source write privileges. A subsequent write through that role failed. After the final required shop changes, the verifier sampled a source WAL position and committed a published marker beyond it. On the subscriber it checked that this subscription’s replication origin had durably applied through the sampled position, and that the marker was visible. Fresh queries then compared every row of all five shop tables.
+ The marker ensured there was a later published transaction to observe; it did not turn omitted tables into replicated data. The origin’s source position and the sampled source position belonged to the same identified publisher history. A subscriber’s local WAL position, or a position from an unrelated cluster, is not interchangeable with either. A move spanning several independent streams needs closure and coverage evidence for each required history.
+ This was a bounded local role test. It did not establish that a real deployment’s administrators, old hosts or failover automation were excluded. Those are part of the authority rehearsal you must supply for that deployment.
+ Accept the target before admitting writers
+ A final boundary makes comparison meaningful: source facts can no longer change beneath it. Take fresh target observations, rather than reusing an old report snapshot. Compare required keys and values, deletions and relationships. Equal row counts can hide a missing order and an extra order, and equal totals can hide wrong lines.
+ For the small shop, compare all five business tables. Then inspect the facts that a plausible-looking migration might accidentally change. This query keeps the line and payment sums separate, so payments cannot multiply lines:
+ <code><span class="line"><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-foreground)"> o.order_id, o.status,</span></span>
+<span class="line"><span style="color:var(--astro-code-foreground)"> (</span><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-token-function)"> sum</span><span style="color:var(--astro-code-foreground)">(quantity </span><span style="color:var(--astro-code-token-keyword)">*</span><span style="color:var(--astro-code-foreground)"> unit_price)</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> FROM</span><span style="color:var(--astro-code-foreground)"> order_items </span><span style="color:var(--astro-code-token-keyword)">WHERE</span><span style="color:var(--astro-code-foreground)"> order_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-foreground)"> o.order_id) </span><span style="color:var(--astro-code-token-keyword)">AS</span><span style="color:var(--astro-code-foreground)"> agreed_total,</span></span>
+<span class="line"><span style="color:var(--astro-code-foreground)"> (</span><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-token-function)"> coalesce</span><span style="color:var(--astro-code-foreground)">(</span><span style="color:var(--astro-code-token-function)">sum</span><span style="color:var(--astro-code-foreground)">(amount), </span><span style="color:var(--astro-code-token-constant)">0</span><span style="color:var(--astro-code-foreground)">)::</span><span style="color:var(--astro-code-token-keyword)">numeric</span><span style="color:var(--astro-code-foreground)">(</span><span style="color:var(--astro-code-token-constant)">8</span><span style="color:var(--astro-code-foreground)">,</span><span style="color:var(--astro-code-token-constant)">2</span><span style="color:var(--astro-code-foreground)">)</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)"> FROM</span><span style="color:var(--astro-code-foreground)"> payments </span><span style="color:var(--astro-code-token-keyword)">WHERE</span><span style="color:var(--astro-code-foreground)"> order_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-foreground)"> o.order_id) </span><span style="color:var(--astro-code-token-keyword)">AS</span><span style="color:var(--astro-code-foreground)"> paid</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">FROM</span><span style="color:var(--astro-code-foreground)"> orders o</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">WHERE</span><span style="color:var(--astro-code-foreground)"> o.order_id </span><span style="color:var(--astro-code-token-keyword)">=</span><span style="color:var(--astro-code-token-constant)"> 103</span><span style="color:var(--astro-code-foreground)">;</span></span>
+<span class="line"><span style="color:var(--astro-code-token-comment)">-- 103 | pending | 29.00 | 0.00</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">SELECT</span><span style="color:var(--astro-code-foreground)"> product_id, price, stock</span></span>
+<span class="line"><span style="color:var(--astro-code-token-keyword)">FROM</span><span style="color:var(--astro-code-foreground)"> products </span><span style="color:var(--astro-code-token-keyword)">ORDER BY</span><span style="color:var(--astro-code-foreground)"> product_id;</span></span>
+<span class="line"><span style="color:var(--astro-code-token-comment)">-- P3 | 4.50 | 10</span></span>
+<span class="line"><span style="color:var(--astro-code-token-comment)">-- P7 | 20.00 | 0</span></span>
+<span class="line"><span style="color:var(--astro-code-token-comment)">-- P9 | 35.00 | 4</span></span></code>
+ Those results are useful because they describe different obligations. Order 103 must remain pending; absence of a payment is meaningful. Its agreed mug price must remain 20.00 even when a later catalogue update makes P7 cost 22.00. Stock already includes the purchase, so replaying order creation would decrement it again. The inspection query is a readable summary, not a substitute for the complete comparison.
+ For a larger service, rehearse how complete comparisons will finish inside the permitted pause. You can prepare comparisons earlier, but their final change coverage must still be accounted for. Decide which exceptions are acceptable and reconcile them explicitly; an unexplained difference is not an acceptance result.
+ Test the actual application identities, ordinary reads, guarded writes and expected refusals. Keep external dispatch disabled. The local rehearsal rolled back a controlled price update, then checked that 20.00 remained. Such a test avoids a retained table change, but a transaction rollback does not rewind sequence allocation or a call already sent outside PostgreSQL. Use isolated test identities where needed and account for retained effects before deciding whether return is still simple.
+ After acceptance, move callers and dependent work deliberately. Replace old pooled connections, check each caller’s actual destination and keep the source excluded. Enable jobs and external dispatch only under the new authority, preserving stable work identities and resolved outcomes. Required consumers and replicas need their own compatibility and progress checks; they do not follow just because the primary application has reconnected.
+ Know when a simple return ends
+ Before new authoritative target work, returning can mean excluding the candidate, confirming the preserved source is usable and complete, then moving callers back. Rehearse that path as carefully as the forward path. Link mode may already have removed it at target startup. Validation may also have left accepted changes or external effects before public traffic was enabled.
+ The last step of Figure 3 crosses a different boundary. The target commits P7 at 22.00 while the excluded source remains at 20.00. Both databases can be physically healthy. Reopening the old one would still lose an accepted price change. This target-only update and the unchanged 29.00 agreement were observed in the native rehearsal.
+ After that boundary, a return needs a tested way to preserve target work: transfer compatible changes back, reconcile them into a suitable restored system, or repair the target and continue there. Close target writes before defining that recovery’s final history. Preserve order, payment and request identities, and account for external effects independently. An email sent or a charge accepted does not disappear when the database changes.
+ Reverse replication is a new compatibility and completeness problem, not an undo switch. Nor does a dump from a newer server promise restoration into an older major version. Decide the recovery route and its limits before the first target write, while you still have time to rehearse it.
+ Finish the migration
+ The accepted target needs a recovery path of its own. Establish backup and required redundancy, test restoration with the new version and extensions, and verify that archive destinations, credentials and monitoring name the new service. Keep the former recovery material until a tested replacement and the agreed retention decision make it safe to retire.
+ Retire the old application access, connection settings and restart paths as well as its files. Remove obsolete subscriptions and slots deliberately once they are no longer needed, checking both ends; a disabled consumer can keep source WAL retained. Record the achieved interruption, accepted exceptions and any remaining obligations.
+ The drawings are explanatory models. Copy- and link-mode upgrades and the whole-shop logical handover were checked using PostgreSQL 17.11 and 18.6 in separate clusters inside one disposable Linux container. Clone mode was not run. The fixture checked local mechanisms and shop facts; it did not test independent storage loss, a real provider, production fencing or a production migration duration. The displayed inspection SQL was also checked in PGlite 0.5.8, the WebAssembly build of PostgreSQL 18.3.
+
+ Sources and further reading
+ Upgrading a PostgreSQL cluster: minor and major versions, migration methods and crossed release notes.
+ pg_upgrade: checks, extension preparation, transfer modes, follow-up work and the link-mode return limit.
+ PostgreSQL 18 release notes: checksum defaults, retained planner statistics and compatibility changes.
+ pg_dump and pg_dumpall: consistent logical exports, database scope, globals and version compatibility.
+ Logical replication restrictions: schema, sequences, large objects and relationships outside the simple row-copy promise.
+ Replication management functions and replication origin status: source progress and durable apply evidence.
+ ALTER COLLATION: changed collation versions and rebuilding dependent objects before refreshing the recorded version.
+ PostgreSQL logical replication and change feeds supplies native stream setup; Restoring PostgreSQL to a recovery target supplies restore procedures. Moving a SQL application to CockroachDB (planned) covers the additional application-contract changes when changing engines.
+END FINISHED pg-upgrades

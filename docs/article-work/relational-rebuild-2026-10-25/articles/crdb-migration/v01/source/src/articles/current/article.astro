@@ -1,0 +1,119 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Purchase from '../../components/relational-rebuild-crdb-migration/Purchase.astro';
+import Handover from '../../components/relational-rebuild-crdb-migration/Handover.astro';
+---
+<p>CockroachDB accepts PostgreSQL’s client protocol, so an application can often connect through a driver it already uses. Moving the application requires more than a connection. Its queries must still mean what the caller expects, its transactions must preserve the same decisions, and its retained requests must still resolve to the same results.</p>
+<p>The move also changes where the shop may accept work. A correct copy is a candidate, not a second writer. The source must finish its accepted work and become unable to accept more before the target takes over. Once the target accepts a new purchase, returning to the original source would lose that purchase unless its history comes back too.</p>
+<p>We will move a small PostgreSQL shop to CockroachDB, create Mina’s purchase there, then bring the complete state back into a fresh PostgreSQL database. The example starts before order 103: one blue mug, P7 at 20.00, and two packs of tea, P3 at 4.50 each. Initially stock is P3 12, P7 1 and P9 4. Orders 101 and 102 and their payments already exist; order 103 does not.</p>
+<p>This is a deliberately paused migration. It makes the application and authority boundaries visible before introducing a change stream. The native rehearsal uses PostgreSQL 18.6 and CockroachDB v26.2.8; the handover drawings describe the required ordering, rather than a trace or a production duration.</p>
+
+<h2 id="compatibility">The same SQL can mean something different</h2>
+<p>Start with a result whose meaning you can state. Suppose a calculation divides 20 whole units into three shares. In PostgreSQL, division of two integers truncates the fractional part. CockroachDB returns a decimal. The query can succeed on both engines and give different answers:</p>
+<Sql label="The same integer operands produce different division results" code={`SELECT 20::INT4 / 3::INT4;
+-- PostgreSQL: 6
+-- CockroachDB: 6.6666666666666666667`} />
+<p>Choose the intended arithmetic before choosing the replacement. If the result is a fractional share, make decimal arithmetic explicit on both systems. If it is the number of complete groups of three, express that rule explicitly. Neither division result decides how to allocate monetary rounding remainders.</p>
+<Sql label="Make fractional arithmetic explicit" code={`SELECT 20::DECIMAL / 3;`} />
+<p>A type name can hide a second difference. PostgreSQL’s <code>INTEGER</code> is a signed 32-bit type. CockroachDB’s default <code>INT</code> and <code>INTEGER</code> are 64-bit. A value of 2,147,483,648 fits the latter but not the former. An application which starts accepting those values may also close its intended return path to PostgreSQL.</p>
+<p>For this migration we preserve the shop’s 32-bit integer domains by declaring <code>INT4</code> in the reviewed target schema. Choosing a wider domain could be reasonable, but it would be an application change: check driver decoding, validation and every dependant, and decide how such values could return. Do not silently narrow accepted data during recovery.</p>
+<p>These are small examples of a wider compatibility assessment. Inventory the application’s generated SQL, types, defaults, functions, constraints, text comparisons and extension dependencies. Run the real driver and ORM version against the chosen target release. Test boundary values and expected refusals as well as successful requests. A health check that executes <code>SELECT 1</code> establishes little of this contract. CockroachDB’s <a href="https://docs.cockroachlabs.com/docs/v26.2/postgresql-compatibility">PostgreSQL compatibility reference</a> identifies differences to investigate; it is not an acceptance test for your application.</p>
+
+<h2 id="purchase">Preserve one purchase</h2>
+<p>Mina’s purchase must change stock and create the agreement together. It must also survive a repeated request. The caller’s identity is customer 1’s purchase operation, token <code>purchase-103</code>; it is distinct from the resulting order number. Reusing that identity with the same canonical basket recovers order 103. Reusing it with different quantities is a mismatch.</p>
+<p>Figure 1 adds the acknowledgement work to the same transaction. Follow the two identities separately: one recognises the purchase, the other recognises the work to acknowledge it.</p>
+<Purchase />
+<p>The agreed line prices travel with the order. They are not reconstructed from the current catalogue during a move. Success leaves pending order 103, two lines worth 29.00, stock 10/0/4 and no payment. The acknowledgement says that a pending order was received; it does not say that a charge was taken.</p>
+<p>Choose the target isolation explicitly. The purchase here uses <code>BEGIN ISOLATION LEVEL SERIALIZABLE</code>. Its application protocol claims the unique request identity before allocating stock, checks each guarded decrement, and retains its terminal result with the database changes. If the mug cannot be supplied after the tea decrement, the partial basket work must be undone.</p>
+<p>CockroachDB’s default Serializable isolation does not supply the caller’s retry protocol. A native <code>40001</code> requires a fresh attempt at the complete database decision. A <code>40003</code>, or a missing commit reply, leaves the outcome uncertain and needs recovery through the same logical request identity. <a href="/learn/databases/relational/cockroachdb/transactions/">CockroachDB transactions and retries</a> develops the claim, error handling and bounded retries. Use that complete protocol when porting the application, rather than retrying only the statement which reported an error.</p>
+<p>Keep outside calls out of replayed transaction work. Record <code>order-103-ack</code> in the outbox with the purchase and let a worker dispatch it later. A database rollback cannot unsend an email. <a href="/learn/databases/relational/outboxes-and-jobs/">Outboxes and database-backed jobs</a> supplies the delivery protocol and the limits of receiver deduplication.</p>
+
+<h2 id="method">Choose a migration you can rehearse</h2>
+<p>For a shop this small, take the simpler route first: pause writes for the final export, load and acceptance. The candidate can be prepared and the process rehearsed beforehand. The final copy still belongs inside the pause, after source writers have been closed and drained.</p>
+<p>The copy must cover everything needed to continue the service. In this bounded rehearsal that means seven tables. The five business tables are <code>customers</code>, <code>products</code>, <code>orders</code>, <code>order_items</code> and <code>payments</code>. Two more retain purchase requests and acknowledgement work. Starting before 103 makes those last two empty, which is a fact to preserve, not a reason to leave them out of the inventory.</p>
+<div class="migration-table" role="region" tabindex="0" aria-label="What moves with the shop">
+<table>
+  <caption>State to transfer, and work to prepare separately</caption>
+  <thead><tr><th scope="col">Part</th><th scope="col">What must be ready</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Business and operation rows</th><td>Complete keys and values, references, canonical request payloads, terminal results and durable work.</td></tr>
+    <tr><th scope="row">Schema and allocation</th><td>Reviewed types, constraints, indexes and routines; a safe identity allocator wherever the application uses one.</td></tr>
+    <tr><th scope="row">Access</th><td>Separate migration and runtime identities, intended grants and policies, and the actual caller’s permitted and refused operations.</td></tr>
+    <tr><th scope="row">Surrounding service</th><td>Pools, workers, imports, schedules, consumers, monitoring and recovery coverage at the new authority.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>CSV transfers values, not that surrounding configuration. Prepare CockroachDB DDL deliberately; a PostgreSQL dump is not a promise that every definition has the same supported meaning there. This example supplies order 103 explicitly and uses no sequence. An application which allocates IDs must establish the allocator’s state and semantics before the target starts allocating.</p>
+<p>Measure the complete interruption on representative data and the intended infrastructure. Include drain, transfer, validation, application checks and reconnection. If the pause is too long, use a coordinated initial copy and change-stream method, such as the documented <a href="https://docs.cockroachlabs.com/docs/molt/migrate-to-cockroachdb">MOLT migration workflows</a>. It must align its initial snapshot with the following changes and establish final catch-up before cutover. Starting an unrelated stream after an arbitrary export can leave a gap. A reverse stream needs its own compatibility and completeness rehearsal.</p>
+
+<h2 id="close-and-copy">Close the source and copy its final state</h2>
+<p>First stop admission: purchases, imports, scheduled jobs and any other path that can change the copied state. Stop external dispatch too. Then resolve work already admitted. A transaction with an uncertain commit result needs its retained request identity checked; an outside call already accepted by a provider remains accepted even if every database connection is closed.</p>
+<p>Next exclude source writers, including old pooled connections and automatic restart paths. The mechanism belongs to the deployment: restricted grants, session termination, network isolation or a controlled server stop can contribute different parts. Runtime must not own the objects or inherit another way to bypass the restriction. Privileged operational paths need explicit control as well. A changed connection address alone leaves an existing source connection usable.</p>
+<p>Figure 2 keeps the target excluded through copying and acceptance. Step to the last stage and compare the two stock rows. That is where the old source stops being a complete return target.</p>
+<Handover direction="forward" />
+<p>With source writes closed and drained, export related tables through one consistent PostgreSQL snapshot. This is the shape of the export session; repeat the <code>COPY</code> for every inventoried table before committing:</p>
+<Sql label="Use one PostgreSQL snapshot for the related exports" code={`BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SET LOCAL TIME ZONE 'UTC';
+COPY (
+  SELECT product_id, name, price, stock
+  FROM products ORDER BY product_id
+) TO STDOUT WITH (FORMAT CSV, HEADER TRUE);
+-- Export the other required tables on this same connection.
+COMMIT;`} />
+<p>The client receives the CSV through <code>STDOUT</code>. It keeps the column lists and format explicit, including quoting, nulls and timestamp interpretation. Load an empty isolated candidate in dependency order: customers and products before orders; orders before lines, payments and acknowledgement work. Keep load errors visible. If a load stops part-way, the candidate stays closed until it has been rebuilt or repaired and fully compared.</p>
+<Sql label="Load a reviewed CockroachDB candidate through its copy connection" code={`COPY products (product_id, name, price, stock)
+FROM STDIN WITH (FORMAT CSV, HEADER TRUE);`} />
+<p>The copy connection has migration authority. The v26.2 <a href="https://docs.cockroachlabs.com/docs/v26.2/copy">COPY reference</a> requires an administrative identity; ordinary shop callers do not need that authority. In a real transfer, protect the exported data and retain a manifest of scope, formats, schema mapping and validation results.</p>
+<p>A snapshot provides consistency, not finality. In the rehearsal’s separate counterexample, an established PostgreSQL Repeatable Read snapshot kept P7 at 20.00 while a later committed update was visible as 22.00 to a new read. That earlier view remained consistent and omitted a real later change. The final export therefore follows writer closure; the source stays closed afterwards.</p>
+
+<h2 id="acceptance">Accept the target before opening it</h2>
+<p>Compare the final source state with fresh target observations. Match complete keys and values in all required tables, including deletions and operation records. Check references and constraints in the reviewed target schema. Equal counts can hide changed values; equal totals can hide the wrong order lines.</p>
+<p>The bounded copy compares all seven tables. Its negative check changes P7’s name on the candidate while preserving every row count. Complete-value comparison catches the difference; counting rows does not. The correction is made before the candidate is accepted.</p>
+<p>Data agreement still leaves behaviour and access to establish. Rehearse the real application build and its ordinary reads, guarded writes, expected refusals, repeated requests and error paths under the intended runtime identity. Test a stale source caller after closure and an ordinary target caller while the candidate is excluded. A successful administrative query establishes neither of those restrictions.</p>
+<p>Keep acceptance work isolated and external dispatch stopped. If validation leaves an accepted business change, a consumed identifier or an external effect, include it in the return decision. A transaction rollback does not undo every kind of effect. In this example, the purchase is deliberately saved for after acceptance so that the first retained target work is visible.</p>
+<p>Record which system will own new work before opening its admission path. The handover controller must recover that decision after interruption. Replace old pools, verify each caller’s actual destination and keep the source excluded. An interruption between recording the decision and opening the target leaves a pause to complete, not permission to open both systems.</p>
+<p>Now accept <code>purchase-103</code> on CockroachDB. The target records the pending order, its two agreed lines, the request result and <code>order-103-ack</code> together. Repeating the same request returns that result without another stock decrement. A changed payload is rejected. A separate unavailable-mug attempt must undo its earlier tea decrement and create no purchase.</p>
+<p>Inspect the agreement and stock together, keeping the line total separate from the payment count:</p>
+<Sql label="Inspect the accepted target purchase without multiplying lines by payments" code={`SELECT o.order_id, o.status,
+  (SELECT sum(quantity * unit_price)
+   FROM order_items WHERE order_id = o.order_id) AS agreed_total,
+  (SELECT count(*)
+   FROM payments WHERE order_id = o.order_id) AS payment_rows
+FROM orders AS o WHERE o.order_id = 103;
+-- 103 | pending | 29.00 | 0
+
+SELECT product_id, stock FROM products ORDER BY product_id;
+-- P3 | 10
+-- P7 | 0
+-- P9 | 4`} />
+<p>The inspection is a readable summary, not the full comparison. It also shows why the original PostgreSQL source is now stale: it still has stock 12/1/4, no order 103, no purchase result and no acknowledgement work.</p>
+
+<h2 id="return">Return without losing accepted work</h2>
+<p>Before accepted target work, return can mean excluding the candidate, confirming the preserved source is complete and usable, and transferring authority back to it. Rehearse that branch too. It ends as soon as the target has retained work which the source lacks, whether that work came from public traffic or controlled validation.</p>
+<p>After purchase 103, changing the address back would erase Mina’s accepted purchase from the shop’s authoritative history. The old source could even sell the same mug again. Both databases being healthy does not make their states interchangeable.</p>
+<p>For this deliberately bounded migration, the return procedure is another paused copy. Figure 3 starts with the stale original on the left. At the copy stage, a fresh PostgreSQL candidate takes its place in the drawing. Watch the request result and acknowledgement travel with the purchase.</p>
+<Handover direction="return" />
+<p>Close and drain CockroachDB’s writing paths and dispatch before taking its final export. Keep it excluded while loading a fresh PostgreSQL candidate from the complete compatible state. The original PostgreSQL database stays separate; it is evidence of the earlier boundary, not the destination to overwrite casually.</p>
+<p>Compare the same seven tables in the reverse direction. Check the PostgreSQL schema and intended access, then recover <code>purchase-103</code> through its retained identity. The answer is still pending order 103 for 29.00. Its stock consumption is already present. Do not call a fresh unprotected purchase to reconstruct that answer.</p>
+<p>The acknowledgement keeps <code>order-103-ack</code> and its original payload. In this rehearsal dispatch stays stopped, so the record is still ready. In a live move, a ready record can also describe a call whose reply was lost. Copying a row cannot establish whether a receiver already acted. Preserve delivery state, stable work identities and receiver evidence, then reconcile uncertain effects before resuming. Ordinary email is not assumed to deduplicate a repeated identity.</p>
+<p>This return depends on a readable CockroachDB source and values which fit the reviewed PostgreSQL contract. If the target is unavailable, the reverse copy cannot run. If target-only types or values no longer fit, an import failure is not permission to discard or truncate them. If an external outcome cannot be established, retain that uncertainty. Those cases need repair, a suitable recovery copy or an explicit reconciliation decision. <a href="/learn/databases/relational/cockroachdb/backup-and-restore/">CockroachDB backup and recovery</a> develops native restoration; a backup restore alone does not transfer application authority or settle outside effects.</p>
+
+<h2 id="finish">Finish the application transfer</h2>
+<p>The accepted database needs the rest of its service. Verify application and worker destinations, operating access, monitoring and required consumers under the chosen authority. Resume jobs and dispatch with their original operation identities. Establish recovery coverage and test restoration for the new system before retiring the old paths and recovery material.</p>
+<p>Rehearse representative traffic and inspect its plans and contention separately. A correct small copy supplies no evidence about a larger workload’s latency, capacity or regional survival. <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">Inside CockroachDB</a> explains where the distributed work goes; <a href="/learn/databases/relational/postgresql/upgrades/">Upgrading and migrating PostgreSQL</a> covers transfers that remain within PostgreSQL.</p>
+<p>The native rehearsal checks a seven-table shop in PostgreSQL 18.6 and a single-node CockroachDB v26.2.8 fixture. It exercises CSV copying in both directions, complete-value acceptance, restricted runtime SQL, the accepted purchase and repeat, and refusal of closed writing paths. The request and acknowledgement payloads use a small fixed text encoding in this fixture; that is an illustrative representation of the shared identities, not a prescribed application schema.</p>
+<p>Those local checks use PostgreSQL’s container-local socket trust and CockroachDB’s fixture-only insecure identity selection. They establish SQL privileges for the tested callers, not production authentication or complete fencing of hosts and administrators. No real provider is called, no production interruption is measured, and the single CockroachDB node demonstrates no distributed failure survival. The application transfer is complete only when the deployment supplies those remaining access, workload and recovery obligations for its own service.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against primary documentation in October 2026, with native checks on PostgreSQL 18.6 and CockroachDB v26.2.8. The authority diagrams are explanatory models. The single-node rehearsal’s scope and limits are described above.</p>
+<ul>
+  <li>CockroachDB v26.2, <a href="https://docs.cockroachlabs.com/docs/v26.2/postgresql-compatibility">PostgreSQL compatibility</a>: client protocol, differing expressions and unsupported features.</li>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/datatype-numeric.html">Numeric types</a> and <a href="https://www.postgresql.org/docs/18/functions-math.html">Mathematical functions and operators</a>: integer domains and division.</li>
+  <li>CockroachDB v26.2, <a href="https://docs.cockroachlabs.com/docs/v26.2/transactions">Transactions</a>: isolation, native error meanings and the limits of automatic retries.</li>
+  <li>PostgreSQL 18, <a href="https://www.postgresql.org/docs/18/transaction-iso.html">Transaction isolation</a> and <a href="https://www.postgresql.org/docs/18/sql-copy.html">COPY</a>: a retained export snapshot and explicit client-side transfer formats.</li>
+  <li>CockroachDB v26.2, <a href="https://docs.cockroachlabs.com/docs/v26.2/copy">COPY</a> and <a href="https://docs.cockroachlabs.com/docs/v26.2/revoke">REVOKE</a>: native CSV import/export and privilege controls.</li>
+  <li>Cockroach Labs, <a href="https://docs.cockroachlabs.com/docs/molt/migrate-to-cockroachdb">Migrate to CockroachDB</a>: bulk loading, coordinated replication and failback workflows to assess when a full write pause is too long.</li>
+</ul>
+<style>
+.migration-table{overflow-x:auto;border:1px solid var(--color-rule);margin:1.8rem 0;padding:.6rem .9rem;font:.8rem/1.6 var(--font-sans)}table{width:100%;border-collapse:collapse}caption{text-align:left;font-weight:600;padding:.3rem 0 .7rem}th,td{vertical-align:top;text-align:left;padding:.65rem;border-bottom:1px solid var(--color-rule)}th{font-weight:600}tbody th{width:29%}.migration-table:focus-visible{outline:3px solid var(--control);outline-offset:3px}@media(max-width:500px){th,td{padding:.55rem .35rem}tbody th{width:34%}}
+</style>

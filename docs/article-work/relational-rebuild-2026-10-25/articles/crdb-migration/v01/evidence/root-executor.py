@@ -1,0 +1,16 @@
+from pathlib import Path
+import hashlib,json,subprocess,sys,os,signal,time
+r=Path('/Users/ryannel/Workspace/staycurrent/docs/article-work/relational-rebuild-2026-10-25/runtime');e=Path('/private/tmp/staycurrent-relational-rebuild-crdb-migration-writer-20261025/evidence');source=json.loads((r/'pg-crdb-migration-fixture.json').read_text());target=json.loads((r/'crdb-migration-fixture.json').read_text());d=['docker','--config','/private/tmp/staycurrent-rebuild-docker-public-config','--host','unix:///Users/ryannel/.docker/run/docker.sock'];receipts=[]
+for f,expected,image,sqlport in [(source,'1e838de2b5913efc0e5023b6eacd1695f4180e46765160285aa216aec06ba8d1',source['image'],'5432/tcp'),(target,'924de6a8bbbd62dede51b15aa52821ebaa97bc12acbcdae16b12ca179032ba88',target['pinned_image'],'26258/tcp')]:
+ assert f['container_id']==expected;i=json.loads(subprocess.check_output(d+['inspect',expected]))[0];assert i['Id']==expected and i['Name']=='/'+f['name'] and i['Config']['Image']==image;assert i['Config']['Labels']['dev.staycurrent.article']==f['article'] and i['Config']['Labels']['dev.staycurrent.task']=='relational-rebuild-2026-10-25';assert i['HostConfig']['NetworkMode']=='bridge';assert set(i['HostConfig']['PortBindings'])=={sqlport};bindings=i['NetworkSettings']['Ports'][sqlport];assert len(bindings)==1 and bindings[0]['HostIp']=='127.0.0.1';assert not any(m['Type']=='bind' for m in i.get('Mounts',[]));receipts.append({'id':i['Id'],'name':i['Name'],'image':image,'labels':i['Config']['Labels'],'network':i['HostConfig']['NetworkMode'],'bindings':bindings,'mount_types':[m['Type'] for m in i.get('Mounts',[])]})
+b=(e/'verify.cjs').read_bytes();h=hashlib.sha256(b).hexdigest();assert h=='dbf7cd8f10296072ce3ab6a9f24d5aa3216df173c45473505af67dc324b128a3';p=e/'native-executed-verifier.cjs';assert not p.exists();p.write_bytes(b);(e/'root-executor.py').write_bytes(Path(__file__).read_bytes());(e/'native-root-fixtures.json').write_text(json.dumps({'source':source,'target':target,'sanitised_inspections':receipts},indent=2)+'\n');started=time.monotonic();proc=None
+try:
+ proc=subprocess.Popen(['node',str(p)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True);out,err=proc.communicate(timeout=240);code=proc.returncode
+except subprocess.TimeoutExpired:
+ os.killpg(proc.pid,signal.SIGKILL);out,err=proc.communicate();code=124
+finally:
+ (e/'native-root.stdout').write_bytes(out);(e/'native-root.stderr').write_bytes(err);cleanup=[]
+ for script,role in [('native-fixture.py','pg-crdb-migration'),('crdb-fixture.py','crdb-migration')]:
+  clean=subprocess.run([sys.executable,str(r/script),'stop',role],capture_output=True,text=True,timeout=80);cleanup.append({'role':role,'exit':clean.returncode,'stdout':clean.stdout,'stderr':clean.stderr})
+ (e/'native-root-cleanup.json').write_text(json.dumps(cleanup,indent=2)+'\n');(e/'native-root-execution.json').write_text(json.dumps({'script_sha256':h,'exit':code,'elapsed_seconds':time.monotonic()-started,'source_unchanged':h==hashlib.sha256((e/'verify.cjs').read_bytes()).hexdigest(),'cleanup_exits':[c['exit'] for c in cleanup]},indent=2)+'\n')
+print(json.dumps({'exit':code,'cleanup_exits':[c['exit'] for c in cleanup],'evidence':str(e)}));sys.exit(code)
