@@ -1,0 +1,31 @@
+-- Execute each numbered experiment in a separate owned client/session; failed statements are expected.
+-- Replace exact identifiers as for native-verification.sql.
+-- 1. From West gateway: the same globally meaningful ID must be refused (23505).
+INSERT INTO orders(order_id,customer_id,placed_at,status,crdb_region)
+VALUES (103,1,'2026-10-20 10:15+00','pending','__WEST__');
+-- 2. From West gateway, rolled back: a defaulted line receives West despite parent 103 being North.
+BEGIN;
+INSERT INTO order_items(order_id,line_no,product_id,quantity,unit_price)
+VALUES (103,3,'P7',1,20.00) RETURNING order_id,line_no,crdb_region;
+ROLLBACK;
+-- 3. From West gateway, rolled back: a non-region update does not automatically rehome order 103.
+BEGIN;
+UPDATE orders SET status=status WHERE order_id=103 RETURNING order_id,crdb_region;
+ROLLBACK;
+-- 4. Explicit rehome changes the row home; matching lines need an explicit decision too.
+BEGIN;
+UPDATE orders SET crdb_region='__WEST__' WHERE order_id=103 RETURNING order_id,crdb_region;
+SELECT order_id,line_no,crdb_region FROM order_items WHERE order_id=103 ORDER BY line_no;
+ROLLBACK;
+-- 5. Missing parent still refused (23503). Independent client statement, no invented committed order.
+INSERT INTO order_items(order_id,line_no,product_id,quantity,unit_price,crdb_region)
+VALUES (999,1,'P7',1,20.00,'__NORTH__');
+-- 6. Inspect native check work without executing a duplicate mutation.
+EXPLAIN (VERBOSE) INSERT INTO orders(order_id,customer_id,placed_at,status,crdb_region)
+VALUES (103,1,'2026-10-20 10:15+00','pending','__WEST__');
+-- 7. Counterexample lives in an isolated projection only, rolled back: explicit composite uniqueness.
+BEGIN;
+CREATE TABLE regional_key_demo(region TEXT, order_id INT, PRIMARY KEY(region,order_id));
+INSERT INTO regional_key_demo VALUES ('__NORTH__',103),('__WEST__',103);
+SELECT * FROM regional_key_demo ORDER BY region;
+ROLLBACK;

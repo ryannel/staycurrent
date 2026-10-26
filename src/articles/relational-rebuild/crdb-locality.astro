@@ -1,0 +1,192 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import TableRoute from '../../components/relational-rebuild-crdb-locality/TableRoute.astro';
+import Purchase from '../../components/relational-rebuild-crdb-locality/Purchase.astro';
+import RowHomes from '../../components/relational-rebuild-crdb-locality/RowHomes.astro';
+import GlobalReads from '../../components/relational-rebuild-crdb-locality/GlobalReads.astro';
+import Survival from '../../components/relational-rebuild-crdb-locality/Survival.astro';
+---
+
+<p>A table’s <strong>locality</strong> tells CockroachDB where to optimise access to its data. A whole table can have one home region, different rows can have different homes, or a table can favour reads from every region. The database’s <strong>survival goal</strong> makes a separate choice: which failures its replica placement must tolerate.</p>
+
+<p>The two choices meet at each range. Homing the shop’s products in West puts their ordinary serving authority there. Surviving West’s loss requires enough voting replicas elsewhere. A North application can therefore have a nearby order and still wait on West for the last blue mug.</p>
+
+<p>This article applies the quorum and request reasoning from <a href="/learn/databases/relational/regional-placement/">Regional placement and survival</a> to CockroachDB v26.2. <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">Inside CockroachDB</a> establishes ranges, leases and gateways. North, West and East are invented labels. The drawings model policies and request dependencies; the native policy check used an isolated v26.2.8 cluster whose labelled nodes all ran on one machine. Neither supplies real regional latency.</p>
+
+<h2 id="regions">Database regions and home regions</h2>
+
+<p>A node’s <strong>locality</strong> describes where it runs, for example <code>region=West,zone=West-1</code>. Set those tiers to match the actual deployment. Three zone names on one host do not make three independent failure domains.</p>
+
+<p>A <strong>database region</strong> is a region selected for one database from the cluster’s available regions. The <strong>primary region</strong> supplies its default table home. In a cluster already containing the three regions, these statements make North primary and add West and East to the shop database:</p>
+
+<Sql label="Choose the database regions on an existing, isolated shop database" code={`ALTER DATABASE shop PRIMARY REGION "North";
+ALTER DATABASE shop ADD REGION "West";
+ALTER DATABASE shop ADD REGION "East";`} />
+
+<p>That is database policy. It does not make North the only SQL entry point. The node accepting a connection is its <strong>SQL gateway</strong>; the relevant range’s <strong>leaseholder</strong> has authority to serve ordinary current reads and coordinate writes. A gateway in North can route KV work to a leaseholder in West. Larger queries can also distribute their SQL processing.</p>
+
+<h2 id="regional-table">Regional by table</h2>
+
+<p><code>REGIONAL BY TABLE</code> gives the entire table one home region. New tables in a multi-region database default to the primary region. An explicit home can differ:</p>
+
+<Sql label="Home the products table in West" code={`ALTER TABLE products
+SET LOCALITY REGIONAL BY TABLE IN "West";`} />
+
+<p>In this independent placement, the product catalogue and shared stock remain together in <code>products</code>, homed West. Assume the main stock-changing service runs there. An occasional North request may accept the remote trip. Figure 1 follows an ordinary lookup for P7’s price. Step through North first, then change the gateway to West.</p>
+
+<TableRoute />
+
+<p>Both routes return 20.00. The difference is where the gateway must reach the serving authority. A home region favours access from that region; it is not an exclusive storage boundary. CockroachDB keeps replicas elsewhere according to the database policy. A local follower copy also does not automatically make an ordinary current read local.</p>
+
+<p>The choice suits a table whose important reads and changes mostly come from one region. If the stock service is in West but customers browse from everywhere, catalogue reads and stock allocation have different needs. A qualified historical catalogue read may be acceptable; selling the last mug still needs the guarded stock decision. <a href="/learn/databases/relational/cockroachdb/follower-reads/">CockroachDB isolation and follower reads</a> develops those read contracts.</p>
+
+<h2 id="regional-row">Regional by row</h2>
+
+<p><code>REGIONAL BY ROW</code> lets different rows of one SQL table have different home regions. CockroachDB adds a hidden <code>crdb_region</code> column, of the database’s <code>crdb_internal_region</code> enum type. It automatically partitions the primary index and every secondary index by that region.</p>
+
+<p>For a separate copy of the shop’s orders, choose North for 101 and 103, and West for 102. These are technical placement choices, not facts about where Mina or Tariq lives. The customer-history index from the performance article gets the same regional partitioning as the primary rows.</p>
+
+<RowHomes />
+
+<p>The North partition holds the keys for 101 and 103 and their history entries. The West partition holds 102. Each partition can span several ranges, and each range has replicas; the drawing shows homes rather than every stored copy.</p>
+
+<h3 id="choosing-home">Choosing a row’s home region</h3>
+
+<p>These statements convert existing copies of the order tables and assign their homes explicitly:</p>
+
+<Sql label="Assign explicit matching homes to the existing orders and order lines" code={`ALTER TABLE orders SET LOCALITY REGIONAL BY ROW;
+ALTER TABLE order_items SET LOCALITY REGIONAL BY ROW;
+
+BEGIN;
+UPDATE orders SET crdb_region = 'North'
+WHERE order_id IN (101, 103);
+UPDATE orders SET crdb_region = 'West'
+WHERE order_id = 102;
+UPDATE order_items AS i SET crdb_region = o.crdb_region
+FROM orders AS o WHERE i.order_id = o.order_id;
+COMMIT;
+
+SELECT order_id, crdb_region FROM orders ORDER BY order_id;`} />
+
+<p>The hidden column does not appear in <code>SELECT *</code>, so name it when checking homes. Inserting a new row without an explicit region normally uses the gateway’s region. If that region is not in the database, the default falls back to the database’s primary region. Routing inserts through West therefore affects where new rows default, even if the caller is elsewhere.</p>
+
+<p>An ordinary foreign key from <code>order_items.order_id</code> to <code>orders.order_id</code> does not itself copy the parent’s region. A line inserted through West without an explicit home can be homed West while order 103 is North. The reference can be valid and the placement inconvenient. Assign the related rows deliberately, as above. CockroachDB also has an explicitly configured foreign-key region-inference feature; it is not enabled by this ordinary reference.</p>
+
+<p>Nor does reading or ordinarily updating an existing row through another gateway move its home by default. An explicit <code>UPDATE orders SET crdb_region = 'West' WHERE order_id = 103</code> changes that row’s home. It does not make an ID-only foreign key cascade the region into its lines. Decide whether the whole related group should move. Optional automatic rehoming changes the default update behaviour and needs its own workload decision.</p>
+
+<p>Row locality earns its complexity when requests repeatedly meet rows homed near their gateways. If the application sends every request through North, West-homed rows remain remote from that entry point. If many important queries need every region’s rows, no choice of one row home makes their whole answer local.</p>
+
+<h3 id="remote-work">The work that remains remote</h3>
+
+<p>A North lookup of order 103 can be satisfied from its North home. Replaying the purchase is a different request. Return independently to before 103 exists: P7 has stock 1 and P3 has stock 12. Creating the pending North order and its two lines also needs the West products authority to guard P7 to 0 and P3 to 10. A successful purchase leaves agreed line value 29.00 and no payment.</p>
+
+<Purchase />
+
+<p>The database must also maintain the order indexes, check references and enforce globally meaningful order identity. A regional prefix in the physical index does not silently change <code>PRIMARY KEY (order_id)</code> into regional uniqueness. CockroachDB’s implicit partitioning retains uniqueness on the declared key; integer order IDs can require checks in other regional partitions. A local row write is therefore not proof that the entire transaction stays local.</p>
+
+<Sql label="A duplicate order number in a different home is still a duplicate" code={`-- 103 already exists in North: this must be rejected.
+INSERT INTO orders
+  (order_id, customer_id, placed_at, status, crdb_region)
+VALUES
+  (103, 1, '2026-10-20 10:15+00', 'pending', 'West');`} />
+
+<p>Explicitly declaring <code>PRIMARY KEY (crdb_region, order_id)</code> instead permits the distinct pairs <code>(North, 103)</code> and <code>(West, 103)</code>. That changes identity and what a reference must carry. It is a different schema contract, not a free way to remove the global check. A randomly generated ID can avoid some checking work under the engine’s rules, but does not preserve the original integer-ID contract by itself.</p>
+
+<p>Inspect the actual constraint and index work before calling a purchase regional. The optimiser can search a local partition first for suitable lookups and widen the search when required. That is an execution optimisation, not permission to ignore remote qualifying rows. <a href="/learn/databases/relational/cockroachdb/query-performance/">CockroachDB query work and hot ranges</a> follows native plans and access-path repairs.</p>
+
+<h2 id="global">Global tables</h2>
+
+<p><code>GLOBAL</code> favours up-to-date reads from every database region at the cost of higher write latency. It suits frequently read reference data whose definitions change rarely. It does not give every region an independent write authority.</p>
+
+<p>Suppose the shop needs a separate reference list of its three existing statuses. This illustrative table does not replace the check constraint on <code>orders.status</code>:</p>
+
+<Sql label="A separate GLOBAL status reference table" code={`CREATE TABLE order_statuses (
+  status TEXT PRIMARY KEY
+) LOCALITY GLOBAL;
+INSERT INTO order_statuses VALUES ('pending'), ('paid'), ('cancelled');`} />
+
+<GlobalReads />
+
+<p>The global-table protocol shifts work to writes so qualified nearby replicas can serve current reads. It uses future write timestamps and a wait that makes those timestamps safe for the read protocol, as well as replica agreement. This is different from an application choosing an older snapshot to get a follower read. The exact wait and request latency depend on clocks, networking, load and the transaction’s other work.</p>
+
+<p>Changing <code>products</code> to <code>GLOBAL</code> would not remove the guarded write that allocates the last mug. It would change that table’s read/write trade. Nor does <code>GLOBAL</code> select region survival: its ranges still depend on the database’s survival goal. Choose the locality for the table’s access pattern, then check the failure promise separately.</p>
+
+<h2 id="survival">Surviving a region failure</h2>
+
+<p>The default database survival goal is <strong>zone failure</strong>. For a standard regional table in a three-region database, its three voters sit in separate zones of the home region. Other regions have non-voting copies. Losing one home zone leaves two of three voters. Losing the whole home region removes all three.</p>
+
+<p>To require survival of any one region, add at least three database regions and select:</p>
+
+<Sql label="Choose region survival for every table in the shop database" code={`ALTER DATABASE shop SURVIVE REGION FAILURE;`} />
+
+<p>For the standard three-region policy, CockroachDB uses five voting replicas spread two–two–one. Two voters remain in the regional table’s home. Figure 5 starts with products homed West under zone survival. Remove West zone 1, then West region. Change to region survival and try losing each region.</p>
+
+<Survival />
+
+<p>Three voters need two; five need three. The zone-survival copies outside West do not vote, so two surviving copies are not a surviving majority. Under region survival, losing either two-voter region leaves three; losing the one-voter region leaves four. Those are votes for this range. Healthy nodes holding unrelated ranges cannot contribute.</p>
+
+<p>The five-voter placement changes healthy writes too. West has only two local voters, short of the required three, so agreement needs a remote acknowledgement. The survival promise buys resilience by adding regional coordination. Changing the table home changes the favoured serving region; it does not remove the database’s voting requirement. The same goal applies to every table in that database, including regional row partitions and global tables.</p>
+
+<h3 id="survival-promise">What the survival goal promises</h3>
+
+<p>A surviving majority permits progress under the assumed failure model. A lost leaseholder or leader still needs detection and replacement. Connections to vanished gateways must be rerouted; affected transactions can need retries. The surviving nodes inherit work and may have less spare capacity. “Survives a region failure” does not promise no interruption, an unchanged response-time distribution or a repaired application endpoint.</p>
+
+<p>With region survival, West’s loss does not require rewriting products’ declared home to North before survivors can serve it. Keep configuration and current authority distinct: the home expresses the preferred healthy placement, while failover changes which surviving replica currently serves a range. A network split also needs communicating voters on the side the application can reach.</p>
+
+<h2 id="checking">Checking policy and placement</h2>
+
+<p>Check three different things: what was requested, where the ranges actually are, and whether complete requests meet their requirements. A successful configuration statement establishes the first. Replica movement and lease placement must converge before the second can match it.</p>
+
+<Sql label="Inspect database policy, table locality, row homes and generated partitions" code={`SHOW REGIONS FROM CLUSTER;
+SHOW REGIONS FROM DATABASE shop;
+SHOW CREATE DATABASE shop;
+SHOW CREATE TABLE products;
+SHOW CREATE TABLE orders;
+SHOW CREATE TABLE order_statuses;
+SELECT order_id, crdb_region FROM orders ORDER BY order_id;
+SHOW INDEXES FROM orders;
+SHOW PARTITIONS FROM TABLE orders;`} />
+
+<p>The database output should name North as primary, list all three regions and show the selected survival goal. The table definitions distinguish West-homed products, regional-by-row orders and GLOBAL statuses. Row values check the intended 101/103 North and 102 West assignment. Index and partition output checks that the history index follows the regional policy too.</p>
+
+<p>On the isolated v26.2.8 fixture, <code>SHOW CREATE DATABASE</code> returned North as primary, all three database regions and <code>SURVIVE ZONE FAILURE</code>. That verifies declared policy. It does not establish Figure 2’s row assignments or Figure 5’s replica layout. The row, constraint and placement examples here follow documented behaviour; no native result for those checks is reported.</p>
+
+<p>Then inspect the actual ranges. Scope the expensive detailed listing to the tables or indexes under investigation:</p>
+
+<Sql label="Inspect actual product and order range placement" code={`SHOW RANGES FROM TABLE products WITH DETAILS;
+SHOW RANGES FROM TABLE orders WITH INDEXES, DETAILS;`} />
+
+<p>Read the range’s bounds and index name with its <code>lease_holder</code>, <code>lease_holder_locality</code>, <code>voting_replicas</code>, <code>non_voting_replicas</code> and <code>replica_localities</code>. Check voting node IDs against their localities; do not count every item in <code>replicas</code> as a vote. Include secondary-index ranges and any other tables the request needs. A range can cover a wider interval than the particular rows being tested.</p>
+
+<p>If the observed layout is still changing or does not meet the intended policy, retain that finding. Configuration text is not a substitute for the missing placement. Health, under-replication and maintenance diagnosis belong to <a href="/learn/databases/relational/cockroachdb/operations/">Operating and securing a CockroachDB cluster</a>.</p>
+
+<h2 id="testing">Testing the complete request</h2>
+
+<p>Begin with the shop’s acceptance cases. A North order read and a North purchase have different dependencies. The status lookup has a third access pattern. Run the same application paths through the gateways they will actually use.</p>
+
+<div class="table-scroll"><table>
+  <caption>Acceptance checks for the independent shop placement</caption>
+  <thead><tr><th>Case</th><th>What the check must establish</th></tr></thead>
+  <tbody>
+    <tr><td>Healthy North order read</td><td>Find 103 and its lines through the intended regional indexes, returning pending and 29.00. Check actual SQL/KV locations as well as the answer.</td></tr>
+    <tr><td>Healthy purchase replay</td><td>From pre-purchase stock 12/1/4, commit one pending 103 and its two lines, stock 10/0/4 and no payment. Include West stock, references, indexes and uniqueness.</td></tr>
+    <tr><td>Duplicate and missing reference</td><td>Reject 103 assigned to another region and a line naming a missing order. Placement must preserve the original integrity contract.</td></tr>
+    <tr><td>One region unavailable</td><td>Test North, West and East separately after convergence. From surviving application gateways, check reads, guarded writes, retries, recognised outcomes and remaining capacity.</td></tr>
+    <tr><td>Regional latency target</td><td>Measure complete healthy and degraded requests under representative networking, data, concurrency and load. Record distributions and throughput, not just one profiled statement.</td></tr>
+  </tbody>
+</table></div>
+
+<p>A controlled loss test must identify the failure domain being removed, confirm the starting range health and placement, and keep a working application route outside it. Remove all nodes in that domain together; stopping only its gateway tests a different failure. Observe the complete request through the transition, verify data and recognised outcomes, then restore the domain and check convergence before the next case. Keep health repair and planned decommissioning in the operations procedure.</p>
+
+<p>A local cluster with three regional labels can check SQL, inspect placement and exercise loss of selected processes. All processes sharing one host still share its storage, network and failure. Such an experiment does not establish independence from a real regional outage or the time spent crossing real regions. Use the structural voter test to reject a layout that cannot survive the required loss, and a deployment-shaped test to establish the service behaviour the application needs.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against the CockroachDB v26.2 documentation on 26 October 2026. Figures are models of documented behaviour and the independent shop placement. North, West and East are invented labels, not measured geography. Native execution confirmed version, gateway regions and database policy; table/index setup did not complete, so it supplied no inserted-row, constraint-probe, range-placement or outage result.</p>
+<ul>
+  <li><a href="https://www.cockroachlabs.com/docs/v26.2/multiregion-overview">Multi-Region Capabilities Overview</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/alter-database">ALTER DATABASE</a>: cluster and database regions, primary regions and database survival policy.</li>
+  <li><a href="https://www.cockroachlabs.com/docs/v26.2/table-localities">Table Localities</a>, <a href="https://www.cockroachlabs.com/docs/v26.2/regional-tables">Regional Tables</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/alter-table#set-localities">ALTER TABLE: set localities</a>: table and row homes, hidden region values, explicit reassignment and configured foreign-key inference.</li>
+  <li><a href="https://www.cockroachlabs.com/blog/regional-by-row/">How we built easy row-level data homing with REGIONAL BY ROW</a>: implicit regional index prefixes, retained global uniqueness and the checks they can require.</li>
+  <li><a href="https://www.cockroachlabs.com/docs/v26.2/global-tables">Global Tables</a> and <a href="https://www.cockroachlabs.com/blog/global-tables-in-cockroachdb/">Back from the future: Global Tables</a>: the read/write trade, future write timestamps and failure limits.</li>
+  <li><a href="https://www.cockroachlabs.com/docs/v26.2/multiregion-survival-goals">Multi-Region Survival Goals</a> and <a href="https://www.cockroachlabs.com/blog/under-the-hood-multi-region/">Survive region outages with CockroachDB</a>: standard home-region voters, five-voter regional placement and remote agreement.</li>
+  <li><a href="https://www.cockroachlabs.com/docs/v26.2/show-regions">SHOW REGIONS</a>, <a href="https://www.cockroachlabs.com/docs/v26.2/show-partitions">SHOW PARTITIONS</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/show-ranges">SHOW RANGES</a>: policy, partition and actual placement evidence.</li>
+</ul>
