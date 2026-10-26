@@ -36,21 +36,12 @@ Every push to `main` builds and deploys to GitHub Pages through
 | `/learn/databases/object-storage/` | Published introduction and thirteen focused articles, using Amazon S3 |
 | `/learn/databases/object-storage/sandbox/` | Fourteen local model lessons, with 78 editable request steps |
 | `/learn/databases/object-storage/practice/` | Real-S3 CLI worksheet with exact-version cleanup |
-| `/learn/databases/caching/` | Application caching with Redis; articles publish individually as completed |
 | `/learn/databases/*/` | Other draft families: documents, partitioning, distributed SQL, search and graphs |
 | `/assessments/postgres-vectors/` | Dated vector-search assessment draft linked from the guide |
 
 `src/lib/reading.ts` indexes available reading for the directory and supplies
 breadcrumbs. The shared layout provides breadcrumbs and collection article
 switchers. Keep new reading discoverable here as it becomes available.
-
-The 26 October application-caching commission authorises a complete illustrated
-Redis collection, with publication after each article is complete. Its plan,
-native execution records and article checks are in
-`docs/article-work/redis-caching-2026-10-26/`. `src/lib/caching-collection.ts`
-separates published articles from planned ones; only published entries join
-reading and search. Article sources are in `src/articles/caching/` and their
-illustrations and model checks in `src/components/caching/`.
 
 Full-text search uses Pagefind through `astro-pagefind`. Each `pnpm build` indexes
 only the routes listed in `reading.ts`; navigation, directory pages, route aliases
