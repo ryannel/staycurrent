@@ -17,7 +17,7 @@ record = runtime / (role + '-fixture.json')
 cli = ['docker', '--config', '/private/tmp/staycurrent-rebuild-docker-public-config', '--host', 'unix:///Users/ryannel/.docker/run/docker.sock']
 image = json.loads((runtime / 'crdb-image.json').read_text())['pinned_image']
 name = 'staycurrent-relational-rebuild-' + role + '-20261025'
-sql_memory = '256MiB' if role == 'crdb-performance' else '64MiB'
+sql_memory = '256MiB' if role in ['crdb-performance', 'crdb-schema-change'] else '64MiB'
 db = 'sc_' + role.replace('-', '_')
 user = db + '_writer'
 
