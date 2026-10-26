@@ -1,0 +1,7 @@
+# Reference exposure
+
+Read all19 bounded parts separately using scripts/read-writing-reference.py: sequences1–6, indexes1–7, storage1–6. Every END marker delivered without truncation. Complete-text SHA256: sequences722e27d04275d6ee28dfa024951827a78b5c591dc8b5f98584af197b5884809c; indexesd60bf12b37f922f0ced9ec54a51b1ef6b94841a40da5f20be6dafdbf75bec8c1; storage2bebcdf28bacf1f5ecc2220e8d20a7c34682e052fff3ecde56ca1a56aba08c07.
+
+Rendered study26October2026: first prescribed iab creation failed because iab unavailable. Root authorised Chrome fallback; fresh owned session/tab315245383. No reference-origin viewport/theme changes. Read/inspected Indexes composite-key figure7 (paired retained entries/heap, counters, early stop), Storage WAL figure5 (stable lanes, change highlight, explicit state explanation), Sequences ordering figure6 (same participants/order variation and text alternative). Used Reset/Next and screenshots; figure/prose relation led design: small stable drawings expose exactly what search omits, with meaningful controls and output changes. Reference displays use System theme (currently dark). Playback stopped by resets/navigation.
+
+Approved neighbour PostgreSQL index methods and operators read at http://127.0.0.1:4606/review/relational-rebuild/postgresql/indexes/ using rendered DOM. Establishes methods/classes, distance ordering, candidate vs filter vs visibility distinction, plan access counts. No main repository or previous target body/feedback read.

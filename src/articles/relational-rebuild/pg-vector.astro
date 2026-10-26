@@ -1,0 +1,193 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import VectorFigures from '../../components/relational-rebuild-pg-vector/VectorFigures.astro';
+---
+<p>Vector search finds rows whose stored vectors are closest to a query vector. A vector is an ordered list of numbers. An embedding model can turn a product description, an image or a customer's search into one of those lists, so that nearby vectors are intended to represent related things. PostgreSQL's <code>pgvector</code> extension supplies the values, distance operators and indexes used to retrieve them.</p>
+<p>There are two decisions here. Does the representation put useful products near the customer's query? And does the database find the nearest products in that representation? An exact search can faithfully return irrelevant products. An approximate search can miss useful ones that the representation placed nearby. Changing the embedding model and changing the index repair different problems.</p>
+<p>This article follows the shop's three products, then a larger mathematical fixture. The small coordinates are invented so that the distance arithmetic stays visible. They establish no meaning for tea, mugs or teapots. The drawings explain retrieval; the later PostgreSQL observations test it. <a href="/learn/databases/relational/postgresql/indexes/">PostgreSQL index methods and operators</a> supplies the background on operators, classes and query plans.</p>
+
+<section id="vectors-and-distance">
+<h2>Vectors and distance</h2>
+<p>Suppose a search produces query vector <code>[1,0]</code>. Give P7, the blue mug, that same vector. Give P9, the teapot, <code>[0.8,0.6]</code>, and P3, the green tea, <code>[0,1]</code>. Each vector has two <em>dimensions</em>: two positions whose meanings must agree between stored values and queries.</p>
+<p>Figure 1 draws an arrow from the origin to each point. Start with L2, then switch the distance. Finally double P9's coordinates and compare the three orders.</p>
+<VectorFigures kind="distance" />
+<p><em>L2 distance</em>, written <code>&lt;-&gt;</code>, is the straight-line gap. Between <code>[1,0]</code> and <code>[0.8,0.6]</code> it is √((1−0.8)² + (0−0.6)²), about 0.632. <em>Cosine distance</em>, written <code>&lt;=&gt;</code>, is one minus the cosine of the angle between the arrows. It compares direction rather than length. Here its value is 0.2.</p>
+<p>The <em>inner product</em> multiplies corresponding coordinates and sums them. P9's inner product with the query is 0.8. Higher inner products come first, but pgvector's <code>&lt;#&gt;</code> returns their negatives, so an ascending index scan can put the best score first. It returns −0.8 here. Multiplying that result by −1 recovers the inner product; subtracting cosine distance from 1 gives cosine similarity. Neither conversion makes the scores interchangeable.</p>
+<p>Doubling P9 changes its length and its inner product, but leaves its direction unchanged. The cosine order stays the same while the inner-product order puts P9 ahead of P7. A choice of distance therefore changes the question. If both sides are normalised to unit length, L2, cosine and inner product give equivalent rankings; their numerical scores and thresholds still differ.</p>
+<h3>The representation's contract</h3>
+<p>Use the distance and preprocessing required by the embedding model, with compatible query and document encoders. Record the model version, dimensions, normalisation and source revision alongside the generation process. Two models can emit the same number of coordinates without making those coordinates comparable. A <code>vector(768)</code> column checks the length; it cannot establish that both values came from the same space.</p>
+<p>Validate values before evaluating retrieval. The <code>vector</code> type stores single-precision components and rejects non-finite values and a mismatched declared dimension. NULL means no vector, rather than a distant product. Approximate indexes omit NULL vectors; cosine indexes also omit zero vectors, whose direction is undefined. Keep missing or unusable embeddings visible in generation monitoring rather than interpreting their absence as an approximate-search miss. Check index limits as well as storage limits: the HNSW and IVFFlat classes for ordinary <code>vector</code> support up to 2,000 dimensions in this version; a wider representation needs another supported type or a deliberate dimensionality/quantisation design, followed by its own recall check.</p>
+</section>
+
+<section id="exact-nearest-neighbours">
+<h2>Exact nearest neighbours</h2>
+<p>An exact search computes the distance for every eligible vector and chooses the smallest. With these three rows, there is little work to save. Start from a separate copy of the shop after order 103: P3 has stock 10, P7 has stock zero, and P9 has stock 4.</p>
+<details class="sql-setup"><summary>The three-row teaching table</summary>
+<Sql label="Create the independent product-vector teaching copy" code={`-- Requires pgvector installed and CREATE EXTENSION vector completed.
+CREATE TABLE product_vectors (
+  product_id text PRIMARY KEY,
+  name text NOT NULL,
+  stock integer NOT NULL CHECK (stock >= 0),
+  embedding vector(2) NOT NULL
+);
+INSERT INTO product_vectors VALUES
+  ('P3', 'Green tea, 50 g', 10, '[0,1]'),
+  ('P7', 'Blue mug',         0, '[1,0]'),
+  ('P9', 'Teapot',           4, '[0.8,0.6]');`} />
+</details>
+<p>The request is “the two nearest products that are in stock”. Keep the condition, ascending distance and limit together:</p>
+<Sql label="Find the two nearest eligible vectors" code={`SELECT product_id, embedding <-> '[1,0]'::vector AS distance
+FROM product_vectors
+WHERE stock > 0
+ORDER BY embedding <-> '[1,0]'::vector
+LIMIT 2;`} />
+<p>The result is P9 at about 0.632, then P3 at about 1.414. P7's zero distance does not help it pass the stock condition. Figure 2 follows that choice, then moves the filter outside a limited global result.</p>
+<VectorFigures kind="filter" />
+<p>Choosing the global nearest two first selects P7 and P9. Filtering those two leaves P9 alone, even though P3 is available. This SQL expresses that second question:</p>
+<Sql label="A limit before eligibility asks another question" code={`SELECT product_id, distance
+FROM (
+  SELECT product_id, stock,
+         embedding <-> '[1,0]'::vector AS distance
+  FROM product_vectors
+  ORDER BY embedding <-> '[1,0]'::vector
+  LIMIT 2
+) AS global_neighbours
+WHERE stock > 0
+ORDER BY distance;`} />
+<p>The difference is observable without any approximate index. An exact query does not need an ANN index to be fast either. If an ordinary index on a filter column reduces a million-row catalogue to thirty eligible products, computing thirty distances and choosing ten can be cheap. Compare that route before building a structure which searches across all million vectors.</p>
+<p>Once an approximate index exists, the planner can use it for the first query too, changing the retrieval guarantee. For a reliable exact baseline, evaluate a copy with no approximate index, or locally disable index scans and confirm a plan that evaluates every eligible vector. Retain the same vectors, distance, filter and visible data. Disabling one particular index by assumption is not evidence that the baseline was exact.</p>
+</section>
+
+<section id="hnsw-indexes">
+<h2>HNSW indexes</h2>
+<p>Exact work grows with the eligible population and the vector width. An <em>approximate nearest-neighbour</em> index, or ANN index, avoids evaluating every eligible vector, accepting that some true neighbours may be missed. HNSW, short for <em>Hierarchical Navigable Small World</em>, organises vectors as a graph of links between nearby points.</p>
+<p>The upper layers contain fewer points and longer routes across the space. A search follows those links towards the query, then descends to denser layers. At the ground layer it explores a candidate list, keeping promising points and visiting their neighbours. The search can finish without reaching a better point elsewhere in the graph.</p>
+<p>Figure 3 makes one missed route visible. Start with one retained candidate. Then keep two and watch what happens at D, which is farther from the query than C.</p>
+<VectorFigures kind="hnsw" />
+<p>In the narrow search, C's distance 2 beats D's 3, so the search discards the route through D. E, at distance 0.5, never enters the answer. Keeping D lets the wider search find E. The extra work is useful precisely because the path to a closer point need not improve at every step. The drawing isolates that trade; it does not predict which links a particular build creates.</p>
+<Sql label="Create an HNSW index for L2 ordering" code={`CREATE INDEX product_vectors_hnsw ON product_vectors
+USING hnsw (embedding vector_l2_ops)
+WITH (m = 16, ef_construction = 64);`} />
+<p>The operator class must match the query's distance. <code>vector_l2_ops</code> supports <code>&lt;-&gt;</code>; cosine needs <code>vector_cosine_ops</code> and <code>&lt;=&gt;</code>, and inner product needs <code>vector_ip_ops</code> and <code>&lt;#&gt;</code>. Preserve the direct distance expression, ascending order and limit in the retrieval query. An expression such as <code>ORDER BY 1 - cosine_distance DESC</code> can express the desired order while preventing the expected index path.</p>
+<p>Two choices belong to the build. <code>m</code> controls graph connectivity; more links consume more space and add maintenance work. <code>ef_construction</code> controls the candidate list used while finding links. A more thorough construction spends build and insertion work to improve the resulting graph. HNSW needs no initial clustering training, so it can be built on an empty table. Its graph still has to be constructed and maintained as vectors arrive.</p>
+<p>The query's <code>hnsw.ef_search</code> controls its search candidate list, defaulting to 40 in pgvector 0.8.7. Raising it spends more exploration to improve recall. It is neither a result count nor a promise that exactly that many vectors are visited:</p>
+<Sql label="Increase HNSW exploration for one transaction" code={`BEGIN;
+SET LOCAL hnsw.ef_search = 100;
+SELECT product_id, embedding <-> '[1,0]'::vector AS distance
+FROM product_vectors
+WHERE stock > 0
+ORDER BY embedding <-> '[1,0]'::vector
+LIMIT 2;
+COMMIT;`} />
+<p>Build memory matters separately. HNSW initially holds its graph in <code>maintenance_work_mem</code>; spilling into the on-disk build phase can make construction substantially slower. Budget memory against concurrent work and measure the build. Raising a query setting cannot repair a poorly connected graph without paying more search work each time.</p>
+</section>
+
+<section id="ivfflat-indexes">
+<h2>IVFFlat indexes</h2>
+<p>IVFFlat uses lists instead of a graph. During the build it learns representative centres from a sample of existing vectors, then assigns vectors to their closest centre. A query compares itself with the centres and <em>probes</em> some of their lists. It computes point distances inside those lists while skipping the others.</p>
+<p>The closest centre does not necessarily own the closest point. In Figure 4 the query is just left of the boundary between two lists, while B is just right of it. Probe one list, then two.</p>
+<VectorFigures kind="ivf" />
+<p>One probe returns A at distance 1.5. Searching the next list finds B at distance 0.2. A perfectly computed distance inside the first list did not establish the global nearest point. Searching more lists trades the saving from skipping vectors for a better chance of retaining the true neighbours.</p>
+<Sql label="IVFFlat build and search controls" code={`-- An alternative to the HNSW index; build after loading representative data.
+CREATE INDEX product_vectors_ivf ON product_vectors
+USING ivfflat (embedding vector_l2_ops)
+WITH (lists = 20);
+
+BEGIN;
+SET LOCAL ivfflat.probes = 5;
+SELECT product_id, embedding <-> '[1,0]'::vector AS distance
+FROM product_vectors
+WHERE stock > 0
+ORDER BY embedding <-> '[1,0]'::vector
+LIMIT 2;
+COMMIT;`} />
+<p>The definition shows the controls, rather than a sensible twenty-list index for three products. <code>lists</code> is a build choice; <code>probes</code> is a query choice. More lists can reduce the vectors searched at a fixed probe count, but can also put useful neighbours in lists the query skips. Raising probes searches more lists. Probing all lists removes that omission, with the work of an exact search; the planner may choose a scan instead.</p>
+<p>Train on a representative loaded population, rather than the first handful of rows. Later inserts are assigned to the existing centres; they do not retrain the partition. A substantial change in distribution can concentrate new vectors into awkward lists and make the original speed–recall trade worse. Compare recall after growth, and rebuild when the measured change warrants it. IVFFlat's smaller structure and training cost belong in the comparison alongside HNSW's graph construction, memory and query work.</p>
+</section>
+
+<section id="filtered-search">
+<h2>Filtering approximate results</h2>
+<p>Putting <code>WHERE stock &gt; 0</code> before the ordered limit is necessary, but an ANN index still explores an approximate population. In a shared index, the stock test is applied to rows produced by that index scan. Nearby out-of-stock rows can consume the exploration budget. A query asking for ten may therefore return three even when hundreds of eligible products exist.</p>
+<p>This is a second reason for a short answer, distinct from explicitly limiting a global subquery in Figure 2. The SQL can ask the right question while the bounded approximate path finds too few eligible rows. Do not move stock or authorisation checks out of the query to disguise that shortfall. A nearby vector establishes no permission to return its row.</p>
+<h3>Searching further</h3>
+<p>pgvector 0.8.7 can continue an approximate scan when the executor needs more rows. HNSW offers <code>strict_order</code> and <code>relaxed_order</code> iterative scans. IVFFlat offers <code>relaxed_order</code>. Iteration stops when enough rows have been found or the permitted search is exhausted; it is not an unbounded guarantee of a full answer.</p>
+<Sql label="Allow bounded additional HNSW exploration" code={`BEGIN;
+SET LOCAL hnsw.ef_search = 100;
+SET LOCAL hnsw.iterative_scan = strict_order;
+SET LOCAL hnsw.max_scan_tuples = 20000;
+SELECT product_id, embedding <-> '[1,0]'::vector AS distance
+FROM product_vectors
+WHERE stock > 0
+ORDER BY embedding <-> '[1,0]'::vector
+LIMIT 2;
+COMMIT;`} />
+<p><code>strict_order</code> preserves distance order among the rows returned. It does not mean the search found the exact nearest eligible set. HNSW's <code>max_scan_tuples</code> is an approximate bound for additional exploration, not the initial scan; memory can also stop further exploration. <code>hnsw.scan_mem_multiplier</code> sets that memory budget relative to <code>work_mem</code>. For IVFFlat, <code>ivfflat.max_probes</code> bounds iterative probing.</p>
+<p>Relaxed scans can return a later, closer row after an earlier, farther one. Materialise the retrieved candidates and sort them before presentation. On PostgreSQL 18, the <code>+ 0</code> below requests a fresh outer sort:</p>
+<Sql label="Sort the candidates found by a relaxed scan" code={`BEGIN;
+SET LOCAL ivfflat.probes = 5;
+SET LOCAL ivfflat.iterative_scan = relaxed_order;
+SET LOCAL ivfflat.max_probes = 20;
+WITH candidates AS MATERIALIZED (
+  SELECT product_id, embedding <-> '[1,0]'::vector AS distance
+  FROM product_vectors
+  WHERE stock > 0
+  ORDER BY embedding <-> '[1,0]'::vector
+  LIMIT 20
+)
+SELECT product_id, distance
+FROM candidates
+ORDER BY distance + 0, product_id
+LIMIT 2;
+COMMIT;`} />
+<p>The inner twenty is a candidate budget, the outer two the requested answer. Sorting can fix the order of found candidates and choose the best two among them. It cannot recover a neighbour absent from those twenty. Re-ranking with a better distance or model has the same limit: candidate generation must first retain the useful row.</p>
+<h3>Narrowing the population</h3>
+<p>When a filter is very selective, prefer checking an exact path through its ordinary index first. For a few stable, frequently requested populations, a partial ANN index can build the structure over just that population:</p>
+<Sql label="An approximate index over an eligible population" code={`CREATE INDEX product_vectors_in_stock_hnsw ON product_vectors
+USING hnsw (embedding vector_l2_ops)
+WHERE stock > 0;`} />
+<p>This removes out-of-stock vectors from this index's search population. It remains approximate within the in-stock population, and stock changes now change index membership. The query must imply the index predicate at planning time. A generic parameterised condition does not necessarily do that. Many per-value partial indexes add planning, build and maintenance costs; they are not free subdivisions of one index.</p>
+<p>Partitioning can provide separate search populations for a suitable partition key, with pruning selecting relevant partitions. It also brings partition design and operational costs, especially when a request spans many populations. Choose between exact filtering, broader ANN exploration, partial indexes and partitioning from the actual filter distribution and request mix. <a href="/learn/databases/relational/partitioning/">Table partitioning and data lifecycle</a> develops that design.</p>
+</section>
+
+<section id="recall-and-latency">
+<h2>Measuring recall and latency</h2>
+<p><em>Nearest-neighbour recall</em> measures how much of the exact answer an approximate search recovered. For a request with exact top-four identities A, B, C and D, an approximate answer A, C, E and F recovers two of four: recall 0.5. It has four rows and can be perfectly sorted. Neither fact repairs the missing B and D.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Calculate nearest-neighbour recall from identities"><table><caption>Same exact answer: A, B, C, D</caption><thead><tr><th>Retrieved identities</th><th>Exact neighbours found</th><th>Recall</th></tr></thead><tbody><tr><td>A, C</td><td>2 of 4 · short answer</td><td>0.5</td></tr><tr><td>A, C, E, F</td><td>2 of 4 · full answer</td><td>0.5</td></tr><tr><td>A, B, C, D</td><td>4 of 4</td><td>1</td></tr></tbody></table></div>
+<p>For top-<em>k</em>, divide the number of recovered exact identities by the exact answer's size. If only three eligible searchable rows exist and <em>k</em> is ten, use three as the denominator. An empty eligible population has no neighbours to recover: report the empty case separately rather than dividing by zero. Count distinct identities, with the same rule for duplicate product chunks or versions on both sides.</p>
+<p>Ties at the cutoff need an explicit convention. A stable identity tie-breaker can select one exact reference set; an equally distant alternative may then score as a miss. A tie-aware evaluation instead accepts any boundary-tied neighbour while retaining every strictly closer one. Record which convention is used. Do not add a secondary sort to an ANN retrieval query and assume its access path stays the same: retrieve candidates first, then sort, and inspect the plan.</p>
+<p>Measure relevance separately using representative customer tasks and judged useful results. If exact neighbours are unhelpful, a higher recall against them only makes retrieval more faithful to an unhelpful representation. Linguistic matching and lexical ranking belong to <a href="/learn/databases/relational/postgresql/full-text-search/">Full-text search in PostgreSQL</a>. Combining lexical and vector retrieval still needs evaluation of the combined answer.</p>
+<h3>A measured comparison</h3>
+<p>The experiment below uses 6,000 invented eight-dimensional vectors, L2 and <em>k</em> = 10. Eight fixed query vectors are run without a filter, then with a cohort condition selecting 300 rows, or 5% of the population. Cohorts and coordinates have no business meaning. Exact identities are collected before any ANN index exists; only one ANN index exists at a time afterwards.</p>
+<p>The comparison uses native PostgreSQL 18.6 and pgvector 0.8.7 on an owned disposable Linux arm64 server. Each configuration has eight recall observations per filter family and five instrumented executions of each request: forty latency samples. They run sequentially on a recently loaded fixture, without concurrent updates or application/network work. The numbers show this fixture's trade, rather than a production throughput claim.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="No filter · 6,000 eligible vectors · k=10"><table><caption>No filter · 6,000 eligible vectors · k=10</caption><thead><tr><th>Retrieval · iteration mode</th><th>Rows returned</th><th>Mean recall</th><th>Median / p95 ms</th></tr></thead><tbody><tr><td>Exact · ordinary planner</td><td>10</td><td>1.000</td><td>0.413 / 0.423</td></tr><tr><td>HNSW · ef_search 10 · off</td><td>10</td><td>1.000</td><td>0.020 / 0.027</td></tr><tr><td>HNSW · ef_search 100 · off</td><td>10</td><td>1.000</td><td>0.098 / 0.109</td></tr><tr><td>HNSW · ef_search 100 · strict</td><td>10</td><td>1.000</td><td>0.102 / 0.116</td></tr><tr><td>IVFFlat · 1 probe · off</td><td>10</td><td>0.950</td><td>0.032 / 0.038</td></tr><tr><td>IVFFlat · 5 probes · off</td><td>10</td><td>1.000</td><td>0.160 / 0.180</td></tr><tr><td>IVFFlat · 5 probes · relaxed</td><td>10</td><td>1.000</td><td>0.161 / 0.178</td></tr></tbody></table></div>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Cohort filter · 300 eligible vectors · k=10"><table><caption>Cohort filter · 300 eligible vectors · k=10</caption><thead><tr><th>Retrieval · iteration mode</th><th>Rows returned</th><th>Mean recall</th><th>Median / p95 ms</th></tr></thead><tbody><tr><td>Exact · ordinary planner</td><td>10</td><td>1.000</td><td>0.041 / 0.046</td></tr><tr><td>HNSW · ef_search 10 · off</td><td>0–1</td><td>0.025</td><td>0.019 / 0.024</td></tr><tr><td>HNSW · ef_search 100 · off</td><td>2–6</td><td>0.375</td><td>0.107 / 0.118</td></tr><tr><td>HNSW · ef_search 100 · strict</td><td>10</td><td>0.975</td><td>0.300 / 0.327</td></tr><tr><td>IVFFlat · 1 probe · off</td><td>10</td><td>0.438</td><td>0.057 / 0.064</td></tr><tr><td>IVFFlat · 5 probes · off</td><td>10</td><td>0.888</td><td>0.176 / 0.185</td></tr><tr><td>IVFFlat · 5 probes · relaxed</td><td>10</td><td>0.887</td><td>0.172 / 0.187</td></tr></tbody></table></div>
+<p>HNSW with <code>ef_search=10</code> recovered every unfiltered neighbour in these eight requests. Under the 5% cohort filter it returned zero or one row. Raising the search list to 100 still left every filtered answer short. Strict iteration filled all ten places and reached mean recall 0.975, but its filtered median was about 0.301 ms against 0.041 ms for exact filtering. The ordinary cohort index made the exact search cheap.</p>
+<p>IVFFlat with one probe filled every filtered answer, yet recovered only 43.75% of the exact identities on average. Five probes raised that to 88.75%. Relaxed iteration made no further difference here: the first batch already supplied ten eligible rows, so the executor did not request another batch. Filling the limit was not the same as satisfying a recall target.</p>
+<p>The ANN comparisons deliberately discouraged sequential scans and removed the ordinary cohort index, exposing each approximate path. Every measured ANN plan was checked for its intended index name. They are controlled mechanics comparisons, not the planner's normal competition between all available indexes. Exact requests retained normal settings: a sequential scan without the filter, and a bitmap search of the cohort index with it.</p>
+<p>The access counts explain why a faster lookup is not simply “fewer pages”. The unfiltered exact scan made 57 shared-buffer accesses; narrow HNSW made 108–166, but avoided computing all 6,000 distances. Under the filter, exact used 58–59 accesses while strict iterative HNSW used 1,039–1,481. These ranges cover the eight retained request plans, without summing parent and child counters.</p>
+<p>HNSW's single build took about 428 ms and occupied 1.92 MiB; IVFFlat's twenty-list build took about 9 ms and occupied 0.40 MiB. Both used one build worker and a 64 MiB maintenance-memory setting. A single build of narrow synthetic vectors establishes neither a universal ratio nor steady-state insertion and cleanup costs. Those need the intended workload.</p>
+<p>The <a href="/relational-rebuild/pg-vector/observed-results.json">retained identities and plans</a>, <a href="/relational-rebuild/pg-vector/native-verifier.sql">guarded native verifier</a> and <a href="/relational-rebuild/pg-vector/fixture.txt">fixture and measurement record</a> give the exact data formula, settings and limits. The verifier requires the specifically named disposable database, user and cluster and rolls its changes back. Recall uses a stable identity reference at ties; it is measured once per request, separately from the five instrumented timing runs.</p>
+<p>Before trusting a measured improvement, inspect the actual plan. The distance must appear as the ANN index scan's <code>Order By</code>. Read the filter and its rejected rows, the returned count, and the shared-buffer accesses alongside time. Buffers count accesses, including repeats, rather than distinct pages or physical drive reads. A smaller reported execution time does not prove less CPU work everywhere, and a full result does not prove high recall.</p>
+<p>For an application decision, use a held-out set of real request vectors, common and rare filters, representative vector widths and a stable data snapshot for each exact/approximate comparison. Keep model generation outside retrieval timings, then measure the whole customer request separately. Compare repeated latency distributions, warm and cold cache conditions, concurrent readers and writers, build time, peak memory, index size and insertion cost. Retain normal planner choices as well as any deliberately forced mechanics tests.</p>
+<p>A query average can hide the requests a shared index handles badly. Group recall and short-answer rates by filter selectivity and request type, and check the slow tail as well as the median. Choose the cheapest tested configuration that meets the required recall and latency for those groups. A specialised index earns its place only when that saving survives its ongoing upkeep.</p>
+</section>
+
+<section id="keeping-vectors-useful">
+<h2>Keeping vectors and indexes useful</h2>
+<p>A text update and a vector update are different work. Changing P7's description does not make an external embedding model run inside PostgreSQL. Until generation finishes, the database can have an accurate current description beside a stale vector. Searching that vector exactly is still stale retrieval.</p>
+<p>Track the source revision each vector represents and the embedding model's version. A background generator should publish its result only if it still corresponds to the intended source revision; otherwise a slow old generation can overwrite a newer one. Decide whether an unembedded or stale product is excluded, served lexically, or shown through another path, and monitor that population explicitly.</p>
+<p>A model migration changes the retrieval space. Generate a compatible new query representation and new document vectors, validate dimensions and metric, build the corresponding index, and evaluate the new answers before switching readers. Keep versions separated through the migration. Mixing old and new coordinates in one distance order can produce plausible scores without meaningful comparisons. <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a> owns the live build and cutover procedures.</p>
+<p>Ordinary inserts, updates and deletes also maintain the search structure and PostgreSQL's row versions. Dead tuples and delayed cleanup can affect the number of candidates available to an approximate scan. Track vacuum, table and index sizes, result counts and recall over time. HNSW cleanup can be expensive; rebuilding is a possible maintenance choice with its own space, write and availability cost. IVFFlat additionally needs reassessment when its training population stops representing current vectors.</p>
+<p>Keep extension binaries and SQL version dependencies with the database's restore and upgrade requirements. An index can be rebuilt from retained vectors; lost source text, model identity or generation rules may not be recoverable from the index. <a href="/learn/databases/relational/postgresql/extensions/">Types and extensions in PostgreSQL</a> owns those installation, dependency and restore procedures.</p>
+<p>The retrieval choice follows the eligible workload. Exact search is a useful baseline and often a useful final design. HNSW spends graph construction and memory to save query exploration; IVFFlat spends training and list selection to skip parts of the population. In both, keep the model's usefulness, nearest-neighbour recall, filter behaviour and lifetime cost visible as separate measurements.</p>
+</section>
+
+<h2>Sources and further reading</h2>
+<p>Checked on 26 October 2026 against pgvector 0.8.7 and PostgreSQL 18. The product coordinates and graph/list drawings are numerical teaching models. The larger fixture is synthetic; its native results establish retrieval behaviour on that fixture, with no learned-model relevance claim.</p>
+<ul>
+<li><a href="https://github.com/pgvector/pgvector/blob/v0.8.7/README.md">pgvector 0.8.7 documentation</a>: distance operators, supported types, HNSW and IVFFlat, filtering, iterative scans, index limits and upkeep.</li>
+<li><a href="https://github.com/pgvector/pgvector/blob/v0.8.7/src/vector.c">Vector type and distance implementation</a>: dimension and finite-value checks, single-precision components and distance arithmetic.</li>
+<li><a href="https://arxiv.org/abs/1603.09320">Malkov and Yashunin, Efficient and robust approximate nearest neighbour search using Hierarchical Navigable Small World graphs</a>: the graph hierarchy and search algorithm. pgvector's <a href="https://github.com/pgvector/pgvector/blob/v0.8.7/src/hnswscan.c">HNSW scan</a>, <a href="https://github.com/pgvector/pgvector/blob/v0.8.7/src/hnsw.c">settings</a> and <a href="https://github.com/pgvector/pgvector/blob/v0.8.7/src/hnswbuild.c">build implementation</a> establish the version-specific controls.</li>
+<li>pgvector's <a href="https://github.com/pgvector/pgvector/blob/v0.8.7/src/ivfbuild.c">IVFFlat build</a>, <a href="https://github.com/pgvector/pgvector/blob/v0.8.7/src/ivfscan.c">scan</a> and <a href="https://github.com/pgvector/pgvector/blob/v0.8.7/src/ivfflat.c">settings</a>: sampling, assignment to centres, probing and iterative limits.</li>
+<li>PostgreSQL 18: <a href="https://www.postgresql.org/docs/18/indexes-partial.html">Partial indexes</a>, <a href="https://www.postgresql.org/docs/18/using-explain.html">Using EXPLAIN</a> and <a href="https://www.postgresql.org/docs/18/queries-with.html">WITH queries</a>: predicate eligibility, observed plan work and materialised candidates.</li>
+</ul>

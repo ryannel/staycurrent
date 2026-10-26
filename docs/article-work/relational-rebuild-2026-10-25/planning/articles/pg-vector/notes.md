@@ -1,0 +1,39 @@
+# Vector search plan
+
+## Exposure and boundaries
+
+Read the private commission, article, incoming ownership, neighbours, reading links, shared example and runtime availability; the supplied breakdown, write and continuity skills. Read all 19 bounded fixed reference parts separately, receiving every END marker (sequences 1–6, indexes 1–7, storage 1–6). No reference output was clipped. A combined later input/tool listing clipped its tail; recovered the shared-example tail and complete reading-links file separately.
+
+IAB was unavailable. With the coordinator's explicit fallback authorisation, used only three owned Chrome tabs in session “📖 Vector plan”, browser inventory ID 1. Studied the finished reference drawings at port 4584: sequence waiting bars with slow-database control, index selectivity with changing match/page counters, and the storage memory/disk/WAL stages. Read the complete rendered replacement parent at `http://127.0.0.1:4606/review/relational-rebuild/postgresql/indexes/`. Its distance-ordering section establishes native geometric search and hands approximate embeddings to this article. Its tree marks full-text and extensions planned; no older bodies were read. Closed all owned tabs. No viewport or theme changes.
+
+The references establish one small case, change one thing, show the consequences, then qualify with execution evidence. The plan follows that teaching order without prescribing drawings or paragraphs. The writer should make searched versus missed vectors and eligible versus rejected results visible. No child is needed: the accepted node already owns complete retrieval and evaluation. No ownership change is proposed. Detailed model training, RAG application design and hybrid ranking implementation would exceed this commission; a brief connection to the lexical neighbour can explain when another retrieval signal is needed.
+
+## Example and continuity decisions
+
+Use an independent post-order-103 retrieval illustration. P3/P7/P9 retain their names, prices and stock 10/0/4; the orders, payments and agreed prices do not change. An illustrative query may place zero-stock P7 nearest, followed by P9 and P3. With k=2, filtering the first two candidates would leave only P9, whereas exact nearest available rows are P9 and P3. This is a numerical candidate/filter model, not a prediction that HNSW or IVFFlat must visit those rows in that order.
+
+Local 2D L2 coordinates can be invented and labelled as such, with no claim that a model generated them or that geometric distance measures product relevance. An expanded graph/list drawing or native workload can use separate mathematical diagnostic rows, not extra shop products. Do not present three shop rows as a useful ANN benchmark. No shared business facts are added. Proposed this example choice centrally; any larger reusable fixture must be agreed and recorded before measurements.
+
+Continuity pass: prerequisites supply operator classes, query plans and filters; this piece supplies vector meaning before exact search, then the work each approximation skips, then the filtering failure and evaluation. Avoid calling ANN misses lossy operator rechecks: the parent's exact candidate/recheck story preserves the answer, whereas approximate retrieval may omit true neighbours. P7's ineligibility is a stock predicate in this illustration, not deletion or an access policy. For cosine examples use non-zero vectors; keep NULL/missing embeddings and incompatible model versions out of an unstated denominator.
+
+## Checked primary sources · 26 October 2026
+
+- [pgvector v0.8.7 README](https://raw.githubusercontent.com/pgvector/pgvector/v0.8.7/README.md): checked Querying, Indexing, HNSW, IVFFlat, Filtering, Iterative Index Scans, Performance, Monitoring, Troubleshooting and type reference. Confirms operator/class alignment, graph/list search, build versus query controls, post-scan filtering, bounded iterative scans, ordering modes, and exact comparison. Also supplies missing/zero-vector exclusions and vector lifecycle considerations. Use [versioned readable source](https://github.com/pgvector/pgvector/blob/v0.8.7/README.md) in the article. Do not promise a universal winner from its qualitative comparison.
+- [Malkov and Yashunin, HNSW](https://arxiv.org/abs/1603.09320): the authors' explanation of incremental multilayer proximity graphs and scale separation. Algorithmic background, not observations of PostgreSQL internals or this workload.
+- [PostgreSQL 18 partial indexes](https://www.postgresql.org/docs/18/indexes-partial.html): query implication must make the chosen subset usable; large families of partial indexes add planning and maintenance work.
+- [PostgreSQL 18 EXPLAIN](https://www.postgresql.org/docs/18/sql-explain.html): ANALYZE executes; buffers describe accesses, and instrumentation adds overhead. Query timing must distinguish measured server execution from application/network latency.
+- [PostgreSQL 18 indexes and ORDER BY](https://www.postgresql.org/docs/18/indexes-ordering.html): ordinary sorted output and a limited result can change planner choices. Vector distance ordering is supplied by the extension's operator class, not a general promise of every PostgreSQL method.
+
+The tagged pgvector GitHub tree initially returned a fetch error; the tagged raw README succeeded. An attempted PostgreSQL index-API URL was 404 and is not relied on. Stanford IR evaluation fetch timed out; no claim relies on that page. The Faiss paper abstract was consulted as background but is not necessary reading or evidence for this outline.
+
+## Execution evidence still to establish
+
+The supplied runtime record pins official arm64 image digest `sha256:9d9c930220cb9bf2f956d10a8f909cf9973d9672ca0278aef2c1e6facccad2e0`, PostgreSQL 18.6 and pgvector control default 0.8.7. Only binary/control-file availability was observed. No database or extension SQL result is established. I provisioned and executed no native tests.
+
+The writer/coordinator should retain SQL, fixture generation, versions, settings, plans and exact/approximate returned identities before making execution claims. Compare exact and ANN on one fixed visible population, using an exact route whose plan excludes ANN. A read-only stable snapshot or immutable fixture avoids measuring row changes as recall loss. Define recall@k as overlap divided by the exact eligible reference count (normally k); state a tie policy, use unique boundary distances in simple examples, and mark an empty baseline not applicable. Full result count, correct distance order and high recall are separate checks.
+
+Use several queries and narrow/broad filters; keep query vectors, metric and embedding population fixed across methods. Record search/build settings, warm-up/cache treatment, repeated latency distribution, index/build size and lifecycle observations. Raising ef_search or probes is a trade to measure, not a guaranteed recall or latency number. Iterative limits can still exhaust the budget, and sorting found candidates cannot restore omitted rows. The official v0.8.7 guide includes PostgreSQL-17+ ordering details for materialised relaxed results; any demonstrated workaround needs native verification on the pinned runtime.
+
+No benchmark, observed omission, index choice or performance improvement is asserted by this plan. Native results and final visual design remain with the fresh writer and coordinator; shared operational procedures stay with their accepted owners.
+
+Validation: parsed `plan.yaml` with PyYAML and checked the breakdown schema recursively: required root strings and singular heading list; heading keys and non-empty briefs; child-stub shape if present. Passed with eight main headings, twelve headings total and no child stubs. Reread the complete outline for prerequisite order and checked the example and evidence boundaries above. No builds, implementation, article writing, reviews, commits or publication performed.

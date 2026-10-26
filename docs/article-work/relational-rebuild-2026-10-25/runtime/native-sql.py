@@ -19,7 +19,7 @@ evidence = source.parent
 runtime = Path(__file__).resolve().parent
 cli = ['docker', '--config', '/private/tmp/staycurrent-rebuild-docker-public-config', '--host', 'unix:///Users/ryannel/.docker/run/docker.sock']
 name = 'staycurrent-relational-rebuild-' + role + '-20261025'
-image = 'postgres@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6'
+image = json.loads((runtime / 'pgvector-image.json').read_text())['image'] if role == 'pg-vector' else 'postgres@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6'
 db = 'sc_' + role.replace('-', '_')
 user = db + '_writer'
 cluster = 'staycurrent-' + role + '-20261025'

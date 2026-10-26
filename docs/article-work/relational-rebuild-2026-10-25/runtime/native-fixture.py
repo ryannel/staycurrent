@@ -22,7 +22,7 @@ existing=run(['inspect','--format','{{.Id}}',name])
 if existing.returncode==0:
  owned(existing.stdout.strip());assert record.exists() and (json.loads(record.read_text()).get('transport','localhost-tcp')=='network-none' or (base/'connection.json').exists()),'Owned fixture exists without complete connection record; coordinator must inspect.';assert json.loads(record.read_text())['container_id']==existing.stdout.strip(),'Owned fixture record does not match the current container; coordinator must inspect.';assert json.loads(record.read_text()).get('transport','localhost-tcp')==transport,'Existing owned fixture transport differs; inspect before reuse.';print(record.read_text());raise SystemExit()
 base.mkdir(exist_ok=True);base.chmod(0o700);password=secrets.token_urlsafe(28);envfile=base/'fixture.env';envfile.write_text(f'POSTGRES_USER={user}\nPOSTGRES_DB={db}\nPOSTGRES_PASSWORD={password}\n');envfile.chmod(0o600)
-image='postgres@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6'
+image=json.loads((r/'pgvector-image.json').read_text())['image'] if role=='pg-vector' else 'postgres@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6'
 p=run(['run',*([] if keep_for_restart else ['--rm']),'-d','--name',name,'--label','dev.staycurrent.task=relational-rebuild-2026-10-25','--label','dev.staycurrent.article='+role,'--memory','1g','--cpus','2','--shm-size','128m',*(['--network','none'] if transport=='network-none' else ['--publish','127.0.0.1::5432']),'--env-file',str(envfile),image,'-c','cluster_name='+marker,*(['-c','listen_addresses='] if transport=='network-none' else [])]);assert p.returncode==0,p.stderr;cid=p.stdout.strip();(base/'container-id').write_text(cid+'\n')
 try:
  for i in range(40):
