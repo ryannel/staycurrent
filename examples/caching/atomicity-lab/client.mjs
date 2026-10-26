@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import {createClient, WatchError, MultiErrorReply} from 'redis';
+import {readFile} from 'node:fs/promises';
+const clients=[];
+async function connection(){const c=createClient({socket:{path:process.env.REDIS_SOCKET,reconnectStrategy:false},disableOfflineQueue:true});c.on('error',()=>{});clients.push(c);await c.connect();return c;}
+try{
+ const a=await connection(),b=await connection();
+ console.log('Native transactions and Lua lab: node-redis 6.3.0 / Redis 8.2.2');
+ await a.set('generation','10');
+ const av=Number(await a.get('generation')),bv=Number(await b.get('generation'));
+ await a.set('generation',String(av+1));await b.set('generation',String(bv+1));
+ assert.equal(await a.get('generation'),'11');console.log('Two read/modify/write operations: both read 10; final value 11 (lost update).');
+ await a.set('generation','10');
+ const at=Number(await a.get('generation')),bt=Number(await b.get('generation'));
+ await a.multi().set('generation',String(at+1)).exec();await b.multi().set('generation',String(bt+1)).exec();
+ assert.equal(await a.get('generation'),'11');console.log('MULTI/EXEC around each precomputed SET: final value still 11.');
+ await a.set('generation','10');await a.watch('generation');await b.watch('generation');
+ const aw=Number(await a.get('generation')),bw=Number(await b.get('generation'));
+ await a.multi().set('generation',String(aw+1)).exec();
+ await assert.rejects(b.multi().set('generation',String(bw+1)).exec(),WatchError);
+ assert.equal(await a.get('generation'),'11');
+ await b.watch('generation');const fresh=Number(await b.get('generation'));await b.multi().set('generation',String(fresh+1)).exec();
+ assert.equal(await a.get('generation'),'12');console.log('WATCH: second EXEC throws WatchError; fresh watch/read/retry produces 12.');
+ await a.set('generation','10');assert.deepEqual((await Promise.all([a.incr('generation'),b.incr('generation')])).sort((x,y)=>x-y),[11,12]);
+ console.log('Two INCR commands: final value 12, without an application read/write gap.');
+ await a.sendCommand(['MULTI']);assert.equal(await a.sendCommand(['SET','queued','yes']),'QUEUED');
+ await assert.rejects(a.sendCommand(['INCR']),/wrong number/);
+ assert.equal(await a.sendCommand(['SET','queued-last','yes']),'QUEUED');
+ await assert.rejects(a.sendCommand(['EXEC']),/EXECABORT/);assert.equal(await b.get('queued'),null);assert.equal(await b.get('queued-last'),null);
+ console.log('Queue-time wrong-argument error: EXECABORT; queued SET did not run.');
+ let transactionError;
+ try{await a.multi().set('first','abc').incr('first').set('last','saved').exec();}catch(e){transactionError=e;}
+ assert.ok(transactionError instanceof MultiErrorReply);assert.deepEqual(transactionError.errorIndexes,[1]);
+ assert.equal(await b.get('first'),'abc');assert.equal(await b.get('last'),'saved');
+ console.log('Transaction runtime error at index 1: first=abc, last=saved; later command ran.');
+ await assert.rejects(a.eval("redis.call('SET',KEYS[1],'abc'); redis.call('INCR',KEYS[1]); return redis.call('SET',KEYS[2],'saved')",{keys:['script-first','script-last'],arguments:[]}),/not an integer/);
+ assert.equal(await b.get('script-first'),'abc');assert.equal(await b.get('script-last'),null);
+ console.log('Lua redis.call error: first=abc remains; following SET never runs.');
+ const script=await readFile(new URL('fill.lua',import.meta.url),'utf8');
+ await a.set('generation','g2');
+ const fill=(generation,ttl='30000')=>a.eval(script,{keys:['generation','card'],arguments:[generation,'{"price":12}',ttl]});
+ assert.equal(await fill('g1'),0);assert.equal(await a.get('card'),null);
+ await assert.rejects(fill('g2','0'),/invalid TTL/);assert.equal(await a.get('card'),null);
+ assert.equal(await fill('g2'),1);assert.equal(await a.get('card'),'{"price":12}');assert.ok(await a.pTTL('card')>0);
+ await a.del(['generation','card']);assert.equal(await fill('g2'),0);assert.equal(await a.get('card'),null);
+ console.log('Guarded fill: mismatched/missing generation rejected; invalid TTL rejected before write; matching generation stored value with TTL.');
+ const sha=await a.scriptLoad('return ARGV[1]');assert.equal(await a.evalSha(sha,{keys:[],arguments:['ok']}),'ok');
+ await a.scriptFlush();await assert.rejects(a.evalSha(sha,{keys:[],arguments:['ok']}),/NOSCRIPT/);
+ const again=await a.scriptLoad('return ARGV[1]');assert.equal(again,sha);assert.equal(await a.evalSha(sha,{keys:[],arguments:['ok']}),'ok');
+ console.log('SCRIPT FLUSH on private instance: EVALSHA returns NOSCRIPT; reload restores execution.');
+ console.log('All native assertions passed.');
+}finally{for(const c of clients)if(c.isOpen)c.destroy();}

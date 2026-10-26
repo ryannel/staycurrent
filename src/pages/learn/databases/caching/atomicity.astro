@@ -1,0 +1,94 @@
+---
+import Article from '../../../../layouts/CachingArticle.astro';
+import AtomicRace from '../../../../components/caching/AtomicRace.astro';
+import TransactionErrors from '../../../../components/caching/TransactionErrors.astro';
+import AtomicFill from '../../../../components/caching/AtomicFill.astro';
+import ScriptOccupancy from '../../../../components/caching/ScriptOccupancy.astro';
+---
+<Article slug="atomicity">
+<p>Two workers have each completed a change that should advance a cache’s generation counter. The counter starts at 10. Each worker reads it, adds one locally, then writes the new number. After both changes, it should be 12.</p>
+<p>Let both workers read before either writes. They each calculate 11. Redis executes both writes correctly, yet the final value is 11: one increment has been lost.</p>
+<AtomicRace />
+<p>Try the same schedule with <code>MULTI / SET / EXEC</code>. The result is still 11. Each write is now inside a transaction, but each worker made its decision using a read from outside that transaction. Redis cannot infer that the literal value 11 really means “one more than whatever the counter holds now”.</p>
+<p>The problem is the boundary around the operation. We need the read, decision and write to behave as one change, or we need to detect when the decision’s input has changed. Redis offers several ways to do this. Choosing well starts with identifying the smallest operation whose meaning must survive concurrency.</p>
+
+<h2>Atomic commands and lost updates</h2>
+<p>An <strong>atomic operation</strong> has no intermediate state that another ordinary command can observe by running in the middle of it. For the counter, the existing <code>INCR</code> command expresses the entire change. Switch the illustration to INCR: whichever worker runs first changes 10 to 11; the other changes 11 to 12.</p>
+<p>This is usually the best first question: can a built-in command express the required change? <code>SET key value PX milliseconds</code> stores a value and its expiry in one command. Sending SET and PEXPIRE separately introduces a gap in which the first may succeed and the second never arrive. <code>SET ... NX PX ...</code> similarly combines conditional creation with a lifetime.</p>
+<p>A pipeline changes when the client waits for replies. It does not turn separate commands into one indivisible decision. If the next command depends on a reply, batching also cannot invent that reply in advance. The native lab accompanying this article reproduces the opening race with separate clients and deliberate ordering, then verifies that two INCR commands preserve both changes.</p>
+<p>The figure’s counter deliberately stays present. A generation protocol has an additional obligation: old generations must not become valid again after eviction, restart or counter recreation. Incrementing a disposable key safely is not sufficient to make that key durable coordination metadata. Use a protocol whose token lifetime and recovery rules meet the consistency requirement, as developed in <a href="/learn/databases/caching/invalidation/">cache invalidation and consistency</a>.</p>
+
+<h2>MULTI and EXEC</h2>
+<p><code>MULTI</code> starts a transaction on a connection. Subsequent commands are queued. <code>EXEC</code> asks Redis to execute the queue without serving another client’s ordinary command between its entries. <code>DISCARD</code> abandons the queue before execution.</p>
+<p>Consider replacing a cached value and updating a related Redis-local marker. If both new values are already known, a transaction can keep another client from running between those two writes. It does not make two separate reads by that other client a snapshot: one read could occur before the transaction and the other afterwards. Readers also need a suitable single operation when they require a consistent group of values.</p>
+<p>A queued GET does not return its value immediately. It returns a queue acknowledgement; its eventual result comes from EXEC. Consequently, placing GET and SET inside MULTI does not let application code examine that GET result and compute the queued SET. The dependent decision needs optimistic concurrency control or execution inside Redis.</p>
+<p>Keep the transaction context on one connection. A client method may assemble commands locally before sending MULTI and EXEC, but the server’s context still belongs to the eventual connection. Sharing that context accidentally between unrelated requests changes which operations are grouped.</p>
+
+<h2>WATCH and optimistic locking</h2>
+<p>Select WATCH in the opening experiment. Both workers read 10. Worker A commits 11. Worker B’s EXEC then refuses its queued write because the watched key changed. Advance B twice more: it starts a fresh observation, reads 11, and successfully writes 12.</p>
+<p><strong>Optimistic locking</strong> allows competing work to proceed, then checks whether its assumptions survived. WATCH must come before the read used to make the decision. It does not reserve the key or prevent another client writing. A conflict means the application must repeat the observation and calculation, not merely resubmit its old SET.</p>
+<pre><code>{`WATCH generation
+GET generation       # read 10; application computes 11
+MULTI
+SET generation 11
+EXEC                 # commit, or abort if the watched key changed`}</code></pre>
+<p>These lines describe one connection’s protocol sequence. In the pinned node-redis 6.3.0 lab, a conflicting EXEC rejects with <code>WatchError</code>. The lab uses a dedicated connection per worker and explicitly rereads before retrying. The server’s null transaction reply and a client library’s exception are different representations of the same conflict outcome.</p>
+<p>Budget retries. Under sustained contention, repeated observations can repeatedly become obsolete. Limit attempts and elapsed time, release the connection, and choose a defined failure or fallback when the budget is exhausted. Avoid side effects outside Redis between the observation and commit: sending an email or changing the source database is not undone when EXEC aborts.</p>
+<p>Changes include expiry and eviction in the Redis 8.2.2 baseline, not just another application’s SET. A successful EXEC, an aborted EXEC, or closing the connection clears its watches; UNWATCH abandons them explicitly. Code that exits early must leave the connection clean before returning it to a pool. A dedicated connection simplifies the lab; a production pool needs the same ownership discipline.</p>
+<p>The native experiment also demonstrates why a recognised conflict differs from a missing reply. WatchError says the conditional transaction did not execute. A connection error while awaiting EXEC can leave its execution outcome unknown. The <a href="/learn/databases/caching/clients-and-latency/">client lifecycle</a> still applies: retry policy cannot treat every exception as proof of no writes.</p>
+
+<h2>Transaction errors and rollback</h2>
+<p>“Atomic” is often heard as “either everything succeeds or nothing changes”. That interpretation is too broad here. Redis prevents interleaving during EXEC, but does not roll back successful commands when another queued command encounters an execution error.</p>
+<p>Follow the three operations below. The first stores the string <code>abc</code>. The second tries to increment that string as an integer. The third writes another key. Compare an error discovered while queuing with one discovered during execution, then switch to Lua.</p>
+<TransactionErrors />
+<p>Our native transaction test ends with <code>first = abc</code> and <code>last = saved</code>. INCR failed, but the later SET still ran. node-redis reports a <code>MultiErrorReply</code> identifying the failed entry. The application must inspect the outcome rather than assuming that a rejected promise restored the old state.</p>
+<p>The queue-time test instead sends an INCR with its required key missing. Redis rejects that command before execution, and EXEC aborts the transaction. Neither queued write runs. This is a different failure stage with a different consequence.</p>
+<p>The Lua comparison is different again. An unhandled error from <code>redis.call</code> stops the script at that line. Our script’s first SET survives, while its final SET is never reached. Catching an error with <code>redis.pcall</code> permits explicit handling; it does not automatically reverse earlier writes.</p>
+<p>Design the operation so expected validation failures occur before its first write. Check argument shape, allowed ranges and necessary existing state, then perform a small, predictable mutation. This reduces partial-effect cases. It is not a promise that permissions, memory limits or an unexpected programming error can never cause a command to fail. Choose a data representation that needs fewer writes where practical, and define how an exceptional partial result will be recognised and repaired.</p>
+
+<h2>Lua scripts for conditional cache fills</h2>
+<p>A short Lua script can read Redis state, make a decision and write a result without another client’s command entering between those steps. It is useful when the needed operation is richer than one built-in command and a WATCH round trip would expose an avoidable conflict window.</p>
+<p>Return to a worker holding a fetched product card. It observed generation g1 before loading £12 from the source. It should save that card only if the generation is still g1. Separate GET-generation and SET-card commands would leave a gap. The script puts both inside one Redis operation.</p>
+<AtomicFill />
+<p>Here is the lab’s complete conditional fill. KEYS contains the generation key and card key; ARGV contains the expected generation, encoded card and TTL in milliseconds.</p>
+<pre><code>{`local ttl = tonumber(ARGV[3])
+if not ttl or ttl < 1 or ttl > 60000 or ttl ~= math.floor(ttl) then
+  return redis.error_reply('ERR invalid TTL')
+end
+local current = redis.call('GET', KEYS[1])
+if not current or current ~= ARGV[1] then
+  return 0
+end
+redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[3])
+return 1`}</code></pre>
+<p>The TTL range is this example’s contract, not a Redis limit or a universal freshness recommendation. The caller also bounds the payload. Missing generation metadata rejects the fill rather than treating absence as an initial generation. The single SET combines the stored copy with its expiry. A return of 1 means it was stored; 0 means the guard refused it.</p>
+<p>The lab tests a mismatch, missing metadata, invalid TTL and a matching fill with a positive remaining lifetime. Those tests establish the Redis-local mechanism. A complete system must also maintain the generation correctly, deliver invalidation after source commits and prevent obsolete generation tokens being reused.</p>
+<p>Choose “Commit source change after the fill script” in the illustration. The script legitimately saves £12. A later source commit changes the price to £15, and the copy stays stale until invalidation arrives. No change inside the Lua script can make a separate database’s commit part of its atomic boundary. A strict fresh read may need the authority itself.</p>
+<p>The same boundary applies to leases. Comparing an ownership token and deleting a lease in one script prevents an old owner deleting a successor’s lease. It does not stop an old worker from resuming and performing work elsewhere after its lease expires. Where stale owners must be rejected, the protected resource needs a suitable fencing protocol: it must check an ordered token and refuse older operations. Merely obtaining a token in Redis does not make a downstream service enforce it.</p>
+
+<h2>Script execution time and shared latency</h2>
+<p>Moving logic to Redis saves a network-dependent decision, but moves its cost onto a shared service. A script that traverses a large collection or processes an unbounded argument list can occupy execution long enough to delay unrelated cache hits.</p>
+<ScriptOccupancy />
+<p>Increase the script’s duration. Every arriving GET waits for it to finish. A short source listing is not a cost bound: one command inside a script can itself perform work proportional to a large key, and a small loop can iterate over an enormous input.</p>
+<p>Bound input bytes, item counts, loops and the complexity of called commands. Measure representative worst cases, including values near those bounds. If work can be broken into chunks, recognise the tradeoff: commands can interleave between chunks, so the whole job no longer has one atomic boundary. Often the right design is to make only a small final check-and-write atomic and do the expensive preparation outside Redis.</p>
+<p>The script execution threshold is not a reliable request deadline. Redis does not automatically terminate a script when it crosses <code>busy-reply-threshold</code>. It can report BUSY to other callers. SCRIPT KILL can stop a script only before it has performed writes; it cannot safely undo a partially written script. Keep bounded scripts as the primary protection, rather than relying on emergency interruption.</p>
+
+<h2>EVALSHA, script caching and deployment</h2>
+<p>With EVAL, the application sends the script text. SCRIPT LOAD installs text in Redis’s script cache and returns its SHA digest; EVALSHA invokes that cached script. Keep the source constant and pass changing data as arguments. Interpolating every product ID or value into new source creates needless script variants.</p>
+<p>That script cache is not durable application storage. The lab deliberately clears only its disposable instance’s cache, observes NOSCRIPT from EVALSHA, reloads the same text and executes it successfully. Restart and failover also require clients to handle missing scripts. Redis 7.4 and later can additionally evict scripts introduced through EVAL or EVAL_RO; the 8.2.2 baseline includes this behaviour.</p>
+<p>Handle a known NOSCRIPT response with the client’s supported loading and invocation path. In a pipeline, a failed invocation has already occupied its position while later commands may have run. Retrying it afterwards cannot restore the original ordering. Use an appropriate EVAL or library-supported strategy when that ordering matters; do not confuse missing-script recovery with replaying an uncertain execution.</p>
+<p>Supply every accessed key through the explicit key arguments. Ordinary data goes through ARGV. This also prepares the code for Redis Cluster’s key-slot restrictions, which we will examine separately. Redis Functions offer a server-managed deployment alternative, but do not make expensive logic cheap or extend atomicity to another system. This article uses client-owned scripts to keep the cache example self-contained.</p>
+<p>The baseline is Redis 8.2.2. Later releases may provide direct commands for operations that previously required Lua; check the deployed version before choosing a custom script. Prefer the smallest existing operation that expresses the requirement, use WATCH when the decision must remain in the client, and use short scripts for dependent Redis-local work. Then examine the remaining boundaries: failures, persistence, source commits and resource cost.</p>
+<p>The <a href="/learn/databases/caching/examples/redis-atomicity-lab.zip" download>downloadable transactions and Lua lab</a> runs all the native cases described here. It requires Node 24+, the pinned node-redis package and a Redis 8.2.2 binary. Its runner creates and removes a private Unix-socket Redis process with persistence disabled. Instructions and assertions are included; it never connects to an existing service.</p>
+<p>Atomicity makes a change indivisible to other commands. It does not make that change free. Next, <a href="/learn/databases/caching/#collection">Redis memory and performance</a> follows how values, commands and background operations consume the service’s capacity.</p>
+
+<details class="cache-sources"><summary>Sources and execution evidence</summary><ul>
+<li><a href="https://redis.io/docs/latest/develop/using-commands/transactions/">Redis transactions</a> — queuing, execution, WATCH and error boundaries.</li>
+<li><a href="https://redis.io/docs/latest/develop/programmability/eval-intro/">Scripting with Lua</a> — server-side decisions, explicit keys and script invocation.</li>
+<li><a href="https://redis.io/docs/latest/develop/programmability/lua-api/">Redis Lua API</a> — redis.call, redis.pcall and execution context.</li>
+<li><a href="https://redis.io/docs/latest/develop/programmability/">Redis programmability</a> — execution thresholds and interruption limitations.</li>
+<li><a href="https://redis.io/docs/latest/commands/eval/">EVAL command reference</a> — including script-cache eviction introduced in 7.4.</li>
+<li><a href="https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/">Redis distributed locks</a> — token-checked release and the need for fencing beyond lease ownership.</li>
+<li><a href="https://www.npmjs.com/package/redis/v/6.3.0">node-redis 6.3.0</a> and <a href="https://github.com/redis/redis/releases/tag/8.2.2">Redis 8.2.2</a> — pinned native lab versions.</li>
+</ul><p>Sources checked and native assertions executed on 27 October 2026. Separate clients and deliberate barriers reproduce the races; no timing-dependent luck is needed. The figures are logical models, and their execution durations are illustrative. The error figure exposes internal inspection frames that another client cannot observe mid-execution. The lab verifies the stated outcomes, not production throughput or a complete distributed consistency protocol.</p></details>
+</Article>

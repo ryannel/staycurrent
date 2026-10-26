@@ -4,19 +4,23 @@ Use /private/tmp/staycurrent-caching-20261026 explicitly for every command.
 Branch codex/application-caching. Do not touch, switch or reset the primary
 checkout /Users/ryannel/Workspace/staycurrent: it has unrelated user edits.
 
-Active goal is NOT complete. Articles 1–6 published and verified. Article 7 is
-complete and publication is underway: 33 model tests pass, production build passes
+Active goal is NOT complete. Articles 1–7 published and verified. Article 7 commit
+c3e84865c41e1d01120510f8063d7145fc97deff, deployment 40418654905 succeeded: 33 model tests pass, production build passes
 all 13 site-check rules, native client lab and desktop/phone controls checked.
-Seven later articles plus final runnable reference application/load/failure lab
+Six later articles plus final runnable reference application/load/failure lab
 remain. Full plan/gates in plan.md. Both teaching references already read and
 interacted with; observations in plan.md. Continue alone; no subagents requested.
 
 Article 7 adds three figures, complete prose and a downloadable, pinned native
 node-redis 6.3.0 / Redis 8.2.2 client lab. See article-07-plan.md,
 article-07-review.md and evidence/clients.txt. Manifest is available and article 6
-links to it. Commit, push and verify live controls next, then record publication.
-Next article: Redis transactions and Lua scripts (atomicity). Cover lost updates,
-MULTI/EXEC, WATCH, bounded atomic scripts and limits beyond one Redis instance.
+links to it. Live batch-six Next reply showed 1/6 at 22 ms, final reply 32 ms;
+no console errors. Article 8 is now complete: four figures, prose, native lab,
+39 model tests and all build checks pass; desktop dark/light and phone checked.
+Native evidence in evidence/atomicity.txt, review in article-08-review.md.
+Manifest and previous article link updated; commit/push/deploy article 8 next.
+Next article after publication: Redis memory and performance. Cover byte accounting,
+MEMORY/INFO, encoding, large keys/command costs, headroom and copy-on-write.
 
 Serena manual read. Isolated checkout mutations use ordinary file tools because
 Serena restricts them to the original root. Local Node 24.16 / pnpm 11.4 installed.

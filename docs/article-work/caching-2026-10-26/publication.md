@@ -63,3 +63,14 @@
   No consoleerrors. Article5 links directly to article6.
 - Sixarticles available; eightremain plus finalapplication/load/failurelab.
   Article7 design/research started; see article-07-plan.md.
+
+## Article 7 — 27 October 2026
+
+- Commit c3e84865c41e1d01120510f8063d7145fc97deff pushed to origin/main.
+- Publish run 40418654905 succeeded (tests, build, deployment):
+  https://github.com/ryannel/staycurrent/actions/runs/40418654905
+- Opened https://staycurrent.dev/learn/databases/caching/clients-and-latency/.
+  Batch six and Next reply: 1/6 replies at 22 ms, last reply 32 ms, total
+  execution 12 ms. No console errors. Article 6 links directly to article 7.
+- Seven articles available; seven remain plus final reference application/lab.
+  Article 8 plan and deterministic native experiments started.
