@@ -80,5 +80,6 @@ verification. Distinguish illustrative models from observed Redis execution.
 - Article 5 published in commit fc04fb30; deployment and live shared-loading control verified.
 - Article 6 published in commit5d7ce0aa; deployment and live bounded-admission control verified.
 - Article 7 published in commit c3e84865; deployment and live pipeline control verified.
-- Article 8 complete: four interactive figures, native lab, prose and browser review; publication checks underway.
-- Articles 9–14 remain to be written, illustrated, verified and published.
+- Article 8 published in commit dcd369c4; deployment and live WATCH retry verified.
+- Article 9 complete: four figures, native memory lab, prose and final browser/build checks; publication underway.
+- Articles 10–14 remain to be written, illustrated, verified and published.

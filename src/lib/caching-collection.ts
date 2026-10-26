@@ -8,7 +8,7 @@ export const cachingArticles = [
   { slug: 'failure-handling', title: 'Cache failures and graceful degradation', description: 'Bound fallback work, deadlines and retries when Redis is unavailable.', published: true },
   { slug: 'clients-and-latency', title: 'Redis clients, latency and pipelining', description: 'Account for round trips, client queues, batches and uncertain command outcomes.', published: true },
   { slug: 'atomicity', title: 'Redis transactions and Lua scripts', description: 'Compose atomic operations and understand the boundaries of transactions, scripts and leases.', published: true },
-  { slug: 'memory-and-performance', title: 'Redis memory and performance', description: 'Size memory, find expensive commands and reserve headroom for Redis operations.', published: false },
+  { slug: 'memory-and-performance', title: 'Redis memory and performance', description: 'Size memory, find expensive commands and reserve headroom for Redis operations.', published: true },
   { slug: 'replication-and-failover', title: 'Redis replication, persistence and failover', description: 'Reason about replication lag, recovery, promotion and acknowledged-write loss.', published: false },
   { slug: 'redis-cluster', title: 'Redis Cluster and hot keys', description: 'Follow hash slots, redirects, resharding and the limits of adding shards.', published: false },
   { slug: 'client-side-caching', title: 'Client-side caching and cache hierarchies', description: 'Keep local and shared copies coherent across invalidation and disconnection.', published: false },

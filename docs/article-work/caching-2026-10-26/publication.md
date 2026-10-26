@@ -74,3 +74,14 @@
   execution 12 ms. No console errors. Article 6 links directly to article 7.
 - Seven articles available; seven remain plus final reference application/lab.
   Article 8 plan and deterministic native experiments started.
+
+## Article 8 — 27 October 2026
+
+- Commit dcd369c4ccd6d0581065f94e577ae9d81e4d7c4d pushed to origin/main.
+- Publish run 40420037722 succeeded (tests, build and deployment):
+  https://github.com/ryannel/staycurrent/actions/runs/40420037722
+- Opened https://staycurrent.dev/learn/databases/caching/atomicity/.
+  WATCH shared schedule rejected B; two more B advances reread and committed 12.
+  No console errors. Article 7 links directly to article 8.
+- Eight articles available; six remain plus final reference application/lab.
+  Article 9 has primary-source notes and a first native memory lab.
