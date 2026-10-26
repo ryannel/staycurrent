@@ -1,5 +1,6 @@
 import rawCollection from '../articles/relational-rebuild/collection.json';
 import { articleTypes, type ArticleType } from './article-types';
+export { splitRelationalRebuildSources } from './relational-rebuild-sources';
 
 export const relationalRebuildHome = '/review/relational-rebuild/';
 export type RelationalRebuildStatus = 'planned' | 'draft' | 'reviewed';
@@ -149,23 +150,4 @@ export function relationalRebuildLinks(html: string, entries: RelationalRebuildS
     if (!entry?.available) return `<span class="relational-rebuild-unavailable">${label} <small>(${entry?.status === 'planned' || !entry ? 'planned' : 'not yet available'})</small></span>`;
     return `<a${before}href=${quote}${escapeHtml(`${relationalRebuildHref(entry.slug)}${target.search}${target.hash}`)}${quote}${after}>${label}</a>`;
   });
-}
-
-/** Move a final sources section below all collection navigation, retaining heading and section anchors. */
-export function splitRelationalRebuildSources(html: string): { body: string; heading: string; sources: string; id?: string } {
-  const heading = [...html.matchAll(/<h2\b[^>]*>\s*Sources and further reading\s*<\/h2>/gi)].at(-1);
-  if (!heading || heading.index === undefined) return { body: html, heading: '', sources: '' };
-  let body = html.slice(0, heading.index);
-  let sources = html.slice(heading.index + heading[0].length);
-  const wrapper = body.match(/<section\b([^>]*)>\s*$/i);
-  const ending = sources.match(/<\/section>\s*$/i);
-  let id: string | undefined;
-  if (wrapper && ending) {
-    id = wrapper[1].match(/\bid\s*=\s*["']([^"']+)["']/i)?.[1];
-    body = body.slice(0, wrapper.index);
-    sources = sources.slice(0, ending.index);
-  }
-  const sourceHeading = /\bid\s*=/.test(heading[0]) ? heading[0] : heading[0].replace('<h2', '<h2 id="sources-and-further-reading"');
-  const headingId = sourceHeading.match(/\bid\s*=\s*["']([^"']+)["']/i)?.[1];
-  return { body, heading: sourceHeading, sources, id: id === headingId ? undefined : id };
 }

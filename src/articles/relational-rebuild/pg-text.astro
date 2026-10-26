@@ -1,0 +1,202 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import Preparation from '../../components/relational-rebuild-pg-text/Preparation.astro';
+import Candidates from '../../components/relational-rebuild-pg-text/Candidates.astro';
+import Ranking from '../../components/relational-rebuild-pg-text/Ranking.astro';
+import Configuration from '../../components/relational-rebuild-pg-text/Configuration.astro';
+import '../../components/relational-rebuild-pg-text/figures.css';
+---
+<div class="relational-design">
+<p>Full-text search finds documents by the words they contain, after preparing those words for search. A request for <em>mugs</em> can find a description containing <em>mug</em>. A request for <em>blue mugs</em> can require both words anywhere, or require them in that order. These are different questions from whether the original text contains the characters <code>mug</code>.</p>
+<p>PostgreSQL separates the work into three parts. A <strong>text search configuration</strong> decides how words become searchable terms. The <code>@@</code> operator tests whether a prepared document matches a prepared query. A ranking function then gives the matches an order. An index can reduce the matching work; it does not choose what the words mean or which result a reader will find useful.</p>
+<p>The examples search the shop’s catalogue after order 103: P3 has stock 10, P7 has none, and P9 has 4. Product names stay the same. A separate <code>catalogue_search</code> projection adds invented descriptions, so that one result row means one product. The small drawings explain meaning; the checked SQL results come from PGlite 0.5.8 (PostgreSQL 18.3 in WebAssembly) and a disposable PostgreSQL 18.6 server. They establish no production latency.</p>
+
+<section aria-labelledby="lexemes">
+<h2 id="lexemes">From words to lexemes</h2>
+<p>A <strong>lexeme</strong> is the term left after preparing a word for search. With PostgreSQL’s built-in <code>english</code> configuration, <em>mugs</em> becomes <code>mug</code>, capitals become lower case, and common words such as <em>the</em> disappear as <strong>stop words</strong>. This reduction of word endings is called stemming. It helps related forms match; it does not discover that <em>cup</em> means something similar to <em>mug</em>.</p>
+<p><code>to_tsvector</code> prepares a document and returns a <code>tsvector</code>: its lexemes with the positions where they occurred. Figure 1 follows <em>The blue mugs</em>. Step through English preparation, then change the configuration to <em>simple</em> and compare the final match.</p>
+<Preparation />
+<p>English preparation kept positions 2 and 3. Removing <em>The</em> did not move <em>blue</em> into position 1. Those positions later let a phrase test the distance between words. The vector prints lexemes in sorted order, with all occurrences of the same lexeme collected together; it is not a sentence to read from left to right.</p>
+<Sql label="Prepare a document and a plain request" code={`SELECT to_tsvector('english', 'The blue mugs');
+-- 'blue':2 'mug':3
+
+SELECT to_tsvector('english', 'The blue mugs')
+       @@ plainto_tsquery('english', 'mug');
+-- true`} />
+<p>The right-hand value is a <code>tsquery</code>, a query over lexemes. Here it contains just <code>mug</code>, which the vector contains. Neither value is the original text. Keep that text for display and excerpts. Casting <code>'The blue mugs'::tsvector</code> instead gives the literal lexemes <code>'The' 'blue' 'mugs'</code>, without stemming or positions. A cast reads an already prepared representation; it does not perform the work of <code>to_tsvector</code>.</p>
+<h3 id="configuration">Choosing a text search configuration</h3>
+<p>Use a configuration suited to the document language and vocabulary, and prepare requests compatibly. An English request for <em>mug</em> will not find the <code>mugs</code> lexeme kept by the built-in <code>simple</code> configuration. Simple can suit vocabulary whose written forms matter, but giving up stemming changes which requests match. Neither configuration is universally better.</p>
+<p>Specify the configuration in stored expressions and queries. Omitting it makes preparation depend on <code>default_text_search_config</code>, a session setting. A different default can then change a request’s meaning. For a multilingual catalogue, retain the document’s language/configuration and decide which languages the interface searches; changing the query’s language alone does not translate a document.</p>
+<p>When an expected word disappears, inspect preparation before rebuilding an index:</p>
+<Sql label="Inspect token and dictionary decisions" code={`SELECT token, dictionary, lexemes
+FROM ts_debug('english', 'The blue mugs')
+WHERE alias <> 'blank';
+-- The   | english_stem | {}
+-- blue  | english_stem | {blue}
+-- mugs  | english_stem | {mug}`} />
+<p>The parser separates text into tokens and assigns token types. The configuration maps those types to dictionaries, which produce lexemes or discard a token. In this output, <code>{'{}'}</code> means <em>The</em> was recognised as a stop word. <code>ts_debug</code> exposes the decision that a missing-match investigation needs. An index cannot recover a lexeme preparation never produced.</p>
+</section>
+
+<section aria-labelledby="requests">
+<h2 id="requests">Turning a search request into a query</h2>
+<p>The query constructor defines the search box’s language. For an ordinary box where all entered words are required, use <code>plainto_tsquery</code>. For quoted phrases, alternatives and exclusions, <code>websearch_to_tsquery</code> accepts a small web-style language. Choose that behaviour deliberately: a customer who types <em>blue OR tea</em> should know whether OR is an instruction or another word.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Query constructor choices"><table><caption>Four ways to interpret a request · English configuration</caption><thead><tr><th>Constructor and input</th><th>Prepared query</th><th>What it asks</th></tr></thead><tbody>
+<tr><td><code>plainto_tsquery</code><br />blue mugs</td><td><code>'blue' &amp; 'mug'</code></td><td>Both lexemes, anywhere.</td></tr>
+<tr><td><code>phraseto_tsquery</code><br />blue mugs</td><td><code>'blue' &lt;-&gt; 'mug'</code></td><td>Blue immediately followed by mug.</td></tr>
+<tr><td><code>websearch_to_tsquery</code><br />"blue mugs" OR teapot -green</td><td><code>('blue' &lt;-&gt; 'mug') | ('teapot' &amp; !'green')</code></td><td>The phrase, or teapot without green.</td></tr>
+<tr><td><code>to_tsquery</code><br />mug:*A &amp; !green</td><td><code>'mug':*A &amp; !'green'</code></td><td>A lexeme beginning mug, at weight A, and no green.</td></tr>
+</tbody></table></div>
+<p><code>&amp;</code> means AND, <code>|</code> OR, and <code>!</code> NOT. Parentheses group the conditions. <code>:*</code> in an explicit query matches a <em>lexeme prefix</em>, not arbitrary characters anywhere in the original text. Weight <code>A</code> will identify the product-name occurrences below.</p>
+<p><code>to_tsquery</code> expects query syntax and can reject malformed input. It suits a controlled advanced interface or a query assembled from validated choices. Plain and phrase constructors treat punctuation as text separators rather than recognising that syntax; web-style input recognises quotes, OR and a minus for exclusion, but not explicit weight or prefix labels. Its tolerance of malformed search syntax does not make SQL string concatenation safe. Bind the search input as SQL data, for example <code>websearch_to_tsquery('english', $1)</code>, as in <a href="/learn/databases/relational/application-sql/">SQL at the application boundary</a>.</p>
+<h3 id="phrases">Phrases and positions</h3>
+<p><code>'blue' &amp; 'mug'</code> matches <em>Blue ceramic mugs</em> and <em>Mugs in blue</em>. The phrase <code>'blue' &lt;-&gt; 'mug'</code> matches neither: the first has an intervening word, and the second has the wrong order. Stemming still applies, so <em>blue mug</em> and <em>blue mugs</em> can satisfy the same phrase.</p>
+<Sql label="A stop word leaves a phrase distance" code={`SELECT phraseto_tsquery('english', 'mugs for tea');
+-- 'mug' <2> 'tea'
+
+SELECT to_tsvector('english', 'Mugs with tea')
+       @@ phraseto_tsquery('english', 'mugs for tea');
+-- true`} />
+<p><code>&lt;2&gt;</code> requires the second lexeme exactly two positions after the first. <em>For</em> was removed, but its position counted. <em>With</em> is also a stop word here, so <em>Mugs with tea</em> passes the same test. A normalised phrase therefore proves an ordered lexeme sequence with specified gaps, not an exact character quotation or the identity of a removed word. Use a separate test on original text when the interface promises that stronger meaning.</p>
+<p>Also decide what to do when preparation leaves no useful positive request. Empty text and English <em>the</em> produce an empty query, which matches nothing. <code>numnode(query) = 0</code> detects that case. A request such as <em>-mug</em> can match almost the whole catalogue and supplies no positive key to narrow the search. <code>querytree(query) = 'T'</code> identifies requests with no useful index restriction, including broader combinations such as <em>blue OR -mug</em>. This shop asks the customer to add a positive search term; browsing the catalogue is a separate interface. That is a product rule, not a syntax error.</p>
+</section>
+
+<section aria-labelledby="document">
+<h2 id="document">Building the searchable document</h2>
+<p>Choose what one result represents before choosing its index. Here it is one product, with its name and description forming one searchable document. Orders and individual word occurrences do not become result rows.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Catalogue search projection"><table><caption>The illustrative search projection · stock after order 103</caption><thead><tr><th>Product</th><th>Name</th><th>Added description</th><th>Stock</th></tr></thead><tbody><tr><td>P3</td><td>Green tea, 50 g</td><td>Loose green tea for a quiet afternoon.</td><td>10</td></tr><tr><td>P7</td><td>Blue mug</td><td>Blue ceramic mugs for tea.</td><td>0</td></tr><tr><td>P9</td><td>Teapot</td><td>Blue teapot for green tea.</td><td>4</td></tr></tbody></table></div>
+<p>A name hit should count more than a description hit. <code>setweight</code> labels each occurrence with <code>A</code>, <code>B</code>, <code>C</code> or <code>D</code>; the ranking function assigns a numerical weight to each label. Give names A and descriptions D, then combine their vectors with <code>||</code>. Figure 2 follows P7’s positions across that combination.</p>
+<figure class="text-figure" aria-labelledby="fields-title">
+<figcaption id="fields-title"><span class="figure-number">Figure 2</span> Two fields become one positional document</figcaption>
+<p class="scene-label">Name · weight A</p><div class="field-strip"><span>Blue<small>1A</small></span><span>mug<small>2A</small></span></div>
+<div class="field-boundary"><p class="scene-label">Description · weight D · shifted by the name’s last position, 2</p><div class="field-strip"><span>Blue<small>3D</small></span><span>ceramic<small>4D</small></span><span>mugs<small>5D</small></span><span class="stop">for<small>6 · omitted</small></span><span>tea<small>7D</small></span></div></div>
+<p class="representation">'blue':1A,3 'ceram':4 'mug':2A,5 'tea':7</p>
+<p class="figure-note">The vector collects both blue and mug occurrences. D is the default label and is not printed. The dashed field boundary is drawn for us; the combined vector stores no field separator. The phrase mug blue can match positions 2 and 3 across it.</p>
+</figure>
+<p>The right-hand vector’s positions shift by the largest position in the left-hand vector. This is a positional continuation, so a phrase can cross from name to description. It also differs from preparing concatenated source text when the left field ends in removed stop words: their trailing positions are no longer in that left vector. If phrases must remain inside one field, match the separate field vectors, or require a consistent field weight on each phrase term. Do not infer a boundary from a visual line in the application.</p>
+<Sql label="Store a weighted searchable document" code={`CREATE TABLE catalogue_search (
+  product_id text PRIMARY KEY,
+  name text NOT NULL,
+  description text,
+  stock integer NOT NULL,
+  search tsvector GENERATED ALWAYS AS (
+    setweight(to_tsvector('pg_catalog.english'::regconfig, name), 'A') ||
+    setweight(to_tsvector('pg_catalog.english'::regconfig,
+                         coalesce(description, '')), 'D')
+  ) STORED
+);
+
+CREATE INDEX catalogue_search_gin
+ON catalogue_search USING gin (search);`} />
+<p><code>coalesce(description, '')</code> makes an absent description contribute an empty vector. Without it, <code>to_tsvector(NULL)</code> returns NULL and the concatenation loses even a perfectly good name. <code>STORED</code> makes the generated vector occupy space in the row and be computed on writes, ready for matching and ranking.</p>
+<h3 id="stored-or-expression">Expression index or stored search vector</h3>
+<p>An expression index can instead index <code>to_tsvector('english', ...)</code> directly, without retaining a separate vector column. It saves that column’s storage. The query must use the indexed document expression with the same explicit configuration; relying on the session default is not equivalent. Any ranking or recheck which needs the vector must derive it again from the source.</p>
+<p>A stored vector costs space but makes the prepared document available repeatedly. This article uses it because phrases, weights and ranking all need more than lexeme membership. A generated expression can depend only on the current row, using immutable operations. It cannot join supplier names or tags from other tables. If those become part of a product’s document, choose a maintenance design which handles every contributing change, such as an explicitly maintained search table. A product-name trigger alone would miss a supplier rename. An asynchronously maintained copy also needs an explicit freshness contract.</p>
+</section>
+
+<section aria-labelledby="gin">
+<h2 id="gin">Finding matches with a GIN index</h2>
+<p>The <a href="/learn/databases/relational/postgresql/indexes/">index-method article</a> introduced an inverted index: a component key points to the rows containing it. For text, those keys are lexemes. The posting list for <code>blue</code> leads to documents containing blue; intersecting it with the list for <code>mug</code> finds documents containing both.</p>
+<p>GIN’s built-in text-search class keeps lexeme keys, without their positions or weight labels. Figure 3 uses three diagnostic snippets to show what that information can prove. Run the words-anywhere request, then switch to the phrase.</p>
+<Candidates />
+<p>The keys suffice for ordinary lexeme membership. The phrase must inspect the vector to check positions, and <code>blue:A</code> must check that a blue occurrence carries A. GIN still helps by excluding documents missing necessary lexemes. PostgreSQL performs the required rechecks; the application does not accept every candidate as a match.</p>
+<p>On the native three-product fixture, an index-assisted <code>blue:A</code> query collected two candidates: P7 and P9. P7 has blue in its name, P9 only in its description. The heap recheck rejected P9. Selected fields from that observed plan are:</p>
+<pre class="plan-output" aria-label="Observed weighted GIN plan">{`Bitmap Heap Scan on catalogue_search (actual rows=1.00 loops=1)
+  Recheck Cond: (search @@ '''blue'':A'::tsquery)
+  Rows Removed by Index Recheck: 1
+  Heap Blocks: exact=1
+  -> Bitmap Index Scan on catalogue_search_gin
+       (actual rows=2.00 loops=1)
+       Index Cond: (search @@ '''blue'':A'::tsquery)`}</pre>
+<p>Sequential scans were discouraged to expose GIN on this tiny fixture. With normal settings, the checked phrase lookup used a sequential scan. Neither observation recommends forcing a plan in an application. <code>Heap Blocks: exact</code> means exact tuple locations survived in the bitmap; it does not mean those tuples already passed the weighted predicate. A <code>Recheck Cond</code> line alone also does not count rejected rows. The parent article separates operator rechecks from lossy bitmaps and snapshot visibility.</p>
+<p>GIN supplies neither the original document nor a relevance order. A query can find few lexeme candidates and still spend time fetching their vectors, testing phrases, checking stock and sorting scores.</p>
+</section>
+
+<section aria-labelledby="ranking">
+<h2 id="ranking">Ranking the eligible results</h2>
+<p>A text match answers whether a product satisfies the query. A <strong>rank</strong> supplies an ordering signal among matches. Neither establishes whether the product may be returned. For this shop’s in-stock search, P7’s stock 0 makes it ineligible however good its text score is.</p>
+<p>The request <em>blue OR tea</em> matches all three products. With the weighted document above, <code>ts_rank_cd</code> gives P7 1.2, P3 1.1 and P9 0.2. Figure 4 follows the correct selection, then lets you move the limit before the stock filter.</p>
+<Ranking />
+<Sql label="Rank all eligible matches before choosing two" code={`WITH request AS (
+  SELECT websearch_to_tsquery('english', $1) AS query
+)
+SELECT p.product_id, p.name,
+       ts_rank_cd(p.search, r.query) AS rank
+FROM catalogue_search AS p
+CROSS JOIN request AS r
+WHERE p.search @@ r.query
+  AND p.stock > 0
+  AND numnode(r.query) > 0
+  AND querytree(r.query) <> 'T'
+ORDER BY rank DESC, p.product_id
+LIMIT 2;`} />
+<p>For bound input <code>blue OR tea</code>, this returns P3, then P9. Put every required eligibility condition into this result’s selection: stock, visibility, tenant and access restrictions where applicable. The secondary product-ID order makes equal scores deterministic for the same data and query. It does not freeze results across later catalogue edits.</p>
+<p>A subquery which first takes the top two text matches would retain P7 and P3. Filtering stock outside it then returns just P3; it cannot recover P9. An arbitrary limit on index candidates is worse: those candidates have no promised score order. A bounded final answer does not generally bound how many matching vectors PostgreSQL must score. The native ranking plan filtered P7 and sorted the two surviving rows before Limit.</p>
+<h3 id="scores">What the relevance score measures</h3>
+<p><code>ts_rank</code> ranks from matching-lexeme frequency; <code>ts_rank_cd</code> uses cover density, rewarding nearby query evidence. Both accept field weights. The default array is ordered D, C, B, A with values <code>{'{0.1, 0.2, 0.4, 1.0}'}</code>. A name occurrence therefore carries ten times a description occurrence’s weight in this setup, although the final ranking formula is more than a raw word count.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Ranking changes with document evidence"><table><caption>Changed snippets for blue AND mugs · all occurrences at weight D</caption><thead><tr><th>Document</th><th><code>ts_rank</code></th><th><code>ts_rank_cd</code></th><th>Cover density, normalisation 2</th></tr></thead><tbody><tr><td>blue mugs</td><td>0.099103</td><td>0.1</td><td>0.05</td></tr><tr><td>blue ceramic mugs</td><td>0.098501</td><td>0.05</td><td>0.016667</td></tr><tr><td>blue mugs blue mugs</td><td>0.340005</td><td>0.3</td><td>0.075</td></tr><tr><td>blue mugs for a quiet afternoon</td><td>0.099103</td><td>0.1</td><td>0.025</td></tr></tbody></table></div>
+<p>Separating blue and mugs reduced cover density. Repeating them raised both scores. Adding unrelated words left the unnormalised scores unchanged in the last row, while normalisation 2 divided by the represented document length and lowered the score. Choose that length penalty only if it improves the wanted ordering; a short product name is not automatically a better answer than a useful description.</p>
+<p>Keep positions when using cover density: it ignores stripped lexemes and gives zero if none retain positions. Scores use local document/query information, rather than a corpus-wide measure of how rare a term is. A value 0.8 does not mean an 80% chance of relevance. Normalisation 32 transforms rank into rank/(rank+1); it changes the scale without changing that ordering. Treat scoring choices as hypotheses to check against useful results.</p>
+<h3 id="excerpts">Showing why a result matched</h3>
+<p>After selecting the winners, <code>ts_headline</code> can choose an excerpt from original text and mark query terms. Do that work for the returned rows, rather than every candidate. It parses source text separately; a stored vector cannot reconstruct the excerpt.</p>
+<Sql label="Highlight original text after result selection" code={`SELECT ts_headline(
+  'english', 'Blue ceramic mugs for tea.',
+  phraseto_tsquery('english', 'blue mugs'),
+  'StartSel=[[, StopSel=]], HighlightAll=true'
+);
+-- [[Blue]] ceramic [[mugs]] for tea.`} />
+<p>This diagnostic text fails the adjacent phrase, yet both terms are highlighted. Highlighting shows term evidence, not proof that every phrase or weight restriction passed. Use <code>@@</code> for selection. Headline output is also not guaranteed safe as HTML: escaping or sanitising untrusted source remains necessary. Plain-text markers displayed as text are one option; structured highlighting must keep source text from becoming executable markup.</p>
+</section>
+
+<section aria-labelledby="maintenance">
+<h2 id="maintenance">Keeping search data current</h2>
+<p>A stored generated vector follows source-column writes. In a separate edit to P7’s description, removing its first <em>Blue</em> changes the vector and its GIN entries as part of that write. Blue remains in the name at weight A, but no longer occurs at weight D. After commit, a new reader sees the committed representation under its normal snapshot rules.</p>
+<p>Changing the preparation rules is different. PostgreSQL does not revisit every stored document because a dictionary or configuration changed. Figure 5 keeps the source unchanged and changes how <em>mugs</em> is prepared.</p>
+<Configuration />
+<p>Rebuilding GIN over a stored vector reads that vector. If it still contains the old lexemes, the rebuilt index faithfully preserves the old meaning. Regenerate the vectors from source under the intended configuration; ordinary writes to that stored column’s source also maintain its index entries. For an expression index, rebuilding instead evaluates its document expression from the base row. The distinction is which representation the index is reading.</p>
+<h3 id="configuration-change">Changing the search configuration</h3>
+<p>Treat a language, dictionary, stop-word or field-composition change as a change of representation. First prepare representative documents and requests under the proposed rules. Check the resulting lexemes and expected matches. Then derive a new, identifiable vector/index version from source, account for writes while it is being populated, and switch matching queries with their compatible preparation. Keep the earlier version available until the switch and its checks are complete.</p>
+<p>Changing the meaning of a named configuration in place can mix old stored documents with newly prepared requests, as the figure shows. A separate configuration name helps identify the intended version, provided its dependencies are also kept under control. Merely copying a configuration does not isolate it from later changes to dictionaries that both versions reference.</p>
+<p>Dictionary files add another step: sessions can cache their contents. PostgreSQL documents using <code>ALTER TEXT SEARCH DICTIONARY</code>, even with unchanged options, to make existing sessions reload a changed file. Reloading rules still does not recompute stored vectors. Check both fresh derivation and the materialised search data. Lock management, concurrent index builds, backfill races and switching live writers need the procedures in <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a>.</p>
+</section>
+
+<section aria-labelledby="checking">
+<h2 id="checking">Checking search quality and query work</h2>
+<p>Keep two comparisons separate. Search quality asks whether the right products match and appear near the top. Execution cost asks how much database work produces those results. A faster index cannot repair a stop word which removed an essential term, or a ranking rule which puts irrelevant products first.</p>
+<p>Retain representative requests with expected matches and useful ordering judgements. For this projection, <em>mugs</em> should find P7; <em>green tea</em> should find P3 and P9; <em>blue mugs</em> as a phrase should find P7; <em>blue OR tea</em> with stock eligibility should return P3, P9. Include zero-result requests, phrases, exclusions, product codes and misspellings. A judgement such as “P3 should lead for green tea” is a search requirement to test, not something an index proves.</p>
+<p>For result correctness, compare the full matching set from a fresh source derivation with the indexed stored representation, using the same configuration, document composition and query. Check both missing and extra IDs. Then compare the complete eligible score order before applying the same final limit. A complete scan with those same rules is a reference for implementation agreement; it cannot establish that the rules themselves are useful.</p>
+<Sql label="Inspect matching, filtering, ranking and sorting work" code={`EXPLAIN (ANALYZE, BUFFERS)
+SELECT product_id, ts_rank_cd(search, query) AS rank
+FROM catalogue_search
+CROSS JOIN websearch_to_tsquery('english', 'blue OR tea') AS query
+WHERE search @@ query AND stock > 0
+ORDER BY rank DESC, product_id
+LIMIT 2;`} />
+<p>On a representative corpus, compare a rare term with a common one, narrow and broad filters, and a phrase with simple membership. Count candidates, actual returned rows, index-recheck rejects, separate filter rejects and buffer accesses. Check how many rows reach the ranking and sort, and whether the sort spills. <a href="/learn/databases/relational/postgresql/query-execution/">Reading and repairing PostgreSQL plans</a> develops that diagnosis. The tiny catalogue’s sequential scan is sensible evidence about three rows, not a reason to discard GIN for a large search.</p>
+<p>Measure writes too. Longer documents and more distinct lexemes add index memberships; stored preparation adds write work and space. GIN can defer updates through its pending list, so include later cleanup and search work rather than timing only an initial insert. The parent’s <a href="/learn/databases/relational/postgresql/indexes/#writes">write-cost explanation</a> follows that trade.</p>
+<p>The <a href="/relational-rebuild/pg-text/catalogue-search.sql">catalogue SQL experiment</a> creates temporary example rows and runs the matching and ranking cases in one transaction, then rolls them back. The drawings are models built from those checked meanings. The native GIN plan above used explicitly discouraged sequential scans to show a mechanism; it is not a benchmark or a guaranteed plan.</p>
+</section>
+
+<section aria-labelledby="alternatives">
+<h2 id="alternatives">When the request needs another kind of search</h2>
+<p>Use the request’s meaning to choose the tool. For exact product code <code>P7</code>, compare the code column directly, with the required case rules. For arbitrary character fragments, use a substring predicate such as <code>LIKE '%mug%'</code>; <code>pg_trgm</code> offers GIN/GiST support for suitable pattern and similarity queries. Very short or non-discriminating patterns can still provide little index restriction.</p>
+<p>A misspelling such as <em>mgu</em> does not become <code>mug</code> through stemming. Trigram similarity can supply spelling candidates, but its threshold and suggestions need evaluation. Domain synonyms require explicit dictionary/query rules or another retrieval design; built-in English preparation does not know every catalogue relationship.</p>
+<p>A request for <em>something to keep tea warm</em> might be useful even when no document shares those words. Embeddings provide a different representation for that question. <a href="/learn/databases/relational/postgresql/vector-search/">Vector search in PostgreSQL</a> separates the embedding’s usefulness from exact or approximate neighbour retrieval. Combining lexical and vector candidates can be useful, but their scores have different meanings. Judge the combined final order against the search task instead of treating either score as a common probability.</p>
+</section>
+
+<section aria-labelledby="sources">
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against PostgreSQL 18 documentation. Catalogue descriptions and diagnostic snippets are illustrative; SQL meanings and the stated small-fixture results were checked in PGlite 0.5.8 (PostgreSQL 18.3/WebAssembly) and native PostgreSQL 18.6. No production performance was measured.</p>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/textsearch-controls.html">Controlling Text Search</a>: document/query constructors, weights, ranking and headline behaviour.</li>
+<li><a href="https://www.postgresql.org/docs/18/datatype-textsearch.html">Text Search Types</a> and <a href="https://www.postgresql.org/docs/18/functions-textsearch.html">Text Search Functions and Operators</a>: literal representations, positions and query tests.</li>
+<li><a href="https://www.postgresql.org/docs/18/textsearch-tables.html">Tables and Indexes</a> and <a href="https://www.postgresql.org/docs/18/ddl-generated-columns.html">Generated Columns</a>: expression compatibility, stored vectors and same-row generation.</li>
+<li><a href="https://www.postgresql.org/docs/18/textsearch-features.html">Additional Features</a>: vector concatenation, stripped positions, query diagnostics and automatic updates.</li>
+<li><a href="https://www.postgresql.org/docs/18/textsearch-indexes.html">Preferred Index Types for Text Search</a>: GIN keys and weighted rechecks.</li>
+<li><a href="https://www.postgresql.org/docs/18/textsearch-debugging.html">Testing and Debugging Text Search</a> and <a href="https://www.postgresql.org/docs/18/textsearch-dictionaries.html">Dictionaries</a>: token decisions, stop words and dictionary reloads.</li>
+<li><a href="https://www.postgresql.org/docs/18/pgtrgm.html">pg_trgm</a>: character similarity, indexed patterns and text-search integration.</li>
+</ul>
+</section>
+</div>
+<style>
+.plan-output { margin:1.5rem 0; padding:1rem; border:1px solid var(--color-rule); background:var(--color-surface-alt); color:var(--color-text); overflow-x:auto; font:.77rem/1.8 var(--font-mono); }
+</style>
