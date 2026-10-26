@@ -1,0 +1,215 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import LockRecovery from '../../components/relational-rebuild-pg-operations/LockRecovery.astro';
+import '../../components/relational-rebuild-pg-operations/operations.css';
+---
+<div class="pg-ops">
+<p>A slow history request may be waiting for an application connection, waiting inside PostgreSQL or doing more work than the server can comfortably serve. PostgreSQL’s activity view can show the second and part of the third. It cannot show a statement the application has not sent, and a long statement in that view need not be the work holding everyone else up.</p>
+<p>Follow Mina’s order history after order 103 has committed. Her read should return 103, pending, followed by 101, paid. Order 103 still has no payment and its two agreed line values total 29.00. We will connect that request to a backend, follow a table-lock wait to its holder, then compare the evidence for excessive execution, connection pressure and storage trouble.</p>
+<p><a href="/learn/databases/relational/slow-queries/">Diagnosing a database incident</a> establishes how to test a cause against recovery. Here the evidence and controls are PostgreSQL 18’s. The drawings are labelled models. A separate disposable native server checks the lock, cancellation and cleanup behaviour described below; it does not measure the shop’s capacity.</p>
+
+<h2 id="request-backend">From a request to its backend</h2>
+<p>The application asks its pool for a connection, borrows one, sends SQL, consumes the result and returns the client. Record those boundaries with the request identity. Once borrowed, a direct server connection has a PostgreSQL backend process; <code>pg_backend_pid()</code> reports its process ID.</p>
+<Sql label="Mina’s ordinary history read" code={`SELECT order_id, placed_at, status
+FROM orders
+WHERE customer_id = 1
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;`} />
+<p>Figure 1 follows the evidence across those boundaries. Begin at the left. A request still in the checkout queue has no current SQL to find on its behalf.</p>
+<figure class="ops-figure" aria-labelledby="ops-path-title">
+  <div class="ops-figure-title" id="ops-path-title"><span>Figure 1</span> Where to look for Mina’s request</div>
+  <div class="ops-path">
+    <div class="ops-card"><b>1 · Application</b><strong>Request arrives</strong><span>Request identity and deadline</span></div>
+    <div class="ops-card"><b>2 · Pool queue</b><strong>No client yet</strong><span>Checkout start → acquired; queued and borrowed counts</span></div>
+    <div class="ops-card"><b>3 · Borrowed client</b><strong>Backend W</strong><span>Server identity, PID, backend_start; statement sent → terminal result</span></div>
+    <div class="ops-card"><b>4 · Response</b><strong>103, then 101</strong><span>Rows consumed → client returned → useful reply</span></div>
+  </div>
+  <figcaption>An evidence map for a direct server connection, read left to right. A client can remain borrowed while its backend waits or is idle inside a transaction. A pooler adds another checkout boundary; in transaction pooling, identify the backend for the relevant transaction rather than assuming one permanent mapping.</figcaption>
+</figure>
+<p>Give connection classes recognisable <code>application_name</code> values, such as <code>shop-history</code> and <code>shop-reports</code>. They help locate candidates; they are neither unique request identifiers nor proof of who currently owns a borrowed client. A pool reuses a backend for successive requests. Keep the server, database, user, PID and connection start alongside the request’s borrow and statement intervals.</p>
+<p>Capture the backend identity when establishing a connection and associate it with each borrow. Do not add an unbounded identity query before every diagnostic sample: that query can itself wait behind a busy connection. With an intermediary, use its mapping or an identity read inside the transaction you are tracing.</p>
+
+<h2 id="activity-waits">Read activity state and waits together</h2>
+<p>Use <code>pg_stat_activity</code> to inspect current server conversations. This sample includes connection, transaction and statement times because they answer different questions. It excludes the monitoring session itself and background processes.</p>
+<Sql label="Sample client activity in the current database" code={`SELECT clock_timestamp() AS sampled_at,
+       pid, backend_start, usename, application_name,
+       state, xact_start, query_start, state_change,
+       wait_event_type, wait_event, query
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND backend_type = 'client backend'
+  AND pid <> pg_backend_pid()
+ORDER BY xact_start NULLS LAST, pid;`} />
+<p><code>backend_start</code> dates the connection; <code>xact_start</code> dates its current transaction. <code>query_start</code> dates the current statement only while the state is <code>active</code>; otherwise it dates the last statement. <code>state_change</code> dates entry into the displayed state. An old <code>query_start</code> beside <code>idle</code> does not mean that query is still running.</p>
+<div class="ops-table"><table><caption>Read the state before interpreting its last SQL</caption><thead><tr><th scope="col">Sample</th><th scope="col">What it tells you</th><th scope="col">Next question</th></tr></thead><tbody>
+<tr><td><code>active</code><br /><code>Lock / relation</code></td><td>A statement is outstanding and waiting for a relation lock.</td><td>Which requested lock and which blocker?</td></tr>
+<tr><td><code>idle in transaction</code><br /><code>Client / ClientRead</code></td><td>The transaction is open; the backend awaits its client’s next command.</td><td>Does it hold the dependency another request needs?</td></tr>
+<tr><td><code>idle</code><br /><code>Client / ClientRead</code></td><td>The backend awaits a command outside an open transaction.</td><td>Is its pool client available, or still held by application code?</td></tr>
+<tr><td><code>active</code><br />No recorded wait</td><td>No wait was reported in this sample.</td><td>Does repeated activity and host evidence show processor work, runnable delay or something missed between samples?</td></tr>
+</tbody></table></div>
+<p>State and wait are independent observations. <code>active</code> includes blocked execution; a null wait is not a processor-use meter. Sample at a bounded rate over the affected statement’s interval. A fleeting I/O wait can be real without explaining most of a second-long request.</p>
+<p>Read samples in fresh, short monitoring transactions. Activity and cumulative statistics can be cached within a transaction; deliberately clearing that cache with <code>pg_stat_clear_snapshot()</code> is another option. Seeing other users’ details needs suitable authority, commonly <code>pg_read_all_stats</code> through an approved monitoring role. Missing detail is not evidence of no work.</p>
+
+<h3 id="preserve-evidence">Keep evidence after the statement finishes</h3>
+<p>The live activity row changes as the connection moves on. Preserve timestamped samples and correlate them with request traces and retained server logs. Include session identity and application name in the log format, and arrange duration and error logging before an incident. <code>log_min_duration_statement</code> can retain slow completed statements; <code>log_min_error_statement</code> covers statements that error. <code>log_lock_waits</code> reports waits exceeding <code>deadlock_timeout</code>, which is a reporting threshold here, not a limit that ends the wait.</p>
+<p>Choose scope, thresholds and retention deliberately. SQL and parameters can contain private values, and logging every statement can create substantial work and storage growth. A short wait below the logging threshold can still appear in a live sample; an absent log line cannot rule it out.</p>
+
+<h2 id="blockers">Follow the blocked statement to its blocker</h2>
+<p>In this independent branch, session H runs <code>BEGIN</code>, then <code>LOCK TABLE orders IN ACCESS EXCLUSIVE MODE</code>, and leaves its transaction open. H changes no rows. Mina’s ordinary <code>SELECT</code> needs <code>ACCESS SHARE</code> on <code>orders</code>; those modes conflict. An ordinary row update would not explain this ordinary read waiting for that row’s lock.</p>
+<p>Start with the blocked backend’s PID, obtained from the request mapping. <code>pg_blocking_pids</code> supplies the immediate blocking session identities. Inspect their state as well as the waiter’s.</p>
+<Sql label="Follow the identified waiter to its immediate blockers" code={`-- Bind $1 to the current waiter PID from the request evidence.
+SELECT w.pid AS waiter_pid, w.backend_start AS waiter_start,
+       w.state AS waiter_state, w.wait_event_type, w.wait_event,
+       p.pid AS blocker_pid, b.backend_start AS blocker_start,
+       b.application_name AS blocker_application,
+       b.state AS blocker_state, b.xact_start, b.query
+FROM pg_stat_activity AS w
+CROSS JOIN LATERAL unnest(pg_blocking_pids(w.pid)) AS p(pid)
+LEFT JOIN pg_stat_activity AS b ON b.pid = p.pid
+WHERE w.pid = $1;`} />
+<p>For our branch, W is <code>active</code> with a lock wait and H is <code>idle in transaction</code>. H’s displayed <code>LOCK</code> is its last completed command. The transaction remains the owner of the lock.</p>
+<Sql label="Inspect the two sessions’ table-lock requests" code={`-- Bind $1 and $2 to H and W. Connect to the orders database.
+SELECT pid, relation::regclass AS relation, mode, granted
+FROM pg_locks
+WHERE database = (SELECT oid FROM pg_database
+                  WHERE datname = current_database())
+  AND relation = 'orders'::regclass
+  AND pid IN ($1, $2)
+ORDER BY pid, mode;`} />
+<p>The relevant rows are H’s granted <code>AccessExclusiveLock</code> and W’s ungranted <code>AccessShareLock</code>. A lock list on its own is not a dependency graph: it also includes harmless compatible locks. Use the blocking relationship to find whom to inspect, then the requested object and mode to explain why.</p>
+<LockRecovery />
+<p>Step through owner rollback first. Then choose each cancellation. W looks busy and H looks idle, yet H’s transaction is the resource owner. Cancelling W stops one attempt. Cancelling H’s finished statement cannot be assumed to end its transaction. Only the paths that actually end H’s transaction remove this dependency.</p>
+
+<h3 id="whole-dependency">Read the whole dependency</h3>
+<p>A blocker can itself be waiting. Follow its blocking PIDs until you reach the participant that can make progress, retaining the relationships and sample times. PostgreSQL can also report a conflicting request ahead in the lock queue as a blocker; a backend need not already hold the requested lock to delay those behind it.</p>
+<p>A returned PID of zero represents a prepared transaction, whose originating session has detached. Inspect <code>pg_prepared_xacts</code> with its transaction manager’s owner; there is no backend zero to cancel. In <code>pg_locks</code>, such held locks have a null PID. Do not infer an outcome and resolve prepared business work merely to clear a queue.</p>
+<p>A chain ending at H need not contain a cycle, so waiting longer than <code>deadlock_timeout</code> does not make it a deadlock. Nor does the oldest connection or longest statement identify the right target. <a href="/learn/databases/relational/locks-and-deadlocks/">Locks, contention and deadlocks</a> develops protected intervals and protocols; <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a> handles the lifecycle of real schema operations that acquire excluding locks.</p>
+
+<h2 id="statement-work">Find the work behind the incident</h2>
+<p>In another branch there is no demonstrated table blocker. Optional paid-order reports overlap with history requests. Ask whether reports ran more often, became more expensive, or both. <code>pg_stat_statements</code> retains counters for groups of structurally equivalent statements after those statements finish.</p>
+<p>It needs advance setup: preload the module, enable query identifiers, restart as required for preloading, and install its extension views in the database used to inspect them. Do not restart an unhealthy service merely to recover evidence the module never collected.</p>
+<Sql label="Retain statement counters at each end of the incident window" code={`SELECT clock_timestamp() AS sampled_at,
+       dbid, userid, queryid, toplevel, query, stats_since,
+       calls, total_exec_time, rows,
+       shared_blks_hit, shared_blks_read, temp_blks_written
+FROM pg_stat_statements
+WHERE dbid = (SELECT oid FROM pg_database
+              WHERE datname = current_database());
+
+SELECT stats_reset, dealloc FROM pg_stat_statements_info;`} />
+<p>Use <code>query</code>, the group’s representative SQL, to identify the paid-order report and associate its counters with the application’s report operation. Literal values may appear as placeholders; the text identifies the statement’s structure, not every execution’s parameters. Match saved entries by <code>dbid</code>, <code>userid</code>, <code>queryid</code> and <code>toplevel</code>. Check the entry’s <code>stats_since</code> and the collection’s reset and eviction history before subtracting. Missing or recreated entries do not supply a complete interval. Avoid resetting shared counters just to make an incident report shorter.</p>
+<p>For a valid interval, divide the change in <code>total_exec_time</code> by the change in <code>calls</code> to obtain that interval’s mean execution time. Do not subtract the two lifetime means. Figure 3 gives two ways the same accumulated time can grow.</p>
+<figure class="ops-figure" aria-labelledby="ops-work-title">
+  <div class="ops-figure-title" id="ops-work-title"><span>Figure 3</span> More calls, or longer calls?</div>
+  <p class="ops-small">Synthetic changes over three alternative 60-second windows · one report statement group</p>
+  <div class="ops-work-row"><b>Baseline</b><div><span class="ops-bar ops-bar-small"></span>10 calls × 20 ms = 200 ms</div></div>
+  <div class="ops-work-row"><b>More executions</b><div><span class="ops-bar ops-bar-full"></span>100 calls × 20 ms = 2,000 ms</div></div>
+  <div class="ops-work-row"><b>Longer executions</b><div><span class="ops-bar ops-bar-full"></span>10 calls × 200 ms = 2,000 ms</div></div>
+  <figcaption>Bar length is accumulated execution time on a common scale. Calls may overlap, and elapsed execution time can include waits; these are neither processor milliseconds nor measured incident timings. The second window suggests investigating repetition; the third suggests investigating each execution.</figcaption>
+</figure>
+<p>The group can combine different customer IDs and time ranges. Its execution counters cover successful executions; failed or cancelled attempts still need activity and error evidence. It has no request trace or latency distribution, and its representative SQL is not a record of every parameter. Keep parameter classes and request measurements beside the counters. Query identifiers are local diagnostic identities with limited stability, rather than permanent cross-version names.</p>
+<p>Connect that statement group to processor, memory and storage evidence during the same window. Compare buffer and temporary-work increases per call as well as totals. Then select a bounded plan investigation on representative inputs. <a href="/learn/databases/relational/postgresql/query-execution/">Reading and repairing PostgreSQL plans</a> reads the plan and tests repairs. <code>EXPLAIN ANALYZE</code> executes the statement again; a busy server may need containment before it has room for that test.</p>
+<p>If repeated optional reports explain the demand, stop their future admission and check whether new report calls cease. Already running reports require a separate decision. A lower resource graph without better history completions would leave part of the cause unexplained.</p>
+
+<h2 id="connections">Diagnose connection pressure</h2>
+<p>A full application pool and a server refusing new connections are different observations. Group PostgreSQL’s client backends, then compare them with borrowed, available and queued populations in the actual application pools. Server-side idle does not prove that an application returned its client.</p>
+<Sql label="Count client sessions and inspect the admission settings" code={`SELECT application_name, usename, state, count(*) AS sessions
+FROM pg_stat_activity
+WHERE backend_type = 'client backend'
+GROUP BY application_name, usename, state
+ORDER BY sessions DESC;
+
+SELECT name, setting
+FROM pg_settings
+WHERE name IN ('max_connections', 'reserved_connections',
+               'superuser_reserved_connections');`} />
+<p>The grouped count spans databases on this server because admission is a server budget. If another client backend is missing from an application’s pool count, it may belong to a worker, tool or another application instance. Background processes and parallel workers do not all consume ordinary client connection slots in the same way; do not compare the unfiltered activity-row total directly with <code>max_connections</code>.</p>
+<figure class="ops-figure" aria-labelledby="ops-budget-title">
+  <div class="ops-figure-title" id="ops-budget-title"><span>Figure 4</span> Reserved slots change who may connect</div>
+  <p class="ops-small">Illustrative settings · max_connections 100 · reserved_connections 2 · superuser_reserved_connections 3</p>
+  <div class="ops-budget" aria-hidden="true"><div class="ops-ordinary">95 ordinary places</div><div class="ops-reserved"></div><div class="ops-super"></div></div>
+  <div class="ops-budget-key"><div><b>Up to 95</b>Ordinary admission before the reserved threshold</div><div><b>Next 2</b>Requires pg_use_reserved_connections privileges, or superuser</div><div><b>Final 3</b>Superuser only</div></div>
+  <figcaption>One shared admission ceiling, not three pools. Privileged sessions can consume places before the thresholds are reached too. The 95 is a maximum ordinary allowance under these settings, not a guaranteed allocation to this application.</figcaption>
+</figure>
+<p>Check the actual settings and operational role before an incident: a planning allowance for support does not grant access to reserved slots. The first reservation defaults to zero; the superuser reservation is a final emergency margin. Increasing <code>max_connections</code> needs a restart and increases associated resource allocation.</p>
+<p>If many borrowed clients are waiting behind H, extra connections make more waiters. If admitted execution already overwhelms a resource, extra sessions can worsen it. If most server clients are idle but one application’s queue grows, inspect its checkout, hold time and leak behaviour. <a href="/learn/databases/relational/connections-and-capacity/">Connections, overload and capacity</a> owns the workload budget and overload policy after you have found the pressure.</p>
+
+<h2 id="storage">Separate storage delay from storage exhaustion</h2>
+<p>An I/O wait locates a delayed operation. Free-space measurements answer whether the relevant volume can keep accepting data. Take both. Save <code>pg_stat_io</code> samples at each end of the same window, checking the reset boundaries before subtracting. Its backend type, object and context locate the accumulated work; match the changes to the affected sessions’ wait samples and host device latency.</p>
+<Sql label="Retain I/O counters for the same incident window" code={`SELECT clock_timestamp() AS sampled_at,
+       backend_type, object, context,
+       reads, read_time, writes, write_time, stats_reset
+FROM pg_stat_io
+ORDER BY backend_type, object, context;`} />
+<p>Time fields require <code>track_io_timing</code> for relation work and <code>track_wal_io_timing</code> for WAL. A zero with timing disabled does not establish free I/O; an untracked operation can appear as null.</p>
+<p>Read counters describe PostgreSQL’s requests to the storage stack; some are served by the operating system’s cache. They do not establish drive reads or drive saturation on their own. Equally, a full shared-buffer cache is normal use of a cache, not evidence that the underlying volume is full.</p>
+<div class="ops-table"><table><caption>Find the object before choosing relief</caption><thead><tr><th scope="col">Growth or delay</th><th scope="col">Evidence to join</th><th scope="col">Repair owner</th></tr></thead><tbody>
+<tr><td>Heap or index growth</td><td>Object sizes over time; retained horizons, maintenance results and live data</td><td><a href="/learn/databases/relational/postgresql/row-versions/">Vacuum and transaction age</a>; justified index or table maintenance</td></tr>
+<tr><td>Temporary-file work</td><td>Statement-group temporary counters, plan spills and overlapping reports</td><td>The plan and workload admission</td></tr>
+<tr><td>WAL delay or growth</td><td>Flush waits, WAL/checkpoint intervals, archive and slot retention</td><td><a href="/learn/databases/relational/postgresql/recovery/">WAL and durability</a>, with the archive or replication owner</td></tr>
+<tr><td>Falling volume space</td><td>Filesystem or quota headroom, all users of that volume, growth rate and repair peak space</td><td>The owner of the growing object; extra storage where needed</td></tr>
+</tbody></table></div>
+<p>For scale, the incident article’s synthetic trajectory falls from 12 to 8 to 4 GiB free in ten minutes. A proposed repair needing another 6 GiB already does not fit at the last point. That is a repair-space test, not a PostgreSQL threshold. Rewrites, continued writes and recovery all need room.</p>
+<p>Do not delete database or WAL files by hand. Deleting rows need not shrink their files, and <code>VACUUM FULL</code> needs spare space and an excluding table lock. A full WAL volume can shut the server down. Preserve recovery headroom while the specialist owner establishes which retention or maintenance obligation can safely change.</p>
+
+<h2 id="timeouts">Bound the next attempt</h2>
+<p>Before repeating a history request, decide how much time remains. The application’s checkout wait is already spent; PostgreSQL does not include it in <code>statement_timeout</code>. Figure 5 assigns a smaller server budget inside an invented two-second request deadline.</p>
+<figure class="ops-figure" aria-labelledby="ops-time-title">
+  <div class="ops-figure-title" id="ops-time-title"><span>Figure 5</span> A statement gets the time still available</div>
+  <div class="ops-time"><div><strong>0–600 ms</strong><span>Checkout already spent</span></div><div><strong>Next ≤900 ms</strong><span>Statement allowance</span><small>Lock wait ≤200 ms per acquisition, inside this allowance</small></div><div><strong>500 ms reserved</strong><span>Transfer, cleanup and reply margin</span></div></div>
+  <figcaption>Illustrative budget: 600 + 900 + 500 = 2,000 ms. Lock waiting is included in statement elapsed time; it is not another 200 ms to add. This allocation does not promise a response by the deadline; the caller must enforce its own remaining deadline and cleanup policy.</figcaption>
+</figure>
+<Sql label="Apply limits only to this explicit attempt" code={`BEGIN;
+SET LOCAL lock_timeout = '200ms';
+SET LOCAL statement_timeout = '900ms';
+SELECT order_id, placed_at, status
+FROM orders
+WHERE customer_id = 1
+ORDER BY placed_at DESC, order_id DESC
+LIMIT 10;
+COMMIT;`} />
+<p><code>lock_timeout</code> limits each lock acquisition wait. <code>statement_timeout</code> covers the statement’s server interval, including those waits. Multiple acquisitions do not turn the first into an end-to-end request cap. Set a useful lock limit below the statement limit, and fit the whole attempt inside the remaining application deadline.</p>
+<p>On a timeout or cancellation error inside this <code>BEGIN</code>, the ordinary cleanup path is <code>ROLLBACK</code>, rather than continuing to <code>COMMIT</code> or handing the failed transaction to the next borrower. Confirm the terminal result, finish cleanup and restore a known client state before release. Discard a broken connection. A caller timeout alone establishes none of those steps.</p>
+<p>Two session-ending controls address longer lifetimes. <code>idle_in_transaction_session_timeout</code> ends a session that remains idle inside an open transaction; it does not cap an executing statement. <code>transaction_timeout</code> caps transaction lifetime, including implicit transactions, by ending the session; prepared transactions are excluded. Choose these with the application and pool’s disconnect handling. They are not interchangeable query-cancellation controls.</p>
+<p>A timeout contains one attempt. Immediately recreating the same blocked attempt can keep the queue full. Keep retry bounds and admission in force while the dependency is unresolved.</p>
+
+<h2 id="cancel-terminate">Cancel a statement or end a session</h2>
+<p>Prefer the owner ending the correct transaction when it can do so. H is deliberately lock-only, so rollback sacrifices no business change in this experiment. A real holder may have writes whose outcome matters. Establish its owner and work before deciding what may be abandoned.</p>
+<p><code>pg_cancel_backend(pid)</code> targets the current statement. <code>pg_terminate_backend(pid, timeout)</code> ends the session, aborting unfinished transaction work and disconnecting its client. With a positive timeout in milliseconds, termination can wait for the session to end and report whether that happened within the bound. Without that wait, a true result establishes signal delivery rather than observed completion.</p>
+<p>Refresh the target evidence just before signalling. PIDs can be reused; the same live backend can also have moved on to a different request. Here is a guarded cancellation query for a selected active statement, using values from a fresh sample:</p>
+<Sql label="Bind the sampled identity before cancelling one active statement" code={`SELECT pg_cancel_backend(pid) AS signal_sent
+FROM pg_stat_activity
+WHERE pid = $1
+  AND backend_start = $2::timestamptz
+  AND datname = current_database()
+  AND application_name = $3
+  AND state = 'active'
+  AND query_start = $4::timestamptz;`} />
+<p>The four parameters are the sampled PID, connection start, application name and statement start. Preserve the timestamps’ full precision when binding them; rounding can prevent an exact match. No matching row means the sample no longer identifies that active statement. These checks narrow the target; they do not freeze a pooled connection between inspection and signalling. Coordinate with its owner to stop reuse when that race matters. Signalling also requires appropriate authority; monitoring access alone does not grant it, and ordinary signal roles cannot terminate a superuser backend.</p>
+<p>Then check the statement or session’s terminal outcome, its remaining locks and the client’s transaction state. Figure 2’s native counterpart used an isolated Linux PostgreSQL 18.6 instance and node-postgres 8.23.1. An idle-holder cancellation returned true while H’s granted table lock and W’s wait remained. Owner rollback released the lock and W returned 103 then 101. Cancelling W inside an explicit transaction produced <code>57014</code>; a subsequent statement failed with <code>25P02</code> until rollback. A separate lock timeout produced <code>55P03</code>. These are observed mechanism checks, not timing or least-privilege tests.</p>
+
+<h3 id="recovery-cost">Account for the recovery work</h3>
+<p>Ending a large PostgreSQL write transaction makes its aborted versions invisible; reclaiming their heap and index space still requires later cleanup. Do not assume that killing a session gives its allocated storage straight back. Our lock-only H avoids that cost because it created no row versions.</p>
+<p>A server restart interrupts a much wider set of work. An unclean stop can require WAL replay and startup work, shared buffers start cold, and reconnecting clients and retries can compete with useful requests. A normal session termination does not itself mean the whole server must replay WAL. <a href="/learn/databases/relational/postgresql/recovery/">PostgreSQL WAL, checkpoints and durability</a> tests restart’s separate costs.</p>
+<p>Finally, a disconnected writing client may have lost a commit reply after the transaction committed. Session loss is not proof of rollback. Retain the operation identity and use <a href="/learn/databases/relational/conflicts-and-retries/">Retries and uncertain commit outcomes</a> to reconcile before repeating business work.</p>
+
+<h2 id="verify-recovery">Verify the service recovered</h2>
+<p>For the lock branch, predict the chain before acting: H’s transaction ends, its conflicting lock disappears, W finishes, the application consumes the rows and returns its client, queued callers borrow, and useful history responses resume. Each link has its own evidence. A missing activity row establishes neither a delivered response nor a returned pool client.</p>
+<p>Our disposable run checked a one-client node-postgres pool with one later borrower queued. Ending H allowed the original read to return, then releasing its client allowed the queued borrower to read the same 103, 101 result. A separate bounded termination of H also released the reader. Those small checks establish the mechanism through the client library. They do not exercise an HTTP response path, production traffic or a burst of retries.</p>
+<p>In the real service, check both already queued and newly arriving requests, useful completions, errors, acquisition delay and total latency under comparable arrivals. A queue that drains through errors is not recovered service. If the lock has gone but clients remain occupied, follow execution or result consumption; if new blockers appear, update the dependency rather than repeating yesterday’s target PID.</p>
+<p>Restore optional work gradually while retaining resource and admission headroom. Keep the incident window, identities, counters, intervention and measured consequences with the lasting repair: shorter transactions, a repaired report, corrected admission or safe storage relief. The PostgreSQL evidence earns its place when it explains where Mina waited and lets you verify what changed for her request.</p>
+
+</div>
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked against PostgreSQL 18 documentation. Figures, timing budgets, connection settings and workload bars are illustrative. Native mechanism evidence comes from a separate disposable PostgreSQL 18.6 server with privileged diagnostic connections and node-postgres 8.23.1; no production capacity, storage rate or restart result is claimed here.</p>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/monitoring-stats.html">The cumulative statistics system</a>: activity states and times, waits, monitoring privileges, snapshot caching and I/O counters.</li>
+<li><a href="https://www.postgresql.org/docs/18/functions-info.html">System information functions</a>: backend identity and <code>pg_blocking_pids</code>, including queued blockers and prepared transactions.</li>
+<li><a href="https://www.postgresql.org/docs/18/view-pg-locks.html">pg_locks</a> and <a href="https://www.postgresql.org/docs/18/explicit-locking.html">Explicit locking</a>: requested and granted modes, transaction ownership and the conflict between ordinary reads and ACCESS EXCLUSIVE.</li>
+<li><a href="https://www.postgresql.org/docs/18/runtime-config-logging.html">Error reporting and logging</a>: completed-duration, error and lock-wait logging, identity fields and logging costs.</li>
+<li><a href="https://www.postgresql.org/docs/18/pgstatstatements.html">pg_stat_statements</a>: advance setup, statement grouping, execution counters and reset/eviction boundaries.</li>
+<li><a href="https://www.postgresql.org/docs/18/runtime-config-connection.html">Connections and authentication</a>: ordinary and reserved admission and the resource cost of the connection ceiling.</li>
+<li><a href="https://www.postgresql.org/docs/18/diskusage.html">Monitoring disk usage</a>: object space and full-volume failure. <a href="https://www.postgresql.org/docs/18/sql-vacuum.html">VACUUM</a>: reuse, rewriting, locks and space requirements.</li>
+<li><a href="https://www.postgresql.org/docs/18/runtime-config-client.html">Client connection defaults</a>: statement, lock, idle-transaction and transaction timeouts. <a href="https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-SIGNAL">Server signalling functions</a>: cancellation, termination, bounded waiting and authority.</li>
+<li><a href="https://node-postgres.com/apis/pool">node-postgres Pool</a>: borrowed and queued clients, release and pool counters. <a href="https://node-postgres.com/features/transactions">Transactions</a>: keeping transaction work on one client.</li>
+</ul>

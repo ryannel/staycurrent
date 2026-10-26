@@ -1,0 +1,11 @@
+# Initial blind reader notes — pg-operations v01
+
+Fixed assignment batch35-reader.txt and review-source.json. Read rendered figures' labels/captions first, then the complete rendered article body, before plans, example facts, author notes, technical report or verdicts. Browser: owned IAB tab on 4606, actual 1280 × 720, initial System (dark appearance).
+
+The figure sequence alone explains the practical boundaries: checkout has no server statement; borrowed clients and backend states differ; H's idle transaction can prevent W's read; cancelling H, cancelling W and ending H's transaction have different results; accumulated statement time can rise through calls or per-call duration; reserved slots constrain admission; a statement allowance fits inside the remaining request deadline. The live lock model's four interventions and all step explanations were inspected. Owner rollback and termination release H, holder cancellation leaves the dependency, waiter cancellation ends W's attempt and requires cleanup.
+
+The body builds that sequence coherently. It introduces the request/backend identity before activity and dependency inspection, then branches into workload, admission and storage evidence before bounded attempts and intervention. The central H/W example is unusually helpful because it deliberately makes a visibly idle participant the actual blocker. The prose distinguishes an observed terminal outcome from signal delivery and server completion from useful response without needing the reader to infer those distinctions. Queries are bounded enough to read; the activity table turns ambiguous state labels into a next question.
+
+Provisional small concern: the Cancel W outcome card says “Explicit transaction failed” although the setup has not yet established W uses BEGIN; the narrative at that step correctly says “If W used BEGIN”. This is local ambiguity in the illustrative branch, not a demonstrated wrong operational instruction. Assess in final report after calibration/brief. No substantive teaching gap identified in the first read.
+
+Remaining: bounded reference calibration; intended-understanding/ownership check; light/phone/control/accessibility observation and playback/reset checks. No reference judgement or intended outcomes consulted yet.
