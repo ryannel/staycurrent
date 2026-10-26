@@ -1,0 +1,9 @@
+# Reference exposure
+
+Applied staycurrent-write, staycurrent-figures and staycurrent-continuity from the current repository skill files, including figures stepper/render/database verification guides. Assignment prohibits delegation/review by this worker and root owns compilation.
+
+All 19 bounded parts were read separately using scripts/read-writing-reference.py, each END marker delivered: sequences 1–6, indexes 1–7, storage 1–6. No clipped reference part remained. Complete extracted-text SHA256: sequences 722e27d04275d6ee28dfa024951827a78b5c591dc8b5f98584af197b5884809c; indexes d60bf12b37f922f0ced9ec54a51b1ef6b94841a40da5f20be6dafdbf75bec8c1; storage 2bebcdf28bacf1f5ecc2220e8d20a7c34682e052fff3ecde56ca1a56aba08c07.
+
+Browser inventory had Chrome and no IAB. Fresh owned session “📚 CRDB operations references”: sequences #trust-boundaries (Figure 13, separated trust boxes and message labels); indexes Composite (multicolumn) indexes/Figure 7 (small changed option, visible counters, one selected route); storage #wal/Figure 5 (same structure across ordered stages, changed state explained under drawing). Reference theme/viewport settings were retained. Storage stopped at completed state; no running playback retained. Reference screenshots were inspected in tool output. The references led prose order, figure scope, visible comparisons, captions and distinction between models/observations; no target old manuscript or feedback was read.
+
+Finished authorised neighbours read through their exact preview pages: Database access and least privilege; Rebalancing and cluster change; Inside CockroachDB; CockroachDB query work and hot ranges; Diagnosing a database incident. Used for prerequisite meaning and ownership, not as prose references. Read-only local HTTP extraction was unavailable under sandbox; browser article text supplied context instead. No main-repository target bodies/plans/reviews or other workers' notes were accessed.

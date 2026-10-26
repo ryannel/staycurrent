@@ -1,0 +1,277 @@
+---
+import Sql from '../../components/explainers/querying/Sql.astro';
+import OperationFigure from '../../components/relational-rebuild-crdb-operations/OperationFigure.astro';
+---
+
+<p>A CockroachDB cluster can accept a connection while some of its data has lost protection. It can also return the right rows to an administrator while the application’s login has too much authority. Operating it means checking the boundary that matters: the actual connection, the rows it may reach, and the ranges that must remain available through a change.</p>
+
+<p>We will secure a small shop lookup, then follow one range through a lost replica and a planned node removal. <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">Inside CockroachDB</a> establishes ranges, voting replicas and leaseholders; <a href="/learn/databases/relational/access-control/">Database access and least privilege</a> supplies the shop’s three task identities. The examples use self-hosted CockroachDB v26.2, with native checks on v26.2.8. Multi-node drawings show stated placements and quorum counts, rather than measured failure times.</p>
+
+<h2 id="connection">A secure connection has two identities</h2>
+
+<p>The service needs to know that it reached the intended database server. The server needs to know which SQL identity connected. These are separate checks, even when both use certificates.</p>
+
+<p>In the example, the service trusts the cluster’s certificate authority, or CA. Its connection asks for <code>db.shop.example</code>. With <code>sslmode=verify-full</code>, the client checks that the server certificate chains to the trusted CA and covers that hostname. The server authenticates the client certificate as <code>shop_runtime</code>. Follow both directions in Figure 1.</p>
+
+<OperationFigure kind="identity" />
+
+<p>A node certificate identifies a server and permits its node work. A runtime client certificate identifies the service’s SQL login. An administrator’s credential carries different authority again. Giving the application a node or administrator key collapses the distinction before a table grant can help. Keep the runtime’s private key with the service that needs it; keep signing keys and maintenance credentials outside that runtime.</p>
+
+<p>The following is the shape of a certificate-authenticated connection URI. The hostname, database and file paths are deployment inputs; the files must belong to this cluster and this runtime identity.</p>
+
+<pre aria-label="Illustrative secure connection URI"><code>postgresql://shop_runtime@db.shop.example:26257/shop?sslmode=verify-full&amp;sslrootcert=/run/shop/ca.crt&amp;sslcert=/run/shop/client.shop_runtime.crt&amp;sslkey=/run/shop/client.shop_runtime.key</code></pre>
+
+<p>Check the identity using that credential and the same driver settings the application deploys:</p>
+
+<Sql label="Check the identity on the actual runtime connection" code={`SELECT current_user, session_user, current_database();`} />
+
+<p><code>session_user</code> identifies the original session login; <code>current_user</code> identifies the current SQL role. A privileged test that switches roles can exercise authorisation, but does not establish that the runtime can authenticate with its own certificate. The native runtime connection here returned <code>shop_runtime</code> for both identities.</p>
+
+<p>Pair the successful connection with rejected cases: an untrusted CA and a hostname absent from the server certificate. An encrypted connection that accepts either has not established the intended server identity. Keep certificate expiry, renewal and a fresh connection test in the operating procedure. A still-open pooled connection is not a test that replacement credentials work.</p>
+
+<p>The local v26.2.8 checks rejected a connection to an address absent from the server certificate, rejected the server when supplied an unrelated trust CA, and rejected using the support certificate to authenticate as <code>shop_runtime</code>. Those failures exercise server trust, server address and client identity separately. They do not verify the shop’s external sign-in service.</p>
+
+<h2 id="authority">Give each task its own authority</h2>
+
+<p><code>shop_runtime</code> serves authorised requests, <code>shop_migrate</code> changes the schema, and <code>shop_support</code> reads selected customer and order details. None is a customer or a person’s sign-in. Derive privileges for the operation being deployed, including the columns its conditions read, rather than granting the union of all future shop tasks.</p>
+
+<p>The bounded example below covers customer and order reads and an order update. It is a slice of runtime work, not a complete checkout grant set. The migration identity owns the <code>shop</code> schema and tables. A non-login group carries the runtime’s ordinary privileges:</p>
+
+<Sql label="A bounded runtime role and grants" code={`CREATE ROLE shop_rw;
+GRANT USAGE ON SCHEMA shop TO shop_rw;
+GRANT SELECT, UPDATE
+  ON shop.customers, shop.orders TO shop_rw;
+GRANT shop_rw TO shop_runtime;`} />
+
+<p>The runtime has no membership path to the migration identity, no object ownership and no grant option. It cannot change payments. These choices must hold across the database: denying <code>CREATE</code> on <code>shop</code> alone does not remove a <code>public</code> grant to create objects in another schema.</p>
+
+<p>Inspect inherited authority as well as direct grants. These native forms answer different parts of the question:</p>
+
+<Sql label="Inspect roles, membership and effective grants" code={`SHOW ROLES;
+SHOW GRANTS ON ROLE;
+SHOW GRANTS FOR shop_runtime;
+SHOW GRANTS ON SCHEMA shop;
+SHOW GRANTS ON TABLE shop.customers, shop.orders,
+  shop.payments;
+SHOW DEFAULT PRIVILEGES FOR ROLE shop_migrate,
+  shop_view_owner;
+SHOW DEFAULT PRIVILEGES FOR ROLE shop_migrate,
+  shop_view_owner IN SCHEMA shop;
+SHOW DEFAULT PRIVILEGES FOR ALL ROLES;
+SHOW DEFAULT PRIVILEGES FOR ALL ROLES IN SCHEMA shop;`} />
+
+<p><code>SHOW GRANTS FOR</code> includes privileges inherited through membership. The object-focused form without <code>FOR</code> lists direct grants on those objects. Follow the roles carrying access, and inspect <code>public</code>, ownership and <code>is_grantable</code>.</p>
+
+<p>Run the default-privilege checks in the shop database. The creator-specific forms inspect future objects made by <code>shop_migrate</code> and <code>shop_view_owner</code>; <code>FOR ALL ROLES</code> checks defaults applying regardless of creator. Inspect both database-wide defaults and those inside the <code>shop</code> schema. Without a <code>FOR</code> clause, the command shows the current SQL identity’s defaults, which can miss grants on objects the migration role will create. A later table or membership can reopen a path a previous test closed.</p>
+
+<p>The native audit found <code>CREATE</code> granted to <code>public</code> on the public schema. Revoking it closed that separate creation path; a subsequent runtime creation there failed too. Inspect the deployed defaults rather than assuming a new database is already restricted.</p>
+
+<h3 id="support">A restricted support interface</h3>
+
+<p>Support needs tenant and customer IDs and names, plus tenant, order and customer IDs and order status. It does not need order timestamps or payment records. Here two views expose exactly those fields:</p>
+
+<Sql label="Support views with explicit selected fields" code={`CREATE VIEW shop.support_customers AS
+SELECT tenant_id, customer_id, name
+FROM shop.customers;
+
+CREATE VIEW shop.support_orders AS
+SELECT tenant_id, order_id, customer_id, status
+FROM shop.orders;
+
+GRANT SELECT ON shop.support_customers,
+  shop.support_orders TO shop_support;`} />
+
+<p>These views are created by a separate non-login role, <code>shop_view_owner</code>, with only the required base-table reads. The support login receives view access and schema usage, with no base-table access and no membership in that owner. The view owner’s temporary schema-create privilege is removed after setup.</p>
+
+<p>By default, CockroachDB checks a view’s underlying privileges and row policies as its owner. The owner therefore belongs in the security design. An administrator-owned view can expose rows that a runtime policy hides. The row policies below apply to our unprivileged view owner too; the native support connection verifies the complete path. An invoker-security view is another design, but it would check the underlying privileges as support and require those privileges. Changing the option does not by itself preserve this no-base-table boundary.</p>
+
+<h2 id="tenants">Enforce the tenant boundary</h2>
+
+<p>Tenant 10 has customers 1–3: Mina Shah, Tariq Aziz and Edda Berg. Tenant 20 has customer 4, Rowan Vale. Customer IDs remain globally unique. A table grant can let the runtime name Rowan’s row; it does not establish a right to read it.</p>
+
+<p>Row-level security, or RLS, adds a policy to ordinary table privileges. In this example the service uses <code>application_name</code> as a deliberately simple tenant context. Its baseline is empty. The policy compares the integer tenant ID, written as a string, with that context. It applies to existing rows through <code>USING</code> and proposed row versions through <code>WITH CHECK</code>:</p>
+
+<Sql label="A native CockroachDB tenant policy on customers" code={`ALTER TABLE shop.customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shop.customers FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_rows ON shop.customers
+FOR ALL TO public
+USING (
+  tenant_id::STRING = current_setting('application_name')
+)
+WITH CHECK (
+  tenant_id::STRING = current_setting('application_name')
+);`} />
+
+<p>The same policy protects <code>shop.orders</code>. <code>FORCE</code> subjects the ordinary table owner to the policy as well; it does not remove administrative or <code>BYPASSRLS</code> exceptions. These are the only policies in this example. Additional permissive policies combine with <code>OR</code>, so adding another broad policy can widen the allowed rows. Check the complete policy set, not just the rule named <code>tenant_rows</code>.</p>
+
+<p>Figure 2 runs a query with no tenant condition. Step through with context 10, then select context 20 and compare Rowan’s row.</p>
+
+<OperationFigure kind="tenant" />
+
+<p>With context 10, the native runtime connection returned Mina, Tariq and Edda. Asking explicitly for <code>customer_id = 4</code> or <code>tenant_id = 20</code> returned no rows. Disabling RLS in a separate counterexample let the same runtime read all four. The missing query condition became visible because Rowan actually existed in the fixture.</p>
+
+<p>A tenant-changing write exercises the other half of the policy. Customer 3 is visible under tenant 10, but changing that row’s <code>tenant_id</code> to 20 failed with SQLSTATE <code>42501</code>, a row-policy violation. A read filter alone would not establish that protection.</p>
+
+<h3 id="context">What the policy trusts</h3>
+
+<p>The service begins a transaction on its borrowed connection, sets the authorised tenant locally, performs the request’s work on that same connection, then commits or rolls back before returning it:</p>
+
+<Sql label="Set the tenant for one request transaction" code={`BEGIN;
+SET LOCAL application_name = '10';
+SELECT customer_id, name
+FROM shop.customers
+ORDER BY customer_id;
+COMMIT;`} />
+
+<p>Both commit and rollback restored the empty baseline in the native connection checks; a subsequent read without setup returned zero customers. A second test first left session context 20 underneath the local value. After the tenant-10 transaction committed, context 20 returned and Rowan was visible. <code>SET LOCAL</code> restores the previous setting; it does not clean an already unsafe baseline. Initialise pooled connections without a tenant, set context before every data statement and test the actual pool’s return and error paths.</p>
+
+<p>The runtime can also set context 20 deliberately, and the native query then returned Rowan. The policy trusts the service’s choice. It catches omitted query conditions when that choice is correct; it cannot establish that the person was authorised to choose 20. Here <code>application_name</code> is an ordinary caller-controlled setting, not an authentication claim. A design that must contain a compromised service needs a boundary it cannot freely forge, such as separately constrained identities or a validated restricted interface.</p>
+
+<p>Nor does tenant scope decide which people inside tenant 10 may read Mina’s details. The application still performs those checks. <a href="/learn/databases/relational/application-sql/">SQL at the application boundary</a> covers keeping the request, connection and transaction together.</p>
+
+<h3 id="routes">Check every route to the rows</h3>
+
+<p>The native support login read customers 1–3 and the three tenant-10 orders through its views. It could not select a base customer table, read payments, read <code>placed_at</code> through the selected-field order view, write an order or create a table in <code>shop</code>. The runtime could read and perform its permitted order update, but could not grant its reads onwards or assume <code>shop_migrate</code>.</p>
+
+<div class="table-scroll" role="region" tabindex="0" aria-label="Native policy and privilege checks"><table><caption>Selected v26.2.8 checks through actual runtime and support logins</caption><thead><tr><th>Attempt</th><th>Observed boundary</th></tr></thead><tbody>
+<tr><td>Runtime reads with tenant 10</td><td>Customers 1–3; customer 4 hidden</td></tr>
+<tr><td>Runtime changes customer 3 to tenant 20</td><td>Policy error <code>42501</code>; row unchanged</td></tr>
+<tr><td>Runtime changes a payment or creates in <code>shop</code></td><td>Privilege error <code>42501</code></td></tr>
+<tr><td>Support reads its two views</td><td>Only selected fields and tenant-10 rows</td></tr>
+<tr><td>Support reads base customers or writes orders</td><td>Privilege error <code>42501</code></td></tr>
+</tbody></table></div>
+
+<p>Test bypass identities separately. The administrator and a role with <code>BYPASSRLS</code> plus table-read authority saw all four customers even with <code>FORCE</code>. An ordinary owner also saw all four when <code>FORCE</code> was removed. These are reasons to keep runtime and interface owners unprivileged, not reasons to test ordinary access as root.</p>
+
+<p>Integrity checks answer a different question. Updating order 103 to customer 4 under tenant 10 failed its composite foreign key: no customer has <code>(tenant_id, customer_id) = (10, 4)</code>. That error can mention a value hidden by RLS. Constraint checks and cascades, privileged interfaces, backups and change-data paths therefore need their own access analysis. A passing <code>SELECT</code> test does not make every route a tenant-scoped export. Keep backup and replication authority separate; <a href="/learn/databases/relational/cockroachdb/backup-and-restore/">CockroachDB backup and recovery</a> owns those procedures.</p>
+
+<h2 id="health">Read node health and range health together</h2>
+
+<p>A reachable gateway answers only the first operational question. The lookup may need a range whose voters are elsewhere. Start with the affected request and observation window, then compare node status, range protection and placement from that same period.</p>
+
+<pre aria-label="Inspect native node and range status"><code>cockroach node status --all \
+  --host=db-1.shop.example:26257 \
+  --certs-dir=/run/shop-operator/certs</code></pre>
+
+<p>Run maintenance commands with a separate authorised operator identity and the verified cluster connection settings. Resolve addresses and node IDs before acting; node 4 in a drawing is not node 4 in your deployment. Check <code>updated_at</code>: an unhealthy node’s resource statistics can be old. <code>is_live</code>, <code>is_available</code>, range counts and store resources describe different things.</p>
+
+<p>An <em>under-replicated</em> range lacks its desired protection. An <em>unavailable</em> range cannot currently make the progress its required majority permits. Three configured voters need two votes. Losing one can leave work possible while removing the allowance for another voter failure. Figure 3 holds that count visible while a replacement joins.</p>
+
+<OperationFigure kind="range" />
+
+<p>The extra healthy machine D supplies no vote until a replica is established and membership changes safely. Its learner copy does not repair a missing old majority. The final checkpoint assumes that the supported replacement has actually completed. With both B and C missing, the model cannot advance to that result merely because D has received data.</p>
+
+<p>Use native replication metrics such as <code>ranges.underreplicated</code> and <code>ranges.unavailable</code> to find a protection problem, then identify the affected ranges. The per-node status fields are counts of ranges represented there, not independent cluster totals to add together. A range can appear on several nodes.</p>
+
+<Sql label="Inspect actual orders range placement and desired configuration" code={`SELECT range_id, start_key, end_key, lease_holder,
+       voting_replicas, non_voting_replicas,
+       learner_replicas
+FROM [SHOW RANGES FROM TABLE shop.orders WITH DETAILS]
+ORDER BY start_key;
+
+SHOW ZONE CONFIGURATION FROM TABLE shop.orders;`} />
+
+<p><code>SHOW RANGES</code> gives the configured replica locations and serving owner at an observation; it does not prove every listed voter is reachable. Match those node IDs to current health. Check the effective replication configuration, including inherited requirements, voting counts and placement constraints. Non-voting replicas and learners do not fill a missing voting majority.</p>
+
+<h2 id="recovery">Find what prevents replication from recovering</h2>
+
+<p>A rising under-replicated count after a node loss is a starting symptom. The next check should explain why this range has not regained protection. In the DB Console, follow Problem Ranges to a Range Report and its allocator information. Retain the range ID and key bounds with the observation; movement can change where the next sample lands.</p>
+
+<div class="table-scroll" role="region" tabindex="0" aria-label="Choose the next range-health check"><table><caption>Follow one affected range from symptom to a testable cause</caption><thead><tr><th>Evidence</th><th>Next check</th><th>What a repair must establish</th></tr></thead><tbody>
+<tr><td>A listed replica is unreachable</td><td>Node/store logs, network and disk health; freshness of status</td><td>The replica returns safely, or an eligible replacement can be built</td></tr>
+<tr><td>Allocator reports no destination</td><td>Replica count, existing holders, constraints and eligible stores</td><td>A distinct suitable store exists; free space elsewhere is insufficient</td></tr>
+<tr><td>A learner or snapshot is progressing</td><td>Progress across successive samples; source and destination pressure</td><td>Catch-up completes while foreground service stays acceptable</td></tr>
+<tr><td>Movement remains stalled</td><td>Specific allocator/snapshot errors; destination space and source/destination I/O, CPU and network</td><td>The identified blocker changes and protection is restored</td></tr>
+<tr><td>A majority is unavailable</td><td>Which original voters can safely return and retain their stores</td><td>Recover a usable majority or follow documented disaster recovery</td></tr>
+</tbody></table></div>
+
+<p>A new node helps only if the constrained range may use it and the source can deliver its history. A restart does not create a missing placement or free destination storage. It can instead remove another voter during the vulnerable interval. Preserve evidence and choose a bounded repair whose predicted effect you can check.</p>
+
+<p>Watch both progress and resources. Snapshot traffic, retained history, compaction and ordinary SQL can compete for the same stores. A falling remaining-replica count supports evacuation progress; a flat count alone does not identify a blocker. Keep the target available while following the native stall report to its remaining range IDs.</p>
+
+<p><a href="/learn/databases/relational/slow-queries/">Diagnosing a database incident</a> connects the symptom to request completion. If range protection is healthy but a particular query or key consumes the work, <a href="/learn/databases/relational/cockroachdb/query-performance/">CockroachDB query work and hot ranges</a> owns that diagnosis and repair. Treating every busy node as a replication fault would send both investigations in the wrong direction.</p>
+
+<h2 id="remaining">Check the cluster that will remain</h2>
+
+<p>Permanent removal asks a forward-looking question: can every affected range keep its required voters and placement, and can the remaining stores carry the work through the next required failure? Begin only with acceptable current health. An existing lost voter is already spending the margin that maintenance would need.</p>
+
+<p>In Figure 3, removing C from a four-node deployment can leave three voters on A, B and D. Removing C when only A, B and C are eligible leaves no third destination. Even four live nodes are insufficient if D violates the range’s placement constraints. Regional failure promises require the actual failure domains, as <a href="/learn/databases/relational/cockroachdb/locality/">CockroachDB table locality and region survival</a> develops.</p>
+
+<p>Native decommissioning pre-flight checks test whether the replicas have possible destinations. They do not establish available disk space or workload capacity. Keep a separate budget for the reduced cluster. The following arithmetic is invented to make that distinction visible:</p>
+
+<div class="table-scroll" role="region" tabindex="0" aria-label="Illustrative destination capacity budget"><table><caption>Assumed 120 GiB of replica data to move; reserve retained for growth and recovery</caption><thead><tr><th>Destination</th><th>Eligible?</th><th>Free</th><th>Reserve</th><th>Usable for this move</th></tr></thead><tbody>
+<tr><td>D</td><td>Yes</td><td>180 GiB</td><td>80 GiB</td><td>100 GiB · does not fit</td></tr>
+<tr><td>E</td><td>No · placement rule</td><td>300 GiB</td><td>80 GiB</td><td>Not a candidate</td></tr>
+<tr><td>F</td><td>Yes</td><td>220 GiB</td><td>80 GiB</td><td>140 GiB · fits this storage calculation</td></tr>
+</tbody></table></div>
+
+<p>D passes a placement test and fails this storage budget. E cannot help despite its spare bytes. F passes only the stated space calculation; its I/O, network, CPU and memory still need capacity for foreground demand and movement. Recalculate after the declared additional failure too. Aggregate cluster free space can hide the one constrained store that must receive the data.</p>
+
+<p><a href="/learn/databases/relational/rebalancing/">Rebalancing and cluster change</a> explains catch-up and membership safety. Here those principles become gates on a native operation: restore current protection, verify remaining placement and capacity, move one budgeted unit, then verify the result before spending the margin again.</p>
+
+<h2 id="remove">Drain and decommission a node</h2>
+
+<p>Draining prepares a process to stop serving active work. Decommissioning permanently removes its stored replicas and membership responsibilities. A temporary maintenance stop preserves the store for a restart; permanent retirement needs both boundaries to finish.</p>
+
+<p>Figure 4 follows one already verified target. Read the completion evidence before the commands.</p>
+
+<OperationFigure kind="removal" />
+
+<p>Withdraw the target from new application traffic through the deployment’s normal routing mechanism. Coordinate connection pools, load-balancer health checks and the process manager so they do not keep opening work on it or kill it before draining finishes. Clients need their usual retry and uncertain-outcome handling; a disconnected commit is not evidence that its transaction aborted.</p>
+
+<p>The command shape below uses an illustrative target ID 4. <code>drain</code> addresses the target’s process; <code>decommission</code> can address another live node while naming the verified target ID. Supply a configured cluster name where required.</p>
+
+<pre aria-label="Illustrative native drain and decommission commands"><code>cockroach node drain \
+  --host=db-4.shop.example:26257 \
+  --certs-dir=/run/shop-operator/certs
+
+cockroach node decommission 4 \
+  --host=db-1.shop.example:26257 \
+  --certs-dir=/run/shop-operator/certs
+
+cockroach node status --decommission \
+  --host=db-1.shop.example:26257 \
+  --certs-dir=/run/shop-operator/certs</code></pre>
+
+<p>Decommissioning also drains automatically if necessary. Explicit draining lets you observe that stage independently. A drained node can still hold stored replicas; leave its process available for evacuation. Use the normal pre-flight checks rather than skipping the placement failure they report.</p>
+
+<h3 id="stalls">When decommissioning stalls</h3>
+
+<p>A pre-flight rejection happens before the requested removal starts. Read the error as a placement explanation: a range needs another replica, existing holders cannot take a second copy for that range, and the remaining live stores may be ineligible. Resolve that condition before repeating the request. The native check has not measured whether a destination has enough spare disk or workload headroom.</p>
+
+<p>After removal starts, progress output can name a node and replicas still belonging to particular ranges. Follow those ranges to their current allocator and snapshot evidence. Restore a missing destination, communication or resource budget while keeping the target usable. Waiting is justified by advancing progress; repeated flat samples with a specific error call for the corresponding repair.</p>
+
+<p><code>node recommission</code> can cancel an active decommissioning state. It cannot bring a fully decommissioned node back into membership; that requires a new node. A node that already drained may need a restart after recommissioning. Use the current native membership state to choose the return path, rather than treating an interrupted terminal command as an undo.</p>
+
+<h3 id="completion">Verify the result before the next change</h3>
+
+<p>The removal progress row can reach zero replicas while membership still says <code>decommissioning</code>. Check the final <code>decommissioned</code> membership as well as evacuation before terminating the process or discarding its store. Then establish restored protection and intended placement for all affected ranges, not merely the few tables in a successful shop query.</p>
+
+<p>The v26.2.8 rehearsal verified the target as node ID 2 at port 26260, although it was the fourth process started. Draining completed while status still listed its stored replicas. The decommission command then reported its replica count falling from 43 to zero. Its last progress row still said <code>decommissioning</code>; the following node-status query reported <code>decommissioned</code> and zero gossiped replicas.</p>
+
+<div class="table-scroll" role="region" tabindex="0" aria-label="Observed range placement before and after native decommission"><table><caption>Selected native range 83, covering shop orders; node lists are unordered sets</caption><thead><tr><th>Observation</th><th>Voting nodes</th><th>Leaseholder</th></tr></thead><tbody><tr><td>Before removing node 2</td><td>1, 2, 3</td><td>1</td></tr><tr><td>After final membership</td><td>1, 3, 4</td><td>1</td></tr></tbody></table></div>
+
+<p>The three remaining nodes’ status snapshots reported no unavailable or under-replicated ranges, and the runtime read returned orders 101 and 102 paid, 103 pending. A strict dry run to remove another node was refused: its ranges had no eligible new store because the other two already held voters. That checks the missing-destination case without carrying out a second removal. No unexpected node outage was introduced, so Figure 3’s loss and recovery sequence remains a model.</p>
+
+<p>Reconnect through an intended remaining gateway as <code>shop_runtime</code>, repeat an authorised tenant lookup and its forbidden case, and check useful application completions, errors and latency under the intended load. One successful read verifies its path; it does not establish the capacity of the reduced deployment.</p>
+
+<p>The native rehearsal here uses four processes on one host. It can establish secure login behaviour and the engine’s membership procedure. It supplies no independent machine, zone or regional failures, and no production capacity result. Keep those acceptance checks with the actual deployment. <a href="/learn/databases/relational/cockroachdb/upgrades/">Upgrading a CockroachDB cluster</a> adds the separate binary and cluster-version transitions when the purpose of stopping a node is an upgrade.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+
+<p>Checked against the v26.2 documentation and an owned disposable v26.2.8 secure cluster. Security probes use separate runtime, migration and support certificate logins, four customer rows, three orders and three payments. The policy drawings, capacity numbers and range checkpoints are explanatory models. The native removal is a bounded functional rehearsal with four processes on one host.</p>
+
+<p>Schema-change probes also checked the SQL setting <code>autocommit_before_ddl</code>. With it on, the CLI committed before DDL, so a later rollback did not restore the schema. A separate check set it to false and verified that its test table was absent after rollback. These results do not make every schema operation safely transactional; check the supported operation and client settings, and verify the final schema. The policy counterexamples used explicit restoration followed by fresh runtime and support checks.</p>
+
+<ul>
+<li>CockroachDB <a href="https://www.cockroachlabs.com/docs/v26.2/security-reference/transport-layer-security">TLS and PKI</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/connection-parameters">client connection parameters</a>: server trust, client authentication and connection verification.</li>
+<li><a href="https://www.cockroachlabs.com/docs/v26.2/create-role">CREATE ROLE</a>, <a href="https://www.cockroachlabs.com/docs/v26.2/grant">GRANT</a>, <a href="https://www.cockroachlabs.com/docs/v26.2/show-grants">SHOW GRANTS</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/show-default-privileges">SHOW DEFAULT PRIVILEGES</a>: login roles, inherited and grantable authority, and future objects.</li>
+<li><a href="https://www.cockroachlabs.com/docs/v26.2/row-level-security">Row-level security</a>, <a href="https://www.cockroachlabs.com/docs/v26.2/create-policy">CREATE POLICY</a>, <a href="https://www.cockroachlabs.com/docs/v26.2/create-view">CREATE VIEW</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/set-vars">SET</a>: policy evaluation, exceptions, view ownership and context lifetime.</li>
+<li><a href="https://www.cockroachlabs.com/docs/v26.2/cockroach-node">cockroach node</a>, <a href="https://www.cockroachlabs.com/docs/v26.2/show-ranges">SHOW RANGES</a>, <a href="https://www.cockroachlabs.com/docs/v26.2/show-zone-configurations">SHOW ZONE CONFIGURATIONS</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/metrics">metrics</a>: observation fields, voters and protection.</li>
+<li><a href="https://www.cockroachlabs.com/docs/v26.2/cluster-setup-troubleshooting">Troubleshoot self-hosted setup</a> and <a href="https://www.cockroachlabs.com/docs/v26.2/node-shutdown">Node shutdown</a>: allocator evidence, pre-flight limits, draining, removal and final membership.</li>
+</ul>
+
+<style>
+ pre{max-width:100%;overflow:auto;margin:1.5rem 0;padding:1rem;border:1px solid var(--color-rule);background:var(--color-surface-alt);font:.77rem/1.8 var(--font-mono)}pre code{font:inherit;padding:0;background:none}
+</style>

@@ -1,0 +1,13 @@
+# Root execution request
+
+Guard exact fixture UUID/database/marker before mutations. Run setup.sql once as root. Existing actual certificate logins are shop_runtime, shop_migrate and shop_support; root-created NOLOGIN roles are used only for privilege/exception checks, not authentication claims. Keep native stdout/stderr/exit status for every case. All row-changing probes use explicit transactions and roll back, apart from schema/grant setup. Do not execute on defaultdb or another cluster.
+
+Execute cases.json entries on separate actual certificate login connections, preserving each entry's statements in one session. Expected failure entries should fail with native permission/policy/constraint errors; do not hide unexpected success. Do not rely on SQLSTATE wording if CLI omits it. Setup deliberately uses only the four canonical customers, three orders and three payments; no products/order lines are needed and none change.
+
+Additional TLS checks: a normal verify-full shop_runtime URL to localhost:26257 must succeed and identify current_user/session_user; repeat with 127.0.0.2 to trigger SAN mismatch, and an empty/unrelated task-owned CA to trigger trust failure. Do not disable TLS to make them pass. Record only public certificate metadata (issuer, subject, expiry), never private key material.
+
+Operational rehearsal (root chooses verified target ID; keep within fixture): collect baseline node status --all, SHOW RANGES FROM DATABASE sc_crdb_operations WITH DETAILS, SHOW ZONE CONFIGURATION FROM DATABASE sc_crdb_operations, SHOW ZONE CONFIGURATION FROM TABLE shop.orders and cluster replication metrics. Request one bounded temporary process outage and return if root can safely observe affected range reachability before replacement; capture actual transition rather than inventing unavailable/underreplicated counts. Four processes on one host establish no zone/region survival.
+
+After recovery, confirm no unavailable/under-replicated ranges before removal. Drain a verified target without shutdown, capture current status. Decommission that live target with normal pre-flight checks, capture progress and final membership plus range placement/metrics and an authorised runtime read. Keep the target live until decommissioned membership. Optionally attempt decommission of another node once three remain: native pre-flight should reject removal where three voters cannot be placed on two nodes. Stop at rejection, do not skip checks. This tests a placement blocker without creating a disk/resource crisis.
+
+These are bounded functional probes, not benchmarks. Root owns process lifetime, all commands, guard, limits and cleanup.
