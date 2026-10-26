@@ -41,3 +41,13 @@
   Guarded stale-refill preset showed source £15, cache empty, held £12, and g1/g2
   rejection. Shared navigation includes the fourth article.
 - Ten articles remain, with cache stampedes now in preparation.
+
+## Article 5 — 26 October 2026
+
+- Commit: fc04fb305da4845b0f9953fbcfe14317b5bb0f5a, pushed to origin/main.
+- Publish run40413919275 succeeded (tests, build, deployment):
+  https://github.com/ryannel/staycurrent/actions/runs/40413919275
+- Opened https://staycurrent.dev/learn/databases/caching/stampedes/.
+  Shared coordination and Next completion produced one load, all12callers
+  answered at500ms. No console errors. Article4 links directly to article5.
+- Five articles available; nine remain. Article6 design and model work started.
