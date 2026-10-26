@@ -6,8 +6,10 @@ The original working tree contains unrelated modelling edits. Our commit 48a8875
 was pushed to origin/main. Deployment run 40406586154 succeeded; production page and Next step verified.
 
 The goal is active and the collection is NOT complete. Full scope and gate in
-plan.md. Articles 1 and 2 completed; article 2 publication in progress. Twelve remain.
-Article 2 evidence and review are in article-02-review.md. Next: expiration and eviction. Do not re-read historical skills.
+plan.md. Articles 1–3 completed; article 3 publication in progress. Eleven remain.
+Evidence and reviews are in article-02-review.md and article-03-review.md.
+Next: cache invalidation and consistency. Article 2 deployment succeeded in
+run 40408619017; production controls verified. Do not re-read historical skills.
 No subagents requested; continue alone.
 
 Serena initial instructions were read. Its symbol overview can read absolute

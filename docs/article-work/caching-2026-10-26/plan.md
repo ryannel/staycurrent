@@ -74,5 +74,6 @@ verification. Distinguish illustrative models from observed Redis execution.
 
 - Planning and reference interaction complete.
 - Article 1 published in commit 48a88755; deployment succeeded and production interactivity verified.
-- Article 2 complete: three interactive arguments, native worksheet and browser checks; publication in progress.
-- Articles 3–14 remain to be written, illustrated, verified and published.
+- Article 2 published in commit 382a0d51; deployment and live controls verified.
+- Article 3 complete: four illustrations, native expiry/eviction worksheet and browser checks; publication in progress.
+- Articles 4–14 remain to be written, illustrated, verified and published.
