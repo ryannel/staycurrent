@@ -1,12 +1,14 @@
 import { relationalCollection, relationalArticleHref, relationalIntroduction } from './relational-collection';
 import { objectArticles, objectHome } from './object-storage-collection';
 import { drawingCollection, drawingHref } from './drawing-collection';
+import { cachingArticles, cachingHome, cachingHref } from './caching-collection';
 
 export const databaseGuide = '/learn/databases/choosing/';
 export const relationalHome = '/learn/databases/relational/';
 export const drawingHome = drawingHref('');
 export interface ReadingEntry { href: string; title: string; description: string; group: string; keywords?: string; }
 export const reading: ReadingEntry[] = [
+  ...cachingArticles.filter(a => a.published).map(a => ({ href: cachingHref(a.slug), title: a.title, description: a.description, group: 'Application caching · Redis', keywords: 'cache Redis cache-aside TTL invalidation latency' })),
   { href: databaseGuide, title: 'Databases and storage: a field guide', description: 'The main approaches to storing data, the problems they solve, and when to choose them.', group: 'Start here' },
   { href: relationalHome, title: relationalIntroduction.title, description: relationalIntroduction.description, group: 'Start here' },
   { href: `${relationalHome}sandbox/`, title: 'SQL sandbox', description: 'Explore PostgreSQL in your browser, with guided lessons from first queries to migrations, indexes and recovery reasoning.', group: 'Practice', keywords: 'PostgreSQL interactive tutorial transactions rollback' },
@@ -39,6 +41,10 @@ export function breadcrumbs(path: string, title: string) {
   if (path.startsWith('/learn/databases/') || path.startsWith('/assessments/')) {
     trail.push({ href: databaseGuide, title: 'Databases and storage' });
     if (path === databaseGuide) return trail;
+    if (path.startsWith(cachingHome)) {
+      trail.push({ href: cachingHome, title: 'Application caching' });
+      if (path === cachingHome) return trail;
+    }
     if (path.startsWith(objectHome)) {
       trail.push({ href: objectHome, title: 'Object storage' });
       if (path === objectHome) return trail;

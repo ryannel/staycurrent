@@ -1,0 +1,108 @@
+---
+import Article from '../../../../layouts/CachingArticle.astro';
+import CacheAside from '../../../../components/caching/CacheAside.astro';
+import Reuse from '../../../../components/caching/Reuse.astro';
+import Latency from '../../../../components/caching/Latency.astro';
+import Copies from '../../../../components/caching/Copies.astro';
+import { cachingArticles, cachingHref } from '../../../../lib/caching-collection';
+---
+<Article slug="">
+<p>A hundred people open the same product page. For each person, your application reads the product from a database, loads its category, calculates the public price and turns the result into JSON. The work may be quite reasonable once. Doing it a hundred times to produce the same answer is less attractive.</p>
+<p>We could keep the first answer and reuse it. The place we keep that answer is a <strong>cache</strong>. A cache trades storage and some bookkeeping for work we hope to avoid. That sounds simple because the first part is simple. The interesting questions begin when the answer changes, the storage fills up, or a thousand requests arrive before the first answer is ready.</p>
+<p>We’ll start with one request and one saved answer. Use <strong>Next step</strong> to follow the request below, or play the sequence. Once it finishes, choose <strong>Request again</strong>.</p>
+<CacheAside />
+<p>On the first request, the application has to visit the database. On the second, it stops at Redis. The product page looks the same to the reader, but the system has done less work to produce it. That difference is the reason to add a cache.</p>
+
+<h2>Cache-aside: look up, load, save</h2>
+<p><strong>Redis</strong> is a server that stores values under keys and lets applications read and change them with commands. It keeps the data it serves in memory. In our example, the key <code>product:42</code> names a saved product response. The value contains the product’s details. The application connects to Redis over a network connection, just as it connects to its database.</p>
+<p>Sending <code>GET product:42</code> asks Redis for that value. If it exists, Redis returns it: a <strong>cache hit</strong>. If the key is absent, Redis returns a null result, displayed as <code>(nil)</code> by its interactive command-line client: a <strong>cache miss</strong>. A miss is an ordinary outcome. It means the application still has work to do.</p>
+<p>After a miss, the application reads the database, prepares the response and sends a <code>SET</code> command to save a copy. This arrangement is called <strong>cache-aside</strong>, also known as lazy loading. The application manages the relationship between the source and the cache. Redis does not know which SQL query to run, what a product means, or whether its saved price is current.</p>
+<p>Here is the successful path in pseudocode. Assume each operation finishes successfully and requests run one at a time; we will remove those assumptions as the collection develops.</p>
+<pre><code>{`function productPage(productId):
+    key = "product:" + productId
+    saved = redis.GET(key)
+    if saved is not null:
+        return decode(saved)
+
+    product = database.loadProduct(productId)
+    response = buildPublicProductPage(product)
+    redis.SET(key, encode(response), EX=60)
+    return response`}</code></pre>
+<p>The null test matters. An empty string, zero or a saved “no results” response can all be legitimate values. A cache miss is the absence of an entry, not a value your programming language happens to treat as false.</p>
+<p>The <code>EX 60</code> option gives this copy a sixty-second lifetime. Redis will treat the key as absent after that time. The lifetime is an application decision; sixty seconds is an example, not a general recommendation. Setting the value and its expiry in the same command also avoids a gap in which a crash could leave the value stored without the intended expiry.</p>
+<p>This code is a useful picture of the algorithm, but it is not yet a production implementation. It has no request deadlines, concurrency control or error policy. In particular, a Redis connection error is different from a missing key. The former is a failed dependency request; the latter is a successful response saying there is no saved value.</p>
+
+<h2>Hit rate and the value of reuse</h2>
+<p>The first visitor to each product pays for the database work. Later visitors benefit only if they ask for a product we have already saved. Try sending all twenty requests below, then increase the number of different products. Watch which database reads disappear.</p>
+<Reuse />
+<p>With four products, the first four requests miss and the next sixteen hit. The <strong>hit rate</strong> is the number of hits divided by the number of cache lookups: 16 ÷ 20, or 80%. With twenty different products, every request misses. We have added twenty lookups and twenty saves without avoiding a single database read.</p>
+<p>This is <strong>temporal locality</strong>: recently requested information is likely to be requested again. Product popularity often creates it. A personalised response that almost nobody requests twice may have very little of it. A cache can only exploit the reuse the workload actually offers.</p>
+<p>We made this example generous to caching. Every value fits, none expires, and no product changes. In a real application, the next request must arrive while the copy is still both present and acceptable to use. A frequently viewed product may earn its storage many times over; a rarely viewed one may expire without a single hit. Increasing the lifetime can create more reuse, but it also allows an unchanged copy to survive longer while the world moves on.</p>
+<p>Hit rate is useful, but it does not tell us how valuable the hits are. Avoiding a hundred cheap lookups might save less work than avoiding one expensive report. Keep the result you want in view: less database load, less CPU time, lower response latency, or some combination. Measuring only hits can make an ineffective cache look successful.</p>
+
+<h2>Cache latency: hits are cheaper, misses are dearer</h2>
+<p>Let’s put a cost on the paths. Suppose a cache lookup takes 2 milliseconds, building the answer from the source takes 40 ms, and saving the copy takes another 2 ms. These are chosen numbers for reasoning, not Redis benchmark results.</p>
+<p>A hit costs 2 ms. A miss costs 2 + 40 + 2 = 44 ms if we wait for the fill before responding. The miss is slower than the original 40 ms request. Caching earns its keep by making enough of the other requests much faster.</p>
+<p>Move the hit-rate slider. Each dot is one request, placed according to its latency. The dashed line shows where all the requests would sit without the cache.</p>
+<Latency />
+<p>At a 90% hit rate, ninety requests take 2 ms and ten take 44 ms. Their mean is (90 × 2 + 10 × 44) ÷ 100 = 6.2 ms. The source does ten reads instead of a hundred. Those are substantial improvements in this model.</p>
+<p>Yet the slowest requests still take 44 ms. The <strong>99th percentile</strong>, or p99, is the latency at the 99th request when these hundred latencies are sorted from fastest to slowest. At 90% hits, that request is a miss. An improved average has not made the miss path faster. An application whose latency target covers almost every request still needs to make that path tolerable.</p>
+<p>We can also find the point at which caching starts to help the average. Let <var>h</var> be the hit rate as a fraction, <var>C</var> the lookup cost, <var>D</var> the source cost and <var>F</var> the fill cost. Every request pays <var>C</var>; the fraction 1 − <var>h</var> also pays <var>D</var> + <var>F</var>. The mean is therefore:</p>
+<p><strong>C + (1 − h)(D + F)</strong></p>
+<p>For this to beat the original cost <var>D</var>, we need <strong>h &gt; (C + F) ÷ (D + F)</strong>. Our numbers give 4 ÷ 42, about 9.5%. Change the source work to 2 ms and the conclusion changes completely: even a hit is no faster than a direct source read, while every miss costs more. There may still be a reason to protect the source’s capacity, but lower mean latency is no longer that reason.</p>
+<p>Real systems add queues, variable query costs, encoding, network transfer and other application work. Avoiding source requests can shorten a database queue, improving even the requests that still reach it. Conversely, a large cached response can spend significant time crossing the network and being decoded. Measure the whole request and the work at the source; the speed of a small Redis command alone cannot settle the decision.</p>
+
+<h2>Cached data and the source of truth</h2>
+<p>So far our product has remained unchanged. Now a member of staff raises its price from £12 to £15 in the database. Redis still holds the response we saved earlier. Change the source in the illustration, then read the product page.</p>
+<Copies />
+<p>The page still shows £12. Nothing malfunctioned: Redis returned exactly the bytes it was given. The application chose to reuse them without asking the source. We call the copy <strong>stale</strong> because the information it represents has changed.</p>
+<p>Delete the cached copy and read again. The miss sends the application back to the database, and the page now shows £15. Deleting a copy so that it cannot be reused is <strong>cache invalidation</strong>. Expiry offers another way to stop reusing it, by ending its lifetime even when nobody explicitly reports a change.</p>
+<p>The database is the <strong>source of truth</strong> in this design: the place whose state decides the current product details. Redis is holding derived, replaceable data. If the cache disappears, we lose saved work, not the underlying product records. That distinction belongs to our application design. Redis can also be used to hold data that is not replaceable, but such data needs a different durability and recovery contract.</p>
+<p>Whether £12 is an acceptable answer depends on the operation. A browsing page may be allowed to lag briefly. Charging a customer needs a price the system can honour. One sensible design caches the browsing information but has checkout validate the sale against authoritative state. A cache entry that happens to be young does not by itself enforce a business rule.</p>
+<p>We have only made sequential changes here. Once reads and writes overlap, even “update the database, then delete the cache entry” has races: an earlier reader can finish late and put an old answer back. The invalidation article will let you move those events yourself. For now, the essential observation is visible in the two boxes: a second copy creates a second state that must be managed.</p>
+
+<h2>Try GET, SET and expiry in Redis</h2>
+<p>The illustrations are local teaching models. To see the actual commands, run a disposable Redis container. You need Docker installed and running; no hosted Redis account is needed. The following setup publishes no network port and keeps no data after removal. It uses Redis 8.2.2 so the exercise has a named, reproducible version.</p>
+<pre><code>{`docker run --detach --rm --name cache-intro --network none \\
+  redis:8.2.2 redis-server --save '' --appendonly no
+
+docker exec -it cache-intro redis-cli`}</code></pre>
+<p>At the Redis prompt, run these commands. If you take more than sixty seconds between saving and reading, save the value again.</p>
+<pre><code>{`GET demo:product:42
+# (nil)
+
+SET demo:product:42 '{"name":"Blue mug","price":12}' EX 60
+# OK
+
+GET demo:product:42
+# "{\\\"name\\\":\\\"Blue mug\\\",\\\"price\\\":12}"
+
+TTL demo:product:42
+# Remaining seconds, at most 60
+
+DEL demo:product:42
+# (integer) 1, if it has not already expired
+
+GET demo:product:42
+# (nil)`}</code></pre>
+<p>The lines beginning with <code>#</code> explain the expected replies; enter only the commands. <code>TTL</code> reports remaining lifetime. It returns <code>-2</code> for a missing key and <code>-1</code> for an existing key with no expiry. Try saving with <code>EX 1</code>, wait a couple of seconds, then read again. Expiration turns that lookup into a miss without any application issuing <code>DEL</code>.</p>
+<p>Leave the prompt with <code>QUIT</code>, then remove this exercise’s container with <code>docker rm -f cache-intro</code>. A <a href="/learn/databases/caching/examples/first-cache.sh" download>downloadable worksheet</a> runs the same exercise and removes its own container. It was executed against Redis 8.2.2 during preparation; it checks command behaviour, not production performance.</p>
+
+<h2>Design the cache around the answer</h2>
+<p>Before adding Redis to a request path, identify the answer you want to reuse and the work it would save. Then decide which requests may share it, how long it can remain acceptable, and where a miss will get a replacement. Those decisions define the cache more usefully than a target hit rate does.</p>
+<p>For our product page, we can state an initial contract: cache the public product details, allow a short delay in reflecting edits, rebuild missing entries from the database, and validate purchases separately. We still need to choose keys that distinguish different answers, prevent bursts of misses from overwhelming the database, and handle Redis failures. The remaining articles develop those parts of the same system.</p>
+<p>You can already recognise a poor candidate: a cheap answer that is almost never reused, or an operation that must decide from current authoritative state and cannot validate a cached result. You can also recognise a promising one: expensive, repeatedly requested work whose answer can remain useful long enough to serve several requests.</p>
+
+<h2 id="collection">The application caching collection</h2>
+<p>Read in order to build the design from first principles. Later articles follow the same application into concurrency, distribution and production operation. Articles marked “in preparation” are not yet available.</p>
+<ol class="cache-collection">{cachingArticles.map(a=><li>{a.slug === '' ? <strong>{a.title} · you are here</strong> : a.published ? <a href={cachingHref(a.slug)}>{a.title}</a> : <span>{a.title} · in preparation</span>}<small>{a.description}</small></li>)}</ol>
+
+<details class="cache-sources"><summary>Sources and further reading</summary>
+<ul>
+<li><a href="https://redis.io/docs/latest/develop/get-started/data-store/">Redis data-store quick start</a> — keys, values and connecting to the server.</li>
+<li><a href="https://redis.io/docs/latest/commands/get/">GET</a>, <a href="https://redis.io/docs/latest/commands/set/">SET</a> and <a href="https://redis.io/docs/latest/commands/del/">DEL</a> — retrieval, storing a value with expiry and deleting the saved copy.</li>
+<li><a href="https://redis.io/docs/latest/commands/ttl/">TTL</a> and <a href="https://redis.io/docs/latest/commands/expire/">EXPIRE</a> — remaining lifetime and expiration semantics.</li>
+<li><a href="https://docs.aws.amazon.com/whitepapers/latest/database-caching-strategies-using-redis/caching-patterns.html">AWS: lazy loading</a> — the cache-aside request path and its miss penalty.</li>
+</ul><p>Primary documentation checked on 26 October 2026. Numerical models are illustrative; the command worksheet was run on Redis 8.2.2. The visual teaching approach was informed by <a href="https://ciechanow.ski/gears/">Bartosz Ciechanowski’s Gears</a> and <a href="https://samwho.dev/load-balancing/">Sam Rose’s Load Balancing</a>.</p>
+</details>
+</Article>
