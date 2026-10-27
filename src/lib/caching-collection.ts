@@ -13,6 +13,6 @@ export const cachingArticles = [
   { slug: 'redis-cluster', title: 'Redis Cluster and hot keys', description: 'Follow hash slots, redirects, resharding and the limits of adding shards.', published: true },
   { slug: 'client-side-caching', title: 'Client-side caching and cache hierarchies', description: 'Keep local and shared copies coherent across invalidation and disconnection.', published: true },
   { slug: 'operations', title: 'Operating Redis caches', description: 'Secure, observe, diagnose and change a cache service under real workload constraints.', published: true },
-  { slug: 'system-design', title: 'Designing a production cache', description: 'Build and test a complete application cache contract under load, updates and failure.', published: false },
+  { slug: 'system-design', title: 'Designing a production cache', description: 'Build and test a complete application cache contract under load, updates and failure.', published: true },
 ];
 export const cachingHref = (slug: string) => `${cachingHome}${slug ? `${slug}/` : ''}`;

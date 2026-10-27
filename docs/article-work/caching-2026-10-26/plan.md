@@ -85,5 +85,5 @@ verification. Distinguish illustrative models from observed Redis execution.
 - Article 10 published in commit 7fd75ec9; deployment and live lost-invalidation control verified.
 - Article 11 published in commit d2ad160e; deployment and live routing/migration controls verified.
 - Article 12 published in commit b247be28; deployment and live pending-read/deadline controls verified.
-- Article 13 complete and reviewed; publication verification pending.
-- Article 14 and its runnable reference application/load/failure lab remain.
+- Article 13 published in commit e0613031; deployment and live ACL/counter/rollout controls verified.
+- Article 14 and its runnable reference application/load/failure lab complete and reviewed; publication verification and final collection audit pending.

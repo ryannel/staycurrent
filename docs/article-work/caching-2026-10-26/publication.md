@@ -126,3 +126,20 @@
   checkbox -> localexpiry60/reload at75. No consoleerrors.
   Article11 links directly to article12.
 - Twelve articles available; two remain plus final referenceapplication/lab.
+
+## Article 13 — 27 October 2026
+
+- Commit e06130315b1c2de7b287771985d02d69dd47a7ae pushed to origin/main.
+- Publish run 40429434385 succeeded:
+  https://github.com/ryannel/staycurrent/actions/runs/40429434385
+- Opened https://staycurrent.dev/learn/databases/caching/operations/.
+  Orders GET -> NOPERM; counter reset -> discard interval; 10% cold rollout ->
+  145 source loads/s, 55 below budget. No consoleerrors.
+  Article12 links directly to article13.
+- Thirteen articles available; final article/referenceapplication/lab remain.
+
+### Operations download command correction
+
+Commit6c4259427fbab723934198f1f299a64627abd0a6 adds the README's documented npmtest
+script to the package and refreshedzip. Exactcommandpassed. Deployment40430206945
+succeeded. No prose or illustration change.
