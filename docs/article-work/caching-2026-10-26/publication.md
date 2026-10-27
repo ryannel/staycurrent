@@ -85,3 +85,13 @@
   No console errors. Article 7 links directly to article 8.
 - Eight articles available; six remain plus final reference application/lab.
   Article 9 has primary-source notes and a first native memory lab.
+
+## Article 9 — 27 October 2026
+
+- Commit 5a7dda3ae66a9e5b41dfc91b3c649b27ff7135be pushed to origin/main.
+- Publish run 40421786805 succeeded:
+  https://github.com/ryannel/staycurrent/actions/runs/40421786805
+- Opened https://staycurrent.dev/learn/databases/caching/memory-and-performance/.
+  Add field 513 changes encoding to hashtable and memory to 37,008 bytes.
+  No console errors. Article 8 links directly to article 9.
+- Nine articles available; five remain plus final reference application/lab.

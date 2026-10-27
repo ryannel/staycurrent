@@ -4,58 +4,51 @@ Use /private/tmp/staycurrent-caching-20261026 explicitly for every command.
 Branch codex/application-caching. Do not touch, switch or reset the primary
 checkout /Users/ryannel/Workspace/staycurrent: it has unrelated user edits.
 
-Active goal is NOT complete. Articles 1–8 published and verified. Article 7 commit
-c3e84865c41e1d01120510f8063d7145fc97deff, deployment 40418654905 succeeded: 33 model tests pass, production build passes
-all 13 site-check rules, native client lab and desktop/phone controls checked.
-Five later articles plus final runnable reference application/load/failure lab
-remain. Full plan/gates in plan.md. Both teaching references already read and
-interacted with; observations in plan.md. Continue alone; no subagents requested.
+Active goal is NOT complete. Articles1–9 published and verified. Article9 commit
+5a7dda3ae66a9e5b41dfc91b3c649b27ff7135be, deployment40421786805 succeeded; live
+encoding513/37,008 verified with no errors. Article10 now complete and publishing:
+four models, four native recovery cases, prose, desktopdark/light and phone390px
+review, 47modeltests andall13sitecheckrulespass. See article-10-plan.md and
+article-10-review.md. Manifest10true and article9nextlink updated. Commit/push,
+verify exact deployment and live controls, then record publication.
 
-Article 7 adds three figures, complete prose and a downloadable, pinned native
-node-redis 6.3.0 / Redis 8.2.2 client lab. See article-07-plan.md,
-article-07-review.md and evidence/clients.txt. Manifest is available and article 6
-links to it. Live batch-six Next reply showed 1/6 at 22 ms, final reply 32 ms;
-no console errors. Article 8 is now complete: four figures, prose, native lab,
-39 model tests and all build checks pass; desktop dark/light and phone checked.
-Native evidence in evidence/atomicity.txt, review in article-08-review.md.
-Article 8 commit dcd369c4ccd6d0581065f94e577ae9d81e4d7c4d; deployment
-40420037722 succeeded. Live WATCH conflict and retry to12 verified, no errors.
-Article 9 now complete: four figures, native memory lab, prose and final desktop/
-phone review; all43model tests and13site rules pass. See article-09-review.md.
-Manifest and article8link updated. Commit/push/deploy article9 next.
-Five later articles and final reference application remain. Next article10 is
-Redis replication, persistence and failover: acknowledged-write loss, lag/promotion,
-RDB/AOF recovery, restore freshness, Sentinel quorum and bounded cold recovery.
+Articles11–14 remain plus final runnable reference application/load/failure lab.
+Next article11: Redis Cluster and hot keys — hashslots, hashtag/multi-key
+constraints, MOVED/ASK and resharding, clients/topology, skew/hotkeys, replica
+failover and cluster availability boundaries. Native isolated cluster lab needed.
+Do not mark goal complete until all14articles and final application delivered.
+Both teaching references already read and interacted with; observations in plan.md.
+Continue alone; no subagents requested. Publication explicitly authorised.
 
 Serena manual read. Isolated checkout mutations use ordinary file tools because
-Serena restricts them to the original root. Local Node 24.16 / pnpm 11.4 installed.
-Dev server at 127.0.0.1:4341, session 47442. Checks: pnpm build and
+Serena restricts them to the original root. Node24.16 / pnpm11.4 installed.
+Dev server127.0.0.1:4341, session47442. Checks: pnpm build and
 node --test src/lib/caching/*.test.mjs. Primary checkout remains untouched.
 
-Docker became unavailable after a host disk-space failure. Do not depend on its
-old container or reset/prune Docker. Official Redis 8.2.2 source was downloaded and
-compiled at /private/tmp/redis-8.2.2; redis-server and redis-cli are under src/.
-Native client lab starts/stops an isolated Unix-socket server with persistence off:
-REDIS_SERVER=/private/tmp/redis-8.2.2/src/redis-server node examples/caching/client-lab/run.mjs
-Its temporary readiness peer binds only localhost. Scoped process/socket approvals
-were granted. This is real Redis execution, not a model or throughput benchmark.
+Docker unavailable after host disk-space failure. Do not reset/prune Docker.
+Official Redis8.2.2 source compiled at /private/tmp/redis-8.2.2; binaries under
+src/. Native labs use owned temporary directories/processes and private Unix
+sockets. Recovery lab additionally uses localhost ephemeral TCP for replication
+and Sentinel. Run REDIS_SERVER=/private/tmp/redis-8.2.2/src/redis-server node
+examples/caching/recovery-lab/run.mjs. Scoped process/socket approval granted.
+All four cases pass including actual Sentinel promotion. Process-only crashes,
+not host/storage-failure proof. examples/caching/{client,atomicity,memory}-lab
+also contain prior pinned native labs. Public downloads in caching/examples.
 
-To recover space, only this isolated worktree's regenerable dist and checked-out
-historical documents were removed. Sparse checkout retains .github, examples,
-public, scripts, src, docs/article-work/caching-2026-10-26,
-docs/article-work/indexes and docs/article-work/designing-data. The latter two are
-needed by existing Astro imports. Do not change the primary checkout's sparsity.
+Sparse checkout retains .github, examples, public, scripts, src,
+docs/article-work/caching-2026-10-26, docs/article-work/indexes and
+docs/article-work/designing-data (lasttwo neededbyexistingAstroimports).
+Do not change primary checkout's sparsity. dist is regenerable.
 
-Browser via cua_repl only. previewBrowser is iab browser3; productionTab tab4,
-keysTab tab9 is local article9; productionTab tab4 is live article8. Old tab5 ended on an internal error page and was
-replaced after restarting dev server. Viewport reset. For phone checks set viewport
-in SAME tool call as tab.screenshot/evaluate; use emitImage. Capability appears
-to target the most recently created/selected native tab: a dedicated fresh phone
-tab10 worked while tab9 stayed1280wide. Phone tab10 is now closed. Restore browser docs
-after compaction. Mark useful local/live tabs as handoff/deliverable before ending.
+Browser via cua_repl only; restore documentation after compaction.
+previewBrowser=iab browser3. productionTab tab4 currently live article9.
+keysTab tab9 local article10; recoveryDesktop is a newer local article10tab.
+Viewport often only changes newest/selectedtab; afterset check actualinnerWidth
+and readable screenshot. A first screenshot sometimes scaled old1280into390;
+nextsnapshot correctly390. Model selectors in component source are known.
+Theme controls radio names Light/Dark/System. Mark useful tabs before ending.
 
-Before each publication: primary/native evidence, invariants, teaching review,
-desktop light/dark and phone/keyboard controls, build; manifest and prior link;
-fetch/reconcile main; stage intended files; commit/push HEAD:main; exact GH run and
-live controls. Publication is explicitly authorised. Keep goal active until all
-14 articles and final reference application are delivered.
+Before publication: primary/native evidence, invariants, teaching self-review,
+desktop light/dark and phone/keyboard controls, build; manifest/priorlink;
+fetch/reconcilemain; stageonlyintendedfiles; commit/push HEAD:main; exactGHrun and
+live controls. Do not infer deployment success from push acceptance.
