@@ -1,9 +1,10 @@
-// Stampede experiments against a real Redis 8.10.3 on port 7106. The database
+// Stampede experiments against a real Redis 8.10.3 on port 7106 (LAB_PORT=7116 for the repair round). The database
 // is simulated (a timer of `delta` ms, with a concurrency counter); every Redis
 // command is real. Usage: node lab.mjs <experiment>
 import { connect } from './resp.mjs';
 import { randomBytes } from 'node:crypto';
 
+const PORT = Number(process.env.LAB_PORT ?? 7106);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function seeded(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const q = (xs, p) => { if (!xs.length) return NaN; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
@@ -61,7 +62,16 @@ const strategies = {
     if (pttl > o.hard - o.soft) return {};
     const token = randomBytes(8).toString('hex');
     if (await p.r.call('SET', `lock:${K}`, token, 'NX', 'PX', o.lockTtl) === 'OK') {
-      (async () => { const fresh = await o.db.query(); await p.r.call('SET', K, fresh, 'PX', o.hard); await p.r.call('DELEX', `lock:${K}`, 'IFEQ', token); })();
+      (async () => {
+        // Re-check after taking the lock: another refresher may have stored a fresh copy and released
+        // its lock between this request's PTTL and its SET NX (round-1 technical review, R3).
+        if (o.recheck) {
+          const again = await p.r.call('PTTL', K);
+          if (again > o.hard - o.soft) { o.skipped++; await p.r.call('DELEX', `lock:${K}`, 'IFEQ', token); return; }
+        }
+        o.refreshes.push({ at: Date.now() - o.t0, pttl });
+        const fresh = await o.db.query(); await p.r.call('SET', K, fresh, 'PX', o.hard); await p.r.call('DELEX', `lock:${K}`, 'IFEQ', token);
+      })();
     }
     return { stale: true };
   },
@@ -82,11 +92,11 @@ const strategies = {
 
 async function run({ strategy, seed = 1, rate = 500, seconds = 3, delta = 200, processes = 4, warm = false, ...rest }) {
   const procs = [];
-  for (let i = 0; i < processes; i++) procs.push({ r: await connect(7106), inflight: new Map() });
+  for (let i = 0; i < processes; i++) procs.push({ r: await connect(PORT), inflight: new Map() });
   const K = 'trending';
   await procs[0].r.call('DEL', K, `lock:${K}`);
   const random = seeded(seed);
-  const o = { db: database(delta), ttl: 60000, lockTtl: 5000, recheck: true, random, gaveUp: 0, beta: 1, soft: 5000, hard: 15000, rebuildTimes: [], ...rest };
+  const o = { db: database(delta), ttl: 60000, lockTtl: 5000, recheck: true, random, gaveUp: 0, beta: 1, soft: 5000, hard: 15000, rebuildTimes: [], refreshes: [], skipped: 0, t0: Date.now(), ...rest };
   if (warm) {
     if (strategy === 'xfetch') { await procs[0].r.call('HSET', K, 'v', 'warm', 'delta', delta); await procs[0].r.call('PEXPIRE', K, o.ttl); }
     else await procs[0].r.call('SET', K, 'warm', 'PX', strategy === 'stale' ? o.hard : o.ttl);
@@ -109,7 +119,7 @@ async function run({ strategy, seed = 1, rate = 500, seconds = 3, delta = 200, p
     p50: q(lat, 0.5), p99: q(lat, 0.99), max: Math.max(...lat), slow: lat.filter(x => x > 50).length,
     stale: results.filter(r => r.stale).length, waited: results.filter(r => r.waited).length, gaveUp: o.gaveUp,
     hardMisses: strategy === 'xfetch' ? results.filter(r => r.missed).length : undefined,
-    rebuildTimes: o.rebuildTimes,
+    rebuildTimes: o.rebuildTimes, refreshes: o.refreshes, skipped: o.skipped,
   };
 }
 
@@ -149,4 +159,14 @@ if (which === 'xfetch') {
   for (const s of starts) { const c = cycles.at(-1); if (c && s.at - c.first < 200) c.n++; else cycles.push({ first: s.at, n: 1, early: s.early }); }
   const early = cycles.map(c => c.early);
   console.log(`  cycles ${cycles.length}; mean rebuilds per cycle ${(starts.length / cycles.length).toFixed(2)}; max ${Math.max(...cycles.map(c => c.n))}; first rebuild before expiry: mean ${(early.reduce((a, b) => a + b, 0) / early.length).toFixed(0)} ms, min ${Math.min(...early)} ms, max ${Math.max(...early)} ms`);
+}
+if (which === 'stale') {
+  console.log('# Experiment L: serve-stale over 30 s with and without the re-check after taking the lock. Poisson 500 req/s, 4 processes,');
+  console.log('# database 200 ms, soft 5 s, hard 15 s. Each refresh logs ms since start and the PTTL its request had read (<= 10000 means stale).');
+  const seeds = process.argv[3] ? process.argv[3].split(',').map(Number) : [7, 8, 9];
+  for (const recheck of [false, true]) for (const seed of seeds) {
+    const r = await run({ strategy: 'stale', seed, seconds: 30, warm: true, recheck });
+    console.log(`recheck=${recheck} ` + fmt(r));
+    console.log(`  refreshes started at (ms, PTTL read): ${r.refreshes.map(f => `${f.at}/${f.pttl}`).join(' ')}; lock won but copy already fresh, skipped: ${r.skipped}`);
+  }
 }

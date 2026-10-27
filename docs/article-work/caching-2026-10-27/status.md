@@ -46,7 +46,7 @@ Redis: 7100 + article number for writers, 7150 + article number for reviewers.
 | 2 | caching-patterns | A | done | final: publish | 3e3c4eca |
 | 3 | keys-and-values | A | done | final: publish | 3e3c4eca |
 | 4 | expiration-and-eviction | | | | |
-| 5 | invalidation | C | done | final: fixed, verified | (this commit) |
+| 5 | invalidation | C | done | final: fixed, verified | c3b6a969 |
 | 6 | stampedes | | | | |
 | 7 | how-redis-works | D | done | final: publish | a09369a4 |
 | 8 | clients-and-pipelining | | | | |
@@ -207,3 +207,12 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
   8.10.3) and marked it published. Article 4 final review: 2 blocking (Figure
   1 readouts carry over the previous TTL's copy; a model result reported as
   Redis), 8 minor; repair 2 started (dev 4414, Redis 7114).
+- 2026-10-28: article 5 live (9 figures, no errors).
+- 2026-10-28: article 6 final review: publish, 0 blocking, 10 minor, about 350 words cuttable. Polish started (sonnet, dev 4426).
+- 2026-10-28: article 6 polished (10 minor fixes, about 350 words cut) and
+  marked published. Shared sequence.mjs: notes now clear the step-number
+  gutter at phone width (raised by two reviewers of article 6; affects all
+  stepped figures, only moving left-edge notes right). Article 9 teaching
+  review: 4 required/22 suggested (replica reads stale through primary loss by
+  default; Figure 7 internal name; Figure 10 contradicts itself; Figure 2
+  shared pages before a child exists). Waiting for its technical review.

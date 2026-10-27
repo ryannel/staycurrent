@@ -1,0 +1,143 @@
+---
+// Figure: XFetch, one request at a time.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Readout from '../shared/Readout.astro';
+import { dotShape } from '../shared/shapes.mjs';
+import './stampedes.css';
+interface Props { number: number }
+const { number } = Astro.props;
+// The figure draws lines and bars the shared kinds have no glyph for, so it has its own legend,
+// with glyphs that match what the scene draws.
+const requestDot = dotShape('client', 5).d;
+---
+<SimFigure number={number} id="st-xfetch" title="Each request draws its own head start" advance={1000}
+  caption="Illustrative model, slowed down to watch: one key, 8 requests a second, a rebuild of 1 second, a copy that lives 8 seconds. One expiry cycle is drawn at a time. Each request is a dot placed at the time it arrived, measured back from the copy's expiry, with its random head start drawn to its right; rows only keep the dots apart. When the first rebuild stores the new copy, the finished cycle stays on screen for a moment. Rebuilds after the first would store the copy again; the model leaves that out. Changing β starts a fresh run.">
+  <Slider slot="params" name="beta" label="β (larger starts earlier)" min={0.5} max={3} step={0.25} value={1} />
+  <Fragment slot="stats">
+    <Readout name="size" label="Rebuilds, latest expiry" kind="database" />
+    <Readout name="mean" label="Average rebuilds per expiry" kind="database" />
+    <Readout name="lead" label="Average start before expiry" kind="neutral" />
+  </Fragment>
+  <ul class="cache-legend st-legend" aria-label="Legend">
+    <li><svg class="st-key" viewBox="0 0 26 10" width="26" height="10" aria-hidden="true"><path class="st-key-gap" d="M5 5H25" /><path class="st-key-dot" transform="translate(5 5)" d={requestDot} /></svg>A request and its head start</li>
+    <li><svg class="st-key" viewBox="0 0 26 10" width="26" height="10" aria-hidden="true"><path class="st-key-reach" d="M1 5H25" /></svg>Head start that reaches the expiry</li>
+    <li><svg class="st-key" viewBox="0 0 26 12" width="26" height="12" aria-hidden="true"><rect class="st-key-bar" x="1" y="1" width="24" height="10" rx="2" /><text class="st-key-num" x="13" y="9" text-anchor="middle">1</text></svg>A rebuild, numbered in the order it started</li>
+  </ul>
+  <Fragment slot="text">
+    <p>Each request draws a random head start: a length of time taken from an exponential distribution whose average is β rebuild times. If the request's arrival plus its head start reaches the copy's expiry, it rebuilds. Far from the expiry almost no head start is long enough; close to it many are, so the first rebuild usually starts a couple of seconds early and finishes before the copy expires. The curve at the top shows the chance that a request at each moment decides to rebuild.</p>
+    <p>While the first rebuild runs, other requests keep drawing head starts, and some reach the expiry too. Each starts another rebuild, drawn on its own numbered lane. With β = 1, an expiry gets about 2.8 rebuilds on average in this model (the first plus those that decide during its one-second rebuild), and the first starts about 2.6 seconds before the expiry. With β = 2 the curve is wider: rebuilds start about 5.5 seconds early and there are about 1.8 per expiry. With β = 0.5 rebuilds start later, about a second early, there are about 5.6 per expiry, and about half of the expiries pass before the first rebuild has finished, so some requests miss. The averages wander for the first minute or two of simulated time and then settle near these values.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+  import { dotShape } from '../shared/shapes.mjs';
+  import { xfetchLive, rebuildChance } from './xfetch-model.mjs';
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="st-xfetch"]').forEach(root => {
+    const host = root.querySelector<HTMLElement>('[data-scene]')!;
+    const svg = svgEl('svg', { class: 'cache-svg st-xfetch', role: 'img', 'aria-label': 'Timeline of requests before a cached copy expires, each with a random head start; those that reach the expiry start numbered rebuilds' }, host);
+    const ROWS = 6, LANES = 6, MAX = 8, MIN = -1;   // axis in seconds (rebuild times) before expiry
+    const HOLD = 1500;                               // how long a finished cycle stays on screen, simulated ms
+    let width = 0;
+    const resize = () => { const w = Math.round(host.clientWidth); if (w && w !== width) { width = w; } };
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resize).observe(host);
+    resize();
+
+    const dot = (parent: Element, kind: string, cx: number, cy: number, r: number) => {
+      const g = svgEl('g', { transform: `translate(${cx.toFixed(1)} ${cy.toFixed(1)})`, 'data-cache-kind': kind }, parent);
+      svgEl('path', { class: `st-dot is-${kind}`, d: dotShape(kind, r).d }, g);
+    };
+
+    const draw = (model: any) => {
+      resize();
+      if (!width) return;
+      const compact = width < 480;
+      const left = compact ? 10 : 24, right = compact ? 10 : 24;
+      const curveTop = 22, curveH = 42, rowsTop = curveTop + curveH + 24, rowH = compact ? 15 : 17;
+      const laneH = compact ? 11 : 12, bandTop = rowsTop + ROWS * rowH + 22, bandH = LANES * laneH;
+      const axisY = bandTop + bandH + 14, height = axisY + 40;
+      const x = (y: number) => left + ((MAX - y) / (MAX - MIN)) * (width - left - right);
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`); svg.setAttribute('width', String(width)); svg.setAttribute('height', String(height));
+      svg.replaceChildren();
+      const beta = model.params.beta;
+      // The chance that a request at each moment rebuilds.
+      let d = `M${x(MAX)} ${curveTop + curveH}`;
+      for (let y = MAX; y >= MIN; y -= 0.05) d += `L${x(y).toFixed(1)} ${(curveTop + curveH - rebuildChance(y, beta) * curveH).toFixed(1)}`;
+      svgEl('path', { class: 'st-curve-area', d: `${d}L${x(MIN)} ${curveTop + curveH}Z` }, svg);
+      svgEl('path', { class: 'st-curve', d: d.replace(/^M[^L]*/, `M${x(MAX)} ${curveTop + curveH - rebuildChance(MAX, beta) * curveH}`) }, svg);
+      svgEl('text', { class: 'st-label', x: left, y: 14 }, svg).textContent = 'Chance that a request rebuilds';
+      svgEl('text', { class: 'st-label', x: left, y: rowsTop - 6 }, svg).textContent = 'Requests and their head starts';
+      svgEl('rect', { class: 'st-band', x: left, y: bandTop, width: width - left - right, height: bandH }, svg);
+      // Axis.
+      svgEl('path', { class: 'st-axis', d: `M${left} ${axisY}H${width - right}` }, svg);
+      for (let y = MAX; y >= MIN; y--) {
+        if (compact && y % 2 && y !== -1) continue;
+        svgEl('path', { class: 'st-axis', d: `M${x(y)} ${axisY}v4` }, svg);
+        svgEl('text', { class: 'st-tick', x: x(y), y: axisY + 16, 'text-anchor': 'middle' }, svg).textContent = String(y);
+      }
+      svgEl('text', { class: 'st-label', x: (left + width - right) / 2, y: axisY + 33, 'text-anchor': 'middle' }, svg).textContent = 'Seconds (rebuild times) left before the copy expires';
+      svgEl('path', { class: 'st-expiry', d: `M${x(0)} ${curveTop - 6}V${axisY}` }, svg);
+      svgEl('text', { class: 'st-note', x: x(0) + 4, y: curveTop - 8 }, svg).textContent = 'expiry';
+
+      // One cycle at a time: the finished cycle for HOLD ms after its copy is stored, then the
+      // current one, filling in from the left up to "now".
+      const holding = model.previous && model.sim.now - model.completedAt < HOLD;
+      const c = holding ? model.previous : model.current;
+      const nowY = holding ? null : (c.expiresAt - model.sim.now) / 1000;
+      const g = svgEl('g', {}, svg);
+      let k = 0, extra = 0;
+      c.requests.forEach((r: any, i: number) => {
+        const y = r.y / 1000, gap = r.gap / 1000;
+        if (y > MAX || y < MIN) return;
+        const cy = rowsTop + (i % ROWS) * rowH + rowH / 2;
+        const end = Math.max(MIN, y - gap);
+        if (!r.rebuild) {
+          svgEl('path', { class: 'st-gap', d: `M${x(y)} ${cy}H${x(end)}` }, g);
+          dot(g, 'client', x(y), cy, compact ? 4 : 4.6);
+          return;
+        }
+        k++;
+        if (y > 0) svgEl('path', { class: 'st-gap is-reach', d: `M${x(y)} ${cy}H${x(0)}` }, g);
+        dot(g, 'database', x(y), cy, compact ? 3.2 : 3.6);
+        svgEl('text', { class: 'st-num', x: x(y), y: cy - 5, 'text-anchor': 'middle' }, g).textContent = String(k);
+        if (k > LANES) { extra++; return; }
+        // While the cycle runs, a rebuild is drawn only up to now; a finished cycle shows each one whole.
+        const until = nowY === null ? y - 1 : Math.max(y - 1, nowY);
+        const ly = bandTop + (k - 1) * laneH + 1, w = Math.max(2, x(until) - x(y));
+        svgEl('rect', { class: 'st-rebuild', x: x(y), y: ly, width: w, height: laneH - 2, rx: 2 }, g);
+        if (w > 12) svgEl('text', { class: 'st-bar-num', x: x(y) + Math.min(w / 2, 10), y: ly + laneH - 4, 'text-anchor': 'middle' }, g).textContent = String(k);
+      });
+      if (nowY !== null && nowY <= MAX && nowY >= MIN) svgEl('path', { class: 'st-now', d: `M${x(nowY)} ${rowsTop - 2}V${axisY}` }, svg);
+      if (holding && c.rebuilds.length) {
+        // Where the first rebuild stored the new copy, and the cycle's total.
+        const storedY = c.rebuilds[0].y / 1000 - 1;
+        if (storedY >= MIN && storedY <= MAX) {
+          svgEl('path', { class: 'st-stored', d: `M${x(storedY)} ${bandTop - 2}V${bandTop + bandH + 2}` }, svg);
+          svgEl('text', { class: 'st-tick st-stored-label', x: x(storedY) - 3, y: bandTop + bandH + 11, "text-anchor": "end" }, svg).textContent = "stored";
+        }
+        const n = c.rebuilds.length;
+        svgEl('text', { class: 'st-note st-summary', x: left, y: bandTop - 6 }, svg).textContent = `New copy stored: ${n} rebuild${n === 1 ? '' : 's'} for this expiry${extra ? ` (first ${LANES} shown)` : ''}`;
+      } else {
+        svgEl('text', { class: 'st-label', x: left, y: bandTop - 6 }, svg).textContent = extra ? `Rebuilds, one lane each (first ${LANES} shown)` : 'Rebuilds, one lane each';
+      }
+    };
+
+    mountSim(root, {
+      seed: 5,
+      create: (params, seed) => xfetchLive({ beta: params.beta }, seed),
+      // A new β starts a fresh run, so the averages describe that β alone.
+      update: () => false,
+      render(model: any) {
+        draw(model);
+        const prev = model.previous;
+        setReadouts(root, {
+          size: prev ? String(prev.rebuilds.length) : '–',
+          mean: model.cycles ? (model.rebuilds / model.cycles).toFixed(1) : '–',
+          lead: model.cycles ? `${(model.leads / model.cycles).toFixed(1)} s` : '–',
+        });
+      },
+    });
+  });
+</script>

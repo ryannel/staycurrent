@@ -29,7 +29,7 @@ export const cachingCollection: CachingEntry[] = [
     description: 'How time to live bounds staleness, how Redis expires keys, and how its eviction policies choose what to remove.' },
   { slug: 'invalidation', title: 'Cache invalidation and consistency', type: 'Deep dive', status: 'published',
     description: 'Keeping cached values close to the database, the races that leave stale data behind, and how to prevent them.' },
-  { slug: 'stampedes', title: 'Cache stampedes and the thundering herd', type: 'Deep dive', status: 'planned',
+  { slug: 'stampedes', title: 'Cache stampedes and the thundering herd', type: 'Deep dive', status: 'published',
     description: 'Why many simultaneous misses overload a database, and the locking, coalescing and early-refresh techniques that prevent it.' },
   { slug: 'how-redis-works', title: 'How Redis works: the event loop, data structures and memory', type: 'Deep dive', status: 'published',
     description: 'How one Redis process executes commands, stores data and spends memory, and what makes a command slow.' },

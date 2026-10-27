@@ -1,9 +1,11 @@
 // A minimal Redis client for the stampede experiments: one TCP connection,
-// commands pipelined, replies matched in order. Refuses any port but 7106.
+// commands pipelined, replies matched in order. Refuses any port but the lab's
+// own (7106 for the first draft, 7116 for the round-1 repair).
+const LAB_PORTS = [7106, 7116];
 import net from 'node:net';
 
 export async function connect(port = 7106) {
-  if (port !== 7106) throw new Error('This lab only talks to port 7106');
+  if (!LAB_PORTS.includes(port)) throw new Error(`This lab only talks to ports ${LAB_PORTS.join(', ')}`);
   const socket = net.createConnection({ port, host: '127.0.0.1' });
   socket.setNoDelay(true);
   await new Promise((ok, fail) => { socket.once('connect', ok); socket.once('error', fail); });
@@ -26,7 +28,7 @@ export async function connect(port = 7106) {
     socket.write(out);
   });
   const info = await call('INFO', 'server');
-  if (!/tcp_port:7106\r?\n/.test(info)) throw new Error('Connected to the wrong server');
+  if (!new RegExp(`tcp_port:${port}\\r?\\n`).test(info)) throw new Error('Connected to the wrong server');
   return { call, close: () => socket.end() };
 }
 

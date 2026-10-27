@@ -122,9 +122,10 @@ export function sequenceFigure(root, spec) {
         const label = svgEl('text', { class: 'cache-message-label', x: (a + b) / 2, y: y - 7, 'text-anchor': 'middle' }, g);
         label.textContent = s.label ?? '';
       } else if (s.at) {
-        // A note may be wider than its lane; keep it inside the drawing.
+        // A note may be wider than its lane; keep it inside the drawing and
+        // clear of the step numbers in the left gutter.
         const w = (s.note ?? '').length * 6.8 + 14;
-        const x = Math.max(w / 2 + 2, Math.min(width - w / 2 - 2, laneX[s.at]));
+        const x = Math.max(w / 2 + 16, Math.min(width - w / 2 - 2, laneX[s.at]));
         svgEl('rect', { class: 'cache-note-box', x: x - w / 2, y: y - 10, width: w, height: 20, rx: 3 }, g);
         svgEl('text', { class: 'cache-note-text', x, y: y + 4, 'text-anchor': 'middle' }, g).textContent = s.note ?? '';
       }

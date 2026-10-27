@@ -1,0 +1,396 @@
+# Technical review round 1: Cache stampedes and the thundering herd
+# Reviewer evidence. Redis 8.10.3 (Homebrew, macOS arm64, libc malloc), port 7156, temp dir, --save '' --appendonly no; shut down afterwards.
+# Scripts were run from the reviewer's scratch directory; their full text is reproduced below so they can be re-run.
+
+## R. Command-level checks (scripts/cmds.sh)
+```
+#!/bin/zsh
+rc() { /opt/homebrew/opt/redis/bin/redis-cli -p 7156 "$@"; }
+run() { echo "> $*"; rc "$@" | sed 's/^/  /'; }
+rc INFO server | grep -E "^(redis_version|tcp_port|os):"
+rc FLUSHALL >/dev/null
+echo "## R1. Command docs: DELEX and SET (since / arguments)"
+rc COMMAND DOCS DELEX | tr '\n' ' ' | head -c 1500; echo
+echo; rc COMMAND DOCS SET | tr '\n' ' ' | grep -o 'since [^ ]* [^ ]*\|IFEQ[^ ]*\|ifeq' | head; 
+rc COMMAND DOCS SET | grep -n -i -A3 "ifeq\|8\.4" | head -40
+echo "## R2. SET NX PX; DELEX IFEQ wrong/right token; DELEX on missing key"
+run SET lock:trending tok-A NX PX 5000
+run SET lock:trending tok-B NX PX 5000
+run DELEX lock:trending IFEQ tok-B
+run DELEX lock:trending IFEQ tok-A
+run DELEX lock:trending IFEQ tok-A
+run DELEX nosuch
+echo "## R3. Lock expiry mid-rebuild (300 ms lock, real sleeps)"
+run SET lock:trending tok-A NX PX 300; sleep 0.35
+run SET lock:trending tok-B NX PX 300; sleep 0.05
+run DEL lock:trending
+run SET lock:trending tok-C NX PX 300
+rc FLUSHALL > /dev/null
+run SET lock:trending tok-A NX PX 300; sleep 0.35
+run SET lock:trending tok-B NX PX 300; sleep 0.05
+run DELEX lock:trending IFEQ tok-A
+run SET lock:trending tok-C NX PX 300
+run GET lock:trending
+echo "## R4. PTTL values; HMGET on missing key; pipelined GET+PTTL"
+run PTTL nosuch
+run SET plain x
+run PTTL plain
+run HMGET nosuch v delta
+run SET trending '[1,2]' EX 15
+printf 'GET trending\nPTTL trending\n' | rc | sed 's/^/  /'
+echo "## R5. XFetch edge: a hash written with HSET and no expiry gives PTTL -1"
+run HSET tr:x v '[1]' delta 200
+run PTTL tr:x
+echo "## R6. SET IFEQ (compare-and-set) availability"
+run SET k v1
+run SET k v2 IFEQ v1
+run GET k
+run SET k v3 IFEQ wrong
+run GET k
+```
+### Output
+redis_version:8.10.3
+os:Darwin 25.6.0 arm64
+tcp_port:7156
+## R1. Command docs: DELEX and SET (since / arguments)
+delex summary Conditionally removes the specified key based on value or digest comparison. since 8.4.0 group string complexity O(1) for IFEQ/IFNE, O(N) for IFDEQ/IFDNE where N is the length of the string value. arguments name key type key display_text key key_spec_index 0 name condition type oneof flags optional arguments name ifeq-value type string display_text ifeq-value token IFEQ name ifne-value type string display_text ifne-value token IFNE name ifdeq-digest type string display_text ifdeq-digest token IFDEQ name ifdne-digest type string display_text ifdne-digest token IFDNE 
+
+since 1.0.0 group
+IFEQ',
+since 2.6.12 flags
+ifeq
+ifeq
+IFEQ
+since 8.4.0 name
+since 8.4.0 name
+since 8.4.0 name
+since 8.4.0 name
+19:8.4.0
+20:Added 'IFEQ', 'IFNE', 'IFDEQ', 'IFDNE' options.
+21-arguments
+22-name
+23-key
+--
+62:ifeq-value
+63-type
+64-string
+65-display_text
+66:ifeq-value
+67-token
+68:IFEQ
+69-since
+70:8.4.0
+71-name
+72-ifne-value
+73-type
+--
+80:8.4.0
+81-name
+82-ifdeq-digest
+83-type
+--
+90:8.4.0
+91-name
+92-ifdne-digest
+93-type
+--
+100:8.4.0
+101-name
+102-get
+103-type
+## R2. SET NX PX; DELEX IFEQ wrong/right token; DELEX on missing key
+> SET lock:trending tok-A NX PX 5000
+  OK
+> SET lock:trending tok-B NX PX 5000
+  
+> DELEX lock:trending IFEQ tok-B
+  0
+> DELEX lock:trending IFEQ tok-A
+  1
+> DELEX lock:trending IFEQ tok-A
+  0
+> DELEX nosuch
+  0
+## R3. Lock expiry mid-rebuild (300 ms lock, real sleeps)
+> SET lock:trending tok-A NX PX 300
+  OK
+> SET lock:trending tok-B NX PX 300
+  OK
+> DEL lock:trending
+  1
+> SET lock:trending tok-C NX PX 300
+  OK
+> SET lock:trending tok-A NX PX 300
+  OK
+> SET lock:trending tok-B NX PX 300
+  OK
+> DELEX lock:trending IFEQ tok-A
+  0
+> SET lock:trending tok-C NX PX 300
+  
+> GET lock:trending
+  tok-B
+## R4. PTTL values; HMGET on missing key; pipelined GET+PTTL
+> PTTL nosuch
+  -2
+> SET plain x
+  OK
+> PTTL plain
+  -1
+> HMGET nosuch v delta
+  
+  
+> SET trending [1,2] EX 15
+  OK
+  [1,2]
+  14994
+## R5. XFetch edge: a hash written with HSET and no expiry gives PTTL -1
+> HSET tr:x v [1] delta 200
+  2
+> PTTL tr:x
+  -1
+## R6. SET IFEQ (compare-and-set) availability
+> SET k v1
+  OK
+> SET k v2 IFEQ v1
+  OK
+> GET k
+  v2
+> SET k v3 IFEQ wrong
+  
+> GET k
+  v2
+
+## S1. Independent XFetch simulation (scripts/xf.py; python3 -I xf.py 4000)
+# Request by request; time in rebuild units; stampede = refreshes in [Z, Z+1) (paper Definition 3).
+```
+# Independent request-by-request XFetch simulation (reviewer). Time in rebuild units.
+# A request at time t (expiry at 0, t<0 before) refreshes if t + Exp(mean beta) >= 0, or t >= 0.
+# Stampede size = number of refreshing requests in [Z, Z+1), Z = first refresh (paper Def. 3).
+import random, math, sys
+def arrivals(rng, rate, start, kind):
+    t = start
+    if kind == 'even':
+        t += rng.random()/rate
+        while True:
+            yield t; t += 1/rate
+    elif kind == 'poisson':
+        while True:
+            t += rng.expovariate(rate); yield t
+    elif kind == 'bursty':  # hyperexponential inter-arrivals, mean 1/rate, CV ~3.6
+        p = 0.04; m1 = 0.5/rate*1/(1-p) ; m2 = 0.5/rate/p   # mixture with mean 1/rate
+        while True:
+            t += rng.expovariate(1/m2) if rng.random()<p else rng.expovariate(1/m1); yield t
+def cycle(rng, rate, beta, kind):
+    start = -beta*math.log(rate*beta/1e-9) - 5
+    Z=None; S=0; late=False
+    for t in arrivals(rng, rate, start, kind):
+        if Z is not None and t >= Z+1: break
+        if t >= 0 or (t + rng.expovariate(1/beta)) >= 0:
+            if Z is None: Z=t
+            S+=1
+    return S, -Z
+rng = random.Random(20261027)
+N=int(sys.argv[1]) if len(sys.argv)>1 else 4000
+print("kind rate beta  meanS  e^(1/b)  paper(e^l-1)(1/l+1/e)  meanLead  formula_lead")
+for kind in ['poisson','even','bursty']:
+  for rate in [10,100,1000]:
+    for beta in [0.5,1,1.5,2]:
+        if kind!='poisson' and beta in (0.5,2) and rate!=100: continue
+        tot=0; lead=0
+        for _ in range(N):
+            s,l = cycle(rng, rate, beta, kind); tot+=s; lead+=l
+        lam=1/beta
+        print(f"{kind:7s} {rate:5d} {beta:4.2f}  {tot/N:6.3f}  {math.exp(lam):6.3f}  {(math.exp(lam)-1)*(1/lam+1/math.e):6.3f}  {lead/N:6.3f}  {beta*(math.log(rate*beta)+0.5772):6.3f}")
+```
+### Output
+# (output of the first, complete run: python3 -I xf.py 4000, seed 20261027)
+kind rate beta  meanS  e^(1/b)  paper(e^l-1)(1/l+1/e)  meanLead  formula_lead
+poisson    10 0.50   5.562   7.389   5.545   1.099   1.093
+poisson    10 1.00   2.700   2.718   2.350   2.869   2.880
+poisson    10 1.50   1.930   1.948   1.770   4.912   4.928
+poisson    10 2.00   1.649   1.649   1.536   7.106   7.146
+poisson   100 0.50   7.306   7.389   5.545   2.263   2.245
+poisson   100 1.00   2.691   2.718   2.350   5.207   5.182
+poisson   100 1.50   1.956   1.948   1.770   8.386   8.382
+poisson   100 2.00   1.652   1.649   1.536  11.754  11.751
+poisson  1000 0.50   7.271   7.389   5.545   3.411   3.396
+poisson  1000 1.00   2.757   2.718   2.350   7.467   7.485
+poisson  1000 1.50   1.918   1.948   1.770  11.815  11.836
+poisson  1000 2.00   1.628   1.649   1.536  16.390  16.356
+even       10 1.00   2.527   2.718   2.350   2.866   2.880
+even       10 1.50   1.879   1.948   1.770   4.915   4.928
+even      100 0.50   7.319   7.389   5.545   2.246   2.245
+even      100 1.00   2.698   2.718   2.350   5.176   5.182
+even      100 1.50   1.913   1.948   1.770   8.416   8.382
+even      100 2.00   1.658   1.649   1.536  11.765  11.751
+even     1000 1.00   2.722   2.718   2.350   7.501   7.485
+even     1000 1.50   1.924   1.948   1.770  11.815  11.836
+bursty     10 1.00   4.910   2.718   2.350   2.494   2.880
+bursty     10 1.50   3.154   1.948   1.770   4.559   4.928
+bursty    100 0.50   8.345   7.389   5.545   2.220   2.245
+bursty    100 1.00   2.957   2.718   2.350   5.151   5.182
+bursty    100 1.50   2.005   1.948   1.770   8.367   8.382
+bursty    100 2.00   1.711   1.649   1.536  11.716  11.751
+bursty   1000 1.00   2.751   2.718   2.350   7.427   7.485
+bursty   1000 1.50   1.981   1.948   1.770  11.791  11.836
+
+## S2. Paper: Vattani, Chierichetti, Lowenstein, PVLDB 8(8) 2015, https://www.vldb.org/pvldb/vol8/p886-vattani.pdf
+# Theorem 7: Exp(lambda) is ((e^l - 1)(1/l + 1/e), (1/l) log n)-effective. Definition 5: (s,g)-effective means E[S] <= (1+o(1)) s. XFetch uses D = Exp(1/beta).
+# Section 3: 'for lambda = 1 ... stampedes of size e - 1/e' ... 'merely e - 1/e ~ 2.4 processes'.
+# Appendix, proof of Lemma 16: 'By Claim 21 and the fact that E[S | T in (nu-i-1, nu-i)] <= n e^{-lambda(nu-i)} = e^{lambda i}'.
+#   Given T (early expiration gap), the stampede window covers y in (T-1, T]; refresh probabilities there are in [e^{-lT}, e^{-l(T-1)}],
+#   all >= e^{-lT} > e^{-l(nu-i)}. Exact conditional mean (Poisson) = (n/l) e^{-lT} (e^l - 1) > e^{li} (e^l-1)/l > e^{li}. The step under-counts.
+# Section 6 (Goodreads trace: interarrival 0.07 s, sd 0.25 s, sigma_I ~3.6, n ~140): Figure 7 rendered at 400 dpi: Exp curve ~3 at beta=1, ~8 at beta=0.5,
+#   crosses y=2 near beta=1.5; text: 'increasing beta = 1/lambda to 1.5 already drops the average stampede size to less than 2'.
+# Ratio bound/e^l = (1-e^{-l})(1/l+1/e) < 1 for all l>0 (0.865 at l=1, 0.932 at l=0.5, -> 1-0.132 l as l->0).
+
+## M. Article models run over other seeds and parameters (scripts/models-check.mjs) and node --test
+```
+const D = '/Users/ryannel/Workspace/staycurrent/src/components/caching/stampedes/';
+const { hotKey } = await import(D + 'hotkey-model.mjs');
+const { coldStart } = await import(D + 'coldstart-model.mjs');
+const { poolStampede } = await import(D + 'pool-model.mjs');
+const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
+for (const rate of [5, 15, 40]) for (const seed of [1,2,3]) {
+  const m = hotKey({ mode: 'none', rate }, seed); m.sim.advance(600000);
+  console.log('none rate', rate, 'seed', seed, 'q/expiry', mean(m.episodes.slice(1).map(e => e.queries)).toFixed(2));
+}
+for (const mode of ['singleflight','lock','stale']) for (const seed of [1,2,3]) {
+  // slowest per episode distribution
+  const m = hotKey({ mode, rate: 15 }, seed);
+  const slow = [];
+  let lastEp = 0;
+  for (let t = 0; t < 300000; t += 100) { m.sim.advance(100); if (m.last.slowest!=null) slow.push(m.last.slowest); }
+  console.log(mode, 'seed', seed, 'queries/ep', mean(m.episodes.slice(1).map(e=>e.queries)).toFixed(2), 'last.slowest range', Math.min(...slow), Math.max(...slow), 'stale', m.totals.stale, 'eps', m.episodes.length);
+}
+for (const dbRate of [60, 100, 150, 200]) for (const seed of [1,2]) {
+  const r = {};
+  for (const mode of ['every','perkey']) { const m = coldStart({ mode, dbRate }, seed); m.sim.advance(60000);
+    r[mode] = { rec: m.recoveredAt, peak: Math.max(...m.samples.map(s=>s.wait)), dup: (m.totals.duplicates/m.totals.queries).toFixed(2) }; }
+  console.log('cold dbRate', dbRate, 'seed', seed, JSON.stringify(r));
+}
+for (const rate of [100, 500, 1000]) { const r = poolStampede({ rate }); console.log('pool', rate, r.misses, r.busyUntil, r.otherWait.toFixed(0)); }
+```
+### Output
+none rate 5 seed 1 q/expiry 5.65
+none rate 5 seed 2 q/expiry 5.68
+none rate 5 seed 3 q/expiry 5.60
+none rate 15 seed 1 q/expiry 14.24
+none rate 15 seed 2 q/expiry 14.99
+none rate 15 seed 3 q/expiry 14.45
+none rate 40 seed 1 q/expiry 37.34
+none rate 40 seed 2 q/expiry 37.31
+none rate 40 seed 3 q/expiry 36.46
+singleflight seed 1 queries/ep 3.95 last.slowest range 1100 1100.0000000000018 stale 0 eps 45
+singleflight seed 2 queries/ep 3.91 last.slowest range 1100 1100.0000000000005 stale 0 eps 45
+singleflight seed 3 queries/ep 3.91 last.slowest range 1100 1100 stale 0 eps 45
+lock seed 1 queries/ep 1.00 last.slowest range 1300 1450.0000000000018 stale 0 eps 48
+lock seed 2 queries/ep 1.00 last.slowest range 1300 1450.0000000000018 stale 0 eps 48
+lock seed 3 queries/ep 1.00 last.slowest range 1300 1450.0000000000018 stale 0 eps 48
+stale seed 1 queries/ep 1.00 last.slowest range 200 200.00000000000182 stale 948 eps 48
+stale seed 2 queries/ep 1.00 last.slowest range 200 200.00000000000182 stale 939 eps 48
+stale seed 3 queries/ep 1.00 last.slowest range 200 200.00000000000182 stale 881 eps 48
+cold dbRate 60 seed 1 {"every":{"rec":21,"peak":22118.639416888807,"dup":"0.68"},"perkey":{"rec":10,"peak":4618.639416888933,"dup":"0.00"}}
+cold dbRate 60 seed 2 {"every":{"rec":22,"peak":22619.317072297286,"dup":"0.69"},"perkey":{"rec":11,"peak":4652.65040563056,"dup":"0.00"}}
+cold dbRate 100 seed 1 {"every":{"rec":10,"peak":4411.972750222258,"dup":"0.37"},"perkey":{"rec":7,"peak":1491.9727502222577,"dup":"0.00"}}
+cold dbRate 100 seed 2 {"every":{"rec":11,"peak":4312.650405630517,"dup":"0.38"},"perkey":{"rec":7,"peak":1582.6504056305175,"dup":"0.00"}}
+cold dbRate 150 seed 1 {"every":{"rec":6,"peak":955.3060835555991,"dup":"0.12"},"perkey":{"rec":6,"peak":595.306083555595,"dup":"0.00"}}
+cold dbRate 150 seed 2 {"every":{"rec":6,"peak":1169.3170722971681,"dup":"0.15"},"perkey":{"rec":5,"peak":555.9837389638546,"dup":"0.00"}}
+cold dbRate 200 seed 1 {"every":{"rec":6,"peak":351.97275022225745,"dup":"0.04"},"perkey":{"rec":6,"peak":196.97275022225745,"dup":"0.00"}}
+cold dbRate 200 seed 2 {"every":{"rec":5,"peak":367.6504056305175,"dup":"0.05"},"perkey":{"rec":5,"peak":167.65040563051753,"dup":"0.00"}}
+pool 100 20 400 0
+pool 500 100 1200 322
+pool 1000 200 2200 901
+✔ unprotected: queries per expiry average rate × rebuild time (1 s here) (445.296083ms)
+✔ single-flight: at most one query per process per expiry (101.657667ms)
+✔ lock: one query per expiry; waiters take longer than a hit (42.378417ms)
+✔ serve stale: one query per expiry and no request waits for the database (170.367459ms)
+✔ pool: 500 a second, 200 ms, 20 connections (0.544584ms)
+✔ cold start: one rebuild per key removes the duplicate third and recovers sooner (131.8625ms)
+✔ XFetch: the paper’s quoted value and the derived expectation (0.146875ms)
+✔ XFetch: simulated stampede size is e^(1/β), whatever the rate (608.019625ms)
+✔ XFetch: request-by-request cycles agree with the fast sampler (Poisson and evenly spaced) (2384.007125ms)
+✔ sequences: every step has an explanation (0.283375ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4257.489958
+
+## L. Writer's lab re-run against port 7156 (copy of evidence/stampedes-scripts/lab.mjs and resp.mjs with 7106 -> 7156; no other change)
+### L1. node lab.mjs cold
+# Experiment G: a cold hot key. Key absent at start; Poisson 500 req/s for 3 s; 4 application processes; database 200 ms.
+none         seed 1: requests 1565, database queries 114, peak concurrent 113, latency p50 0 ms p99 202 ms max 218 ms, slower than 50 ms 114 (7.3%), served stale 0, waited on lock 0
+none         seed 2: requests 1566, database queries 115, peak concurrent 115, latency p50 0 ms p99 208 ms max 224 ms, slower than 50 ms 115 (7.3%), served stale 0, waited on lock 0
+none         seed 3: requests 1502, database queries 92, peak concurrent 92, latency p50 0 ms p99 202 ms max 203 ms, slower than 50 ms 92 (6.1%), served stale 0, waited on lock 0
+singleflight seed 1: requests 1565, database queries 4, peak concurrent 4, latency p50 0 ms p99 182 ms max 202 ms, slower than 50 ms 90 (5.8%), served stale 0, waited on lock 0
+singleflight seed 2: requests 1566, database queries 4, peak concurrent 4, latency p50 0 ms p99 169 ms max 204 ms, slower than 50 ms 81 (5.2%), served stale 0, waited on lock 0
+singleflight seed 3: requests 1502, database queries 4, peak concurrent 4, latency p50 0 ms p99 178 ms max 202 ms, slower than 50 ms 65 (4.3%), served stale 0, waited on lock 0
+lock         seed 1: requests 1565, database queries 1, peak concurrent 1, latency p50 0 ms p99 164 ms max 218 ms, slower than 50 ms 89 (5.7%), served stale 0, waited on lock 116
+lock         seed 2: requests 1567, database queries 1, peak concurrent 1, latency p50 0 ms p99 179 ms max 213 ms, slower than 50 ms 72 (4.6%), served stale 0, waited on lock 96
+lock         seed 3: requests 1555, database queries 1, peak concurrent 1, latency p50 0 ms p99 185 ms max 215 ms, slower than 50 ms 98 (6.3%), served stale 0, waited on lock 119
+### L2. node lab.mjs recheck
+# Experiment H: does skipping the re-check after taking the lock cause duplicate rebuilds? 30 runs each, 0.6 s bursts at 500 req/s.
+recheck=false: database queries per run: 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 1 1 1 1 1 1 1 1 1 2 1 1 1 1 1; runs with more than one: 2
+recheck=true: database queries per run: 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1; runs with more than one: 0
+### L3. node lab.mjs cycles
+# Experiment I: a warm hot key over 30 s. Poisson 500 req/s, 4 processes, database 200 ms. TTL 5 s (none, lock, xfetch); stale: soft 5 s, hard 15 s.
+none         seed 7: requests 15131, database queries 519, peak concurrent 111, latency p50 0 ms p99 203 ms max 219 ms, slower than 50 ms 519 (3.4%), served stale 0, waited on lock 0
+lock         seed 7: requests 15140, database queries 5, peak concurrent 1, latency p50 0 ms p99 157 ms max 217 ms, slower than 50 ms 432 (2.9%), served stale 0, waited on lock 529
+stale        seed 7: requests 15131, database queries 6, peak concurrent 1, latency p50 0 ms p99 4 ms max 21 ms, slower than 50 ms 0 (0.0%), served stale 524, waited on lock 0
+xfetch       seed 7: requests 15154, database queries 15, peak concurrent 3, latency p50 0 ms p99 9 ms max 209 ms, slower than 50 ms 15 (0.1%), served stale 0, waited on lock 0, requests that found no value 0
+  xfetch cycles: 8; rebuilds per cycle: 3 1 2 1 2 3 1 2; mean 1.88; first rebuild started this many ms before expiry: 940 1211 841 641 1245 797 1221 1013
+### L4. node lab.mjs xfetch
+# Experiment J: XFetch on real Redis, longer run. Poisson 500 req/s, TTL 5 s, beta 1, 120 s.
+xfetch       seed 11: requests 59966, database queries 63, peak concurrent 5, latency p50 0 ms p99 11 ms max 224 ms, slower than 50 ms 79 (0.1%), served stale 0, waited on lock 0, requests that found no value 0
+  cycles 29; mean rebuilds per cycle 2.17; max 5; first rebuild before expiry: mean 1010 ms, min 509 ms, max 1660 ms
+# Note: per-expiry count has sd ~2.2 under the model (Var = (e-1) + (e-1)^2), so 28-29 expiries give a standard error ~0.4.
+#   Writer: 2.75 over 28; this re-run: 2.17 over 29. Both consistent with e ~ 2.72.
+### L5. Serve-stale race: lab-stale.mjs = lab.mjs plus one log line when a stale reader wins the lock and starts a refresh
+#   (logs ms since start and the PTTL that reader had read; hard 15000, soft 5000, so PTTL <= 10000 means stale).
+#   Added 'staleonly' runs seeds 7, 8, 9 for 30 s. Expected about 5-6 refreshes per run.
+stale refresh start 5097 pttl 9971
+stale refresh start 10303 pttl 9997
+stale refresh start 10507 pttl 9794
+stale refresh start 15708 pttl 10000
+stale refresh start 20912 pttl 9998
+stale refresh start 21120 pttl 9794
+stale refresh start 26322 pttl 9999
+stale        seed 7: requests 15131, database queries 7, peak concurrent 1, latency p50 1 ms p99 13 ms max 93 ms, slower than 50 ms 29 (0.2%), served stale 604, waited on lock 0
+stale refresh start 5003 pttl 9997
+stale refresh start 5216 pttl 9784
+stale refresh start 10419 pttl 9998
+stale refresh start 10621 pttl 9796
+stale refresh start 15827 pttl 9996
+stale refresh start 16027 pttl 9795
+stale refresh start 21230 pttl 9999
+stale refresh start 21450 pttl 9783
+stale refresh start 26653 pttl 9999
+stale        seed 8: requests 15243, database queries 9, peak concurrent 1, latency p50 0 ms p99 9 ms max 30 ms, slower than 50 ms 0 (0.0%), served stale 539, waited on lock 0
+stale refresh start 5002 pttl 9999
+stale refresh start 5203 pttl 9797
+stale refresh start 10410 pttl 9994
+stale refresh start 15618 pttl 9993
+stale refresh start 20820 pttl 9999
+stale refresh start 21044 pttl 9791
+stale refresh start 26246 pttl 9999
+stale        seed 9: requests 14981, database queries 7, peak concurrent 1, latency p50 1 ms p99 18 ms max 66 ms, slower than 50 ms 9 (0.1%), served stale 535, waited on lock 0
+# Pairs ~200 ms apart (e.g. 10303 then 10507, PTTL 9794): the second reader read the old copy before the first refresher's SET,
+#   then won SET NX after the first refresher's DELEX, and refreshed a copy that was already fresh. No re-check after taking the lock.
+
+## P. Rendered page (Playwright, dev server port 4466, CACHING_DRAFT_PREVIEW=1)
+fig9 default (beta 1, 100/rebuild): size 2.73 | e^(1/b) 2.72 | lead 5.2 (formula 5.2) | late 0%
+fig9 rate 10: 2.72 | 2.72 | 2.9 (2.9) | 2% ; rate 1000: 2.73 | 7.5 (7.5) ; rate 10000: 2.73 | 9.8 (9.8)
+fig9 beta 0.5 (rate 10000): 7.42 | 7.39 ; beta 2: 1.65 | 1.65 | lead 21.0
+Console errors/warnings: none. scrollWidth at 375 px: 375 (no overflow).
+
+## D. Other primary sources checked
+# redis.io/docs/latest/develop/clients/patterns/distributed-locks/: verbatim 'viable solution in applications where a race condition from time to time is acceptable';
+#   'Redis is not using monotonic clock for TTL expiration mechanism.'; failover race; 'The DELEX command was introduced in Redis 8.4.'; Lua release script.
+# Nishtala et al., NSDI 2013, 3.2.1: 'return a token only once every 10 seconds per key'; 'wait a short amount of time'; peak 17K/s -> 1.3K/s;
+#   'A thundering herd happens when a specific key undergoes heavy read and write activity'; stale values held after delete.
+# Valkey 9.0 added DELIFEQ key value (compare-and-delete), per Valkey command docs/man page.
