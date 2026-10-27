@@ -95,3 +95,13 @@
   Add field 513 changes encoding to hashtable and memory to 37,008 bytes.
   No console errors. Article 8 links directly to article 9.
 - Nine articles available; five remain plus final reference application/lab.
+
+## Article 10 — 27 October 2026
+
+- Commit 7fd75ec9f40b5151203252f23276d43f2e20ba5f pushed to origin/main.
+- Publish run 40423733559 succeeded:
+  https://github.com/ryannel/staycurrent/actions/runs/40423733559
+- Opened https://staycurrent.dev/learn/databases/caching/replication-and-failover/.
+  Change source, DEL, failprimary, promote -> old12returns. No consoleerrors.
+  Article9 links directly to article10.
+- Ten articles available; four remain plus final reference application/lab.
