@@ -32,7 +32,6 @@ Every push to `main` builds and deploys to GitHub Pages through
 | `/learn/databases/relational/` | Relational introduction and collection |
 | `/learn/databases/relational/sandbox/` | Browser PostgreSQL sandbox with free exploration and linked tutorials |
 | `/learn/databases/relational/*/` | Published relational articles, practical guides and preserved route aliases |
-| `/learn/databases/caching/` | Application caching with Redis; an illustrated introduction and a growing commissioned collection |
 | `/learn/databases/column-stores/` | Illustrated column-store essay with four experiments |
 | `/learn/databases/object-storage/` | Published introduction and thirteen focused articles, using Amazon S3 |
 | `/learn/databases/object-storage/sandbox/` | Fourteen local model lessons, with 78 editable request steps |
@@ -154,13 +153,3 @@ Keep source evidence, runnable examples and review results under `docs/article-w
 Interactive model checks remain beside their models in `src/lib/explainers/`.
 The repository's required check is `pnpm build`; use focused example or model
 checks when the change calls for them.
-
-## Application caching collection, 26 October 2026
-
-The user commissioned the complete application caching collection and authorised
-publication article by article. `src/lib/caching-collection.ts` tracks availability;
-only published entries join reading, search and previous/next navigation. The
-opening article has four interactive models and a native Redis 8.2.2 worksheet.
-Planning, source checks and per-article validation are recorded in
-`docs/article-work/caching-2026-10-26/`. Unfinished article names remain plain text
-in the introduction, with no empty reading destinations.

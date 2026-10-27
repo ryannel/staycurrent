@@ -5,7 +5,6 @@ import { drawingCollection, drawingHref } from './drawing-collection';
 import { relationalCollection, relationalArticleHref, relationalIntroduction } from './relational-collection';
 import { objectArticles, objectHome } from './object-storage-collection';
 import { relationalHome } from './reading';
-import { cachingArticles, cachingHref } from './caching-collection';
 
 export interface PagerEntry { href: string; title: string }
 
@@ -25,8 +24,7 @@ const objectStorage: PagerEntry[] = [
   ...objectArticles.map((a) => ({ href: `${objectHome}${a.slug}/`, title: a.title })),
 ];
 
-const caching: PagerEntry[] = cachingArticles.filter(a => a.published).map(a => ({ href: cachingHref(a.slug), title: a.title }));
-export const collections = [relational, drawing, objectStorage, caching];
+export const collections = [relational, drawing, objectStorage];
 
 /** The pages either side of this one in its collection, or nothing if it isn't in one. */
 export function neighbours(path: string): { previous?: PagerEntry; next?: PagerEntry } | undefined {
