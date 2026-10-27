@@ -47,7 +47,7 @@ Redis: 7100 + article number for writers, 7150 + article number for reviewers.
 | 3 | keys-and-values | A | done | final: publish | 3e3c4eca |
 | 4 | expiration-and-eviction | | | | |
 | 5 | invalidation | C | done | final: fixed, verified | c3b6a969 |
-| 6 | stampedes | | | | |
+| 6 | stampedes | C | done | final: publish | c07149d8 |
 | 7 | how-redis-works | D | done | final: publish | a09369a4 |
 | 8 | clients-and-pipelining | | | | |
 | 9 | replication-and-persistence | | | | |
@@ -216,3 +216,18 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
   review: 4 required/22 suggested (replica reads stale through primary loss by
   default; Figure 7 internal name; Figure 10 contradicts itself; Figure 2
   shared pages before a child exists). Waiting for its technical review.
+- 2026-10-28: article 6 published (c07149d8), live with 10 figures, no errors.
+  Article 8 final review: 1 blocking (redis-py reports a timed-out watched
+  transaction as WatchError even with retries off, so WATCH loops re-run it),
+  11 minor; repair 2 started (dev 4418, Redis 7118). Article 9 technical
+  review: 3 required/9 suggested (Figure 11 verdict is a model result that
+  reverses below about 380 reads/s capacity; everysec can lose acknowledged
+  writes; MISCONF needs save points). Repair 1 started (dev 4419, Redis 7119).
+- 2026-10-28: article 4 repair 2 done (Figure 1 drops the copy on a TTL change
+  and counts from the next miss; model results labelled with pace; expiry
+  cycle detail halved). Orchestrator changed "half a minute" to "a minute" in
+  the Figure 1 instructions. Dev servers hot-reload pages while other agents
+  edit, so figure checks before publishing use the clean-worktree build served
+  statically. Article 10 drafted (6,860 words, 9 figures; toolkit gaps: text
+  input, column chart, Choice-driven sequence, grid legend); round-1 teaching
+  (dev 4460) and technical (dev 4470, Redis 7160–7166) reviews started.

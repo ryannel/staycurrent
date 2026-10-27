@@ -71,12 +71,28 @@ What I did:
 
 ## Length
 
-Prose (excluding figures and sources): about 6,000 words before, about [WORDS] after. In the second half I removed the X8 table and its paragraph, the X11a/X11b narration, two INFO rows, the second policy measurement, the separate-pools aside, the LFU source dispute (to Sources), the OBJECT commands paragraph (to one sentence) and much of the closing. The rate explanation the technical findings required (about 400 words, two clocks, the P1 check and the qualified advice) went in, so the second half is net [NET] words shorter than before. In the first half the cut TTL-table rows and shorter precision and DEBUG paragraphs pay for most of the new reclamation explanation.
+Prose (tags stripped, excluding Sources): 5,899 words before, about 5,750 after. The second half (from "When memory runs out") went from 3,200 to about 2,990 words. I cut about 600 words of measurement narration and reference material there: the X8 table and its paragraph, the X11a/X11b narration, two INFO rows, the second policy measurement, the separate-pools aside, the LFU source dispute (moved to Sources), most of the OBJECT commands paragraph and much of the closing. About 400 words of required pace explanation went in (two clocks, the P1 check, qualified advice). **Net, the second half is only about 210 words shorter, short of the 600–800 asked for.** Cutting further would mean losing the diagnosis paragraph or the policy table, both of which I judged worth their length. In the first half, the cut TTL-table rows and shorter precision and DEBUG paragraphs pay for most of the new reclamation explanation.
 
 ## P1 outcome
 
-[P1]
+The real server agrees with the model to within 0.6 points in every case. At 400 requests a second (4.8 to 6.4 a minute per cached key, 10 minutes to settle, 10 measured):
+
+| Policy | Paced: real | Paced: model | Keys | Full speed: real |
+| --- | --- | --- | --- | --- |
+| `allkeys-lru` | 17.71% | 17.73% | 3,773 | 17.13% |
+| `allkeys-lfu` | 22.53% | 22.72% | 5,029 | 27.45% |
+| `allkeys-lfu`, decay 10 | 27.13% | 27.68% | 4,448 | 27.50% |
+
+At this pace, default LFU loses 5 points against full speed despite holding more keys. Decay 10 restores those points. At equal size (model, C = 5,029), LFU's lead over LRU is about 3 points here, against 10 at full speed. So the model's 5,000-a-second lines and the article's advice stand.
+
+The paragraph after Figure 8 now reports these numbers. It notes that the LRU run held fewer keys, because the same `maxmemory` held different key counts under each policy. Caveat: the default-decay LFU run fell up to 48.6 s behind schedule once and then caught up. Its result still matched the model.
 
 ## Still needs a decision
 
-- [DECISIONS]
+- **Second-half length.** The net cut is about 210 words, not 600–800, because of the added pace content. The orchestrator should decide whether more should go.
+- **Figure overlays.** `chartPoints` (Figures 7 and 8), the Figure 4 off-scale note and Figure 9's band are drawn locally from `plotArea` geometry, not from toolkit features. They render correctly after the toolkit agent finished. If the toolkit changes its plot geometry they could drift, or move to its new markers and bands.
+- **Model data.** Figure 8's 5,000-a-second lines are model output, labelled as such in the caption and text alternative and checked by P1.
+- **Other servers.** The `http.server` processes on 8731 and 8732 are not mine. Their working directories are in another session's scratchpad (`spare-C2F4Zz/bceb699b…/scratchpad/web`). I left them running.
+- **Disk space.** The disk was briefly full (about 120 MB free) late in the round. It has since recovered to 16 GB free. The evidence and scripts are complete.
+
+Redis on 7114 is shut down and the 4414 dev server is stopped. The page rendered with status 200 after the final edit. Nothing is committed.

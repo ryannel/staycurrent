@@ -735,3 +735,420 @@ cd ${0:a:h}
 { echo "## X11b a scan interleaved with normal Zipf traffic (x11b_scan_live.py)"; python3 x11b_scan_live.py allkeys-lru,allkeys-lfu,allkeys-random; echo; } > x11b.out 2>&1
 { echo "## X10 hit ratio against cache size, Zipf 0.8 over 4,000,000 keys (x10_size.py 4000000 0.8 3000000 2000000 20000,40000,120000,400000,1200000 allkeys-lru,allkeys-lfu,allkeys-random 1 160)"; python3 x10_size.py 4000000 0.8 3000000 2000000 20000,40000,120000,400000,1200000 allkeys-lru,allkeys-lfu,allkeys-random 1 160; echo; } > x10.out 2>&1
 echo done > chain.done
+
+
+==============================================================================
+Repair round 1 (2026-10-27/28): reclamation speed, pace dependence of eviction
+==============================================================================
+Redis 8.10.3 (/opt/homebrew/opt/redis/bin/redis-server) on port 7114, temporary
+directory, --save ''; shut down afterwards. Same machine as above (macOS arm64).
+Model runs use the article's own sampled-cache.mjs (5 samples, pool of 16,
+one-second LRU clock, Morris counter with decay) and shared/sim.mjs zipf().
+
+Why: X10 and X11 ran at about 80,000 requests a second for about a minute.
+Redis's LRU clock has one-second resolution and LFU counters lose one per
+lfu-decay-time minutes, so both approximations depend on requests a minute per
+cached key, not on the number of requests. These runs measure that dependence
+and the expiry cycle's behaviour on a large keyspace.
+
+Scripts (copied in full at the end of this section):
+  e1_reclaim.py, e1b_busy.py  load keys over a RESP client (resp.py), poll DBSIZE,
+                              INFO keyspace/stats every 5 s; e1b adds a second
+                              client sending GETs one at a time.
+  p1_paced.py                 X10's workload scaled down: Zipf 0.8 over 800,000
+                              keys, GET then SET on miss, 100-byte values,
+                              maxmemory = empty used_memory + 4,000 x 160 bytes,
+                              maxmemory-samples 5. fast: 200k fill + 600k warm +
+                              400k counted, pipelined 20 at a time. paced: 200k
+                              fill at full speed, then 400 requests a second one
+                              at a time, 600 s unmeasured, 600 s counted.
+  p1model.mjs                 the same procedure in the model, at a given capacity.
+  pace.mjs                    model sweep on X10's workload (4,000,000 keys);
+                              pace = requests a minute per cached key; warm-up
+                              3M requests or 30 simulated minutes (5,000/s runs:
+                              60 minutes), 2M counted; exact LRU is a linked list.
+  scanpace.mjs                Figure 9's model (scan-model.mjs, paced()) at two
+                              paces and decay times, mean of seeds 1-5.
+
+------------------------------------------------------------------------------
+E2: local checks
+------------------------------------------------------------------------------
+CONFIG GET lazyfree-lazy-expire    -> no
+CONFIG GET lazyfree-lazy-eviction  -> no
+CONFIG GET hz                      -> 10   (dynamic-hz yes)
+SET gtcheck v; EXPIRE gtcheck 600 GT -> 0, TTL -1  (GT never adds a TTL)
+EXPIRE gtcheck 600 LT              -> 1, TTL 600
+noeviction, maxmemory set just below used_memory:
+  SET over:1 world (existing key)  -> OOM command not allowed when used memory > 'maxmemory'.
+  INCR newcounter (new key)        -> OOM command not allowed ...
+  GET over:1 -> hello;  DEL over:1 -> 1;  errorstat_OOM:count=2
+
+------------------------------------------------------------------------------
+E1: expiry reclamation, idle server
+------------------------------------------------------------------------------
+500,000 keys EX 3600 + 25,000 PX 3000 (4.8% of keys with a TTL), loaded in 4.1 s
+  + 0 s  expired still in memory 24,998  expired_keys    2  stale_perc 0.50
+  +20 s                          24,802                198            3.96
+  +40 s                          24,605                395            4.47
+  -> about 10 a second; the last would go after roughly 40 minutes.
+400,000 keys EX 3600 + 100,000 PX 3000 (20%), loaded in 6.3 s
+  + 0 s  99,973 still in memory, expired_keys 28
+  +20 s  93,393, expired_keys 6,645, stale_perc 16.45
+  +40 s  85,663, expired_keys 14,338, stale_perc 17.13
+  -> about 350 a second.
+
+E1b: the same with a second client sending GETs one at a time (~1,800-2,200/s)
+4.8%: +0 s 24,996; +15 s 24,858; +30 s 24,717 -> about 9.4 a second.
+20%:  +0 s 99,960; +5 s 85,848; +10 s 54,062; +15 s 22,336; +20 s 181
+      (stale_perc 8.59); +25 s 152; +30 s 123 (stale_perc 2.9)
+  -> fast cycles cleared all but 181 within 20 s, stopped once the estimate
+     fell below 10%, and the rest went at about 6 a second.
+
+------------------------------------------------------------------------------
+P1: real server, fast and paced, with the model run on the same procedure
+------------------------------------------------------------------------------
+fast (about 18,000 requests a second):
+allkeys-lru    keys 4550  hit 0.1713  evicted 988,837  wall 65 s
+allkeys-lfu    keys 4444  hit 0.2745  evicted 877,480  wall 68 s
+allkeys-lfu:10 keys 4464  hit 0.2750  evicted 876,339  wall 54 s
+allkeys-random keys 4426  hit 0.1662  evicted 996,612  wall 26 s
+model (C 4,450-4,550): lru 0.1732, lfu 0.2788, lfu:10 0.2795, random 0.1681
+
+paced (400 a second = 4.8 to 6.4 requests a minute per cached key):
+allkeys-lru    keys 3773  hit 0.1771 over 240,000  evicted 557,138  max lag 0.16 s
+allkeys-lfu    keys 5029  hit 0.2253 over 244,289  evicted 514,696  max lag 48.56 s
+allkeys-lfu:10 keys 4448  hit 0.2713 over 240,000  evicted 498,910  max lag 0.25 s
+model at each run's key count:
+  C=3773 lru 0.1773 | C=5029 lfu 0.2272, lru 0.1959 | C=4448 lfu:10 0.2768, lfu 0.2210, lru 0.1879
+
+Notes: maxmemory was the same formula each time but the number of keys held
+differed by policy (3,773 to 5,029). The LFU decay-1 run fell behind its schedule
+once by up to 48.6 s and caught up; the others stayed within 0.25 s.
+Reading: the real server agrees with the model to within 0.6 points in every
+case. At about 5 requests a minute per cached key, allkeys-lfu with the default
+decay hits 5 points less than at full speed despite a larger cache; with
+lfu-decay-time 10 it keeps its full-speed hit ratio. At equal size (model,
+C=5,029) LFU's lead over LRU at this pace is about 3 points, against 10 at full
+speed.
+
+------------------------------------------------------------------------------
+M5: model pace sweep, 4,000,000 keys, Zipf 0.8 (hit ratio)
+------------------------------------------------------------------------------
+C=20,000 (0.5%)
+pace/min  rate/s   random  lru     exact   lfu     lfu:10
+240       80,000   0.1741  0.1793  0.1946  0.2811  0.2815
+60        20,000   0.1742  0.1910  0.1949  0.2754  0.2933
+10        3,333    0.1743  0.1943  0.1951  0.2358  0.2875
+1         333      0.1741  0.1938  0.1946  0.2029  0.2605
+0.1       33       0.1741  0.1938  0.1946  0.1794  0.2073
+C=120,000 (3%)
+240       480,000  0.3108  0.3205  0.3415  0.4172  0.4172
+10        20,000   0.3113  0.3407  0.3420  0.3906  0.4378
+1         2,000    0.3107  0.3403  0.3415  0.3504  0.4160
+0.1       200      0.3108  0.3404  0.3415  0.3180  0.3568
+(pace 60 at C=120,000 stopped after one policy: too slow.)
+
+------------------------------------------------------------------------------
+M6: model at X10's conditions and at 5,000 a second (source of size-data.mjs)
+------------------------------------------------------------------------------
+Sizes 20k, 40k, 120k, 400k, 1.2M keys (0.5%, 1%, 3%, 10%, 30%).
+80,000/s, 3M warm + 2M counted (about a minute):
+  lru    0.1793 0.2307 0.3388 0.4925 0.6923
+  lfu    0.2811 0.3255 0.4161 0.5409 0.6984
+  random 0.1741 0.2185 0.3108 0.4561 0.6659
+  -> within 0.6 points of every X10 measurement (model 0.1-0.6 high).
+5,000/s after 60 simulated minutes, 2M counted:
+  lru    0.1939 0.2422 0.3407 0.4935 0.6922
+  exact  0.1949 0.2432 0.3421 0.4950 0.6944
+  lfu    0.2432 0.2823 0.3674 0.4956 0.6697
+  lfu:10 0.2922 0.3430 0.4371 0.5626 0.7132
+  random 0.1744 0.2188 0.3110 0.4566 0.6541
+
+------------------------------------------------------------------------------
+M8: maxmemory-samples, model, C=20,000
+------------------------------------------------------------------------------
+80,000/s: 5 samples 0.1793, 10 0.1792, 64 0.1797; exact 0.1946
+5,000/s:  1 sample 0.1743, 5 0.1939, 10 0.1945, 64 0.1947; exact 0.1949
+
+------------------------------------------------------------------------------
+M7: Figure 9's model, hit ratio before -> during -> after the batch job
+------------------------------------------------------------------------------
+36 a minute per cached key, decay 1:  LRU 41.4 -> 29.4 -> 41.8 | LFU 49.1 -> 48.2 -> 49.5
+1 a minute, decay 1:                  LRU 41.8 -> 30.1 -> 41.8 | LFU 43.1 -> 33.7 -> 43.3
+1 a minute, decay 10:                 LRU 41.8 -> 30.1 -> 41.8 | LFU 50.5 -> 49.1 -> 51.2
+1 a minute, decay 60:                 LRU 41.8 -> 30.1 -> 41.8 | LFU 48.9 -> 47.8 -> 49.9
+
+Repair round 1 scripts:
+
+#### script resp.py
+import socket
+class R:
+    def __init__(s, port=7114):
+        s.s = socket.create_connection(('127.0.0.1', port)); s.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1); s.f = s.s.makefile('rb')
+    @staticmethod
+    def enc(args):
+        o = [f"*{len(args)}\r\n".encode()]
+        for a in args:
+            if isinstance(a, str): a = a.encode()
+            elif isinstance(a, (int, float)): a = str(a).encode()
+            o.append(b"$%d\r\n" % len(a)); o.append(a); o.append(b"\r\n")
+        return b"".join(o)
+    def read(s):
+        l = s.f.readline(); t, b = l[:1], l[1:-2]
+        if t == b'+': return b.decode()
+        if t == b'-': return Exception(b.decode())
+        if t == b':': return int(b)
+        if t == b'$':
+            n = int(b)
+            if n < 0: return None
+            return s.f.read(n + 2)[:-2]
+        if t == b'*': return [s.read() for _ in range(int(b))]
+        raise ValueError(l)
+    def call(s, *a): s.s.sendall(s.enc(a)); return s.read()
+    def pipe(s, cmds, batch=1000):
+        out = []
+        for i in range(0, len(cmds), batch):
+            ch = cmds[i:i + batch]; s.s.sendall(b"".join(s.enc(c) for c in ch)); out += [s.read() for _ in ch]
+        return out
+    def info(s, field, sec='stats'):
+        for l in s.call('INFO', sec).decode().split('\r\n'):
+            if l.startswith(field + ':'): return l.split(':', 1)[1]
+
+#### script e1_reclaim.py
+# E1: how fast the active expiry cycle reclaims expired keys that nobody reads, by their share of the keys with a TTL.
+# LONG keys with EX 3600 and SHORT keys with PX 3000, interleaved, 100-byte values; default hz 10, active-expire-effort 1.
+# After the short keys expire, print DBSIZE-LONG (= short keys still in memory) every 5 s for 40 s.
+import sys, time
+sys.path.insert(0, sys.argv[0].rsplit('/', 1)[0])
+from resp import R
+r = R(); v = b'x' * 100
+for LONG, SHORT in [(500000, 25000), (400000, 100000)]:
+    r.call('FLUSHALL'); r.call('CONFIG', 'RESETSTAT')
+    every = (LONG + SHORT) // SHORT
+    cmds = []; s = 0
+    for i in range(LONG + SHORT):
+        if i % every == 0 and s < SHORT: cmds.append(['SET', f'short:{i}', v, 'PX', 3000]); s += 1
+        else: cmds.append(['SET', f'long:{i}', v, 'EX', 3600])
+    t = time.time(); r.pipe(cmds); load = time.time() - t
+    nlong = len(cmds) - s
+    print(f'{nlong} keys with EX 3600, {s} with PX 3000 ({100*s/len(cmds):.1f}% of keys with a TTL); loaded in {load:.1f} s')
+    time.sleep(max(0, 3.2 - load))
+    t0 = time.time(); prev = s
+    while True:
+        el = time.time() - t0; held = r.call('DBSIZE') - nlong
+        print(f'  +{el:4.1f} s: expired keys still in memory {held:6d} ({100*held/(nlong+held):.1f}% of keys with a TTL)  expired_keys {r.info("expired_keys")}  expired_stale_perc {r.info("expired_stale_perc")}', flush=True)
+        if el > 40: break
+        time.sleep(5)
+r.call('FLUSHALL')
+
+#### script e1b_busy.py
+# E1b: as E1, but a second client keeps the server busy with GETs on the long keys (single requests, no pipelining,
+# so the event loop turns over constantly), because Redis's fast expiry cycles run between event-loop iterations.
+import sys, time, threading, random
+sys.path.insert(0, sys.argv[0].rsplit('/', 1)[0])
+from resp import R
+r = R(); v = b'x' * 100
+stop = False; served = [0]
+def busy(nlong):
+    b = R(); rnd = random.Random(1)
+    while not stop:
+        b.call('GET', f'long:{rnd.randrange(nlong)}'); served[0] += 1
+for LONG, SHORT in [(500000, 25000), (400000, 100000)]:
+    r.call('FLUSHALL'); r.call('CONFIG', 'RESETSTAT')
+    every = (LONG + SHORT) // SHORT
+    cmds = []; s = 0
+    for i in range(LONG + SHORT):
+        if i % every == 0 and s < SHORT: cmds.append(['SET', f'short:{i}', v, 'PX', 3000]); s += 1
+        else: cmds.append(['SET', f'long:{i}', v, 'EX', 3600])
+    t = time.time(); r.pipe(cmds); load = time.time() - t
+    nlong = len(cmds) - s
+    stop = False; served[0] = 0
+    th = threading.Thread(target=busy, args=(len(cmds),)); th.start()
+    print(f'{nlong} keys with EX 3600, {s} with PX 3000 ({100*s/len(cmds):.1f}% of keys with a TTL); a second client sends GETs one at a time')
+    time.sleep(max(0, 3.2 - load))
+    t0 = time.time(); n0 = served[0]
+    while True:
+        el = time.time() - t0; held = r.call('DBSIZE') - nlong
+        print(f'  +{el:4.1f} s: expired keys still in memory {held:6d} ({100*held/(nlong+held):.1f}%)  expired_keys {r.info("expired_keys")}  stale_perc {r.info("expired_stale_perc")}  busy GETs/s {(served[0]-n0)/max(el,0.01):.0f}', flush=True)
+        if el > 30 or held == 0: break
+        time.sleep(5)
+    stop = True; th.join()
+r.call('FLUSHALL')
+
+#### script p1_paced.py
+# P1: the X10 workload scaled down, run on Redis 8.10.3 at full speed and at a paced rate.
+# Cache-aside reads (GET, SET on miss, 100-byte values) with Zipf popularity (exponent 0.8) over N keys,
+# maxmemory set for about C keys (used_memory when empty + C * 160 bytes), maxmemory-samples 5.
+# Full speed: FILL + WARM + MEAS requests pipelined 20 at a time, as X10 was.
+# Paced: FILL requests at full speed to fill the cache, then requests sent one at a time at RATE a second,
+# SETTLE seconds unmeasured, then MEAS_S seconds counted.
+# usage: python3 p1_paced.py mode policy[:decay] ...   mode = fast | paced
+import sys, time
+import numpy as np
+sys.path.insert(0, sys.argv[0].rsplit('/', 1)[0])
+from resp import R
+N, ALPHA, C = 800000, 0.8, 4000
+FILL, WARM, MEAS = 200000, 600000, 400000
+RATE, SETTLE, MEAS_S = 400, 600, 600
+mode = sys.argv[1]
+rng = np.random.default_rng(7)
+p = np.arange(1, N + 1, dtype=np.float64) ** (-ALPHA); p /= p.sum(); cdf = np.cumsum(p)
+total = FILL + (WARM + MEAS if mode == 'fast' else RATE * (SETTLE + MEAS_S) + 1000)
+reqs = np.searchsorted(cdf, rng.random(total)).tolist()
+r = R(); val = b'x' * 100
+def used(): return int(r.info('used_memory', 'memory'))
+def fast(seq, count_from):
+    hits = 0; B = 20; sock, f, enc = r.s, r.f, r.enc
+    for b0 in range(0, len(seq), B):
+        ks = seq[b0:b0 + B]
+        sock.sendall(b''.join(enc(('GET', f'z:{k}')) for k in ks)); miss = []
+        for j, k in enumerate(ks):
+            l = f.readline()
+            if l[:2] == b'$-': miss.append(k)
+            else:
+                f.read(int(l[1:-2]) + 2)
+                if b0 + j >= count_from: hits += 1
+        if miss:
+            ms = list(dict.fromkeys(miss)); sock.sendall(b''.join(enc(('SET', f'z:{k}', val)) for k in ms))
+            for _ in ms: f.readline()
+    return hits
+print(f'mode={mode} N={N} alpha={ALPHA} C~{C} ' + (f'fill {FILL} + warm {WARM} + measured {MEAS} at full speed' if mode == 'fast' else f'fill {FILL} at full speed, then {RATE}/s ({RATE*60/C:.0f} reads a minute per cached key): {SETTLE} s unmeasured, {MEAS_S} s measured'), flush=True)
+for spec in sys.argv[2:]:
+    pol, _, decay = spec.partition(':'); decay = decay or '1'
+    r.call('CONFIG', 'SET', 'maxmemory', 0); r.call('FLUSHALL'); r.call('CONFIG', 'SET', 'maxmemory-policy', pol)
+    r.call('CONFIG', 'SET', 'maxmemory-samples', 5); r.call('CONFIG', 'SET', 'lfu-decay-time', decay); r.call('CONFIG', 'SET', 'lfu-log-factor', 10)
+    r.call('CONFIG', 'SET', 'maxmemory', used() + C * 160); r.call('CONFIG', 'RESETSTAT')
+    t0 = time.time()
+    if mode == 'fast':
+        hits = fast(reqs[:FILL + WARM + MEAS], FILL + WARM); n = MEAS
+    else:
+        fast(reqs[:FILL], 10**12)
+        i = FILL; start = time.time(); hits = n = 0; lag = 0.0
+        while True:
+            el = time.time() - start
+            if el >= SETTLE + MEAS_S: break
+            k = reqs[i]; i += 1
+            h = r.call('GET', f'z:{k}') is not None
+            if not h: r.call('SET', f'z:{k}', val)
+            if el >= SETTLE: n += 1; hits += h
+            target = start + (i - FILL) / RATE
+            d = target - time.time()
+            if d > 0: time.sleep(d)
+            else: lag = max(lag, -d)
+    dt = time.time() - t0
+    print(f'{pol:12s} lfu-decay-time {decay:>3s}  keys {r.call("DBSIZE"):5d}  hit ratio {hits/n:.4f} over {n} requests  evicted_keys {r.info("evicted_keys")}  wall {dt:.0f} s' + (f'  max lag {lag:.2f} s' if mode == 'paced' else f'  req/s {(FILL+WARM+MEAS)/dt:.0f}'), flush=True)
+r.call('CONFIG', 'SET', 'maxmemory', 0); r.call('FLUSHALL')
+
+#### script p1model.mjs
+// Model mirror of P1 (p1_paced.py): Zipf 0.8 over 800,000 keys, capacity C keys.
+// fast: FILL+WARM+MEAS requests at FASTRATE a second. paced: FILL at FASTRATE, then 400 a second for 600 s unmeasured + 600 s measured.
+const base = '/Users/ryannel/Workspace/staycurrent/src/components/caching/';
+const { SampledCache } = await import(base + 'expiration-and-eviction/sampled-cache.mjs');
+const { zipf, seededRandom } = await import(base + 'shared/sim.mjs');
+const [mode, C, FASTRATE] = [process.argv[2], +process.argv[3], +process.argv[4]];
+const N = 800000, FILL = 200000, WARM = 600000, MEAS = 400000, RATE = 400, SETTLE = 600, MEAS_S = 600;
+const z = zipf(N, 0.8);
+for (const spec of process.argv.slice(5)) {
+  const [pol, decay = '1'] = spec.split(':');
+  const r = seededRandom(7), cr = seededRandom(99);
+  const c = new SampledCache({ capacity: C, policy: pol, samples: 5, random: cr, decayMinutes: +decay });
+  let hits = 0, n = 0, now = 0;
+  const total = mode === 'fast' ? FILL + WARM + MEAS : FILL + RATE * (SETTLE + MEAS_S);
+  for (let i = 0; i < total; i++) {
+    now = i < FILL || mode === 'fast' ? i * 1000 / FASTRATE : FILL * 1000 / FASTRATE + (i - FILL) * 1000 / RATE;
+    const k = z.sample(r); const h = c.get(k, now); if (!h) c.set(k, now);
+    const counted = mode === 'fast' ? i >= FILL + WARM : i >= FILL + RATE * SETTLE;
+    if (counted) { n++; hits += h; }
+  }
+  console.log(`model ${mode} C=${C} ${pol} decay ${decay}: hit ratio ${(hits / n).toFixed(4)} over ${n}`);
+}
+
+#### script pace.mjs
+// M5: X10's workload (Zipf 0.8 over N keys, cache-aside) in the article's Redis-like model
+// (sampled-cache.mjs), with requests spaced evenly at a chosen pace. Pace is given as reads a
+// minute for each key the cache holds (rate = pace * C / 60). Runs warm up for max(WARM requests,
+// WARMMIN simulated minutes), then count MEAS requests.
+// usage: node pace.mjs N C pace policy[,policy...]   policy: random | lru | exact | lfu | lfu10 | lfu0
+const base = '/Users/ryannel/Workspace/staycurrent/src/components/caching/';
+const { SampledCache } = await import(base + 'expiration-and-eviction/sampled-cache.mjs');
+const { zipf, seededRandom } = await import(base + 'shared/sim.mjs');
+// An exact LRU: a doubly linked list over slots, most recent at the head.
+class ExactLru { constructor(cap) { this.cap = cap; this.slot = new Map(); this.key = new Int32Array(cap); this.prev = new Int32Array(cap).fill(-1); this.next = new Int32Array(cap).fill(-1); this.head = -1; this.tail = -1; this.n = 0; }
+  unlink(i) { const p = this.prev[i], n = this.next[i]; if (p >= 0) this.next[p] = n; else this.head = n; if (n >= 0) this.prev[n] = p; else this.tail = p; }
+  front(i) { this.prev[i] = -1; this.next[i] = this.head; if (this.head >= 0) this.prev[this.head] = i; this.head = i; if (this.tail < 0) this.tail = i; }
+  get(k) { const i = this.slot.get(k); if (i === undefined) return false; this.unlink(i); this.front(i); return true; }
+  set(k) { let i; if (this.n < this.cap) i = this.n++; else { i = this.tail; this.unlink(i); this.slot.delete(this.key[i]); } this.key[i] = k; this.slot.set(k, i); this.front(i); } }
+const [N, C, pace, pols] = [+process.argv[2], +process.argv[3], +process.argv[4], process.argv[5].split(',')];
+const WARM = +(process.env.WARM ?? 3000000), MEAS = +(process.env.MEAS ?? 2000000), WARMMIN = +(process.env.WARMMIN ?? 30);
+// RATE (requests a second) overrides pace; pace is then reported as derived from it.
+const rate = process.env.RATE ? +process.env.RATE : pace * C / 60;
+// The benchmark pace (240) reproduces X10 as run (3M + 2M requests, about a minute); slower paces also warm for WARMMIN simulated minutes.
+const warm = (process.env.BENCH || (!process.env.RATE && pace >= 240)) ? WARM : Math.max(WARM, Math.ceil(WARMMIN * 60 * rate));
+const z = zipf(N, 0.8);
+for (const pol of pols) {
+  const r = seededRandom(1), cr = seededRandom(99);
+  let c;
+  if (pol === 'exact') c = new ExactLru(C);
+  else if (pol.startsWith('lfu')) c = new SampledCache({ capacity: C, policy: 'lfu', samples: 5, random: cr, decayMinutes: pol === 'lfu' ? 1 : +pol.slice(3) });
+  else if (pol.startsWith('lru') && pol.length > 3) c = new SampledCache({ capacity: C, policy: 'lru', samples: +pol.slice(3), random: cr });
+  else c = new SampledCache({ capacity: C, policy: pol, samples: 5, random: cr });
+  let hits = 0; const t0 = Date.now();
+  for (let i = 0; i < warm + MEAS; i++) {
+    const k = z.sample(r), now = i * 1000 / rate;
+    let h;
+    h = c.get(k, now); if (!h) c.set(k, now);
+    if (i >= warm && h) hits++;
+  }
+  console.log(JSON.stringify({ N, C, pace: +(rate * 60 / C).toFixed(3), rate: +rate.toFixed(2), policy: pol, warm, meas: MEAS, simMinutes: +((warm + MEAS) / rate / 60).toFixed(1), hit: +(hits / MEAS).toFixed(4), secs: (Date.now() - t0) / 1000 }));
+}
+
+#### script scanpace.mjs
+// M7: Figure 9's model (scan-model.mjs) at its own pace (36 reads a minute per cached key) and stretched to 1 a minute,
+// with lfu-decay-time 1 and 10. Mean of seeds 1-5. Phases in units of the job: before (5..20), during (20..30), after (35..60).
+const base = '/Users/ryannel/Workspace/staycurrent/src/components/caching/expiration-and-eviction/';
+const { scanModel, meanBetween, paced } = await import(base + 'scan-model.mjs');
+for (const [slow, decay] of [[1, 1], [36, 1], [36, 10], [36, 60]]) {
+  const acc = Array(6).fill(0);
+  for (const seed of [1, 2, 3, 4, 5]) {
+    const m = scanModel({}, seed, paced(slow, decay)); m.sim.advance((60 + 80) * slow * 1000);
+    const k = slow;
+    [meanBetween(m, 'lru', 5 * k, 20 * k), meanBetween(m, 'lru', 20 * k, 30 * k), meanBetween(m, 'lru', 35 * k, 60 * k), meanBetween(m, 'lfu', 5 * k, 20 * k), meanBetween(m, 'lfu', 20 * k, 30 * k), meanBetween(m, 'lfu', 35 * k, 60 * k)].forEach((v, i) => acc[i] += v / 5);
+  }
+  const f = v => (v * 100).toFixed(1);
+  console.log(`slow x${slow} (${(36 / slow).toFixed(1)} reads a minute per cached key), lfu-decay-time ${decay}: LRU ${f(acc[0])} -> ${f(acc[1])} -> ${f(acc[2])} | LFU ${f(acc[3])} -> ${f(acc[4])} -> ${f(acc[5])}`);
+}
+
+==============================================================================
+Repair round 2 (2026-10-28): source checks and Figure 1's readouts
+==============================================================================
+Source, Redis 8.10.3 (raw.githubusercontent.com/redis/redis/8.10.3):
+  expire.c:347   timelimit = config_cycle_slow_time_perc*1000000/server.hz/100;
+                 (slow cycle: 25% of each 1/hz period; the share does not depend on hz)
+  expire.c:352   fast cycle: timelimit = config_cycle_fast_duration (1,000 us at effort 1)
+  expire.c:485-6 timelimit_exit = 1; server.stat_expired_time_cap_reached_count++;
+                 one code path for both cycle types, so expired_time_cap_reached_count
+                 counts any cycle, fast or slow, that ran out of its time budget.
+  server.c:1575-9 if (server.dynamic_hz) { while (clients / hz > MAX_CLIENTS_PER_CLOCK_TICK)
+                 hz *= 2 ... }: with many clients, hz rises, each slice gets shorter,
+                 the 25% share stays.
+redis.io Key eviction page (fetched 2026-10-28): "Use allkeys-lrm when you want to
+  preserve frequently read data but evict data that hasn't been modified recently.
+  This is useful for read-heavy workloads ..."; the LRM section says the timestamp
+  updates on writes only. So a key that is only read is the first LRM candidate.
+
+Figure 1 (ttl-model.mjs, model only, not Redis). Round 2 change: a TTL change drops
+the held copy, and the 'so far' counts start at the next read (a miss that stores
+the first copy with the new TTL). Seed changed 12 -> 685 after a search over seeds
+1-800 for start times 15-120 s, a 10/15/20 s hold at 30 s and checks at +10/+20 s
+at 3 s: seed 12 showed the 3 s stale readout above 25% in 15% of cases (a cluster
+of three database changes in its first minute); seed 685 in 2%. Database changes
+for seed 685 in the first 200 s: 35, 42, 79, 98, 110, 118, 137, 182 s.
+Long-run check after a change (30 s -> 3 s, 10 simulated hours, models.test.mjs):
+hit ratio and stale share within 0.01 of 75% and 4.8%.
+Browser, Playwright, 1x real time, the prose's sequence (10 s for 20 s, 30 s for 30 s, then 3 s):
+  10 s  +20 s  87% / 91%   stale 0% / 15%
+  30 s  +3 s    0% / 97% (one miss)   +10 s 83% / 97%, 0%   +15 s 92%, 9%   +30 s 96% / 97%, 55% / 37%
+  3 s   +1 s   0% (one miss)   +3 s 67%, 0%   +6 s 75% / 75%, 0% / 5%   +10 s 77%   +20 s 81%   +30 s 79% / 75%, 0% / 5%
+Same, starting at 45 s: 30 s stage 98% / 97% with stale 0% (no database change fell
+in that half minute); 3 s stage +3 s 83%, +10 s 75%, +30 s 75% / 75%, stale 0% / 5%.
+Reduced motion, Step 5 s only, same sequence: 30 s +30 s 96%, 55%; 3 s +10 s 75%, 0%; +30 s 79%, 0%.

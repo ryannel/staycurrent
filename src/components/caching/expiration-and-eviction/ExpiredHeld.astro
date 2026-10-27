@@ -1,0 +1,93 @@
+---
+// Figure: expired keys stay in memory until a read or the background cycle deletes them.
+import SimFigure from '../shared/SimFigure.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './figures.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="ee-expired-held" title="Expired is not yet deleted" advance={2000}
+  legend={[{ kind: 'redis', label: 'Key in memory, TTL not reached' }, { kind: 'expiry', label: 'Expired, still in memory' }]}
+  caption="Illustrative model, not a measurement: six new keys a second, each with a TTL of 4 to 8 seconds, read only in their first 10 seconds. The background cycle follows Redis's rule (every 100 ms, look at 20 keys that have a TTL, delete the expired ones, repeat while more than 10% were expired), but picks the 20 at random where Redis walks through them in order, and caps the repeats in place of Redis's time limit. The model holds only about 35 keys, so each 20-key sample sees most of them and an expired key is found within a fraction of a second. A real server's sample sees a sliver of its keys, and the text below says what that changes.">
+  <Choice slot="params" name="active" label="Background expiry cycle" value="on"
+    options={[{ value: 'on', label: 'On (the default)' }, { value: 'off', label: 'Off' }]} />
+  <Fragment slot="stats">
+    <Readout name="memory" label="Keys in memory, live and expired" />
+    <Readout name="held" label="Expired but still held" kind="expiry" />
+    <Readout name="passive" label="Deleted by a read" />
+    <Readout name="active" label="Deleted by the cycle" />
+  </Fragment>
+  <div slot="after" data-chart></div>
+  <Fragment slot="text">
+    <p>Each square is a key occupying memory, oldest first. A key whose TTL has passed turns into a dashed square: no read can see it any more, but its memory is still in use. With the background cycle on, dashed squares vanish within a fraction of a second, because this small model's samples cover most of its keys, and the number of keys in memory stays near 35. With the cycle off, a dashed key is removed only if a read happens to ask for it. Keys nobody asks for again stay, so after a minute about 200 expired keys are still held beside about 35 live ones, and the count keeps climbing. The chart below the squares plots both counts over time.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { lineChart } from '../shared/chart.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+  import { expiryModel, inMemory } from './expiry-model.mjs';
+  import { svgIn, onWidth, cellGrid } from './draw.mjs';
+
+  const MAX_CELLS = 360;
+  document.querySelectorAll<HTMLElement>('[data-figure-id="ee-expired-held"]').forEach(root => {
+    const container = root.querySelector<HTMLElement>('[data-scene]')!;
+    const { svg, size } = svgIn(container, 'Keys in memory, live or expired but not yet deleted', 120);
+    const cells = svgEl('g', {}, svg);
+    const more = svgEl('text', { class: 'ee-count', 'text-anchor': 'end' }, svg);
+    let width = 0;
+    const getWidth = onWidth(container, w => { width = w; });
+    const chart = lineChart(root.querySelector<HTMLElement>('[data-chart]')!, {
+      label: 'Keys in memory over time: live, and expired but still held',
+      height: 190,
+      x: { label: 'Simulated time (s)', window: 60 },
+      y: { label: 'Keys', domain: [0, 'auto'], format: (v: number) => (Number.isInteger(v) ? String(v) : '') },
+      series: [
+        { id: 'live', label: 'TTL not reached', kind: 'redis' },
+        { id: 'held', label: 'Expired, still in memory', kind: 'expiry' },
+      ],
+    });
+    let shown: any = null;
+    let drawn = 0;
+    mountSim(root, {
+      seed: 3,
+      create: (params, seed) => expiryModel({ active: params.active === 'on' }, seed),
+      update: (model: any, params) => { model.params = { active: params.active === 'on' }; },
+      render(model: any) {
+        width = getWidth() || width;
+        const now = model.sim.now;
+        // Deleted keys are kept briefly in the model for other uses; the grid shows only keys still in memory.
+        const keys = inMemory(model);
+        const count = Math.min(MAX_CELLS, keys.length);
+        const grid = cellGrid(width, Math.max(count, 40), { size: width < 480 ? 12 : 14, gap: 3, top: 4, left: 2 });
+        size(width, Math.max(60, grid.height + 22));
+        cells.replaceChildren();
+        let i = 0;
+        for (const key of keys) {
+          if (i >= MAX_CELLS) break;
+          const [x, y] = grid.at(i++);
+          svgEl('rect', { class: `ee-cell ${key.expiresAt <= now ? 'is-held' : 'is-live'}`, x, y, width: grid.size, height: grid.size, rx: 2 }, cells);
+        }
+        more.setAttribute('x', String(width - 4));
+        more.setAttribute('y', String(grid.height + 18));
+        more.textContent = keys.length > MAX_CELLS ? `+${keys.length - MAX_CELLS} more keys not drawn` : '';
+        if (model !== shown) { shown = model; drawn = 0; chart.clear(); }
+        for (; drawn < model.samples.length; drawn++) {
+          const s = model.samples[drawn];
+          chart.push('live', s.t, s.live);
+          chart.push('held', s.t, s.held);
+        }
+        chart.render();
+        const present = inMemory(model);
+        const held = present.filter((k: any) => k.expiresAt <= now).length;
+        setReadouts(root, {
+          memory: String(present.length),
+          held: String(held),
+          passive: String(model.stats.passive),
+          active: String(model.stats.active),
+        });
+      },
+    });
+  });
+</script>

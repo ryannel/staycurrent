@@ -1,0 +1,96 @@
+---
+// Figure: a batch job reads everything once; sampled LRU against sampled LFU, at two paces and two LFU decay times.
+import SimFigure from '../shared/SimFigure.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './figures.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="ee-scan" title="A batch job reads everything once" advance={5000} clock={false}
+  caption="Illustrative model, not a measurement: Zipf popularity (exponent 0.8) over 5,000 keys and a cache with room for 500, so 300 reads a second is 36 requests a minute for each cached key. A batch job reads one-off keys at the same rate for the middle sixth of the run, each stored on its miss. Both caches see the same requests and evict as Redis does (sampling 5 keys, a pool of 16); one ranks by recency, the other by the logarithmic counter with its decay. The slower pace replays the same pattern 36 times slower, at 1 request a minute per cached key. Only the normal reads are counted.">
+  <Choice slot="params" name="pace" label="Requests a minute per cached key" value="36"
+    options={[{ value: '36', label: '36 (fast)' }, { value: '1', label: '1 (steady)' }]} />
+  <Choice slot="params" name="decay" label="lfu-decay-time" value="1"
+    options={[{ value: '1', label: '1 minute (default)' }, { value: '10', label: '10 minutes' }]} />
+  <Fragment slot="stats">
+    <Readout name="time" label="Time" />
+    <Readout name="job" label="Batch job" />
+    <Readout name="lru" label="Hit ratio, allkeys-lru (recent)" kind="redis" />
+    <Readout name="lfu" label="Hit ratio, allkeys-lfu (recent)" kind="hit" />
+  </Fragment>
+  <Fragment slot="text">
+    <p>The chart plots the hit ratio of normal reads over time for two caches of the same size fed the same requests, with the batch job's run shaded.</p>
+    <p>At 36 requests a minute per cached key, before the job the LFU cache hits about 49% and the LRU cache about 41%. While the job runs, each of its keys arrives as the most recently used key, so the LRU cache gives room to keys nobody will read again and falls to about 29%. The LFU cache gives each newcomer a counter of 5, below the popular keys, so the job's keys are evicted first and it stays near 48%. After the job the LRU cache recovers within a few seconds.</p>
+    <p>At 1 request a minute per cached key, with the default lfu-decay-time of 1 minute, the LFU cache starts lower, about 43%, and falls to about 34% during the job, nearly as far as the LRU cache (42% to 30%): most cached keys go more than a few minutes between reads, their counters decay below 5, and the job's keys outrank them. With lfu-decay-time 10 at the same pace, the LFU cache hits about 50% before the job and 49% during it.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { lineChart } from '../shared/chart.mjs';
+  import { scanModel, paced } from './scan-model.mjs';
+  import { chartBand } from './draw.mjs';
+
+  const FAST = 36;   // requests a minute per cached key in the unstretched model
+  document.querySelectorAll<HTMLElement>('[data-figure-id="ee-scan"]').forEach(root => {
+    const container = root.querySelector<HTMLElement>('[data-scene]')!;
+    let chart: any = null;
+    let chartSlow = 0;
+    // Fast runs are shown in seconds, slow runs in minutes; the chart is rebuilt when the unit changes.
+    const makeChart = (slow: number) => {
+      const minutes = slow > 1;
+      chart = lineChart(container, {
+        label: 'Hit ratio of normal reads over time, allkeys-lru and allkeys-lfu',
+        height: 240,
+        x: { label: minutes ? 'Simulated time (minutes)' : 'Simulated time (s)', window: minutes ? slow : 60 },
+        y: { label: 'Hit ratio', domain: [0, 0.7], format: (v: number) => `${Math.round(v * 100)}%` },
+        series: [
+          { id: 'lfu', label: 'allkeys-lfu', kind: 'hit', dash: '' },
+          { id: 'lru', label: 'allkeys-lru', kind: 'redis', dash: '8 4' },
+        ],
+      });
+      chartSlow = slow;
+    };
+    let shown: any = null;
+    let drawn = 0;
+    mountSim(root, {
+      seed: 1,
+      create: (params, seed) => {
+        const slow = FAST / Number(params.pace ?? 36);
+        const model: any = scanModel({}, seed, paced(slow, Number(params.decay ?? 1)));
+        // The figure's clock runs `slow` times faster than the reader's, so both paces play in the same time.
+        const inner = model.sim;
+        model.inner = inner;
+        model.slow = slow;
+        model.sim = { get now() { return inner.now / slow; }, advance: (ms: number) => inner.advance(ms * slow) };
+        return model;
+      },
+      render(model: any) {
+        const slow = model.slow;
+        const unit = slow > 1 ? 60 : 1;
+        if (!chart || chartSlow !== slow) makeChart(slow);
+        if (model !== shown) { shown = model; drawn = 0; chart.clear(); }
+        for (; drawn < model.samples.length; drawn++) {
+          const s = model.samples[drawn];
+          chart.push('lru', s.t / unit, s.lru);
+          chart.push('lfu', s.t / unit, s.lfu);
+        }
+        chart.render();
+        const span = (60 * slow) / unit;
+        const t = model.inner.now / 1000 - model.o.warm;
+        const latest = model.samples.length ? model.samples[model.samples.length - 1].t / unit : 0;
+        const at = model.o.scanAt / unit, until = (model.o.scanAt + model.o.scanFor) / unit;
+        chartBand(container, { id: 'job', x0: at, x1: until, domain: [Math.max(0, latest - span), Math.max(span, latest)], label: 'batch job' });
+        const recent = model.samples.slice(-5);
+        const mean = (id: string) => (recent.length ? `${Math.round((recent.reduce((a: number, r: any) => a + r[id], 0) / recent.length) * 100)}%` : '–');
+        const when = (v: number) => (unit > 1 ? `${Math.round(v)} min` : `${Math.round(v)} s`);
+        setReadouts(root, {
+          time: when(t / unit),
+          job: model.scanning ? 'running' : t / unit < at ? `starts at ${when(at)}` : 'finished',
+          lru: mean('lru'),
+          lfu: mean('lfu'),
+        });
+      },
+    });
+  });
+</script>

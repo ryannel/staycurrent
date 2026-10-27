@@ -1,0 +1,112 @@
+---
+// Figure: one cached key living through fills, hits, database changes and expiries.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Readout from '../shared/Readout.astro';
+import './figures.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="ee-ttl-timeline" title="One cached key under a TTL" advance={5000}
+  legend={['write', 'miss', 'hit', 'stale', 'expiry']}
+  caption="Illustrative model, not a measurement: one key read about once a second at random, its database value changing about once every 30 seconds at random. Nothing deletes the cached copy when the database changes, so only the TTL limits how long it can be wrong. The last 40 seconds are shown. Changing the TTL drops the cached copy (in Redis a stored copy would keep its old TTL), so the next read stores a copy with the new TTL, and the ‘so far’ readouts count from that read. The ‘long run’ values come from the formulas derived below.">
+  <Slider slot="params" name="ttl" label="TTL" min={1} max={60} step={1} value={10} format="seconds" />
+  <Fragment slot="stats">
+    <Readout name="ratio" label="Hit ratio: so far / long run" kind="hit" />
+    <Readout name="stale" label="Hits that were stale: so far / long run" kind="stale" />
+    <Readout name="reads" label="Database reads a minute" kind="database" />
+  </Fragment>
+  <Fragment slot="text">
+    <p>Three rows run along a time axis. The top row is the value in the database, which changes now and then (squares). The middle row shows the copy Redis holds: a bar from the miss that filled it to the moment its TTL ran out (dashed ring). The bottom row is each read: a ring for a miss that went to the database, a filled dot for a hit, and a triangle for a hit that returned a value the database had already changed.</p>
+    <p>With a 10-second TTL about 91% of reads are hits and about one hit in seven is stale. With 3 seconds, about 75% are hits and about one in twenty is stale. With 30 seconds, about 97% are hits but about a third of hits are stale. Over long runs these match hit ratio = rT / (1 + rT) and stale share = 1 − (1 − e^(−λT)) / (λT) for r = 1 read a second and λ = 1 change every 30 seconds.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+  import { oneKey, setTtl, trimTimeline, hitRatio, staleShare } from './ttl-model.mjs';
+  import { svgIn, dot, onWidth } from './draw.mjs';
+
+  const WINDOW = 40;
+  document.querySelectorAll<HTMLElement>('[data-figure-id="ee-ttl-timeline"]').forEach(root => {
+    const container = root.querySelector<HTMLElement>('[data-scene]')!;
+    const { svg, size } = svgIn(container, 'A timeline of one key: database changes, the cached copy and each read', 190);
+    let width = 0;
+    let compact = false;
+    const layers = { grid: svgEl('g', {}, svg), copies: svgEl('g', {}, svg), marks: svgEl('g', {}, svg) };
+    const lanes = () => (compact
+      ? { left: 8, right: width - 8, db: 40, copy: 98, read: 156, labelX: 8, labelDy: -16, height: 196, versionY: 57 }
+      : { left: 128, right: width - 16, db: 34, copy: 86, read: 138, labelX: 8, labelDy: 4, height: 176, versionY: 26 });
+    const drawGrid = () => {
+      const L = lanes();
+      size(width, L.height);
+      layers.grid.replaceChildren();
+      for (const [y, name, sub] of [[L.db, 'Database', 'value'], [L.copy, 'Redis', 'cached copy'], [L.read, 'Reads', 'of this key']] as const) {
+        svgEl('path', { class: 'ee-lane-line', d: `M${L.left} ${y}H${L.right}` }, layers.grid);
+        const label = svgEl('text', { class: 'ee-lane-label', x: L.labelX, y: y + L.labelDy }, layers.grid);
+        label.textContent = name;
+        if (!compact) { const s = svgEl('text', { class: 'ee-lane-sub', x: L.labelX, y: y + 18 }, layers.grid); s.textContent = sub; }
+        else { const s = svgEl('tspan', { class: 'ee-lane-sub', dx: 6 }, label); s.textContent = sub; }
+      }
+    };
+    onWidth(container, w => { width = w; compact = w < 520; drawGrid(); });
+
+    mountSim(root, {
+      seed: 685,
+      create: (params, seed) => oneKey(params, seed),
+      // A new TTL drops the current copy; the readouts restart at the next read's miss, the first copy with the new TTL.
+      update: (model: any, params) => { setTtl(model, params); },
+      render(model: any) {
+        trimTimeline(model);
+        const L = lanes();
+        const now = model.sim.now / 1000;
+        const t0 = now - WINDOW;
+        const x = (t: number) => L.left + ((t - t0) / WINDOW) * (L.right - L.left);
+        layers.copies.replaceChildren();
+        layers.marks.replaceChildren();
+        // Time ticks every 10 s, labelled relative to now.
+        for (let k = 0; k <= WINDOW; k += 10) {
+          const t = svgEl('text', { class: 'ee-tick', x: x(now - k), y: L.read + 30, 'text-anchor': k === 0 ? 'end' : 'middle' }, layers.marks);
+          t.textContent = k === 0 ? 'now' : `−${k} s`;
+        }
+        // The database value: a line per version, a square at each change.
+        const changes = model.changes.filter((c: any) => c.t / 1000 > t0);
+        for (const c of changes) {
+          dot(layers.marks, 'write', x(c.t / 1000), L.db, 5);
+          const v = svgEl('text', { class: 'ee-version', x: x(c.t / 1000) + 8, y: L.versionY }, layers.marks);
+          v.textContent = `v${c.version}`;
+        }
+        if (!changes.length || x(changes[0].t / 1000) - L.left > 26) {
+          const first = changes.length ? changes[0].version - 1 : model.version;
+          const v = svgEl('text', { class: 'ee-version', x: L.left + 2, y: L.versionY }, layers.marks);
+          v.textContent = `v${first}`;
+        }
+        // Cached copies: from the filling miss to expiry (or now).
+        for (const c of model.copies) {
+          const a = Math.max(L.left, x(c.from / 1000));
+          const end = Math.min(now, c.to / 1000);
+          const b = x(end);
+          if (b < L.left) continue;
+          svgEl('rect', { class: 'ee-copy', x: a, y: L.copy - 9, width: Math.max(1, b - a), height: 18, rx: 2 }, layers.copies);
+          if (b - a > 24) { const v = svgEl('text', { class: 'ee-version', x: a + 4, y: L.copy + 4 }, layers.copies); v.textContent = `v${c.version}`; }
+          if (c.to / 1000 <= now && !c.dropped) dot(layers.marks, 'expiry', x(c.to / 1000), L.copy, 5.5);
+        }
+        for (const r of model.reads) {
+          if (r.t / 1000 < t0) continue;
+          dot(layers.marks, r.kind, x(r.t / 1000), L.read, 5);
+        }
+        svgEl('path', { class: 'ee-now', d: `M${L.right} ${L.db - 20}V${L.read + 14}` }, layers.marks);
+        const s = model.stats;
+        const total = model.counting ? s.hits + s.misses : 0;
+        const since = model.counting ? model.sim.now - model.statsFrom : 0;
+        const pct = (v: number) => `${Math.round(v * 100)}%`;
+        const ttl = model.params.ttl;
+        setReadouts(root, {
+          ratio: `${total ? pct(s.hits / total) : '–'} / ${pct(hitRatio(model.rate, ttl))}`,
+          stale: `${s.hits ? pct(s.stale / s.hits) : '–'} / ${pct(staleShare(model.changeRate, ttl))}`,
+          reads: since > 5000 ? ((s.misses / since) * 60000).toFixed(1) : '–',
+        });
+      },
+    });
+  });
+</script>
