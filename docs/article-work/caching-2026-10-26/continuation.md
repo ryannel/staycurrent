@@ -6,15 +6,15 @@ checkout /Users/ryannel/Workspace/staycurrent: unrelated user edits are there.
 Continue alone; no subagents. Publication explicitly authorised per completed
 article. Goal is NOT complete until all14 articles and final referenceapp/lab.
 
-Articles1–11 published/liveverified; exact commits/runs in publication.md.
-Article12 complete and reviewed, publication underway. Four figures, prose,
-pinned native trackinglab, README/five-filezip. 55modeltests, final142pagesbuild,
-117checkedpages/all13rules pass. See article-12-plan.md and article-12-review.md.
-Manifest12true, article11nextlinkdirect. Finalnative repeat all assertionspass.
-Update publication.md with commit/deploy/live checks after push.
-Articles13–14 remain. Article13 operations: secure/accessboundaries, metricsand
-counterdeltas, incidentdiagnosis, controlledrollout/recovery. Article14 must include
-a runnable referenceapplication and load/failure exercises, not just a worksheet.
+Articles1–12 published/liveverified; exact commits/runs in publication.md.
+Article12 b247be280df50281d9742c81ea2c92f6531baf27, run40428206363success,
+livependingreplyanddeadlinecontrolsverified. Article13 complete/reviewed,
+publication underway. Fourfigures,prose,operationsnativeACL/session/counters/loglab,
+README/fivefilezip.59modeltests;143pagebuild/118checked/all13rulespass.
+See article-13-plan/review.md. Manifest13true,article12directnextlink.
+Update publication.md aftercommit/deploy/liveverification.
+Only article14 remains: must include runnable referenceapplication and load/failure
+exercises. Design coherentcontract beforeimplementation; don'tmerelymakeworksheet.
 
 Both teaching references already read and interacted with; plan.md records it.
 Check primary sources for consequential claims, distinguish models/native evidence,
@@ -33,7 +33,7 @@ Sparsecheckout retains .github,examples,public,scripts,src,
 docs/article-work/caching-2026-10-26,docs/article-work/indexes,
 docs/article-work/designing-data; lasttwo existingAstroimports. Don't alter primary.
 Browser only via cua_repl; restore docs aftercompaction. previewBrowser iab3,
-keysTab9 localarticle12; productionTab4livearticle11 until12verification.
+keysTab9 localarticle13; productionTab4livearticle12 until13verification.
 Viewport can affect newest/selectedtab; check actualinnerWidth afterset.
 Theme radios Light/Dark/System. Mark useful tabs beforeending.
 Beforepublishing fetch/reconcileoriginmain; stageintendedfiles; commit/pushHEAD:main;

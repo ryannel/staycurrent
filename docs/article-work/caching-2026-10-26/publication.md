@@ -115,3 +115,14 @@
   Shared hash tag -> both slot8000; migration step3 -> ASK C. No console errors.
   Article10 links directly to article11.
 - Eleven articles available; three remain plus final reference application/lab.
+
+## Article 12 — 27 October 2026
+
+- Commit b247be280df50281d9742c81ea2c92f6531baf27 pushed to origin/main.
+- Publish run 40428206363 succeeded:
+  https://github.com/ryannel/staycurrent/actions/runs/40428206363
+- Opened https://staycurrent.dev/learn/databases/caching/client-side-caching/.
+  Pending late reply -> naive12/guardEmpty/currentcaller12; original-deadline
+  checkbox -> localexpiry60/reload at75. No consoleerrors.
+  Article11 links directly to article12.
+- Twelve articles available; two remain plus final referenceapplication/lab.
