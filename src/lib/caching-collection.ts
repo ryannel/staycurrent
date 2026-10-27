@@ -27,7 +27,7 @@ export const cachingCollection: CachingEntry[] = [
     description: 'What to cache, how to name it, and how to store values so they stay small, correct and reusable.' },
   { slug: 'expiration-and-eviction', title: 'Cache expiration and eviction', type: 'Deep dive', status: 'planned',
     description: 'How time to live bounds staleness, how Redis expires keys, and how its eviction policies choose what to remove.' },
-  { slug: 'invalidation', title: 'Cache invalidation and consistency', type: 'Deep dive', status: 'planned',
+  { slug: 'invalidation', title: 'Cache invalidation and consistency', type: 'Deep dive', status: 'published',
     description: 'Keeping cached values close to the database, the races that leave stale data behind, and how to prevent them.' },
   { slug: 'stampedes', title: 'Cache stampedes and the thundering herd', type: 'Deep dive', status: 'planned',
     description: 'Why many simultaneous misses overload a database, and the locking, coalescing and early-refresh techniques that prevent it.' },

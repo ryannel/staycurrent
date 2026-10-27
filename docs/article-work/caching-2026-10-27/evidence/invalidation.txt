@@ -440,3 +440,249 @@ writes/s 1, mean fill 10 ms, TTL 5 s, 60 s: writes 71, fills 68, stale fills 1, 
 
 # An earlier run of the same script, the same day, gave for the 1,000,000-member set:
 # DEL 57.05, 68.68, 57.42 ms; UNLINK 0.12, 0.14, 0.12 ms. The article quotes "about 40 to 70 ms".
+
+# ====================================================================
+# Repair round 1, 27 October 2026. Redis 8.10.3 (macOS, libc malloc), port 7115,
+# temporary directory, --save '' --appendonly no; shut down afterwards. Commands via redis-cli.
+# ====================================================================
+
+## Repair-1 R1. Tag-set race with two separate commands (reproduces review R3)
+> FLUSHALL
+  OK
+> SADD tag:product:42 category:7:top:p1
+  1
+> SET category:7:top:p1 page-v1 EX 300
+  OK
+# Invalidator reads the members...
+> SMEMBERS tag:product:42
+  category:7:top:p1
+# ...a reader fills another page in between (SADD first, then SET)...
+> SADD tag:product:42 category:7:cheap:p2
+  1
+> SET category:7:cheap:p2 page-v2 EX 300
+  OK
+# ...then the invalidator unlinks what it read, and the set
+> UNLINK category:7:top:p1 tag:product:42
+  2
+> SMEMBERS tag:product:42
+  
+> TTL category:7:cheap:p2
+  300
+# cheap:p2 is cached and in no tag set: the next change cannot find it.
+
+## Repair-1 R2. The same interleaving against an atomic invalidation script
+> FLUSHALL
+  OK
+> SADD tag:product:42 category:7:top:p1
+  1
+> SET category:7:top:p1 page-v1 EX 300
+  OK
+# The script reads the members and unlinks them and the set in one step; nothing can run in between.
+> EVAL local names = redis.call("SMEMBERS", KEYS[1])
+for i = 1, #names, 500 do redis.call("UNLINK", unpack(names, i, math.min(i + 499, #names))) end
+redis.call("UNLINK", KEYS[1])
+return #names 1 tag:product:42
+  1
+# A reader that fills afterwards (SADD, then SET) is tracked by a fresh set
+> SADD tag:product:42 category:7:cheap:p2
+  1
+> SET category:7:cheap:p2 page-v2 EX 300
+  OK
+> SMEMBERS tag:product:42
+  category:7:cheap:p2
+# Next change:
+> EVAL local names = redis.call("SMEMBERS", KEYS[1])
+for i = 1, #names, 500 do redis.call("UNLINK", unpack(names, i, math.min(i + 499, #names))) end
+redis.call("UNLINK", KEYS[1])
+return #names 1 tag:product:42
+  1
+> EXISTS category:7:cheap:p2 tag:product:42
+  0
+
+## Repair-1 R3. Fill order: a reader that crashes between the two fill commands
+> FLUSHALL
+  OK
+# SET first, crash before SADD: an untracked page
+> SET category:7:new:p4 page EX 300
+  OK
+> EVAL local names = redis.call("SMEMBERS", KEYS[1])
+for i = 1, #names, 500 do redis.call("UNLINK", unpack(names, i, math.min(i + 499, #names))) end
+redis.call("UNLINK", KEYS[1])
+return #names 1 tag:product:42
+  0
+> EXISTS category:7:new:p4
+  1
+# SADD first, crash before SET: a name without a page, harmless
+> SADD tag:product:42 category:7:new:p4
+  1
+> EVAL local names = redis.call("SMEMBERS", KEYS[1])
+for i = 1, #names, 500 do redis.call("UNLINK", unpack(names, i, math.min(i + 499, #names))) end
+redis.call("UNLINK", KEYS[1])
+return #names 1 tag:product:42
+  1
+> EXISTS category:7:new:p4 tag:product:42
+  0
+
+## Repair-1 R4. The script with 1,200 names (batches of 500 stay under Lua's unpack limit)
+> FLUSHALL
+  OK
+> DBSIZE
+  1201
+> EVAL local names = redis.call("SMEMBERS", KEYS[1])
+for i = 1, #names, 500 do redis.call("UNLINK", unpack(names, i, math.min(i + 499, #names))) end
+redis.call("UNLINK", KEYS[1])
+return #names 1 tag:product:42
+  1200
+> DBSIZE
+  0
+
+## Repair-1 R5. Tag set TTL renewed to at least the page TTL with EXPIRE ... GT
+> FLUSHALL
+  OK
+> SADD tag:product:42 category:7:top:p1
+  1
+> EXPIRE tag:product:42 300 NX
+  1
+> EXPIRE tag:product:42 300 GT
+  1
+> EXPIRE tag:product:42 100 GT
+  0
+> TTL tag:product:42
+  300
+> EXPIRE tag:product:42 600 GT
+  1
+> TTL tag:product:42
+  600
+# NX sets it on a set with no TTL, GT only lengthens it; a fill uses both as needed.
+
+## Repair-1 R6. A generation lookup is dependent: MGET cannot fetch the page in the same round trip
+> FLUSHALL
+  OK
+> SET gen:category:7 3
+  OK
+> SET category:7:g3:cheap:p1 page-g3 EX 300
+  OK
+# The client does not know the page key until it has the generation; one script can do both:
+> EVAL local g = redis.call("GET", KEYS[1]) if not g then return nil end return redis.call("GET", ARGV[1] .. g .. ARGV[2]) 1 gen:category:7 category:7:g :cheap:p1
+  page-g3
+> MGET gen:category:7 gen:product:42
+  3
+  
+# MGET is for several counters at once, when a page depends on more than one.
+
+## Repair-1 R7. WAIT with no replica attached (this server has none)
+> SET product:42 tombstone
+  OK
+> DEL product:42
+  1
+> WAIT 1 100
+  0
+# WAIT returns the number of replicas that acknowledged, here 0 after the 100 ms timeout; it never fails the write.
+> INFO replication
+  # Replication
+  role:master
+  connected_slaves:0
+  master_failover_state:no-failover
+  master_replid:da215f6feb53d02f2b4acc2ab5293e476b08e8f2
+  master_replid2:0000000000000000000000000000000000000000
+  master_repl_offset:1
+  second_repl_offset:-1
+  repl_backlog_active:0
+  repl_backlog_size:1048576
+  repl_backlog_first_byte_offset:0
+  repl_backlog_histlen:0
+
+## Repair-1 R8. KEEPTTL inside the lease keeps the lease's short expiry (review S4)
+> FLUSHALL
+  OK
+> SET product:42 lease:a NX PX 10000
+  OK
+> SET product:42 {"price":35} IFEQ lease:a KEEPTTL
+  OK
+> PTTL product:42
+  9989
+> SET product:42 lease:b XX PX 10000
+  OK
+> SET product:42 {"price":35} IFEQ lease:b EX 300
+  OK
+> TTL product:42
+  300
+
+## Repair-1 R9. IFEQ never creates a key; the retry loop needs NX for a missing key (review S7)
+> FLUSHALL
+  OK
+> SET product:42 v9|{"price":35} IFEQ v8|{"price":37} EX 300
+  
+> EXISTS product:42
+  0
+> SET product:42 v9|{"price":35} NX EX 300
+  OK
+> GET product:42
+  v9|{"price":35}
+> FLUSHALL
+  OK
+
+## Repair-1 sources read
+- redis.io WAIT (since 3.0.0): returns the number of replicas that acknowledged the connection's previous writes, on success or timeout. 'WAIT does not make Redis a strongly consistent store'; a replica that received the write is more likely, 'but not guaranteed', to be promoted; 'it is possible to still lose a write synchronously replicated to multiple replicas.'
+- redis.io replication (quoted by the technical reviewer, evidence/invalidation-review-1.txt): replication is asynchronous by default; with WAIT, acknowledged writes can still be lost during a failover.
+- Failover itself was not observed: only one port was available. The article's failover paragraph rests on the documented semantics above.
+
+================================================================
+Repair 2 (pre-publication), 2026-10-28. Redis 8.10.3, port 7115, temporary directory, --save '', shut down afterwards (SHUTDOWN NOSAVE).
+Commands from /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/tagttl.sh, delbench.sh.
+
+== Tag-set TTL: EXPIRE GT alone, then EXPIRE NX followed by EXPIRE GT (Redis 8.10.3, port 7115, --save '') ==
+FLUSHALL                                 → OK 
+SADD tag:p42 a                           → 1 
+EXPIRE tag:p42 300 GT                    → 0 
+TTL tag:p42                              → -1 
+# NX then GT on a new set:
+SADD tag:p43 a                           → 1 
+EXPIRE tag:p43 300 NX                    → 1 
+EXPIRE tag:p43 300 GT                    → 1 
+TTL tag:p43                              → 300 
+# A later fill with a shorter TTL (60 s) does not shorten it:
+SADD tag:p43 b                           → 1 
+EXPIRE tag:p43 60 NX                     → 0 
+EXPIRE tag:p43 60 GT                     → 0 
+TTL tag:p43                              → 300 
+# A later fill with a longer TTL (900 s) lengthens it:
+EXPIRE tag:p43 900 NX                    → 0 
+EXPIRE tag:p43 900 GT                    → 1 
+TTL tag:p43                              → 900 
+# The fill as one script: SADD, SET page EX ttl, EXPIRE tag ttl NX, EXPIRE tag ttl GT; returns the set's TTL.
+# Script: 
+# redis.call("SADD", KEYS[1], KEYS[2]); redis.call("SET", KEYS[2], ARGV[1], "EX", ARGV[2]); redis.call("EXPIRE", KEYS[1], ARGV[2], "NX"); redis.call("EXPIRE", KEYS[1], ARGV[2], "GT"); return redis.call("TTL", KEYS[1])
+fill page:a with TTL 120                 → 120
+fill page:b with TTL 30                  → 120
+fill page:c with TTL 600                 → 600
+TTL tag:p44                              → 600 
+# Plain EXPIRE when every page has the same TTL:
+SADD tag:p45 a                           → 1 
+EXPIRE tag:p45 300                       → 1 
+TTL tag:p45                              → 300 
+
+== Generation counter restart from TIME in microseconds ==
+TIME                                     → 1793143335 603356 
+EVAL 'local t = redis.call("TIME"); return t[1] * 1000000 + t[2]' 0 → 1793143335611385
+SET gen:category:7 1793143335611385 NX   → OK 
+SET gen:category:7 999 NX                →  
+INCR gen:category:7                      → 1793143335611386 
+GET gen:category:7                       → 1793143335611386 
+
+== The same in MULTI/EXEC ==
+MULTI; SADD tag:p46 page:a; EXPIRE tag:p46 120 NX; EXPIRE tag:p46 120 GT; EXEC; TTL tag:p46
+OK QUEUED QUEUED QUEUED 1 1 0 120 
+(EXEC replies: SADD 1, EXPIRE NX 1, EXPIRE GT 0 because 120 is not greater than the 120 just set; TTL 120.)
+
+== DEL against UNLINK of a 1,000,000-member set (SLOWLOG, threshold 0; microseconds) ==
+member name ~8 bytes  DEL → 90147 µs
+member name ~8 bytes  UNLINK → 26 µs
+member name ~27 bytes  DEL → 79671 µs
+member name ~27 bytes  UNLINK → 5 µs
+member name ~58 bytes  DEL → 96468 µs
+member name ~58 bytes  UNLINK → 10 µs
+(This run: 80-96 ms for DEL. Earlier runs: 41-69 ms in this file's original measurement; the final reviewer measured 460-530 ms. Hence the article's 'between tens and hundreds of milliseconds across runs'. UNLINK returned in microseconds every time.)
+
+Figure 1 model check (node, window-model.mjs after the repair): with 'Deletes are lost' switched on after 20 s, over 8 seeds x delete delays 0/400/3000 ms x 120 s, every stale stretch ended by expiry (endedBy.delete unchanged) and the longest was 11.9-15.0 s; over 199 seeds x 10 minutes the longest stale stretch was 15,000 ms (to floating-point precision). With deletes arriving, the longest stretch equals the delete delay (0.40 s at 400 ms, 1.50 s at 1,500 ms, 3.00 s at 3,000 ms).
+Fanout check (node, fanout-model.mjs, generations, 200 s sampled every 0.5 s): seeds 9 and 1 averaged 23.7/21.8 unreachable page keys against 7.9/8.2 servable, about 3.0/2.7 unreachable copies per servable page (TTL 20 s / change every 7 s = 2.9) and 3.7-4.0 times as many keys as Redis can serve.

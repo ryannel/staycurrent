@@ -46,9 +46,9 @@ Redis: 7100 + article number for writers, 7150 + article number for reviewers.
 | 2 | caching-patterns | A | done | final: publish | 3e3c4eca |
 | 3 | keys-and-values | A | done | final: publish | 3e3c4eca |
 | 4 | expiration-and-eviction | | | | |
-| 5 | invalidation | | | | |
+| 5 | invalidation | C | done | final: fixed, verified | (this commit) |
 | 6 | stampedes | | | | |
-| 7 | how-redis-works | | | | |
+| 7 | how-redis-works | D | done | final: publish | a09369a4 |
 | 8 | clients-and-pipelining | | | | |
 | 9 | replication-and-persistence | | | | |
 | 10 | cluster-and-hot-keys | | | | |
@@ -194,3 +194,16 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
   shortened by the orchestrator) and marked published. Article 8 repair 1 done
   (retry table measured; IFEQ and Lua compare-and-set listings run on 8.10.3);
   final review started (dev 4478, Redis 7178).
+- 2026-10-28: article 7 published (a09369a4), built in a clean worktree, live
+  with 9 figures and no errors. Writer for article 11 started (Redis 7111,
+  7181–7184, dev 4421).
+- 2026-10-28: article 9 drafted (6,800 words, 11 figures; failover lost an
+  acknowledged delete; restored snapshot resurrects a deleted value; detection
+  31 s at Sentinel defaults). Round-1 teaching (dev 4459) and technical (dev
+  4469, Redis 7159, 7185–7189, 26185–26189) reviews started.
+- 2026-10-28: article 5 repair 2 done; orchestrator verified the three
+  blocking fixes (Figure 1 with deletes lost: stale copy ends at expiry;
+  monotonic reads now per-client version only; EXPIRE NX then GT checked on
+  8.10.3) and marked it published. Article 4 final review: 2 blocking (Figure
+  1 readouts carry over the previous TTL's copy; a model result reported as
+  Redis), 8 minor; repair 2 started (dev 4414, Redis 7114).
