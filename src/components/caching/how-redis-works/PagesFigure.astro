@@ -1,0 +1,77 @@
+---
+// Figure: why resident memory stays high after deleting keys (illustrative allocator).
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Readout from '../shared/Readout.astro';
+import './redis.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="redis-pages" title="Deleted keys, resident pages" controls="none"
+  legend={[{ kind: 'redis', label: 'Original key' }, { kind: 'write', label: 'Key added later' }, { kind: 'neutral', label: 'Free slot' }]}
+  caption="Illustrative model of an allocator, not of jemalloc or libc in detail: memory comes from the operating system in pages of 16 equal slots, a page can be returned only when every slot on it is free, deletions hit keys at random, and new keys fill free slots before new pages are taken. Real allocators use many slot sizes and sometimes return parts of pages. The model shows when a page could be returned, not when the allocator actually returns it: jemalloc on Linux returns empty pages gradually in the background, and the libc allocator on my laptop kept them even after FLUSHALL. The fragmentation ratio is resident memory divided by memory in use, as Redis reports it in mem_fragmentation_ratio.">
+  <Slider slot="params" name="deleted" label="Delete, at random" min={0} max={1} step={0.05} value={0.5} format="percent" />
+  <Slider slot="params" name="added" label="Then add new keys" min={0} max={1} step={0.05} value={0} format="percent" />
+  <Fragment slot="stats">
+    <Readout name="used" label="In use (used_memory)" kind="redis" />
+    <Readout name="resident" label="Resident (RSS), at best" />
+    <Readout name="ratio" label="Fragmentation ratio" />
+  </Fragment>
+  <div data-pages class="redis-pages"></div>
+  <Fragment slot="text">
+    <p>A grid of 24 memory pages, each with 16 slots. At the start all 384 slots hold keys and every page is resident: in use and resident are equal, a ratio of 1.0.</p>
+    <p>Deleting half the keys at random leaves every page with about eight live keys and eight holes. Not one page is completely empty (the chance of a page losing all 16 keys is 0.5¹⁶, about 1 in 65,000), so none can be returned to the operating system. Memory in use halves; resident memory does not move; the ratio is 2.0. On a real server I measured the same thing: deleting every second key of a million took used_memory from 159 MB to 84 MB while RSS stayed at 171 MB, a ratio of 2.03.</p>
+    <p>Adding new keys fills the holes first, so the ratio falls back towards 1.0 without RSS growing, until the holes run out and new pages are taken. Only deleting nearly everything empties whole pages, and even then the allocator decides when to give them back: the model counts an empty page as returned at once, which is the best case.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { bindParams, setReadouts } from '../shared/player.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+  import { pages } from './pages-model.mjs';
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="redis-pages"]').forEach(root => {
+    const box = root.querySelector<HTMLElement>('[data-pages]')!;
+    const svg = svgEl('svg', { class: 'cache-svg', role: 'img', 'aria-label': 'Memory pages and the keys in their slots' }, box);
+    let current: any = null;
+
+    const draw = () => {
+      const width = Math.round(box.clientWidth);
+      if (!width || !current) return;
+      svg.replaceChildren();
+      const compact = width < 480;
+      const perRow = compact ? 4 : 8;
+      const pageW = (width - 8) / perRow;
+      const slot = Math.min(compact ? 15 : 13, (pageW - 14) / 4 - 2);
+      const pageH = slot * 4 + 2 * 3 + 22;
+      const rows = Math.ceil(current.pages.length / perRow);
+      const height = rows * (pageH + 8) + 4;
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      svg.setAttribute('width', width); svg.setAttribute('height', height);
+      current.pages.forEach((page: string[], p: number) => {
+        const x = 4 + (p % perRow) * pageW;
+        const y = 4 + Math.floor(p / perRow) * (pageH + 8);
+        const returned = page.every(s => s === 'free');
+        const extra = p >= 24;
+        svgEl('rect', { class: returned ? 'page-box is-returned' : 'page-box', x: x + 2, y, width: pageW - 6, height: pageH, rx: 4 }, svg);
+        const label = svgEl('text', { class: 'page-label', x: x + 8, y: y + 14 }, svg);
+        label.textContent = returned ? (compact ? 'empty' : 'empty: can go back') : compact ? `${p + 1}${extra ? ' (new)' : ''}` : `page ${p + 1}${extra ? ' (new)' : ''}`;
+        page.forEach((s, i) => {
+          const sx = x + 8 + (i % 4) * (slot + 2);
+          const sy = y + 20 + Math.floor(i / 4) * (slot + 2);
+          svgEl('rect', { class: 'page-slot', 'data-cache-kind': s === 'live' ? 'redis' : s === 'new' ? 'write' : undefined, x: sx, y: sy, width: slot, height: slot, rx: 1.5 }, svg);
+        });
+      });
+    };
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(draw).observe(box);
+
+    bindParams(root, (params: any) => {
+      current = pages({ deleted: Number(params.deleted), added: Number(params.added) });
+      setReadouts(root, {
+        used: `${current.used} slots`,
+        resident: `${current.residentPages} page${current.residentPages === 1 ? '' : 's'} (${current.resident} slots)`,
+        ratio: current.used ? current.ratio.toFixed(2) : '–',
+      });
+      draw();
+    });
+  });
+</script>

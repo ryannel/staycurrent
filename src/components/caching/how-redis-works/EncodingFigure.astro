@@ -1,0 +1,125 @@
+---
+// Figure: a small hash packed into a listpack, and the switch to a hash table.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './redis.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="redis-encoding" title="Packed or hashed: one hash as it grows" controls="none"
+  legend={[{ kind: 'redis', label: 'Field and value' }, { kind: 'client', label: 'Fields in the hash now' }]}
+  caption="Measured on Redis 8.10.3 (libc malloc, macOS) with the default thresholds hash-max-listpack-entries 512 and hash-max-listpack-value 64: one hash was grown a field at a time with HSET, and MEMORY USAGE … SAMPLES 0 read after each field. The dashed line is 200,000 separate string keys with names and values of the same sizes, measured as used_memory growth per key; that also counts each key's entry in the keyspace, which for the single hash is one entry shared by all its fields. The drawing above the chart is schematic: it shows the shape of each encoding, not its byte layout.">
+  <Slider slot="params" name="fields" label="Fields in the hash" min={1} max={600} value={100} />
+  <Choice slot="params" name="value" label="Each value" value="20" options={[{ value: '20', label: '20 bytes' }, { value: '100', label: '100 bytes' }]} />
+  <Fragment slot="stats">
+    <Readout name="encoding" label="Encoding (OBJECT ENCODING)" kind="redis" />
+    <Readout name="usage" label="MEMORY USAGE" />
+    <Readout name="per" label="Bytes per field" kind="redis" />
+    <Readout name="keys" label="As separate keys" />
+  </Fragment>
+  <div data-drawing class="redis-encoding"></div>
+  <div slot="after" data-chart></div>
+  <Fragment slot="text">
+    <p>A drawing of the hash's encoding, and a chart of its measured memory per field as fields are added (field names like field:0001, 10 bytes).</p>
+    <p>With 20-byte values the hash is a listpack: every field and value packed one after another in a single allocation. It costs about 34 bytes per field, little more than the 30 bytes of field name and value, against 85 bytes for each of the same values stored as a separate key, which the chart shows as a dashed line. When the 513th field arrives, the hash has more than 512 entries and Redis converts it to a hash table: an array of buckets with a separate allocation for every field and value. Memory jumps from 17,437 bytes to 34,946, about 68 bytes per field. Removing fields does not convert it back.</p>
+    <p>With 100-byte values, every value is longer than the 64-byte limit, so the hash is a hash table from its first field and costs about 140 to 160 bytes per field, close to the 165 bytes of a separate key.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { bindParams, setReadouts } from '../shared/player.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+  import { lineChart } from '../shared/chart.mjs';
+  import { HASH_USAGE, HASH_ENCODING_FROM } from './measured.mjs';
+
+  // Measured: 200,000 separate string keys with 10-byte names, like the field names, and values of
+  // each size, as used_memory growth per key (evidence, section R-5).
+  const SEPARATE_KEY: Record<number, number> = { 20: 85.1, 100: 164.5 };
+  const encodingAt = (value: number, fields: number) => {
+    let name = 'listpack';
+    for (const [from, enc] of (HASH_ENCODING_FROM as any)[value]) if (fields >= from) name = enc;
+    return name;
+  };
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="redis-encoding"]').forEach(root => {
+    const box = root.querySelector<HTMLElement>('[data-drawing]')!;
+    const svg = svgEl('svg', { class: 'cache-svg', role: 'img', 'aria-label': 'Schematic of the hash’s current encoding' }, box);
+    const chart = lineChart(root.querySelector<HTMLElement>('[data-chart]')!, {
+      label: 'Measured bytes per field against the number of fields',
+      height: 210,
+      x: { label: 'Fields in the hash', domain: [0, 600] },
+      y: { label: 'Bytes per field', domain: [0, 'auto'] },
+      series: [{ id: 'per', label: 'Bytes per field (measured)', kind: 'redis' }, { id: 'keys', label: 'The same values as separate keys (measured)', kind: 'neutral', dash: '7 4' }, { id: 'here', label: 'Fields in the hash now', kind: 'client', dash: '2 3' }],
+    });
+    let current: any = null;
+
+    const draw = () => {
+      const width = Math.round(box.clientWidth);
+      if (!width || !current) return;
+      const { fields, encoding } = current;
+      const compact = width < 480;
+      svg.replaceChildren();
+      const cell = compact ? 16 : 20;
+      let height;
+      if (encoding === 'listpack') {
+        height = 78;
+        const shown = Math.min(fields, Math.floor((width - 80) / (cell * 2 + 2)));
+        const x0 = 8, y = 30;
+        const total = shown * (cell * 2 + 2) + (shown < fields ? 34 : 0) + 12;
+        svgEl('rect', { class: 'enc-bucket', x: x0, y: y - 6, width: total, height: cell + 12, rx: 4 }, svg);
+        for (let i = 0; i < shown; i++) {
+          const x = x0 + 6 + i * (cell * 2 + 2);
+          const g = svgEl('g', { 'data-cache-kind': 'redis' }, svg);
+          svgEl('rect', { class: 'enc-cell', x, y, width: cell - 1, height: cell }, g);
+          svgEl('rect', { class: 'enc-cell', x: x + cell, y, width: cell - 1, height: cell, opacity: 0.6 }, g);
+        }
+        if (shown < fields) svgEl('text', { class: 'enc-more', x: x0 + 6 + shown * (cell * 2 + 2) + 4, y: y + cell - 5 }, svg).textContent = '…';
+        svgEl('text', { class: 'enc-label', x: x0, y: 14 }, svg).textContent = compact ? 'listpack: one allocation' : 'listpack: fields and values packed in one allocation';
+        svgEl('text', { class: 'enc-note', x: x0, y: y + cell + 24 }, svg).textContent = compact ? `${fields} field${fields === 1 ? '' : 's'}, read in order` : `${fields} field${fields === 1 ? '' : 's'}, one after another; a lookup reads them in order`;
+      } else {
+        const buckets = Math.min(compact ? 6 : 10, Math.max(4, fields));
+        const shown = Math.min(fields, buckets);
+        const x0 = 8, top = 30, gap = (width - 24) / buckets;
+        height = 30 + cell + 18 + cell * 2 + 30;
+        svgEl('text', { class: 'enc-label', x: x0, y: 14 }, svg).textContent = compact ? 'hashtable: buckets and entries' : 'hashtable: buckets pointing to separate allocations';
+        for (let i = 0; i < buckets; i++) {
+          const x = x0 + i * gap;
+          svgEl('rect', { class: 'enc-bucket', x, y: top, width: Math.min(gap - 4, cell * 2), height: cell }, svg);
+          if (i < shown) {
+            const ex = x + 4, ey = top + cell + 18;
+            svgEl('path', { class: 'enc-arrow', d: `M${x + cell / 2} ${top + cell / 2}V${ey - 2}` }, svg);
+            const g = svgEl('g', { 'data-cache-kind': 'redis' }, svg);
+            svgEl('rect', { class: 'enc-cell', x: ex, y: ey, width: cell - 1, height: cell, rx: 3 }, g);
+            svgEl('rect', { class: 'enc-cell', x: ex, y: ey + cell + 3, width: cell - 1, height: cell, rx: 3, opacity: 0.6 }, g);
+          }
+        }
+        svgEl('text', { class: 'enc-note', x: x0, y: height - 6 }, svg).textContent = compact ? `${fields} field${fields === 1 ? '' : 's'}, each in its own allocation` : `${fields} field${fields === 1 ? '' : 's'}: each field and value is its own allocation, found by hashing the field`;
+      }
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      svg.setAttribute('width', width); svg.setAttribute('height', height);
+    };
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(draw).observe(box);
+
+    bindParams(root, (params: any) => {
+      const value = Number(params.value);
+      const fields = Number(params.fields);
+      const usage = (HASH_USAGE as any)[value] as number[];
+      const encoding = encodingAt(value, fields);
+      current = { fields, encoding };
+      const perField = usage.map((u, i) => [i + 1, u / (i + 1)]);
+      chart.set('per', perField.slice(1));
+      chart.set('keys', [[0, SEPARATE_KEY[value]], [600, SEPARATE_KEY[value]]]);
+      const top = Math.max(SEPARATE_KEY[value], ...perField.slice(1).map(p => p[1]));
+      chart.set('here', [[fields, 0], [fields, top]]);
+      chart.render();
+      setReadouts(root, {
+        encoding,
+        usage: `${usage[fields - 1].toLocaleString('en-GB')} B`,
+        per: `${(usage[fields - 1] / fields).toFixed(1)} B`,
+        keys: `${SEPARATE_KEY[value].toFixed(1)} B a key`,
+      });
+      draw();
+    });
+  });
+</script>

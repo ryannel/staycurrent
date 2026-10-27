@@ -1,0 +1,124 @@
+---
+// Figure: walking a million keys with KEYS or with SCAN at different COUNT values,
+// replayed in real time from measured runs.
+import SimFigure from '../shared/SimFigure.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './redis.css';
+import { WALKS } from './walks.mjs';
+interface Props { number: number }
+const { number } = Astro.props;
+const W = WALKS as any;
+const s = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${(ms / 1000).toFixed(2)} s`);
+const call = (us: number) => (us >= 10000 ? `${Math.round(us / 1000)} ms` : us >= 1000 ? `${(us / 1000).toFixed(1)} ms` : us >= 100 ? `${(us / 1000).toFixed(2)} ms` : `${Math.round(us * 10) / 10} µs`);
+const n = (v: number) => v.toLocaleString('en-GB');
+const share = (o: string) => `${Math.round((W[o].exec / W[o].wall) * 100)}%`;
+---
+<SimFigure number={number} id="redis-scan" title="Walking a million keys: KEYS or SCAN" advance={200} clock={true}
+  legend={[{ kind: 'hit', label: 'Keys received' }, { kind: 'redis', label: 'Executing KEYS or SCAN' }, { kind: 'client', label: 'PING round trip' }]}
+  caption="Measured, and replayed in real time at 1×. Redis 8.10.3 on my laptop with 1,000,000 keys. A client walked every key and recorded when each reply arrived; each call's execution time is from the slow log. A separate process sent PING, waited for the reply, slept about 1 ms and repeated. For each option this is the run, of thirteen, whose longest single call was shortest: the one least disturbed by other work on the laptop (KEYS ranged from 86 to 157 ms across its runs). The strip shows execution only, placed where the request reached the server; the socket work around each call (about 7 µs on this laptop, as in Figure 1) and the writing of KEYS's 20 MB reply are not drawn. PINGs under 0.5 ms sit on the axis. The laptop was shared with other work, so some PINGs were delayed by the machine itself: such spikes appear before the walk starts too, and the dashed line marks the longest any single call held the thread.">
+  <Choice slot="params" name="option" label="Walk with" value="keys"
+    options={[{ value: 'keys', label: 'KEYS *' }, { value: '10', label: 'SCAN, COUNT 10' }, { value: '100', label: '100' }, { value: '1000', label: '1,000' }, { value: '10000', label: '10,000' }, { value: '100000', label: '100,000' }]} />
+  <Fragment slot="stats">
+    <Readout name="keys" label="Keys the job has received" kind="hit" />
+    <Readout name="calls" label="Calls so far" />
+    <Readout name="percall" label="Each call held the main thread for" kind="redis" />
+    <Readout name="exec" label="Share of time executing the walk" kind="redis" />
+  </Fragment>
+  <div data-progress class="redis-progress"></div>
+  <div data-strip></div>
+  <div slot="after" data-chart></div>
+  <p slot="after" class="redis-status" data-status aria-live="polite"></p>
+  <Fragment slot="text">
+    <p>Each option replays one measured walk over the same 1,000,000 keys in real time: a bar fills as the job receives keys, a strip shows the last second of Redis's main thread executing the walk, and a chart plots the round trip of every PING another process sent, from 0.8 s before the walk began.</p>
+    <ul>
+      <li>KEYS *: one call that executed for {call(W.keys.max)}. The job had every key after {s(W.keys.wall)}, faster than any SCAN, but the PING that arrived during the call waited {Math.round(W.keys.slowestDuring)} ms.</li>
+      <li>SCAN with COUNT 10 (the default): {n(W['10'].calls)} calls of about {call(W['10'].median)} each, with a network round trip between one call and the next. The walk took {s(W['10'].wall)}, and the thread spent {share('10')} of that time executing it. The chart stays flat apart from spikes like those before the walk began, which come from the laptop, not from SCAN; the longest single call was {call(W['10'].max)}.</li>
+      <li>COUNT 100: {n(W['100'].calls)} calls of about {call(W['100'].median)}; the walk took {s(W['100'].wall)}.</li>
+      <li>COUNT 1,000: {n(W['1000'].calls)} calls of about {call(W['1000'].median)}; the walk took {s(W['1000'].wall)}, and no call held the thread for more than {call(W['1000'].max)}.</li>
+      <li>COUNT 10,000: {n(W['10000'].calls)} calls of about {call(W['10000'].median)}; the walk took {s(W['10000'].wall)}. Pauses this short are smaller than the laptop's own hiccups on the chart.</li>
+      <li>COUNT 100,000: {n(W['100000'].calls)} calls of about {call(W['100000'].median)}; the walk took {s(W['100000'].wall)}, and the chart shows ten spikes of that size. This is KEYS cut into ten pieces.</li>
+    </ul>
+    <p>Across the SCAN options, the time the thread spent executing the walk stays between {s(Math.min(...['10', '100', '1000', '10000', '100000'].map(o => W[o].exec)))} and {s(Math.max(...['10', '100', '1000', '10000', '100000'].map(o => W[o].exec)))}. COUNT decides how that work is cut up: small pieces keep every pause short and make the walk long; large pieces finish sooner and make other clients wait longer.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+  import { replay, KEY_COUNT, BEFORE_MS, LONGEST_WALK } from './scan-model.mjs';
+  import { threadStrip } from './strip.mjs';
+  import { stemChart } from './stems.mjs';
+
+  const STRIP = 1000; // ms of the main thread shown in the strip
+  const callText = (us: number) => (us >= 10000 ? `${Math.round(us / 1000)} ms` : us >= 1000 ? `${(us / 1000).toFixed(1)} ms` : us >= 100 ? `${(us / 1000).toFixed(2)} ms` : `${Math.round(us * 10) / 10} µs`);
+  const secs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${(ms / 1000).toFixed(2)} s`);
+  const NAME: Record<string, string> = { keys: 'KEYS *', 10: 'SCAN … COUNT 10', 100: 'SCAN … COUNT 100', 1000: 'SCAN … COUNT 1000', 10000: 'SCAN … COUNT 10000', 100000: 'SCAN … COUNT 100000' };
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="redis-scan"]').forEach(root => {
+    const status = root.querySelector<HTMLElement>('[data-status]')!;
+    const box = root.querySelector<HTMLElement>('[data-progress]')!;
+    const bar = svgEl('svg', { class: 'cache-svg', role: 'img', 'aria-label': 'Keys the job has received so far, out of 1,000,000' }, box);
+    const strip = threadStrip(root.querySelector<HTMLElement>('[data-strip]')!, {
+      label: 'The last second of the Redis main thread, executing the walk, drawn to scale',
+      lanes: [{ id: 'main', label: 'Main thread', short: 'Main' }],
+      laneHeight: 30,
+      minWidth: 0,
+      format: (v: number) => `${(v / 1000).toFixed(1)} s`,
+      axisLabel: 'Time since the walk began (the last second)',
+    });
+    const top = Math.ceil(LONGEST_WALK / 1000);
+    const chart = stemChart(root.querySelector<HTMLElement>('[data-chart]')!, {
+      label: 'Round trip of each PING from another process, in milliseconds, against time since the walk began',
+      height: 210,
+      x: { label: 'Time since the walk began (s)', domain: [-BEFORE_MS / 1000, top], format: (v: number) => (v === 0 ? '0' : `${v}`) },
+      y: { label: 'PING round trip (ms)', domain: [0, 120], format: (v: number) => `${v}` },
+    });
+
+    const drawBar = (received: number) => {
+      const width = Math.round(box.clientWidth);
+      if (!width) return;
+      const height = 46, left = 4, right = width - 4;
+      bar.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      bar.setAttribute('width', String(width)); bar.setAttribute('height', String(height));
+      bar.replaceChildren();
+      svgEl('text', { class: 'progress-label', x: left, y: 13 }, bar).textContent = width < 440 ? 'Keys received' : 'Keys the job has received';
+      svgEl('text', { class: 'progress-value', x: right, y: 13, 'text-anchor': 'end' }, bar).textContent = `${received.toLocaleString('en-GB')} of 1,000,000`;
+      svgEl('rect', { class: 'progress-track', x: left, y: 20, width: right - left, height: 16, rx: 3 }, bar);
+      svgEl('rect', { class: 'progress-fill', 'data-cache-kind': 'hit', x: left, y: 20, width: (received / KEY_COUNT) * (right - left), height: 16, rx: 3 }, bar);
+    };
+    let latest = 0;
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => drawBar(latest)).observe(box);
+
+    mountSim(root, {
+      create: (params: any) => replay(String(params.option)),
+      formatClock: (now: number) => `${now < 0 ? '−' : ''}${(Math.abs(now) / 1000).toFixed(2)} s`,
+      render(model: any) {
+        const now = model.sim.now, w = model.data;
+        latest = model.keysAt(now);
+        drawBar(latest);
+        strip.render({
+          from: now - STRIP, to: now,
+          blocks: model.busy(now - STRIP, now).map((b: any) => ({ lane: 'main', start: b.start, end: b.end, kind: 'redis', opacity: b.share })),
+          now,
+        });
+        chart.set(model.slowPings(-BEFORE_MS, now).map(([t, rtt]: number[]) => [t / 1000, rtt]));
+        chart.render({
+          shades: [{ from: -BEFORE_MS / 1000, to: 0, label: 'before the walk' }],
+          marks: model.done ? [{ x: w.wall / 1000, label: `walk done, ${secs(w.wall)}` }] : [],
+          rules: [{ y: w.max / 1000, label: `longest call ${callText(w.max)}`, kind: 'redis' }],
+        });
+        const elapsed = Math.max(0, Math.min(now, w.wall));
+        setReadouts(root, {
+          keys: latest.toLocaleString('en-GB'),
+          calls: model.callsAt(now).toLocaleString('en-GB'),
+          percall: callText(w.median),
+          exec: elapsed > 0 ? `${Math.round((model.execUpTo(elapsed) / elapsed) * 100)}%` : '–',
+        });
+        const text = now < 0 ? `${NAME[model.option]} starts at 0 s.`
+          : model.done ? `${NAME[model.option]}: every key received after ${secs(w.wall)}, in ${w.calls.toLocaleString('en-GB')} call${w.calls === 1 ? '' : 's'}. Press Reset to replay it.`
+          : `${NAME[model.option]} running.`;
+        if (status.textContent !== text) status.textContent = text;
+      },
+    });
+  });
+</script>

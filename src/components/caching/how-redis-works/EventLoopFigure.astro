@@ -1,0 +1,93 @@
+---
+// Figure: one main thread serving many clients through an event loop.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Readout from '../shared/Readout.astro';
+import './redis.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="redis-event-loop" title="One thread, many clients" advance={10000} clock={false}
+  legend={[{ kind: 'client', label: 'Request' }, { kind: 'hit', label: 'Reply' }, { kind: 'redis', label: 'Executing a command' }, { kind: 'neutral', label: 'Socket reads and writes' }]}
+  caption="Illustrative model, slowed about 10,000 times. Each client sends GET, waits for the reply and sends the next. The main thread's costs are proportions from one measurement on a laptop (Redis 8.10.3: about 7.5 µs of main-thread time per GET, of which executing the command is a few tenths of a microsecond); the network is a loopback round trip of 0.1 ms. The readouts average the Redis time since you last moved the slider. Left out: I/O threads, pipelining, real networks, which are slower, and the variation between requests.">
+  <Slider slot="params" name="clients" label="Clients" min={1} max={40} value={1} />
+  <Fragment slot="stats">
+    <Readout name="rate" label="Requests a second" kind="hit" />
+    <Readout name="busy" label="Main thread busy" kind="redis" />
+    <Readout name="wait" label="Average wait to be read" kind="client" />
+    <Readout name="time" label="Redis time" />
+  </Fragment>
+  <div class="redis-loop-scene" data-loop-scene></div>
+  <div data-strip></div>
+  <Fragment slot="text">
+    <p>Clients on the left send requests to Redis on the right; each reply travels back and the client sends its next request. Below, a timeline shows what Redis's main thread did over the last 0.4 ms: grey blocks for reading requests from sockets and writing replies, thin coloured blocks for executing the commands, and gaps where the thread had nothing to do.</p>
+    <p>With one client the thread is busy about 7% of the time and serves about 9,300 requests a second: the client spends most of its time waiting for the network, not for Redis. Each added client adds about the same again. At about 14 clients the thread is never idle and serves about 130,000 requests a second; adding more clients does not raise that number, it only makes each request wait longer to be read (about 0.12 ms at 40 clients). In every request, executing the command is the smallest part of the thread's work.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { createScene, spread } from '../shared/scene.mjs';
+  import { eventLoop } from './eventloop-model.mjs';
+  import { threadStrip, scaled } from './strip.mjs';
+
+  const PER_MS = 0.1; // µs of Redis time for each millisecond on screen
+  const WINDOW = 400; // µs shown in the timeline
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="redis-event-loop"]').forEach(root => {
+    const step = root.querySelector<HTMLElement>('[data-advance]');
+    if (step) {
+      step.querySelector('span')!.textContent = 'Step 1 ms';
+      step.setAttribute('aria-label', 'Step forward 1 millisecond of Redis time');
+    }
+    const scene = createScene(root.querySelector<HTMLElement>('[data-loop-scene]')!, {
+      label: 'Clients sending GET requests to one Redis server and receiving replies',
+      nodes: [
+        { id: 'clients', kind: 'client', label: 'Clients', count: 3 },
+        { id: 'redis', kind: 'redis', label: 'Redis', sublabel: 'one main thread' },
+      ],
+      edges: [{ id: 'clients-redis', from: 'clients', to: 'redis' }],
+      layout: (width, compact) => {
+        const [a, b] = spread(width, 2, compact ? 52 : 140);
+        return { height: 130, positions: { clients: [a, 68], redis: [b, 68] } };
+      },
+    });
+    const strip = threadStrip(root.querySelector<HTMLElement>('[data-strip]')!, {
+      label: 'Timeline of the Redis main thread: socket work, command execution and idle time',
+      lanes: [{ id: 'main', label: 'Main thread', short: 'Main' }],
+      laneHeight: 34,
+      format: (v: number) => `${Math.round(v)} µs`,
+      axisLabel: 'Redis time (µs)',
+    });
+
+    mountSim(root, {
+      seed: 3,
+      create: (params: any) => scaled(eventLoop({ clients: params.clients }, 3), PER_MS),
+      update: (model: any, params: any) => { model.inner.setClients(params.clients); model.inner.changedAt = model.inner.sim.now; return true; },
+      render(model: any) {
+        const m = model.inner;
+        const now = m.sim.now;
+        // Average only over time after the number of clients last changed and after any clients
+        // the slider removed have finished their last request (settledAt is Infinity until then),
+        // skipping the first round trip while new clients settle (at most 2 ms of Redis time).
+        const since = Number.isFinite(m.settledAt) ? now - Math.max(m.changedAt ?? 0, m.settledAt) : 0;
+        const r = m.rates(Math.min(2000, Math.max(since - 300, 1)));
+        scene.dots(m.movers.active());
+        scene.node('redis').set({ meter: r.busy, meterKind: 'redis', badge: `${Math.round(r.busy * 100)}%${root.clientWidth < 480 ? '' : ' busy'}`, queue: [r.waiting, 8] });
+        scene.node('clients').set({ label: `${m.params.clients} client${m.params.clients === 1 ? '' : 's'}` });
+        const from = Math.max(0, now - WINDOW);
+        strip.render({
+          from, to: Math.max(WINDOW, now),
+          blocks: m.blocks.filter((b: any) => b.kind !== 'poll' && b.end >= from).map((b: any) => ({ lane: 'main', start: b.start, end: Math.min(b.end, now), kind: b.kind === 'exec' ? 'redis' : 'socket' })).filter((b: any) => b.start <= now),
+          now,
+        });
+        const enough = since > 400;
+        setReadouts(root, {
+          rate: enough ? Number(r.perSecond.toPrecision(2)).toLocaleString('en-GB') : '–',
+          busy: enough ? `${Math.round(r.busy * 100)}%` : '–',
+          wait: enough ? `${r.wait.toFixed(1)} µs` : '–',
+          time: now < 1000 ? `${Math.round(now)} µs` : `${(now / 1000).toFixed(2)} ms`,
+        });
+      },
+    });
+  });
+</script>

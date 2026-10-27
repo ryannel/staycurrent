@@ -157,3 +157,40 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
   histogram second series hollow. Introduction prose updated. Article 8's
   ladder.mjs draws equal-size client/hit dots: fix in its repair. Article 7
   repair done; final review started.
+- 2026-10-27: article 4 repair 1 done except the real-pace P1 check (about an
+  hour at 400 requests a second); repair agent resumed to finish it. Article 8
+  teaching review: 6 required/14 suggested (compare-and-set example lacks code;
+  Figure 3 hides slow rows; missing ArticleRefs). Waiting for its technical
+  review. Writer for article 10 started (ports 7110, 7195–7199, dev 4410).
+- 2026-10-27: article 5 repair 1 done (12 required fixed; prose 6,713 → 6,013
+  words; failover-lost deletes and atomic tag-set script added). Final review
+  started (dev 4475, Redis 7175), asked to judge length directly.
+- 2026-10-28: article 8 technical review: 4 required/12 suggested (library
+  default retries double-apply scripts, MULTI and pipelines; retried SET can
+  overwrite a newer write; pool-exhaustion waits; cjson). Repair 1 started
+  (dev 4418, Redis 7118); needs a final review after.
+- 2026-10-28: article 7 final review: publish, 0 blocking, 10 minor (Figure 1
+  one-client rate disagrees with prose). Polish started (sonnet, dev 4427),
+  including the Valkey lazy-free and compact-hash/field-TTL notes.
+- 2026-10-28: article 5 final review: 3 blocking (Figure 1 lost-delete toggle
+  contradicts prose; monotonic-reads claim wrong; EXPIRE GT never sets a TTL
+  on a new tag set), 12 minor, 350–450 words cuttable. Repair 2 started (dev
+  4415, Redis 7115); orchestrator to verify the three blocking fixes before
+  publishing.
+- 2026-10-28: the disk filled (ENOSPC; the machine had 484 MB free, almost all
+  usage outside this commission). Article 7's polish and article 6's repair
+  stopped early. Freed space by stopping three orphan dev servers (4399 ×2,
+  4400) and deleting finished agents' scratchpad folders and published
+  articles' review screenshots; 15 GiB free afterwards. Article 6 repair-1.md
+  saved by the orchestrator from the agent's report, and its last cosmetic
+  edit made. Article 7 polish resumed. Agents must stop their dev servers;
+  check `pgrep -fl "pnpm dev"` for orphans at each publication.
+- 2026-10-28: article 4 repair 1 complete: paced real-server check (400 a
+  second, about 5 requests a minute per cached key) matched the model within
+  0.6 points (LRU 17.7%, LFU 22.5%, LFU decay 10 27.1%). Final reviews of
+  articles 4 (dev 4474, Redis 7174) and 6 (dev 4476, Redis 7176) started.
+- 2026-10-28: article 7 polished (Figure 1 rate fixed at its cause in the
+  model; Valkey lazy-free and listpackex field-expiry notes; 375 px badge
+  shortened by the orchestrator) and marked published. Article 8 repair 1 done
+  (retry table measured; IFEQ and Lua compare-and-set listings run on 8.10.3);
+  final review started (dev 4478, Redis 7178).

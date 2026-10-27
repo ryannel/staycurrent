@@ -31,7 +31,7 @@ export const cachingCollection: CachingEntry[] = [
     description: 'Keeping cached values close to the database, the races that leave stale data behind, and how to prevent them.' },
   { slug: 'stampedes', title: 'Cache stampedes and the thundering herd', type: 'Deep dive', status: 'planned',
     description: 'Why many simultaneous misses overload a database, and the locking, coalescing and early-refresh techniques that prevent it.' },
-  { slug: 'how-redis-works', title: 'How Redis works: the event loop, data structures and memory', type: 'Deep dive', status: 'planned',
+  { slug: 'how-redis-works', title: 'How Redis works: the event loop, data structures and memory', type: 'Deep dive', status: 'published',
     description: 'How one Redis process executes commands, stores data and spends memory, and what makes a command slow.' },
   { slug: 'clients-and-pipelining', title: 'Redis clients: round trips, pipelining and atomic operations', type: 'Deep dive', status: 'planned',
     description: 'What a request to Redis costs, how pipelining and batching reduce it, and how to make changes atomic.' },

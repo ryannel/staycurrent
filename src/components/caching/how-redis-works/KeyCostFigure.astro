@@ -1,0 +1,106 @@
+---
+// Figure: what one string key costs in memory, measured.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './redis.css';
+import { VALUE_SIZES } from './measured.mjs';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="redis-key-cost" title="What one key costs" controls="none"
+  legend={[{ kind: 'redis', label: 'Your value' }, { kind: 'neutral', label: 'Key name (darker) and Redis’s overhead' }]}
+  caption="Measured on my Mac (Redis 8.10.3, libc malloc, Apple Silicon): 200,000 keys named like user:00000001 (13 bytes) were written with string values of each size, and the growth in used_memory was divided by 200,000. I have no Linux measurement. A Linux server differs in two ways: its jemalloc allocator rounds allocations to different sizes, and Redis embeds a value with its key only while both fit in a 64-byte cache line rather than this Mac's 128, so with these keys values from 29 to 44 bytes get an allocation of their own there. Expect different bytes per key on Linux, and the step near 28 bytes rather than 44.">
+  <Slider slot="params" name="size" label="Value size" min={0} max={VALUE_SIZES.length - 1} value={8} />
+  <Choice slot="params" name="ttl" label="Expiry" value="no" options={[{ value: 'no', label: 'No TTL' }, { value: 'yes', label: 'With a TTL' }]} />
+  <Fragment slot="stats">
+    <Readout name="total" label="Memory per key" kind="redis" />
+    <Readout name="share" label="Share that is your value" kind="redis" />
+    <Readout name="usage" label="MEMORY USAGE says" />
+    <Readout name="ten" label="10 million keys" />
+  </Fragment>
+  <div data-bytes></div>
+  <p slot="after" class="redis-note" data-note></p>
+  <Fragment slot="text">
+    <p>One bar per key, split into the value's bytes, the key name's 13 bytes and the rest, which is Redis's own overhead: the object header, the entry in the keyspace's hash table and the allocator's rounding. All values are measured.</p>
+    <p>A 1-byte value costs about 69 bytes per key, almost all overhead. A 100-byte value costs about 159 bytes, so 37% of the memory is overhead. Only at a few kilobytes does the value dominate (a 4,000-byte value costs about 4,143 bytes). A TTL adds 21 to 42 bytes per key here: 8 bytes for the expiry time, stored in the key's own object, and the rest for the key's entry in the separate table of keys that expire. MEMORY USAGE counts the key's own allocations but not its share of the keyspace's tables, so it shows only the 8-byte expiry time, which the allocator's rounding turns into 0 to 16 more bytes.</p>
+    <p>Short values share one allocation with the object header and the key name (the embstr encoding) while key and value together fit in a CPU cache line, less 23 bytes of header. On a typical Linux server the cache line is 64 bytes, so key plus value must be at most 41 bytes: with these 13-byte keys, values up to 28 bytes. On this Mac the line is 128 bytes, and a separate limit of 44 bytes applies first, which is why the measured cost steps up between 44 and 45 bytes. Longer values get an allocation of their own (raw).</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { bindParams, setReadouts } from '../shared/player.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+  import { VALUE_SIZES, KEY_BYTES, BYTES_PER_KEY, BYTES_PER_KEY_TTL, MEMORY_USAGE, MEMORY_USAGE_TTL, STRING_ENCODING } from './measured.mjs';
+
+  const gb = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(bytes >= 1e10 ? 0 : 1)} GB` : `${Math.round(bytes / 1e6)} MB`);
+  const sizeText = (n: number) => `${n.toLocaleString('en-GB')} byte${n === 1 ? '' : 's'}`;
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="redis-key-cost"]').forEach(root => {
+    const box = root.querySelector<HTMLElement>('[data-bytes]')!;
+    const note = root.querySelector<HTMLElement>('[data-note]')!;
+    box.classList.add('redis-bytes');
+    const svg = svgEl('svg', { class: 'cache-svg', role: 'img', 'aria-label': 'The bytes of one key, split into value, key name and overhead' }, box);
+    let current: any = null;
+
+    const draw = () => {
+      const width = Math.round(box.clientWidth);
+      if (!width || !current) return;
+      const { value, total } = current;
+      const height = 112;
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      svg.setAttribute('width', width); svg.setAttribute('height', height);
+      svg.replaceChildren();
+      const left = 4, right = width - 4, span = right - left, y = 34, h = 30;
+      const parts = [
+        { kind: 'redis', bytes: value, cls: 'bytes-seg' },
+        { kind: 'neutral', bytes: KEY_BYTES, cls: 'bytes-seg is-key' },
+        { kind: 'neutral', bytes: total - value - KEY_BYTES, cls: 'bytes-seg is-overhead' },
+      ];
+      let x = left;
+      let keyMid = 0;
+      for (const part of parts) {
+        const w = Math.max(1.5, (part.bytes / total) * span);
+        svgEl('rect', { class: part.cls, 'data-cache-kind': part.kind, x, y, width: w, height: h }, svg);
+        if (part.cls.includes('is-key')) keyMid = x + w / 2;
+        x += w;
+      }
+      // The key name is labelled below the bar, so its colour does not have to carry the meaning.
+      svgEl('path', { class: 'bytes-tick', d: `M${keyMid} ${y + h}v5` }, svg);
+      // Labels above the bar: value at the left, overhead at the right.
+      const valueText = svgEl('text', { class: 'bytes-value', x: left, y: y - 10 }, svg);
+      valueText.textContent = `value ${value.toLocaleString('en-GB')} B`;
+      const overText = svgEl('text', { class: 'bytes-value', x: right, y: y - 10, 'text-anchor': 'end' }, svg);
+      overText.textContent = `overhead ${Math.round(total - value - KEY_BYTES)} B`;
+      svgEl('path', { class: 'bytes-tick', d: `M${left} ${y + h + 6}v6H${right}v-6` }, svg);
+      const totalText = svgEl('text', { class: 'bytes-label', x: (left + right) / 2, y: y + h + 30, 'text-anchor': 'middle' }, svg);
+      totalText.textContent = `${Math.round(total).toLocaleString('en-GB')} bytes of used_memory per key, including the 13-byte key name (darker)`;
+    };
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(draw).observe(box);
+
+    bindParams(root, (params: any) => {
+      const i = Number(params.size);
+      const ttl = params.ttl === 'yes';
+      const value = VALUE_SIZES[i];
+      const total = (ttl ? BYTES_PER_KEY_TTL : BYTES_PER_KEY)[i];
+      current = { value, total };
+      const output = root.querySelector('[data-param-output="size"]');
+      if (output) output.textContent = sizeText(value);
+      root.querySelector('[data-param="size"]')?.setAttribute('aria-valuetext', sizeText(value));
+      setReadouts(root, {
+        total: `${Math.round(total).toLocaleString('en-GB')} B`,
+        share: `${Math.round((value / total) * 100)}%`,
+        usage: `${(ttl ? MEMORY_USAGE_TTL : MEMORY_USAGE)[i].toLocaleString('en-GB')} B`,
+        ten: gb(total * 1e7),
+      });
+      const encoding = STRING_ENCODING[i];
+      // Redis 8 embeds a short string with its key while 16 + (key + 3) + (value + 4) bytes fit in
+      // one cache line (src/object.c, kvobjSet): 64 bytes on every build except Apple Silicon, 128 on Apple Silicon.
+      const linuxEmbeds = KEY_BYTES + value <= 41;
+      const linux = linuxEmbeds ? 'embstr, sharing one allocation with the key' : 'raw, the value in an allocation of its own';
+      const mac = encoding === 'embstr' ? 'embstr' : 'raw';
+      note.textContent = `Encoding on a typical Linux server: ${linux}. On this Mac, where these bytes were measured: ${mac}.${ttl ? ` The TTL adds ${Math.round(BYTES_PER_KEY_TTL[i] - BYTES_PER_KEY[i])} bytes per key here; MEMORY USAGE, which sees only the key's own object, where the 8-byte expiry time is stored, grows by ${MEMORY_USAGE_TTL[i] - MEMORY_USAGE[i]} after the allocator's rounding.` : ''}`;
+      draw();
+    });
+  });
+</script>
