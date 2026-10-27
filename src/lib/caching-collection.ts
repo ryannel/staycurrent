@@ -11,7 +11,7 @@ export const cachingArticles = [
   { slug: 'memory-and-performance', title: 'Redis memory and performance', description: 'Size memory, find expensive commands and reserve headroom for Redis operations.', published: true },
   { slug: 'replication-and-failover', title: 'Redis replication, persistence and failover', description: 'Reason about replication lag, recovery, promotion and acknowledged-write loss.', published: true },
   { slug: 'redis-cluster', title: 'Redis Cluster and hot keys', description: 'Follow hash slots, redirects, resharding and the limits of adding shards.', published: true },
-  { slug: 'client-side-caching', title: 'Client-side caching and cache hierarchies', description: 'Keep local and shared copies coherent across invalidation and disconnection.', published: false },
+  { slug: 'client-side-caching', title: 'Client-side caching and cache hierarchies', description: 'Keep local and shared copies coherent across invalidation and disconnection.', published: true },
   { slug: 'operations', title: 'Operating Redis caches', description: 'Secure, observe, diagnose and change a cache service under real workload constraints.', published: false },
   { slug: 'system-design', title: 'Designing a production cache', description: 'Build and test a complete application cache contract under load, updates and failure.', published: false },
 ];

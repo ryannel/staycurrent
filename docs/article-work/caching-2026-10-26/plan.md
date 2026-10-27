@@ -83,5 +83,6 @@ verification. Distinguish illustrative models from observed Redis execution.
 - Article 8 published in commit dcd369c4; deployment and live WATCH retry verified.
 - Article 9 published in commit 5a7dda3a; deployment and live encoding control verified.
 - Article 10 published in commit 7fd75ec9; deployment and live lost-invalidation control verified.
-- Article 11 complete: four figures, six-node native Cluster lab, prose and final checks; publication underway.
-- Articles 12–14 remain to be written, illustrated, verified and published.
+- Article 11 published in commit d2ad160e; deployment and live routing/migration controls verified.
+- Article 12 complete and reviewed; publication verification pending.
+- Articles 13–14 remain, including the final runnable reference application.

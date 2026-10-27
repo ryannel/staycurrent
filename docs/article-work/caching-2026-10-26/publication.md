@@ -105,3 +105,13 @@
   Change source, DEL, failprimary, promote -> old12returns. No consoleerrors.
   Article9 links directly to article10.
 - Ten articles available; four remain plus final reference application/lab.
+
+## Article 11 — 27 October 2026
+
+- Commit d2ad160e1fa1c126757cf17f09a1d5c4f1f3d4bd pushed to origin/main.
+- Publish run 40425809888 succeeded:
+  https://github.com/ryannel/staycurrent/actions/runs/40425809888
+- Opened https://staycurrent.dev/learn/databases/caching/redis-cluster/.
+  Shared hash tag -> both slot8000; migration step3 -> ASK C. No console errors.
+  Article10 links directly to article11.
+- Eleven articles available; three remain plus final reference application/lab.
