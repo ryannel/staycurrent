@@ -143,3 +143,17 @@
 Commit6c4259427fbab723934198f1f299a64627abd0a6 adds the README's documented npmtest
 script to the package and refreshedzip. Exactcommandpassed. Deployment40430206945
 succeeded. No prose or illustration change.
+
+## Article 14 — 27 October 2026
+
+- Commit b35587a01d875c55710da3d759f70918f232303e pushed to origin/main.
+- Publish run 40432738442 succeeded:
+  https://github.com/ryannel/staycurrent/actions/runs/40432738442
+- Opened https://staycurrent.dev/learn/databases/caching/system-design/.
+  Contract step4 -> display1200/source1500; step5 ->503. Distinct-key burst ->
+  4source reads/4success/36refusal. No consoleerrors. Article13directnextlink.
+- All14productionURLs returnedHTTP200 with expectedtitles/figurecounts. All14
+  downloads match localsourceartifactbytes. Evidence/production-collection.txt.
+- Collectioncomplete:14articles,53interactivefigures,14nativeexercises/downloads,
+  includingrunnableHTTP/Redis/SQLiteapplication andload/failureacceptancecases.
+  Requirement-by-requirement finalassessment in completion-audit.md.
