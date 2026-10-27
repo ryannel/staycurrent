@@ -32,11 +32,11 @@ them once can read any figure in the collection.
 
 | Kind | Meaning | Dot shape |
 | --- | --- | --- |
-| `client` | A client, or a request not yet answered | filled circle, grey |
+| `client` | A client, or a request not yet answered | small filled circle, grey |
 | `app` | Application server | (node: a server with two slots) |
 | `redis` | Redis | (node: a memory chip) |
 | `database` | The database | (node: a cylinder) |
-| `hit` | Cache hit | filled circle |
+| `hit` | Cache hit | filled circle, full size |
 | `miss` | Cache miss | ring |
 | `stale` | Stale value | triangle |
 | `write` | Write or invalidation | square |
@@ -51,9 +51,15 @@ page surfaces in both themes.
 
 Ten colours cannot all stay distinct for readers with colour-vision deficiency
 (miss and stale are close under protanopia; app and database are close under
-deuteranopia). That is why each outcome also has a shape, and nodes differ in
-outline and label. Do not invent new colours or reuse one for another meaning.
-When a figure needs a kind not listed, use `neutral` and a label.
+deuteranopia; a grey request and a green hit are close under both). That is why
+each outcome also has a shape, and nodes differ in outline and label. A pending
+request and a hit are both filled dots, so they differ in two other ways: the
+request is a small dot (`CLIENT_DOT_SCALE`, 0.65 of a hit's radius, from
+`dotShape`), and the hit is the stronger colour, darker than the grey in the
+light theme and lighter in the dark one. Draw dots with `dotShape` or `marker`
+rather than your own circles so they keep these sizes, and call a request "a
+small grey dot" in prose. Do not invent new colours or reuse one for another
+meaning. When a figure needs a kind not listed, use `neutral` and a label.
 
 ## Prose: `Term`
 
@@ -281,7 +287,9 @@ hist.mark('p99', value, 'p99 14 ms');
 ```
 
 Several line series get different dash patterns as well as colours, and a legend
-appears above the chart. Feed a chart from a model's samples in `render`, and
+appears above the chart. In a histogram with several series, the second is drawn
+hollow (pale fill, coloured outline), so stacked layers such as hits and misses
+differ in lightness as well as hue; list the series whose dots are filled first. Feed a chart from a model's samples in `render`, and
 clear it when Reset gives you a new model (see `demo/LoadChartDemo.astro`).
 
 For a figure with parameters but no clock, use `controls="none"` and

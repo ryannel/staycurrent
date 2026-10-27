@@ -42,9 +42,9 @@ Redis: 7100 + article number for writers, 7150 + article number for reviewers.
 
 | # | Slug | Research | Draft | Review | Published |
 | --- | --- | --- | --- | --- | --- |
-| 1 | (introduction) | | | | |
-| 2 | caching-patterns | | | | |
-| 3 | keys-and-values | | | | |
+| 1 | (introduction) | A | done | final: publish | 3e3c4eca |
+| 2 | caching-patterns | A | done | final: publish | 3e3c4eca |
+| 3 | keys-and-values | A | done | final: publish | 3e3c4eca |
 | 4 | expiration-and-eviction | | | | |
 | 5 | invalidation | | | | |
 | 6 | stampedes | | | | |
@@ -145,3 +145,15 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
   and 2). Article 5 teaching review: 7 required/16 suggested; repair 1 started
   (cut 1,000–1,300 words; failover-lost deletes; tag-set race; monotonic
   reads). Needs a final review after.
+- 2026-10-27: articles 1–3, scaffold and toolkit committed (3e3c4eca), built
+  in a clean worktree (site check all OK, three caching pages only) and pushed.
+  Toolkit extension done. Colour-blind-safe glyph agent started on shared files.
+- 2026-10-27: articles 1–3 live (production check: 24 figures, no errors).
+  Article 6 teaching review: 5 required/15 suggested (missing delete-on-write
+  trigger; Figure 8 overlapping rebuilds). Article 8 drafted (7,200 words,
+  eight figures); round-1 reviews started. Writer for article 9 started.
+- 2026-10-27: colour-vision fix in shared toolkit: pending request is a smaller
+  grey dot (0.65 of a hit's radius), hit tokens darker/lighter, stacked
+  histogram second series hollow. Introduction prose updated. Article 8's
+  ladder.mjs draws equal-size client/hit dots: fix in its repair. Article 7
+  repair done; final review started.

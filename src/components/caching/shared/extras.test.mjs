@@ -8,6 +8,7 @@ import { exponentialGap, poissonArrivals, Simulation, seededRandom, paramText, f
 import { splitLabel } from './sequence.mjs';
 import { gridLayout } from './grid.mjs';
 import { clipInterval, laneLabelWidth } from './timeline.mjs';
+import { dotShape, CLIENT_DOT_SCALE } from './shapes.mjs';
 
 test('labels that fit stay on one row; close labels take new rows without overlapping', () => {
   const apart = placeLabels([{ x: 100, text: 'p50' }, { x: 300, text: 'p99' }], { left: 0, right: 500 });
@@ -124,4 +125,14 @@ test('timeline intervals clip to the window', () => {
   assert.deepEqual(clipInterval(12, 12, 10, 20), [12, 12]);
   assert.equal(laneLabelWidth([{ label: 'Main thread', short: 'Main' }], false), 11 * 7 + 16);
   assert.equal(laneLabelWidth([{ label: 'Main thread', short: 'Main' }], true), 4 * 7 + 16);
+});
+
+test('a pending request is a smaller filled dot than a hit, so the two differ without hue', () => {
+  const radius = d => Number(/^M(-?[\d.]+) /.exec(d)[1]) * -1;
+  const request = dotShape('client', 5), hit = dotShape('hit', 5);
+  assert.equal(request.paint, 'fill');
+  assert.equal(hit.paint, 'fill');
+  assert.equal(radius(hit.d), 5);
+  assert.equal(radius(request.d), 5 * CLIENT_DOT_SCALE);
+  assert.ok(CLIENT_DOT_SCALE <= 0.7);
 });

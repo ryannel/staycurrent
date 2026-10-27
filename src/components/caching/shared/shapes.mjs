@@ -20,13 +20,18 @@ export const KIND_LABELS = {
 
 const circle = r => `M${-r} 0a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0z`;
 
+/** How much smaller a pending request's dot is than an outcome's. */
+export const CLIENT_DOT_SCALE = 0.65;
+
 /**
  * Path data centred on (0, 0) for a dot of radius r, and how it is painted:
  * 'fill' (solid), 'ring' (outline on the surface colour), 'cross' (two strokes),
- * 'dashed' (dashed outline).
+ * 'dashed' (dashed outline). A pending request (`client`) is a small dot, so it
+ * differs from a hit's full-size dot by size and lightness, not by hue alone.
  */
 export function dotShape(kind, r = 5) {
   switch (kind) {
+    case 'client': return { d: circle(r * CLIENT_DOT_SCALE), paint: 'fill' };
     case 'miss': return { d: circle(r - 0.5), paint: 'ring' };
     case 'stale': { const h = r * 1.15; return { d: `M0 ${-h}L${h} ${h * 0.75}L${-h} ${h * 0.75}z`, paint: 'fill' }; }
     case 'write': { const s = r * 0.9; return { d: `M${-s} ${-s}h${2 * s}v${2 * s}h${-2 * s}z`, paint: 'fill' }; }

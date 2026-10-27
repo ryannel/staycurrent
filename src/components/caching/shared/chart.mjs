@@ -104,7 +104,7 @@ function frame(container, { label, legend }) {
       const li = document.createElement('li');
       li.dataset.cacheKind = item.kind ?? 'neutral';
       const swatch = svgEl('svg', { width: 22, height: 10, 'aria-hidden': 'true', class: 'cache-swatch' }, li);
-      if (item.bar) svgEl('rect', { x: 4, y: 1, width: 14, height: 8, class: 'cache-bar' }, swatch);
+      if (item.bar) svgEl('rect', item.hollow ? { x: 4.5, y: 1.5, width: 13, height: 7, class: 'cache-bar is-hollow' } : { x: 4, y: 1, width: 14, height: 8, class: 'cache-bar' }, swatch);
       else svgEl('path', { d: 'M1 5H21', class: 'cache-line', 'stroke-dasharray': item.dash || undefined }, swatch);
       li.append(item.label);
       legendList.append(li);
@@ -308,7 +308,8 @@ export function barChart(container, { label, bars = [], x = {}, labels = 'above'
  *   label, height = 200,
  *   bins: { min, max, count },
  *   kind?,                              colour of a single series
- *   series?: [{ id, label, kind }],     or several series, stacked in this order (with a legend)
+ *   series?: [{ id, label, kind }],     or several series, stacked in this order (with a legend);
+ *                                       the second (and fourth) is drawn hollow: pale fill, coloured outline
  *   x: { label, format? },
  *   y: { label, format?, scale?: 'linear' | 'sqrt' },   sqrt keeps a small hump visible beside a tall peak
  * })
@@ -318,7 +319,10 @@ export function barChart(container, { label, bars = [], x = {}, labels = 'above'
  */
 export function histogram(container, { label, height = 200, kind = 'neutral', series, bins, x = {}, y = {} }) {
   const layers = series ?? [{ id: 'values', kind }];
-  const svg = frame(container, { label, legend: series?.length > 1 ? series.map(s => ({ ...s, bar: true })) : null });
+  // Stacked series alternate solid and hollow (pale fill, coloured outline), so
+  // neighbouring layers differ in lightness as well as hue.
+  const hollow = i => i % 2 === 1;
+  const svg = frame(container, { label, legend: series?.length > 1 ? series.map((s, i) => ({ ...s, bar: true, hollow: hollow(i) })) : null });
   const grid = svgEl('g', {}, svg);
   const barLayer = svgEl('g', {}, svg);
   const markLayer = svgEl('g', {}, svg);
@@ -367,13 +371,13 @@ export function histogram(container, { label, height = 200, kind = 'neutral', se
       for (let i = 0; i < bins.count; i++) {
         const a = xScale(bins.min + i * binWidth), b = xScale(bins.min + (i + 1) * binWidth);
         let below = 0;
-        for (const l of layers) {
+        layers.forEach((l, li) => {
           const c = counts[l.id][i];
-          if (!c) continue;
+          if (!c) return;
           const top = yScale(below + c), bottom = yScale(below);
-          svgEl('rect', { class: 'cache-bar', 'data-cache-kind': l.kind ?? 'neutral', x: a + 0.5, y: top, width: Math.max(1, b - a - 1), height: Math.max(0.5, bottom - top) }, barLayer);
+          svgEl('rect', { class: hollow(li) ? 'cache-bar is-hollow' : 'cache-bar', 'data-cache-kind': l.kind ?? 'neutral', x: a + 0.5, y: top, width: Math.max(1, b - a - 1), height: Math.max(0.5, bottom - top) }, barLayer);
           below += c;
-        }
+        });
       }
       markLayer.replaceChildren();
       // Labels sit at the top of each marker; a label that would collide with an
