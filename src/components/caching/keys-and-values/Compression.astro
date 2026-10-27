@@ -1,0 +1,63 @@
+---
+// Figure: per-read cost with and without compression, from measured sizes and times.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './kv.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="kv-compression" title="What one read costs, compressed or not" controls="none"
+  caption="Sizes, decompression and parsing times are measured: real JSON (TypeScript's German error messages, cut to each size) compressed with zstd level 3 and parsed with json.loads in Python 3.14 on an Apple laptop. Transfer time is a model: the bytes divided by the link speed, ignoring the round trip that both cases pay. A single connection rarely gets a link's full speed, so real transfers take longer than shown. Other languages and parsers will differ.">
+  <Fragment slot="params">
+    <Slider name="size" label="Cached value" min={0} max={4} step={1} value={2} />
+    <Choice name="link" label="Network between application and Redis" value="10" options={[{ value: '1', label: '1 Gbit/s' }, { value: '10', label: '10 Gbit/s' }]} />
+  </Fragment>
+  <Fragment slot="stats">
+    <Readout name="stored" label="Stored size, compressed" kind="redis" />
+    <Readout name="saving" label="Each read, compressed versus not" kind="client" />
+    <Readout name="share" label="Link used by 1,000 reads a second" kind="database" />
+  </Fragment>
+  <Fragment slot="text">
+    <p>Each bar is one read: moving the bytes from Redis, decompressing them if they were compressed, and parsing the JSON, which costs the same either way. Compression shrank the JSON to about half at 1 KB and to about a quarter at 64 KB and above, so it always saves memory in Redis. Whether a read gets faster depends on the network. On a 1 Gbit/s link, sending a 16 KB value takes about 130 microseconds; sending it compressed and decompressing it takes about 57, so each read saves about 75 microseconds. On a 10 Gbit/s link the same value takes 13 microseconds uncompressed and 19 compressed: the read is slightly slower, because decompression costs more than the transfer it saves. At 1 KB the difference is a few microseconds either way, lost in a network round trip of a hundred or more.</p>
+    <p>On the fast link, parsing the JSON takes longer than moving the uncompressed bytes at every size: 28 microseconds against 13 at 16 KB, and about 0.7 ms against 0.2 ms at 256 KB. On the slow link it is the other way round: moving the uncompressed bytes takes longer than parsing them at every size.</p>
+    <p>The bandwidth line shows the other gain: at 1,000 reads a second, 64 KB values use about half of a 1 Gbit/s link uncompressed and about 15% compressed.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { bindParams, setReadouts } from '../shared/player.mjs';
+  import { stackedBars } from './draw.mjs';
+  import { readCost, MEASURED } from './compression-model.mjs';
+
+  const kb = (bytes: number) => (bytes < 10240 ? `${(bytes / 1024).toFixed(1)} KB` : `${Math.round(bytes / 1024)} KB`);
+  const linkUse = (share: number) => (share > 1 ? 'more than the link' : `${Math.round(share * 100)}%`);
+  const us = (v: number) => (v < 10 ? `${v.toFixed(1)} µs` : `${Math.round(v).toLocaleString('en-GB')} µs`);
+  document.querySelectorAll<HTMLElement>('[data-figure-id="kv-compression"]').forEach(root => {
+    const bars = stackedBars(root.querySelector<HTMLElement>('[data-scene]')!, {
+      label: 'Time for one read, uncompressed and compressed: transfer, decompression and JSON parsing, stacked',
+      rows: [{ id: 'plain', label: 'Stored uncompressed' }, { id: 'packed', label: 'Stored compressed' }],
+      segments: [
+        { id: 'transfer', label: 'Transfer from Redis', kind: 'redis' },
+        { id: 'decompress', label: 'Decompress', kind: 'app' },
+        { id: 'parse', label: 'Parse the JSON', kind: 'neutral' },
+      ],
+      format: us,
+      axisLabel: 'Microseconds per read',
+    });
+    const output = root.querySelector<HTMLElement>('[data-param-output="size"]');
+    const input = root.querySelector<HTMLInputElement>('[data-param="size"]');
+    bindParams(root, ({ size, link }) => {
+      const c = readCost(size, link);
+      if (output) output.textContent = kb(MEASURED[size].bytes);
+      input?.setAttribute('aria-valuetext', kb(MEASURED[size].bytes));
+      bars.set({ plain: { transfer: c.plain, parse: c.parseUs }, packed: { transfer: c.packedTransfer, decompress: c.decompressUs, parse: c.parseUs } });
+      const diff = c.saving;
+      setReadouts(root, {
+        stored: `${kb(c.compressed)} (${Math.round(c.ratio * 100)}%)`,
+        saving: Math.abs(diff) < 1 ? 'about the same' : diff > 0 ? `${us(diff)} faster` : `${us(-diff)} slower`,
+        share: `${linkUse(c.linkShare.plain)} → ${linkUse(c.linkShare.packed)}`,
+      });
+    });
+  });
+</script>

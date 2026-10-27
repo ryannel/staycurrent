@@ -1,0 +1,529 @@
+# Technical review 1 of article 7, how-redis-works. Independent reviewer, 2026-10-27T21:55Z.
+# Machine: Apple M3 Max, 14 cores, macOS 26.6.2.
+# Redis 8.10.3 from Homebrew (libc malloc), port 7157 only, temporary --dir, --save ''.
+# Source files fetched from https://raw.githubusercontent.com/redis/redis/8.10.3/<path> into a scratch directory.
+# Other agents may be running Redis and dev servers on other ports; timings carry noise.
+
+$ redis-cli -p 7157 info server | egrep 'redis_version|mem_allocator|multiplexing'
+redis_version:8.10.3
+multiplexing_api:kqueue
+
+$ redis-cli -p 7157 info memory | egrep 'mem_allocator'
+mem_allocator:libc
+
+# R1. String embedding in Redis 8.10.3: kvobjSet() in src/object.c embeds an EMBSTR value with its key only if 16 + (keylen+3) + (4+vallen) <= CACHE_LINE_SIZE; src/config.h sets CACHE_LINE_SIZE 128 on Apple aarch64 and 64 elsewhere. On this Mac: keylen + vallen <= 105 embeds.
+$ grep -n -A6 'ifndef CACHE_LINE_SIZE' /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/src/../config.h 2>/dev/null || curl -sfL https://raw.githubusercontent.com/redis/redis/8.10.3/src/config.h | grep -n -A6 'ifndef CACHE_LINE_SIZE'
+38:#ifndef CACHE_LINE_SIZE
+39-#if defined(__aarch64__) && defined(__APPLE__)
+40-#define CACHE_LINE_SIZE 128
+41-#else
+42-#define CACHE_LINE_SIZE 64
+43-#endif
+44-#endif
+
+$ sed -n 286,296p /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/src/object.c
+
+        /* Embed when the sum is less than a cache line (Metadata is discarded 
+         * since we don't have to be accurate and it is placed before the object) */
+        size_t size = sizeof(kvobj);
+        size += (key != NULL) * (sdslen(key) + 3); /* hdr size (1) + hdr (1) + nullterm (1) */
+        size += 4 + len; /* embstr header (3) + nullterm (1) */
+        if (size <= CACHE_LINE_SIZE) {
+            kv = kvobjCreateEmbedString(val->ptr, len, key, keyMetaBits);
+        } else {
+            kv = kvobjCreate(OBJ_STRING, key, sdsnewlen(val->ptr, len), keyMetaBits);
+        }
+
+$ redis-cli -p 7157 flushall; K13=user:00000001; for v in 28 29 44 45; do redis-cli -p 7157 set $K13 $(head -c $v /dev/zero | tr '\\0' x) >/dev/null; echo "key 13 B, value $v B: $(redis-cli -p 7157 object encoding $K13)  memory usage $(redis-cli -p 7157 memory usage $K13)"; done
+OK
+key 13 B, value 28 B:   memory usage 
+key 13 B, value 29 B:   memory usage 
+key 13 B, value 44 B:   memory usage 
+key 13 B, value 45 B:   memory usage 
+
+$ K=$(head -c 70 /dev/zero | tr '\\0' k); for v in 20 35 36 40 44; do redis-cli -p 7157 set $K $(head -c $v /dev/zero | tr '\\0' x) >/dev/null; echo "key 70 B, value $v B: $(redis-cli -p 7157 object encoding $K)  memory usage $(redis-cli -p 7157 memory usage $K)"; done
+key 70 B, value 20 B: ERR wrong number of arguments for 'object|encoding' command  memory usage ERR wrong number of arguments for 'memory|usage' command
+key 70 B, value 35 B: ERR wrong number of arguments for 'object|encoding' command  memory usage ERR wrong number of arguments for 'memory|usage' command
+key 70 B, value 36 B: ERR wrong number of arguments for 'object|encoding' command  memory usage ERR wrong number of arguments for 'memory|usage' command
+key 70 B, value 40 B: ERR wrong number of arguments for 'object|encoding' command  memory usage ERR wrong number of arguments for 'memory|usage' command
+key 70 B, value 44 B: ERR wrong number of arguments for 'object|encoding' command  memory usage ERR wrong number of arguments for 'memory|usage' command
+
+# (The two commands above failed through shell quoting; repeated with a Python RESP client, py/r.py, listed at the end.)
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/embed.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py
+key 13 B, value 20 B: encoding=embstr  memory_usage=64
+key 13 B, value 28 B: encoding=embstr  memory_usage=64
+key 13 B, value 29 B: encoding=embstr  memory_usage=80
+key 13 B, value 35 B: encoding=embstr  memory_usage=80
+key 13 B, value 36 B: encoding=embstr  memory_usage=80
+key 13 B, value 44 B: encoding=embstr  memory_usage=80
+key 13 B, value 45 B: encoding=raw     memory_usage=96
+key 70 B, value 20 B: encoding=embstr  memory_usage=128
+key 70 B, value 28 B: encoding=embstr  memory_usage=128
+key 70 B, value 29 B: encoding=embstr  memory_usage=128
+key 70 B, value 35 B: encoding=embstr  memory_usage=160
+key 70 B, value 36 B: encoding=raw     memory_usage=139
+key 70 B, value 44 B: encoding=raw     memory_usage=139
+key 70 B, value 45 B: encoding=raw     memory_usage=155
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/enc.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py
+hash, 20-byte values
+  h: element 1: listpack
+  h: element 513: hashtable
+  h after HDEL down to 1 field(s): hashtable
+hash, one 64-byte value: listpack
+  after one 65-byte value: hashtable
+  after deleting it: hashtable
+set of integers
+  si: element 1: intset
+  si: element 513: hashtable
+  si after SREM down to 1: hashtable
+small intset plus one string member: listpack
+set of strings
+  ss: element 1: listpack
+  ss: element 129: hashtable
+  ss after SREM down to 1: hashtable
+set, one 64-byte member: listpack
+  plus a 65-byte member: hashtable
+sorted set
+  z: element 1: listpack
+  z: element 129: skiplist
+  z after ZREM down to 1: skiplist
+list, 100-byte elements
+  l: element 1: listpack
+  l: element 80: quicklist
+  l after RPOP down to 1: listpack
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/perkey.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py
+value  28 B, no TTL: 79.3 B/key; MEMORY USAGE 64; embstr
+value  28 B, TTL   : 116.1 B/key; MEMORY USAGE 80; embstr
+value  29 B, no TTL: 95.3 B/key; MEMORY USAGE 80; embstr
+value  29 B, TTL   : 116.1 B/key; MEMORY USAGE 80; embstr
+value  44 B, no TTL: 95.3 B/key; MEMORY USAGE 80; embstr
+value  44 B, TTL   : 132.1 B/key; MEMORY USAGE 96; embstr
+value  45 B, no TTL: 111.3 B/key; MEMORY USAGE 96; raw
+value  45 B, TTL   : 148.1 B/key; MEMORY USAGE 104; raw
+value 100 B, no TTL: 159.3 B/key; MEMORY USAGE 144; raw
+value 100 B, TTL   : 196.1 B/key; MEMORY USAGE 152; raw
+
+$ redis-cli -p 7157 flushall
+OK
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/load.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py 1000000 10
+1000000
+
+$ for i in 1 2 3; do python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/probe.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py KEYS '*'; done
+KEYS * | reply after 404.4 ms | reply array of 1000000 | slowlog exec 102391 us
+  PING before: n=197 max=0.29 ms | during and after: max=102.88 ms
+KEYS * | reply after 467.8 ms | reply array of 1000000 | slowlog exec 105637 us
+  PING before: n=184 max=3.08 ms | during and after: max=107.10 ms
+KEYS * | reply after 407.9 ms | reply array of 1000000 | slowlog exec 111725 us
+  PING before: n=179 max=8.81 ms | during and after: max=111.47 ms
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/probe.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py KEYS 'user:0000099*'
+KEYS user:0000099* | reply after 92.5 ms | reply array of 10 | slowlog exec 92283 us
+  PING before: n=176 max=7.83 ms | during and after: max=92.16 ms
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/probe.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py KEYS 'nomatch:*'
+KEYS nomatch:* | reply after 48.1 ms | reply array of 0 | slowlog exec 47874 us
+  PING before: n=176 max=4.55 ms | during and after: max=47.09 ms
+
+$ redis-cli -p 7157 scan 0 match 'user:0000099*' count 10
+458752
+
+
+$ redis-cli -p 7157 flushall
+OK
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/bigset.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py bigset 2000000
+bigset 2000000 hashtable
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/probe.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py DEL bigset
+DEL bigset | reply after 238.5 ms | reply 1 | slowlog exec 238015 us
+  PING before: n=156 max=11.29 ms | during and after: max=238.43 ms
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/bigset.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py bigset 2000000
+bigset 2000000 hashtable
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/probe.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py UNLINK bigset
+UNLINK bigset | reply after 0.2 ms | reply 1 | slowlog exec <1000 us
+  PING before: n=178 max=3.57 ms | during and after: max=4.58 ms
+
+$ redis-cli -p 7157 config get lazyfree-lazy-expire
+lazyfree-lazy-expire
+no
+
+$ for i in 1 2; do python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/bigset.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py bigset 2000000 >/dev/null; python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/expireprobe.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py bigset; done
+key gone after 422 ms | worst PING before 7.47 ms | worst PING from PEXPIRE on 219.77 ms | lazyfreed_objects 3000011
+key gone after 419 ms | worst PING before 0.34 ms | worst PING from PEXPIRE on 214.87 ms | lazyfreed_objects 3000011
+
+$ redis-cli -p 7157 config set lazyfree-lazy-expire yes
+OK
+
+$ for i in 1 2 3; do python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/bigset.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py bigset 2000000 >/dev/null; python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/expireprobe.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py bigset; done
+key gone after 203 ms | worst PING before 0.34 ms | worst PING from PEXPIRE on 12.72 ms | lazyfreed_objects 3000012
+key gone after 203 ms | worst PING before 0.96 ms | worst PING from PEXPIRE on 7.88 ms | lazyfreed_objects 3000013
+key gone after 204 ms | worst PING before 0.49 ms | worst PING from PEXPIRE on 5.83 ms | lazyfreed_objects 3000014
+
+$ for i in 1 2 3; do python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/bigset.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py bigset 2000000 >/dev/null; python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/probe.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py UNLINK bigset; done
+UNLINK bigset | reply after 0.2 ms | reply 1 | slowlog exec <1000 us
+  PING before: n=193 max=0.75 ms | during and after: max=13.88 ms
+UNLINK bigset | reply after 0.2 ms | reply 1 | slowlog exec <1000 us
+  PING before: n=184 max=0.24 ms | during and after: max=6.91 ms
+UNLINK bigset | reply after 0.3 ms | reply 1 | slowlog exec <1000 us
+  PING before: n=169 max=9.98 ms | during and after: max=0.39 ms
+
+$ redis-cli -p 7157 config set lazyfree-lazy-expire no
+OK
+
+$ redis-cli -p 7157 flushall; python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/load.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py 1000000 10
+OK
+1000000
+
+$ # without a terminal: redis-cli prints raw 'min max avg count' once after 1 s and exits (redis-cli.c latencyMode, config.interval defaults to 1000 ms)
+
+$ (redis-cli -p 7157 --latency; echo exit=$?) & sleep 1.5; redis-cli -p 7157 keys '*' >/dev/null; wait
+0.152 4.389 0.453 73
+exit=0
+
+$ # under a pseudo-terminal it samples until stopped; KEYS * sent after 1.5 s; last line, ANSI codes removed
+
+$ for i in 1 2; do redis-cli -p 7157 config resetstat >/dev/null; (perl -e 'alarm 4; exec @ARGV' script -q /dev/null redis-cli -p 7157 --latency 2>&1 | tr '\r' '\n' | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | grep -a 'min:' | tail -1) & sleep 1.5; redis-cli -p 7157 keys '*' > /dev/null; wait; redis-cli -p 7157 info commandstats | egrep -o 'cmdstat_keys:calls=1,usec=[0-9]+'; done
+min: 0.124, max: 119.477, avg: 0.903 (278 samples)   [final cumulative line kept; 277 earlier redraws removed by the reviewer]
+cmdstat_keys:calls=1,usec=128905
+min: 0.110, max: 93.706, avg: 0.773 (277 samples)   [final cumulative line kept; 276 earlier redraws removed by the reviewer]
+cmdstat_keys:calls=1,usec=95378
+
+$ for k in io-threads 'lazyfree*' slowlog-log-slower-than slowlog-max-len latency-monitor-threshold hz activedefrag; do redis-cli -p 7157 config get "$k" | paste - - ; done
+io-threads	1
+lazyfree-lazy-user-del	no
+lazyfree-lazy-eviction	no
+lazyfree-lazy-expire	no
+lazyfree-lazy-server-del	no
+lazyfree-lazy-user-flush	no
+slowlog-log-slower-than	10000
+slowlog-max-len	128
+latency-monitor-threshold	0
+hz	10
+activedefrag	no
+
+$ redis-cli -p 7157 config set io-threads 4
+ERR CONFIG SET failed (possibly related to argument 'io-threads') - can't set immutable config
+
+
+$ redis-cli -p 7157 config set activedefrag yes
+ERR CONFIG SET failed (possibly related to argument 'activedefrag') - Active defragmentation cannot be enabled: it requires a Redis server compiled with a modified Jemalloc like the one shipped by default with the Redis source distribution
+
+
+$ redis-cli -p 7157 memory purge
+OK
+
+$ redis-cli -p 7157 acl cat dangerous | egrep -x 'keys|flushall|flushdb|debug|sort|smembers|hgetall|scan' | sort | tr '\n' ' '; echo
+debug flushall flushdb keys sort 
+
+$ redis-cli -p 7157 command docs sort | sed -n '1,20p' | egrep -i -A1 'complexity'
+complexity
+O(N+M*log(M)) where N is the number of elements in the list or set to sort, and M the number of returned elements. When the elements are not sorted, complexity is O(N).
+arguments
+
+$ redis-cli -p 7157 command info sort | tr '\n' ' ' | egrep -o '@[a-z]+' | tr '\n' ' '; echo
+@write @set @sortedset @list @slow @dangerous 
+
+== valkey 7.2.5 config.c
+3062:    createBoolConfig("lazyfree-lazy-eviction", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.lazyfree_lazy_eviction, 0, NULL, NULL),
+3063:    createBoolConfig("lazyfree-lazy-expire", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.lazyfree_lazy_expire, 0, NULL, NULL),
+3064:    createBoolConfig("lazyfree-lazy-server-del", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.lazyfree_lazy_server_del, 0, NULL, NULL),
+3065:    createBoolConfig("lazyfree-lazy-user-del", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.lazyfree_lazy_user_del , 0, NULL, NULL),
+3066:    createBoolConfig("lazyfree-lazy-user-flush", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.lazyfree_lazy_user_flush , 0, NULL, NULL),
+3077:    createBoolConfig("replica-lazy-flush", "slave-lazy-flush", MODIFIABLE_CONFIG, server.repl_slave_lazy_flush, 0, NULL, NULL),
+== valkey 8.0.0 config.c
+3070:    createBoolConfig("lazyfree-lazy-eviction", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.lazyfree_lazy_eviction, 1, NULL, NULL),
+3071:    createBoolConfig("lazyfree-lazy-expire", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.lazyfree_lazy_expire, 1, NULL, NULL),
+3072:    createBoolConfig("lazyfree-lazy-server-del", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.lazyfree_lazy_server_del, 1, NULL, NULL),
+3073:    createBoolConfig("lazyfree-lazy-user-del", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.lazyfree_lazy_user_del, 1, NULL, NULL),
+3074:    createBoolConfig("lazyfree-lazy-user-flush", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.lazyfree_lazy_user_flush, 1, NULL, NULL),
+3086:    createBoolConfig("replica-lazy-flush", "slave-lazy-flush", MODIFIABLE_CONFIG, server.repl_replica_lazy_flush, 1, NULL, NULL),
+1283:lazyfree-lazy-eviction yes
+1284:lazyfree-lazy-expire yes
+1285:lazyfree-lazy-server-del yes
+1286:replica-lazy-flush yes
+1293:lazyfree-lazy-user-del yes
+1304:lazyfree-lazy-user-flush yes
+$ redis-cli -p 7157 flushall; python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/load.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py 100000 100 key: >/dev/null; redis-cli -p 7157 dbsize
+OK
+100000
+
+$ for i in 1 2; do /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/bench.sh 1 1000000; /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/bench.sh 16 4000000; done
+pipeline 1: GET: 121124.04 requests per second, p50=0.703 msec | main-thread CPU per request 0.0 us
+pipeline 16: GET: 1332445.00 requests per second, p50=1.047 msec | main-thread CPU per request 0.0 us
+pipeline 1: GET: 124968.76 requests per second, p50=0.671 msec | main-thread CPU per request 0.0 us
+pipeline 16: GET: 1332889.12 requests per second, p50=1.047 msec | main-thread CPU per request 0.0 us
+
+$ redis-cli -p 7157 config resetstat >/dev/null; redis-benchmark -p 7157 -t get -n 1000000 -c 100 --threads 4 -r 100000 -q >/dev/null 2>&1; redis-cli -p 7157 info commandstats | grep cmdstat_get
+cmdstat_get:calls=1000000,usec=97573,usec_per_call=0.10,rejected_calls=0,failed_calls=0
+
+# (main_thread CPU fields are not reported on macOS; repeated with process CPU, used_cpu_sys + used_cpu_user)
+$ for i in 1 2; do /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/bench.sh 1 1000000; /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/bench.sh 16 4000000; done
+pipeline 1: GET: 128998.97 requests per second, p50=0.663 msec | main-thread CPU per request 7.521 us
+pipeline 16: GET: 1142530.75 requests per second, p50=1.095 msec | main-thread CPU per request 0.753 us
+pipeline 1: GET: 68653.03 requests per second, p50=0.647 msec | main-thread CPU per request 8.15 us
+pipeline 16: GET: 1139276.62 requests per second, p50=1.111 msec | main-thread CPU per request 0.764 us
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/frag.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py
+fresh                            used_memory     1.0 MB  rss   260.7 MB  ratio 255.82
+1,000,000 keys loaded            used_memory   159.2 MB  rss   389.2 MB  ratio 2.45
+every second key deleted         used_memory    84.3 MB  rss   389.2 MB  ratio 4.62
+500,000 new keys added           used_memory   160.4 MB  rss   389.2 MB  ratio 2.43
+FLUSHALL                         used_memory     1.1 MB  rss   385.0 MB  ratio 351.76
+
+$ # The run above was on a server already used for 2,000,000-member sets (RSS at its earlier peak). Repeat on a freshly started server.
+
+$ redis-cli -p 7157 shutdown nosave; sleep 1; /opt/homebrew/opt/redis/bin/redis-server --port 7157 --dir /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/data --save '' --appendonly no --daemonize yes --logfile /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/redis.log --pidfile /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/redis.pid; sleep 1; redis-cli -p 7157 ping
+PONG
+
+$ python3 -I /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py/frag.py /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/hrw-rev1/py
+fresh                            used_memory     0.9 MB  rss     4.3 MB  ratio 4.55
+1,000,000 keys loaded            used_memory   159.1 MB  rss   171.0 MB  ratio 1.07
+every second key deleted         used_memory    84.3 MB  rss   171.0 MB  ratio 2.03
+500,000 new keys added           used_memory   160.3 MB  rss   172.3 MB  ratio 1.07
+FLUSHALL                         used_memory     1.0 MB  rss   168.3 MB  ratio 161.21
+
+ceiling 133333
+clients 1: 9280 req/s, busy 7.2%, mean wait 0.2 us
+clients 2: 18560 req/s, busy 14.3%, mean wait 0.2 us
+clients 7: 65000 req/s, busy 50.0%, mean wait 0.2 us
+clients 13: 120710 req/s, busy 92.9%, mean wait 0.2 us
+clients 14: 129870 req/s, busy 100.0%, mean wait 0.3 us
+clients 15: 130100 req/s, busy 100.0%, mean wait 7.3 us
+clients 20: 132640 req/s, busy 100.0%, mean wait 27.9 us
+clients 40: 133200 req/s, busy 100.0%, mean wait 117.0 us
+KEYS over 100000: main 9.9 ms, worst ping 9.8 ms, max queue 4
+KEYS over 1000000: main 99.4 ms, worst ping 99.3 ms, max queue 39
+KEYS over 10000000: main 994.0 ms, worst ping 993.9 ms, max queue 339
+SCAN 10: gap 115.4 us, server 0.237 s, window longestWait 0.00 ms vs measured worst 15.6 ms
+SCAN 100: gap 146.3 us, server 0.204 s, window longestWait 0.02 ms vs measured worst 6 ms
+SCAN 1000: gap 408.6 us, server 0.181 s, window longestWait 0.18 ms vs measured worst 0.72 ms
+SCAN 10000: gap 2845.6 us, server 0.175 s, window longestWait 1.74 ms vs measured worst 4.86 ms
+SCAN 100000: gap 26089.3 us, server 0.169 s, window longestWait 16.02 ms vs measured worst 19 ms
+pages deleted 0.5: resident 24/24, ratio 2.00
+pages deleted 0.9: resident 17/24, ratio 7.16
+pages deleted 0.99: resident 4/24, ratio 16.00
+$ redis-cli -p 7157 del hf >/dev/null; redis-cli -p 7157 hset hf fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff v >/dev/null; echo 'hash with one 65-byte field name and a 1-byte value:' $(redis-cli -p 7157 object encoding hf)
+hash with one 65-byte field name and a 1-byte value: hashtable
+
+$ redis-cli -p 7157 del hx >/dev/null; redis-cli -p 7157 hset hx a 1 b 2 >/dev/null; redis-cli -p 7157 hexpire hx 100 fields 1 a >/dev/null; echo 'small hash after HEXPIRE on one field:' $(redis-cli -p 7157 object encoding hx)
+small hash after HEXPIRE on one field: listpackex
+
+200 https://github.com/redis/redis/blob/8.10.3/redis.conf
+200 https://github.com/redis/redis/blob/8.10.3/src/iothread.c
+200 https://github.com/redis/redis/blob/8.10.3/src/lazyfree.c
+200 https://github.com/redis/redis/blob/8.10.3/src/object.c
+200 https://github.com/redis/redis/blob/8.10.3/src/redis-cli.c
+200 https://github.com/redis/redis/releases/tag/8.4.0
+200 https://github.com/valkey-io/valkey/blob/8.0/valkey.conf
+200 https://redis.io/blog/redis-8-0-m03-is-out-even-more-performance-new-features/
+200 https://redis.io/docs/latest/commands/info/
+200 https://redis.io/docs/latest/commands/keys/
+200 https://redis.io/docs/latest/commands/memory-usage/
+200 https://redis.io/docs/latest/commands/object-encoding/
+200 https://redis.io/docs/latest/commands/scan/
+200 https://redis.io/docs/latest/commands/slowlog/
+200 https://redis.io/docs/latest/commands/unlink/
+200 https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/latency-monitor/
+200 https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/latency/
+200 https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/memory-optimization/
+
+# Note on the expiry runs above: expireprobe.py polls EXISTS every 2 ms, so the key was removed by on-access expiry
+# (the polling client's EXISTS found it expired), not by the active expiry cycle. Both paths free through
+# dbGenericDelete with server.lazyfree_lazy_expire, so the comparison of defaults holds; with the default 'no', the
+# client whose command touched the expired key waited for the whole free (key reported gone ~420 ms after a 200 ms TTL).
+# Worst PINGs "before" any command reached 3-11 ms in several runs on this shared laptop, and UNLINK runs showed
+# 0.4-14 ms worst PINGs, the same range as lazyfree-lazy-expire yes (5.8-12.7 ms).
+$ redis-cli -p 7157 shutdown nosave; sleep 1; lsof -nP -iTCP:7157 -sTCP:LISTEN | wc -l
+       0
+
+# ---- helper scripts (scratch directory hrw-rev1/py) ----
+# ---- r.py ----
+# Minimal RESP2 client for the review (port 7157 only). No third-party packages.
+import socket
+class R:
+    def __init__(self, port=7157):
+        self.s = socket.create_connection(("127.0.0.1", port)); self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.f = self.s.makefile("rb")
+    def send(self, *args):
+        out = [b"*%d\r\n" % len(args)]
+        for a in args:
+            a = a if isinstance(a, bytes) else str(a).encode()
+            out.append(b"$%d\r\n%s\r\n" % (len(a), a))
+        self.s.sendall(b"".join(out))
+    def read(self):
+        line = self.f.readline()
+        t, rest = line[:1], line[1:-2]
+        if t == b"+": return rest.decode()
+        if t == b"-": return "ERR:" + rest.decode()
+        if t == b":": return int(rest)
+        if t == b"$":
+            n = int(rest)
+            if n < 0: return None
+            d = self.f.read(n + 2)[:-2]
+            try: return d.decode()
+            except UnicodeDecodeError: return d
+        if t == b"*":
+            n = int(rest)
+            return None if n < 0 else [self.read() for _ in range(n)]
+        raise ValueError(line)
+    def __call__(self, *args):
+        self.send(*args); return self.read()
+    def info(self, section):
+        d = {}
+        for l in self("INFO", section).splitlines():
+            if ":" in l and not l.startswith("#"):
+                k, v = l.split(":", 1); d[k] = v
+        return d
+# ---- embed.py ----
+# embed.py: OBJECT ENCODING and MEMORY USAGE of string keys for several key and value lengths.
+import sys; sys.path.insert(0, sys.argv[1]); from r import R
+r = R(); r("FLUSHALL")
+for klen in (13, 70):
+    key = ("user:" + "0" * 200)[:klen]
+    for vlen in (20, 28, 29, 35, 36, 44, 45):
+        r("SET", key, "x" * vlen)
+        print(f"key {klen:>2} B, value {vlen:>2} B: encoding={r('OBJECT','ENCODING',key):7} memory_usage={r('MEMORY','USAGE',key)}")
+# ---- enc.py ----
+# enc.py: encoding thresholds and whether each conversion reverses when the key shrinks.
+import sys; sys.path.insert(0, sys.argv[1]); from r import R
+r = R(); r("FLUSHALL")
+E = lambda k: r("OBJECT", "ENCODING", k)
+def grow(name, add, limit_probe):
+    prev = None
+    for i in range(1, limit_probe + 1):
+        add(i)
+        e = E(name)
+        if e != prev:
+            print(f"  {name}: element {i}: {e}"); prev = e
+print("hash, 20-byte values"); grow("h", lambda i: r("HSET", "h", f"field:{i:04d}", "v" * 20), 600)
+for i in range(600, 1, -1): r("HDEL", "h", f"field:{i:04d}")
+print(f"  h after HDEL down to {r('HLEN','h')} field(s): {E('h')}")
+r("HSET", "h2", "a", "v" * 64); print(f"hash, one 64-byte value: {E('h2')}"); r("HSET", "h2", "b", "v" * 65); print(f"  after one 65-byte value: {E('h2')}"); r("HDEL", "h2", "b"); print(f"  after deleting it: {E('h2')}")
+print("set of integers"); grow("si", lambda i: r("SADD", "si", i), 600)
+for i in range(600, 1, -1): r("SREM", "si", i)
+print(f"  si after SREM down to {r('SCARD','si')}: {E('si')}")
+for i in range(1, 11): r("SADD", "si2", i)
+r("SADD", "si2", "abc"); print(f"small intset plus one string member: {E('si2')}")
+print("set of strings"); grow("ss", lambda i: r("SADD", "ss", f"m{i}"), 200)
+for i in range(200, 1, -1): r("SREM", "ss", f"m{i}")
+print(f"  ss after SREM down to {r('SCARD','ss')}: {E('ss')}")
+r("SADD", "ss2", "x" * 64); print(f"set, one 64-byte member: {E('ss2')}"); r("SADD", "ss2", "y" * 65); print(f"  plus a 65-byte member: {E('ss2')}")
+print("sorted set"); grow("z", lambda i: r("ZADD", "z", i, f"m{i}"), 200)
+for i in range(200, 1, -1): r("ZREM", "z", f"m{i}")
+print(f"  z after ZREM down to {r('ZCARD','z')}: {E('z')}")
+print("list, 100-byte elements"); grow("l", lambda i: r("RPUSH", "l", "x" * 100), 300)
+while r("LLEN", "l") > 1: r("RPOP", "l")
+print(f"  l after RPOP down to {r('LLEN','l')}: {E('l')}")
+# ---- load.py ----
+# load.py N VALUE_BYTES [PREFIX] [EX]: SET N keys PREFIX%08d (pipelined, 1,000 per batch).
+import sys; sys.path.insert(0, sys.argv[1]); from r import R
+n, size = int(sys.argv[2]), int(sys.argv[3]); prefix = sys.argv[4] if len(sys.argv) > 4 else "user:"; ex = sys.argv[5] if len(sys.argv) > 5 else None
+r = R(); v = "x" * size
+for b in range(0, n, 1000):
+    for i in range(b, min(n, b + 1000)):
+        r.send("SET", f"{prefix}{i:08d}", v, *(("EX", ex) if ex else ()))
+    for i in range(b, min(n, b + 1000)): r.read()
+print(r("DBSIZE"))
+# ---- perkey.py ----
+# perkey.py: used_memory growth per key for 200,000 keys "user:%08d" with values of a few sizes, with and without EX 3600.
+import sys, subprocess; sys.path.insert(0, sys.argv[1]); from r import R
+r = R()
+for size in (28, 29, 44, 45, 100):
+    for ex in (None, "3600"):
+        r("FLUSHALL", "SYNC"); before = int(r.info("memory")["used_memory"])
+        subprocess.run([sys.executable, "-I", sys.argv[1] + "/load.py", sys.argv[1], "200000", str(size), "user:"] + ([ex] if ex else []), capture_output=True)
+        after = int(r.info("memory")["used_memory"])
+        print(f"value {size:>3} B, {'TTL   ' if ex else 'no TTL'}: {(after-before)/200000:.1f} B/key; MEMORY USAGE {r('MEMORY','USAGE','user:00000001')}; {r('OBJECT','ENCODING','user:00000001')}")
+# ---- probe.py ----
+# probe.py DIR CMD ARGS...: run one command on its own connection while a second connection sends PING,
+# waits for the reply and sleeps ~1 ms, from 300 ms before to 500 ms after. Reports the command's
+# server execution time (SLOWLOG, if it was logged) and the PING round trips.
+import sys, time, threading; sys.path.insert(0, sys.argv[1]); from r import R
+cmd = sys.argv[2:]
+rtts = []; stop = False
+def pinger():
+    p = R()
+    while not stop:
+        t = time.perf_counter(); p("PING"); rtts.append((t, (time.perf_counter() - t) * 1000)); time.sleep(0.001)
+admin = R(); admin("SLOWLOG", "RESET"); admin("CONFIG", "SET", "slowlog-log-slower-than", "1000")
+th = threading.Thread(target=pinger); th.start(); time.sleep(0.3)
+c = R(); t0 = time.perf_counter(); c.send(*cmd); rep = c.read(); t1 = time.perf_counter()
+time.sleep(0.5); stop = True; th.join()
+admin("CONFIG", "SET", "slowlog-log-slower-than", "10000")
+sl = admin("SLOWLOG", "GET", 5)
+ex = [e[2] for e in sl if [str(a).lower() for a in e[3][:1]] == [cmd[0].lower()]]
+desc = f"array of {len(rep)}" if isinstance(rep, list) else repr(rep)[:40]
+during = [x for (t, x) in rtts if t >= t0 - 0.002 and t <= t1]
+print(f"{' '.join(cmd)[:60]} | reply after {(t1-t0)*1000:.1f} ms | reply {desc} | slowlog exec {ex[0] if ex else '<1000'} us")
+print(f"  PING before: n={len([1 for t,_ in rtts if t < t0])} max={max([x for t,x in rtts if t < t0] or [0]):.2f} ms | during and after: max={max([x for t,x in rtts if t >= t0 - 0.002] or [0]):.2f} ms")
+# ---- bigset.py ----
+# bigset.py DIR KEY MEMBERS: build a set of MEMBERS members "member:%09d", 1,000 per SADD.
+import sys; sys.path.insert(0, sys.argv[1]); from r import R
+r = R(); key, n = sys.argv[2], int(sys.argv[3]); r("DEL", key)
+for b in range(0, n, 1000):
+    r.send("SADD", key, *[f"member:{i:09d}" for i in range(b, min(n, b + 1000))])
+    if (b // 1000) % 50 == 49: [r.read() for _ in range(50)]
+pending = (n // 1000) % 50
+for _ in range(pending): r.read()
+print(key, r("SCARD", key), r("OBJECT", "ENCODING", key))
+# ---- expireprobe.py ----
+# expireprobe.py DIR KEY: give KEY a 200 ms TTL and probe with PING (sleep ~1 ms) until 800 ms later; report the worst PING.
+import sys, time, threading; sys.path.insert(0, sys.argv[1]); from r import R
+key = sys.argv[2]; rtts = []; stop = False
+def pinger():
+    p = R()
+    while not stop:
+        t = time.perf_counter(); p("PING"); rtts.append((t, (time.perf_counter() - t) * 1000)); time.sleep(0.001)
+th = threading.Thread(target=pinger); th.start(); time.sleep(0.3)
+a = R(); t0 = time.perf_counter(); a("PEXPIRE", key, 200)
+while a("EXISTS", key) and time.perf_counter() - t0 < 5: time.sleep(0.002)
+gone = time.perf_counter(); time.sleep(0.6); stop = True; th.join()
+print(f"key gone after {(gone-t0)*1000:.0f} ms | worst PING before {max([x for t,x in rtts if t < t0]):.2f} ms | worst PING from PEXPIRE on {max([x for t,x in rtts if t >= t0]):.2f} ms | lazyfreed_objects {a.info('memory').get('lazyfreed_objects')}")
+# ---- frag.py ----
+# frag.py: used_memory and RSS across load 1,000,000 x 100 B, delete every second key, add 500,000, FLUSHALL.
+import sys, subprocess, time; sys.path.insert(0, sys.argv[1]); from r import R
+r = R(); r("FLUSHALL", "SYNC"); time.sleep(1)
+def show(step):
+    m = r.info("memory"); print(f"{step:32} used_memory {int(m['used_memory'])/1e6:7.1f} MB  rss {int(m['used_memory_rss'])/1e6:7.1f} MB  ratio {m['mem_fragmentation_ratio']}")
+show("fresh")
+subprocess.run([sys.executable, "-I", sys.argv[1] + "/load.py", sys.argv[1], "1000000", "100"], capture_output=True); time.sleep(1); show("1,000,000 keys loaded")
+for b in range(0, 1000000, 2000):
+    for i in range(b, b + 2000, 2): r.send("UNLINK", f"user:{i:08d}")
+    for i in range(b, b + 2000, 2): r.read()
+time.sleep(2); show("every second key deleted")
+subprocess.run([sys.executable, "-I", sys.argv[1] + "/load.py", sys.argv[1], "500000", "100", "new:"], capture_output=True); time.sleep(1); show("500,000 new keys added")
+r("FLUSHALL", "SYNC"); time.sleep(2); show("FLUSHALL")
+# ---- bench.sh ----
+#!/bin/bash
+# bench.sh PIPELINE N: redis-benchmark GET over 100,000 keys of 100 bytes, 100 connections, 4 client threads;
+# process CPU (user+sys; main_thread fields are Linux-only) per request from INFO cpu before and after.
+P=$1; N=$2
+cpu() { redis-cli -p 7157 info cpu | tr -d '\r' | awk -F: '/^used_cpu_(sys|user):/{s+=$2} END{printf "%.6f", s}'; }
+a=$(cpu); out=$(redis-benchmark -p 7157 -t get -n $N -c 100 --threads 4 -r 100000 -P $P -q 2>/dev/null | tr '\r' '\n' | grep -a "requests per second" | tail -1); b=$(cpu)
+echo "pipeline $P: $out | main-thread CPU per request $(python3 -I -c "print(round(($b-$a)/$N*1e6,3))") us"
+# ---- probe-models.mjs ----
+// Reviewer probe of the article 7 models. Run from the component directory with an absolute import base.
+const base = process.argv[2];
+const { eventLoop, ceiling } = await import(base + '/eventloop-model.mjs');
+const { mainThread, jobFor, worstPing } = await import(base + '/mainthread-model.mjs');
+const { window, MEASURED, serverTime, gapAfterCall } = await import(base + '/scan-model.mjs');
+const { pages } = await import(base + '/pages-model.mjs');
+console.log('ceiling', Math.round(ceiling()));
+for (const c of [1, 2, 7, 13, 14, 15, 20, 40]) {
+  const m = eventLoop({ clients: c }, 3); m.sim.advance(300000); const r = m.rates(100000);
+  console.log(`clients ${c}: ${Math.round(r.perSecond)} req/s, busy ${(r.busy*100).toFixed(1)}%, mean wait ${r.wait.toFixed(1)} us`);
+}
+for (const keys of [100000, 1000000, 10000000]) {
+  const m = mainThread({}, 4); m.sim.advance(20000); const t = m.sim.now;
+  const job = m.run(jobFor('keys', { keys }));
+  let maxQ = 0; for (let i = 0; i < 2000 && m.pending; i++) { m.sim.advance(1000); maxQ = Math.max(maxQ, m.waiting()); }
+  m.sim.advance(5000);
+  console.log(`KEYS over ${keys}: main ${(job.main/1000).toFixed(1)} ms, worst ping ${(worstPing(m.pings, t)/1000).toFixed(1)} ms, max queue ${maxQ}`);
+}
+for (const o of ['10','100','1000','10000','100000']) console.log(`SCAN ${o}: gap ${gapAfterCall(o).toFixed(1)} us, server ${(serverTime(o)/1e6).toFixed(3)} s, window longestWait ${(window(o).longestWait/1000).toFixed(2)} ms vs measured worst ${MEASURED[o].worstPing} ms`);
+for (const d of [0.5, 0.9, 0.99]) { const p = pages({ deleted: d }); console.log(`pages deleted ${d}: resident ${p.residentPages}/24, ratio ${p.ratio.toFixed(2)}`); }

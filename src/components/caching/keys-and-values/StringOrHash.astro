@@ -1,0 +1,103 @@
+---
+// Figure: one product as a JSON string and as a hash, and what each operation moves.
+import SimFigure from '../shared/SimFigure.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './kv.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="kv-string-hash" title="The same product as a string and as a hash" controls="none"
+  legend={[{ kind: 'hit', label: 'Read from Redis' }, { kind: 'write', label: 'Written to Redis' }]}
+  caption="The product, the JSON's length and both memory figures were measured on Redis 8.10.3 with MEMORY USAGE (macOS, system allocator, so compare rather than quote the absolute numbers). Byte counts are the names and values moved, not counting the protocol's own framing. The twelve listing products are assumed to be the same size as this one.">
+  <Choice slot="params" name="op" label="The application wants to" value="price" options={[
+    { value: 'page', label: 'Show the product page' },
+    { value: 'price', label: 'Read the price' },
+    { value: 'sell', label: 'Record a sale' },
+    { value: 'listing', label: 'Show a listing of 12' },
+  ]} />
+  <Fragment slot="stats">
+    <Readout name="bytes" label="Bytes moved: string / hash" kind="redis" />
+    <Readout name="commands" label="Commands: string / hash" kind="app" />
+  </Fragment>
+  <Fragment slot="text">
+    <p>The product is 129 bytes of JSON as a string and eight fields as a hash. In Redis the string used 194 bytes of memory and the hash 155.</p>
+    <p>To show the product page, the string needs one <code>GET</code> that returns 129 bytes; the hash needs one <code>HGETALL</code> that returns 88 bytes of names and values. To read only the price, the string still returns all 129 bytes, which the application must parse; <code>HGET</code> returns the 4 bytes of the price.</p>
+    <p>To record a sale, the string must be read whole, changed and written back whole: two commands and 258 bytes, and a sale recorded by another process between the <code>GET</code> and the <code>SET</code> is lost. The hash needs one <code>HINCRBY</code>, which Redis applies in place, so two sales at once both count.</p>
+    <p>To show a listing of twelve products, one <code>MGET</code> returns all twelve strings. Hashes need one <code>HGETALL</code> each: twelve commands, which a client can pipeline into one round trip.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { bindParams, setReadouts } from '../shared/player.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+  import { FIELDS, JSON_LINES, MEMORY, OPERATIONS } from './string-hash-model.mjs';
+  import { responsiveSvg } from './draw.mjs';
+
+  type Panel = { rows: Map<string, SVGElement>; commands: SVGElement[]; note: SVGElement; times: SVGElement; cmdY: number };
+  document.querySelectorAll<HTMLElement>('[data-figure-id="kv-string-hash"]').forEach(root => {
+    let panels: Record<'string' | 'hash', Panel> | null = null;
+    let op = 'price';
+    const apply = () => {
+      if (!panels) return;
+      const spec = (OPERATIONS as any)[op];
+      for (const layout of ['string', 'hash'] as const) {
+        const p = panels[layout], s = spec[layout];
+        for (const [name, rect] of p.rows) {
+          if (s.fields.includes(name)) { rect.setAttribute('data-cache-kind', s.kind); rect.classList.add('is-on'); }
+          else { rect.removeAttribute('data-cache-kind'); rect.classList.remove('is-on'); }
+        }
+        p.commands.forEach((line, i) => { line.textContent = s.commands[i] ?? ''; });
+        p.note.textContent = s.note;
+        p.note.setAttribute('y', String(p.cmdY + s.commands.length * 17 + 6));
+        p.note.setAttribute('data-warn', s.warn ? 'true' : 'false');
+        p.times.textContent = s.times ? `× ${s.times} products` : '';
+      }
+    };
+    const view = responsiveSvg(root.querySelector<HTMLElement>('[data-scene]')!,
+      'Two panels. Left: the product stored as one JSON string. Right: the same product stored as a hash of eight fields. The fields that the chosen operation reads or writes are highlighted, and the commands it sends are listed below each panel.',
+      (svg, width, compact) => {
+        const gap = 24;
+        const panelW = compact ? width : (width - gap) / 2;
+        const rowH = compact ? 19 : 21;
+        const build = (layout: 'string' | 'hash', x: number, y: number): [Panel, number] => {
+          const g = svgEl('g', { transform: `translate(${x} ${y})` }, svg);
+          svgEl('text', { class: 'kv-grid-title', x: 0, y: 13 }, g).textContent = layout === 'string' ? 'As a JSON string' : 'As a hash';
+          svgEl('text', { class: 'kv-grid-sub', x: 0, y: 31 }, g).textContent = `product:42, ${MEMORY[layout]} bytes in Redis`;
+          const top = 42;
+          const rows = new Map<string, SVGElement>();
+          // A string is one value: it is highlighted as a whole, never field by field.
+          const blob = layout === 'string' ? svgEl('rect', { class: 'kv-blob', x: 0, y: top - 3, width: panelW, height: FIELDS.length * rowH + 6, rx: 5 }, g) : null;
+          FIELDS.forEach(([name, value], i) => {
+            const ry = top + i * rowH;
+            if (blob) {
+              rows.set(name, blob);
+              svgEl('text', { class: 'kv-row-text', x: 10, y: ry + rowH / 2 + 4 }, g).textContent = JSON_LINES[i];
+            } else {
+              const rect = svgEl('rect', { class: 'kv-row kv-field-cell', x: 0, y: ry, width: panelW, height: rowH - 3, rx: 3 }, g);
+              rows.set(name, rect);
+              svgEl('text', { class: 'kv-row-text kv-row-name', x: 8, y: ry + rowH / 2 + 3 }, g).textContent = name;
+              svgEl('text', { class: 'kv-row-text', x: Math.min(110, panelW * 0.38), y: ry + rowH / 2 + 3 }, g).textContent = value;
+            }
+          });
+          let cy = top + FIELDS.length * rowH + 22;
+          const times = svgEl('text', { class: 'kv-grid-sub', x: panelW, y: cy - 6, 'text-anchor': 'end' }, g);
+          const cmdY = cy + 10;
+          const commands = [0, 1, 2].map(i => svgEl('text', { class: 'kv-command', x: 0, y: cmdY + i * 17 }, g));
+          const note = svgEl('text', { class: 'kv-note', x: 0, y: cmdY + 3 * 17 + 6 }, g);
+          return [{ rows, commands, note, times, cmdY }, cmdY + 3 * 17 + 14];
+        };
+        const [string, h1] = build('string', 0, 0);
+        const [hash, h2] = compact ? build('hash', 0, h1 + 20) : build('hash', panelW + gap, 0);
+        panels = { string, hash };
+        return compact ? h2 + h1 + 20 : Math.max(h1, h2);
+      });
+    view.onDraw = apply;
+    bindParams(root, params => {
+      op = params.op;
+      apply();
+      const s = (OPERATIONS as any)[op];
+      const n = (v: number) => v.toLocaleString('en-GB');
+      setReadouts(root, { bytes: `${n(s.string.bytes)} / ${n(s.hash.bytes)}`, commands: `${s.string.count} / ${s.hash.count}` });
+    });
+  });
+</script>

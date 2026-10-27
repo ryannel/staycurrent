@@ -1,0 +1,737 @@
+# Evidence for article 4, Cache expiration and eviction
+# Redis 8.10.3 (macOS arm64, libc malloc), port 7104, temporary dir, --save '' --appendonly no --enable-debug-command local
+# Started 2026-10-27T21:18:11Z. Commands are shown with '>' and replies below.
+
+## X0 server
+redis_version:8.10.3
+os:Darwin 25.6.0 arm64
+arch_bits:64
+hz:10
+configured_hz:10
+executable:/opt/homebrew/opt/redis/bin/redis-server
+mem_allocator:libc
+
+## X1 defaults relevant to expiry and eviction
+> redis-cli CONFIG GET maxmemory maxmemory 0 
+> redis-cli CONFIG GET maxmemory-policy maxmemory-policy noeviction 
+> redis-cli CONFIG GET maxmemory-samples maxmemory-samples 5 
+> redis-cli CONFIG GET maxmemory-eviction-tenacity maxmemory-eviction-tenacity 10 
+> redis-cli CONFIG GET hz hz 10 
+> redis-cli CONFIG GET dynamic-hz dynamic-hz yes 
+> redis-cli CONFIG GET active-expire-effort active-expire-effort 1 
+> redis-cli CONFIG GET lfu-log-factor lfu-log-factor 10 
+> redis-cli CONFIG GET lfu-decay-time lfu-decay-time 1 
+> redis-cli CONFIG GET lazyfree-lazy-expire lazyfree-lazy-expire no 
+> redis-cli CONFIG GET lazyfree-lazy-eviction lazyfree-lazy-eviction no 
+> redis-cli CONFIG GET replica-ignore-maxmemory replica-ignore-maxmemory yes 
+
+## X2 TTL command semantics
+> redis-cli FLUSHALL
+OK
+> redis-cli SET product:42 v1 EX 300
+OK
+> redis-cli TTL product:42
+300
+> redis-cli PTTL product:42
+299985
+> redis-cli EXPIRETIME product:42
+1793136192
+> redis-cli TTL no:such:key
+-2
+> redis-cli SET plain v
+OK
+> redis-cli TTL plain
+-1
+# a plain SET over a key with a TTL clears the TTL
+> redis-cli SET product:42 v2
+OK
+> redis-cli TTL product:42
+-1
+> redis-cli SET product:42 v3 EX 300
+OK
+> redis-cli SET product:42 v4 KEEPTTL
+OK
+> redis-cli TTL product:42
+300
+> redis-cli SET views:42 10 EX 300
+OK
+> redis-cli INCR views:42
+11
+> redis-cli TTL views:42
+300
+> redis-cli APPEND product:42 -more
+7
+> redis-cli TTL product:42
+300
+> redis-cli PERSIST product:42
+1
+> redis-cli TTL product:42
+-1
+> redis-cli PERSIST product:42
+0
+> redis-cli GETEX product:42 EX 60
+v4-more
+> redis-cli TTL product:42
+60
+> redis-cli EXPIRE product:42 600 GT
+1
+> redis-cli TTL product:42
+600
+> redis-cli EXPIRE product:42 30 GT
+0
+> redis-cli TTL product:42
+600
+> redis-cli EXPIRE plain 100 XX
+0
+> redis-cli EXPIRE plain 100 NX
+1
+> redis-cli TTL plain
+100
+> redis-cli SET c 1 EX 0
+ERR invalid expire time in 'set' command
+
+> redis-cli EXPIRE plain -1
+1
+> redis-cli EXISTS plain
+0
+> redis-cli SET n v EX 30
+OK
+> redis-cli SET n other NX EX 999
+
+> redis-cli TTL n
+30
+> redis-cli GET n
+v
+> redis-cli RENAME n m
+OK
+> redis-cli TTL m
+30
+
+## X3 expiry precision as a client sees it (x3_precision.py)
+trial 1: last hit sent at 200.1 ms, first miss sent at 200.2 ms after SET was sent
+trial 2: last hit sent at 200.5 ms, first miss sent at 200.7 ms after SET was sent
+trial 3: last hit sent at 200.7 ms, first miss sent at 200.8 ms after SET was sent
+
+## X4 expired keys hold memory until deleted (x4_passive.py)
+empty: used_memory:931456
+> DEBUG SET-ACTIVE-EXPIRE 0
+loaded 200,000 keys with PX 500: used_memory:40197584 | DBSIZE 200000
+2.5 s later, all logically expired: used_memory:39120240 | DBSIZE 200000 | db0:keys=200000,expires=200000,avg_ttl=0,subexpiry=0 | expired_keys:0
+> GET k:1 -> None ; > EXISTS k:2 k:3 -> 0
+after touching 3 keys: DBSIZE 199997 | expired_keys:3
+> SCAN 0 COUNT 100 returned 0 keys; DBSIZE now 199895 | expired_keys:105
+> DEBUG SET-ACTIVE-EXPIRE 1
+  t=0.00 s DBSIZE 199895 used_memory:39176496
+  t=0.25 s DBSIZE 75668 used_memory:17729344
+  t=0.51 s DBSIZE 0 used_memory:1132192
+expired_keys:200000 expired_keys_active:199895 expired_stale_perc:35.13 expired_time_cap_reached_count:7 expire_cycle_cpu_milliseconds:85
+
+## X5a synchronised expiry: 1,000,000 keys, one expiry instant (x5_sync.py same)
+mode=same: loaded 1000000 keys, used_memory:189075456 | DBSIZE 1000000
+  t= -8.26 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.24 ms  (n=356)
+  t= -7.76 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.29 ms  (n=354)
+  t= -7.26 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.22 ms  (n=356)
+  t= -6.76 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.23 ms  (n=356)
+  t= -6.25 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   4.70 ms  (n=346)
+  t= -5.75 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.22 ms  (n=356)
+  t= -5.25 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.27 ms  (n=356)
+  t= -4.75 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.25 ms  (n=356)
+  t= -4.24 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.20 ms  (n=357)
+  t= -3.74 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.26 ms  (n=357)
+  t= -3.23 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   2.55 ms  (n=347)
+  t= -2.72 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.45 ms  (n=357)
+  t= -2.22 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.25 ms  (n=356)
+  t= -1.72 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.31 ms  (n=356)
+  t= -1.22 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.21 ms  (n=357)
+  t= -0.71 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.26 ms  (n=356)
+  t= -0.21 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.27 ms  (n=356)
+  t= +0.29 s from first expiry: DBSIZE   798368  slowest PING in last 0.5 s  26.46 ms  (n=268)
+  t= +0.79 s from first expiry: DBSIZE   344637  slowest PING in last 0.5 s  26.54 ms  (n=155)
+  t= +1.30 s from first expiry: DBSIZE    11791  slowest PING in last 0.5 s  26.23 ms  (n=222)
+  t= +1.80 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s  14.03 ms  (n=347)
+  t= +2.30 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.22 ms  (n=356)
+  t= +2.81 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.34 ms  (n=356)
+  t= +3.31 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.34 ms  (n=356)
+  t= +3.82 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.28 ms  (n=356)
+  t= +4.32 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.26 ms  (n=356)
+  t= +4.82 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.24 ms  (n=356)
+  t= +5.33 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   5.60 ms  (n=337)
+  t= +5.83 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.37 ms  (n=350)
+  t= +6.34 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.34 ms  (n=355)
+  t= +6.84 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.32 ms  (n=357)
+expired_keys:1000000
+expired_keys_active:1000000
+expired_time_cap_reached_count:335
+expire_cycle_cpu_milliseconds:598
+
+## X5b the same keys with expiry spread evenly over 30 s (x5_sync.py spread)
+mode=spread: loaded 1000000 keys, used_memory:189075456 | DBSIZE 1000000
+  t= -8.43 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   4.90 ms  (n=332)
+  t= -7.92 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.24 ms  (n=355)
+  t= -7.42 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.26 ms  (n=354)
+  t= -6.92 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.21 ms  (n=356)
+  t= -6.42 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.20 ms  (n=356)
+  t= -5.91 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.21 ms  (n=356)
+  t= -5.41 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.21 ms  (n=355)
+  t= -4.90 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   5.95 ms  (n=332)
+  t= -4.40 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.24 ms  (n=355)
+  t= -3.89 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.35 ms  (n=354)
+  t= -3.39 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   4.28 ms  (n=337)
+  t= -2.88 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.49 ms  (n=355)
+  t= -2.38 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.27 ms  (n=354)
+  t= -1.88 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.31 ms  (n=354)
+  t= -1.38 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.21 ms  (n=355)
+  t= -0.87 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   0.29 ms  (n=354)
+  t= -0.37 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   3.34 ms  (n=339)
+  t= +0.14 s from first expiry: DBSIZE  1000000  slowest PING in last 0.5 s   5.11 ms  (n=333)
+  t= +0.64 s from first expiry: DBSIZE   999998  slowest PING in last 0.5 s   4.47 ms  (n=346)
+  t= +1.15 s from first expiry: DBSIZE   999992  slowest PING in last 0.5 s   0.21 ms  (n=356)
+  t= +1.65 s from first expiry: DBSIZE   999989  slowest PING in last 0.5 s   0.19 ms  (n=356)
+  t= +2.15 s from first expiry: DBSIZE   999976  slowest PING in last 0.5 s   0.30 ms  (n=356)
+  t= +2.66 s from first expiry: DBSIZE   999967  slowest PING in last 0.5 s   0.23 ms  (n=355)
+  t= +3.16 s from first expiry: DBSIZE   999957  slowest PING in last 0.5 s   0.25 ms  (n=356)
+  t= +3.67 s from first expiry: DBSIZE   999923  slowest PING in last 0.5 s   0.27 ms  (n=354)
+  t= +4.17 s from first expiry: DBSIZE   999897  slowest PING in last 0.5 s   0.21 ms  (n=354)
+  t= +4.68 s from first expiry: DBSIZE   999884  slowest PING in last 0.5 s   0.33 ms  (n=354)
+  t= +5.18 s from first expiry: DBSIZE   999777  slowest PING in last 0.5 s   0.22 ms  (n=356)
+  t= +5.68 s from first expiry: DBSIZE   999141  slowest PING in last 0.5 s   0.24 ms  (n=355)
+  t= +6.19 s from first expiry: DBSIZE   995192  slowest PING in last 0.5 s   0.30 ms  (n=352)
+  t= +6.69 s from first expiry: DBSIZE   990458  slowest PING in last 0.5 s  12.71 ms  (n=319)
+  t= +7.19 s from first expiry: DBSIZE   982998  slowest PING in last 0.5 s   2.97 ms  (n=335)
+  t= +7.70 s from first expiry: DBSIZE   973028  slowest PING in last 0.5 s   5.91 ms  (n=329)
+  t= +8.20 s from first expiry: DBSIZE   958390  slowest PING in last 0.5 s   7.95 ms  (n=325)
+  t= +8.71 s from first expiry: DBSIZE   935608  slowest PING in last 0.5 s   1.03 ms  (n=340)
+  t= +9.21 s from first expiry: DBSIZE   903833  slowest PING in last 0.5 s   2.43 ms  (n=326)
+  t= +9.72 s from first expiry: DBSIZE   862527  slowest PING in last 0.5 s   6.50 ms  (n=313)
+  t=+10.22 s from first expiry: DBSIZE   793450  slowest PING in last 0.5 s   1.23 ms  (n=315)
+  t=+10.73 s from first expiry: DBSIZE   690526  slowest PING in last 0.5 s   1.26 ms  (n=301)
+  t=+11.23 s from first expiry: DBSIZE   683878  slowest PING in last 0.5 s   4.77 ms  (n=337)
+  t=+11.73 s from first expiry: DBSIZE   679650  slowest PING in last 0.5 s   4.05 ms  (n=344)
+  t=+12.24 s from first expiry: DBSIZE   674984  slowest PING in last 0.5 s   0.33 ms  (n=352)
+  t=+12.75 s from first expiry: DBSIZE   668787  slowest PING in last 0.5 s   0.45 ms  (n=350)
+  t=+13.25 s from first expiry: DBSIZE   661918  slowest PING in last 0.5 s   5.05 ms  (n=341)
+  t=+13.76 s from first expiry: DBSIZE   653756  slowest PING in last 0.5 s   0.40 ms  (n=351)
+  t=+14.26 s from first expiry: DBSIZE   642690  slowest PING in last 0.5 s   4.53 ms  (n=331)
+  t=+14.77 s from first expiry: DBSIZE   628985  slowest PING in last 0.5 s   6.98 ms  (n=338)
+  t=+15.27 s from first expiry: DBSIZE   609757  slowest PING in last 0.5 s   6.08 ms  (n=324)
+  t=+15.78 s from first expiry: DBSIZE   588056  slowest PING in last 0.5 s   0.73 ms  (n=340)
+  t=+16.28 s from first expiry: DBSIZE   558454  slowest PING in last 0.5 s   1.20 ms  (n=336)
+  t=+16.79 s from first expiry: DBSIZE   514058  slowest PING in last 0.5 s   1.40 ms  (n=327)
+  t=+17.29 s from first expiry: DBSIZE   476989  slowest PING in last 0.5 s   1.15 ms  (n=331)
+  t=+17.80 s from first expiry: DBSIZE   464550  slowest PING in last 0.5 s   2.78 ms  (n=332)
+  t=+18.30 s from first expiry: DBSIZE   453830  slowest PING in last 0.5 s   1.90 ms  (n=327)
+  t=+18.81 s from first expiry: DBSIZE   442958  slowest PING in last 0.5 s   7.38 ms  (n=308)
+  t=+19.31 s from first expiry: DBSIZE   429535  slowest PING in last 0.5 s   0.54 ms  (n=340)
+  t=+19.82 s from first expiry: DBSIZE   413124  slowest PING in last 0.5 s   0.72 ms  (n=339)
+  t=+20.32 s from first expiry: DBSIZE   392542  slowest PING in last 0.5 s   3.10 ms  (n=327)
+  t=+20.82 s from first expiry: DBSIZE   364980  slowest PING in last 0.5 s   5.82 ms  (n=314)
+  t=+21.33 s from first expiry: DBSIZE   332801  slowest PING in last 0.5 s   5.11 ms  (n=316)
+  t=+21.83 s from first expiry: DBSIZE   315406  slowest PING in last 0.5 s   0.82 ms  (n=338)
+  t=+22.34 s from first expiry: DBSIZE   303893  slowest PING in last 0.5 s   0.56 ms  (n=342)
+  t=+22.84 s from first expiry: DBSIZE   285936  slowest PING in last 0.5 s   1.98 ms  (n=334)
+  t=+23.35 s from first expiry: DBSIZE   267853  slowest PING in last 0.5 s   0.85 ms  (n=336)
+  t=+23.85 s from first expiry: DBSIZE   240824  slowest PING in last 0.5 s   1.20 ms  (n=326)
+  t=+24.35 s from first expiry: DBSIZE   219619  slowest PING in last 0.5 s   1.26 ms  (n=332)
+  t=+24.86 s from first expiry: DBSIZE   203379  slowest PING in last 0.5 s   1.07 ms  (n=336)
+  t=+25.36 s from first expiry: DBSIZE   186262  slowest PING in last 0.5 s   7.71 ms  (n=317)
+  t=+25.87 s from first expiry: DBSIZE   162070  slowest PING in last 0.5 s   1.24 ms  (n=325)
+  t=+26.37 s from first expiry: DBSIZE   143779  slowest PING in last 0.5 s   1.16 ms  (n=327)
+  t=+26.88 s from first expiry: DBSIZE   123225  slowest PING in last 0.5 s   1.27 ms  (n=329)
+  t=+27.38 s from first expiry: DBSIZE   102664  slowest PING in last 0.5 s   9.47 ms  (n=324)
+  t=+27.88 s from first expiry: DBSIZE    83922  slowest PING in last 0.5 s   1.28 ms  (n=340)
+  t=+28.39 s from first expiry: DBSIZE    64127  slowest PING in last 0.5 s   0.86 ms  (n=349)
+  t=+28.89 s from first expiry: DBSIZE    43280  slowest PING in last 0.5 s   1.25 ms  (n=338)
+  t=+29.40 s from first expiry: DBSIZE    23979  slowest PING in last 0.5 s   3.66 ms  (n=330)
+  t=+29.91 s from first expiry: DBSIZE     3489  slowest PING in last 0.5 s   7.90 ms  (n=289)
+  t=+30.42 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   3.76 ms  (n=344)
+  t=+30.92 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.43 ms  (n=355)
+  t=+31.43 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.30 ms  (n=355)
+  t=+31.93 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.79 ms  (n=352)
+  t=+32.43 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.33 ms  (n=354)
+  t=+32.94 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.40 ms  (n=354)
+  t=+33.44 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.40 ms  (n=355)
+  t=+33.95 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   0.32 ms  (n=355)
+  t=+34.45 s from first expiry: DBSIZE        0  slowest PING in last 0.5 s   5.13 ms  (n=345)
+expired_keys:1000000
+expired_keys_active:1000000
+expired_time_cap_reached_count:60
+expire_cycle_cpu_milliseconds:1260
+
+## X6 a full Redis under three policies (x6_policies.py)
+noeviction   no key has a TTL                   stored= 126729 rejected= 73271 evicted_keys=     0 used_memory=21022048
+   first error: OOM command not allowed when used memory > 'maxmemory'.
+   while full under noeviction:
+   > GET cache:1 -> b'xxxxxxxxxx' ; > DEL cache:1 -> 1 ; > EXPIRE cache:2 60 -> 1
+   > SET new:1 x -> OOM command not allowed when used memory > 'maxmemory'. ; > INCR new:counter -> OOM command not allowed when used memory > 'maxmemory'.
+   errorstat_OOM:count=73273
+   cmdstat_set:calls=126729,usec=26209,usec_per_call=0.21,rejected_calls=73272,failed_calls=0
+volatile-lru no key has a TTL                   stored= 126708 rejected= 73292 evicted_keys=     0 used_memory=21025152
+   first error: OOM command not allowed when used memory > 'maxmemory'.
+volatile-lru half the keys have a TTL           stored= 114688 rejected=     5 evicted_keys= 85444 used_memory=20971600
+   first error: OOM command not allowed when used memory > 'maxmemory'.
+   of the first 1,000 keys with a TTL, 90 survive; of the first 1,000 without, 1000 survive
+   db0:keys=114265,expires=14265,avg_ttl=3599947,subexpiry=0
+allkeys-lru  no key has a TTL                   stored= 125470 rejected=     0 evicted_keys= 74691 used_memory=20971680
+
+## X7 one value larger than maxmemory (x7_bigvalue.py)
+after 3,000 x 1 KB keys: DBSIZE 3000 used_memory 4985392 maxmemory 6291456 evicted 0
+> SET big <8 MB> -> OK
+> DBSIZE -> 633 ; > EXISTS big -> 0 ; evicted_keys 2368 ; used_memory 1900096
+
+## X8 accuracy of approximated LRU by maxmemory-samples (x8_lru.py)
+K=50000 old keys (100 B values, key i has idle time (K-i) s so key 0 is the oldest), then add M=25000 fresh keys; maxmemory = used_memory right after loading the K keys
+A perfect LRU would evict exactly the oldest keys. 'precision' = share of evicted old keys that are among the E oldest (E = number evicted).
+samples= 1: evicted_old= 20097 precision= 40.1%  mean age-percentile of evicted keys= 50.0  oldest survivor rank=0  fresh keys lost=5980
+samples= 2: evicted_old= 26000 precision= 61.7%  mean age-percentile of evicted keys= 56.6  oldest survivor rank=2  fresh keys lost=226
+samples= 3: evicted_old= 26260 precision= 73.6%  mean age-percentile of evicted keys= 63.6  oldest survivor rank=2  fresh keys lost=0
+samples= 5: evicted_old= 26293 precision= 83.6%  mean age-percentile of evicted keys= 69.1  oldest survivor rank=3  fresh keys lost=0
+samples=10: evicted_old= 26272 precision= 92.3%  mean age-percentile of evicted keys= 72.5  oldest survivor rank=6  fresh keys lost=0
+samples=20: evicted_old= 26254 precision= 96.4%  mean age-percentile of evicted keys= 73.5  oldest survivor rank=1193  fresh keys lost=0
+samples=64: evicted_old= 26249 precision= 99.0%  mean age-percentile of evicted keys= 73.7  oldest survivor rank=20044  fresh keys lost=0
+
+
+## X9a LFU counter growth by lfu-log-factor (x9_lfu.sh)
+lfu-log-factor | counter after N accesses (N = 1 new key, 10, 100, 1000, 10000, 100000, 1000000)
+factor 0: N=10:105 N=100:105 N=1000:255 N=10000:255 N=100000:255 N=1000000:255 (a fresh key reads 5)
+factor 1: N=10:21 N=100:18 N=1000:52 N=10000:145 N=100000:255 N=1000000:255 (a fresh key reads 5)
+factor 10: N=10:9 N=100:10 N=1000:22 N=10000:44 N=100000:147 N=1000000:255 (a fresh key reads 5)
+factor 100: N=10:7 N=100:9 N=1000:9 N=10000:20 N=100000:53 N=1000000:146 (a fresh key reads 5)
+
+NOTE: the N=10 column is invalid. redis-benchmark ran with -P 100, which sends a full pipeline of 100 requests even when -n is 10, so N=10 and N=100 both received 100 INCRs (factor 0 reads 105 = 5 + 100 in both). Columns N=100 and above are valid. One run per cell.
+
+## X9b LFU decay with lfu-decay-time 1 (x9b_decay.sh)
+> RESTORE decay 0 <dump> FREQ 100 -> OK
+t=  0.0 s  OBJECT FREQ decay -> 100
+t= 30.0 s  OBJECT FREQ decay -> 99
+t= 60.0 s  OBJECT FREQ decay -> 99
+t= 90.0 s  OBJECT FREQ decay -> 98
+t=120.0 s  OBJECT FREQ decay -> 98
+t=150.0 s  OBJECT FREQ decay -> 97
+t=180.0 s  OBJECT FREQ decay -> 97
+t=210.0 s  OBJECT FREQ decay -> 96
+
+
+## X11a scan pollution with a pause before the scan (x11a_scan_pause.py)
+Scan pollution: cache holds ~20000 keys; 1000 hot keys each read 50 times; 2 s pause; then 100000 distinct one-off keys written once (a full scan); then count surviving hot keys
+policy        hot_survivors  cache_keys_at_end  evicted_keys
+allkeys-lru         0/1000        20721       100437
+allkeys-lfu       969/1000        20098       101061
+allkeys-random     12/1000        19935       101223
+
+
+## X11b a scan interleaved with normal Zipf traffic (x11b_scan_live.py)
+N=2000000, alpha=0.8, cache ~200000 keys, warm-up 3000000, then windows of 200000 normal reads; scan of 400000 one-off keys interleaved 1:1 during windows 6-7
+allkeys-lru    keys=197272 req/s~74177  hit ratio per window: 0.487 0.486 0.486 0.485 0.485 0.407 0.370 0.414 0.472 0.484 0.485 0.486 0.486 0.486 0.487 0.487 0.487 0.486 0.486
+allkeys-lfu    keys=197512 req/s~75650  hit ratio per window: 0.533 0.525 0.527 0.527 0.531 0.517 0.513 0.523 0.534 0.538 0.542 0.547 0.548 0.550 0.552 0.551 0.551 0.549 0.549
+allkeys-random keys=195494 req/s~76630  hit ratio per window: 0.448 0.447 0.447 0.445 0.445 0.376 0.341 0.382 0.418 0.429 0.436 0.439 0.443 0.445 0.445 0.445 0.448 0.446 0.447
+
+
+## X10 hit ratio against cache size, Zipf 0.8 over 4,000,000 keys (x10_size.py 4000000 0.8 3000000 2000000 20000,40000,120000,400000,1200000 allkeys-lru,allkeys-lfu,allkeys-random 1 160)
+N=4000000 keys, Zipf alpha=0.8, 100 B values, warm-up 3000000 + measured 2000000 cache-aside requests (GET, SET on miss), seed 1
+policy        target_C  actual_keys  hit_ratio  evicted_keys  | oracle_top_C  exact_LRU_sim | req/s
+allkeys-lru      20000       19957     0.1783       4089533  |       0.3175         0.1945 |   78950
+allkeys-lfu      20000       20069     0.2782       3632894  |       0.3179         0.1945 |   82426
+allkeys-random    20000       19931     0.1729       4115197  |       0.3174         0.1945 |   77677
+allkeys-lru      40000       39590     0.2300       3812641  |       0.3706         0.2426 |   82378
+allkeys-lfu      40000       39518     0.3222       3411950  |       0.3704         0.2426 |   84587
+allkeys-random    40000       39207     0.2158       3881828  |       0.3698         0.2426 |   80338
+allkeys-lru     120000      118984     0.3375       3205273  |       0.4727         0.3414 |   78382
+allkeys-lfu     120000      119239     0.4124       2925004  |       0.4729         0.3414 |   80365
+allkeys-random   120000      118306     0.3071       3349325  |       0.4721         0.3414 |   79117
+allkeys-lru     400000      393599     0.4894       2221830  |       0.6125         0.4945 |   78554
+allkeys-lfu     400000      395992     0.5368       2071719  |       0.6133         0.4945 |   82117
+allkeys-random   400000      390804     0.4502       2382828  |       0.6115         0.4945 |   82668
+allkeys-lru    1200000     1172050     0.6878        736415  |       0.7727         0.6940 |   88041
+allkeys-lfu    1200000     1177395     0.6948        716865  |       0.7734         0.6940 |   86934
+allkeys-random  1200000     1170842     0.6598        796990  |       0.7725         0.6940 |   76781
+
+Note: 'oracle_top_C' and 'exact_LRU_sim' are calculated by the script from the same request sequence; only hit_ratio is measured on Redis. One run per cell, macOS arm64, libc malloc.
+
+## Appendix: scripts used (copied from the working directory; RESP client resp.py, port 7104)
+
+#### script resp.py
+import socket
+class R:
+    def __init__(s,port=7104):
+        s.s=socket.create_connection(("127.0.0.1",port)); s.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1); s.f=s.s.makefile('rb')
+    @staticmethod
+    def enc(args):
+        o=[f"*{len(args)}\r\n".encode()]
+        for a in args:
+            if isinstance(a,str): a=a.encode()
+            elif isinstance(a,int): a=str(a).encode()
+            o.append(b"$%d\r\n"%len(a)); o.append(a); o.append(b"\r\n")
+        return b"".join(o)
+    def _read(s):
+        l=s.f.readline()
+        t=l[:1]; b=l[1:-2]
+        if t==b'+': return b.decode()
+        if t==b'-': return Exception(b.decode())
+        if t==b':': return int(b)
+        if t==b'$':
+            n=int(b)
+            if n<0: return None
+            d=s.f.read(n+2); return d[:-2]
+        if t==b'*':
+            n=int(b); return [s._read() for _ in range(n)]
+        raise ValueError(l)
+    def call(s,*args):
+        s.s.sendall(s.enc(args)); return s._read()
+    def pipe(s,cmds,batch=1000):
+        out=[]
+        for i in range(0,len(cmds),batch):
+            chunk=cmds[i:i+batch]
+            s.s.sendall(b"".join(s.enc(c) for c in chunk))
+            for _ in chunk: out.append(s._read())
+        return out
+
+#### script rc.sh
+#!/bin/zsh
+# Runs one redis-cli command on port 7104, printing the command and its reply.
+echo "> redis-cli $*"
+/opt/homebrew/opt/redis/bin/redis-cli -p 7104 "$@"
+
+#### script x3_precision.py
+# X3: how precisely a TTL ends, as a client sees it. SET p 1 PX 200, then GET in a tight loop.
+import time; from resp import R
+r = R()
+for trial in range(3):
+    r.call("DEL", "p")
+    t0 = time.perf_counter(); r.call("SET", "p", "1", "PX", 200)
+    last_hit = None
+    while True:
+        t = (time.perf_counter() - t0) * 1000
+        v = r.call("GET", "p")
+        if v is None: print(f"trial {trial+1}: last hit sent at {last_hit:.1f} ms, first miss sent at {t:.1f} ms after SET was sent"); break
+        last_hit = t
+
+#### script x4_passive.py
+# X4: expired keys hold memory until something deletes them.
+# 200,000 keys with 100-byte values and PX 500. Background cycle off (DEBUG SET-ACTIVE-EXPIRE 0), then on.
+import time; from resp import R
+r = R(); val = b"x" * 100
+def info(section, *keys):
+    lines = r.call("INFO", section).decode().splitlines()
+    return " ".join(l for l in lines if l.split(":")[0] in keys)
+r.call("FLUSHALL"); r.call("CONFIG", "RESETSTAT")
+print("empty:", info("memory", "used_memory"))
+r.call("DEBUG", "SET-ACTIVE-EXPIRE", 0)
+print("> DEBUG SET-ACTIVE-EXPIRE 0")
+r.pipe([["SET", f"k:{i}", val, "PX", 500] for i in range(200000)])
+print("loaded 200,000 keys with PX 500:", info("memory", "used_memory"), "| DBSIZE", r.call("DBSIZE"))
+time.sleep(2.5)
+print("2.5 s later, all logically expired:", info("memory", "used_memory"), "| DBSIZE", r.call("DBSIZE"), "|", info("keyspace", "db0"), "|", info("stats", "expired_keys"))
+print("> GET k:1 ->", r.call("GET", "k:1"), "; > EXISTS k:2 k:3 ->", r.call("EXISTS", "k:2", "k:3"))
+print("after touching 3 keys:", "DBSIZE", r.call("DBSIZE"), "|", info("stats", "expired_keys"))
+cur, keys = r.call("SCAN", 0, "COUNT", 100)
+print("> SCAN 0 COUNT 100 returned", len(keys), "keys; DBSIZE now", r.call("DBSIZE"), "|", info("stats", "expired_keys"))
+r.call("DEBUG", "SET-ACTIVE-EXPIRE", 1)
+print("> DEBUG SET-ACTIVE-EXPIRE 1")
+t0 = time.time()
+while True:
+    n = r.call("DBSIZE")
+    print(f"  t={time.time()-t0:.2f} s DBSIZE {n}", info("memory", "used_memory"))
+    if n == 0 or time.time() - t0 > 6: break
+    time.sleep(0.25)
+print(info("stats", "expired_keys", "expired_keys_active", "expired_stale_perc", "expired_time_cap_reached_count", "expire_cycle_cpu_milliseconds"))
+
+#### script x5_sync.py
+# X5: cost inside Redis of many keys expiring at once versus spread out.
+# 1,000,000 keys, 100-byte values. Mode 'same': all PXAT the same millisecond. Mode 'spread': PXAT spread evenly over 30 s.
+# A second connection sends PING every ~1 ms and records the slowest reply in each half second.
+import sys, time, threading; from resp import R
+mode = sys.argv[1]; N = 1000000; val = b"x" * 100
+r = R(); r.call("FLUSHALL"); r.call("CONFIG", "RESETSTAT")
+start = int(time.time() * 1000) + 12000
+cmds = []
+for i in range(N):
+    at = start if mode == "same" else start + (i * 30000) // N
+    cmds.append(["SET", f"k:{i}", val, "PXAT", at])
+r.pipe(cmds)
+used = [l for l in r.call("INFO", "memory").decode().splitlines() if l.startswith("used_memory:")][0]
+print(f"mode={mode}: loaded {N} keys,", used, "| DBSIZE", r.call("DBSIZE"))
+p = R(); stop = False; samples = []
+def probe():
+    while not stop:
+        t = time.perf_counter(); p.call("PING"); samples.append((time.time() * 1000, (time.perf_counter() - t) * 1000)); time.sleep(0.001)
+th = threading.Thread(target=probe); th.start()
+end = start + (2500 if mode == "same" else 30000) + 4000
+while time.time() * 1000 < end:
+    time.sleep(0.5)
+    now = time.time() * 1000
+    recent = [l for (t, l) in samples if t > now - 500]
+    print(f"  t={(now - start)/1000:+6.2f} s from first expiry: DBSIZE {r.call('DBSIZE'):8d}  slowest PING in last 0.5 s {max(recent) if recent else 0:6.2f} ms  (n={len(recent)})")
+stop = True; th.join()
+for l in r.call("INFO", "stats").decode().splitlines():
+    if l.split(":")[0] in ("expired_keys", "expired_keys_active", "expired_time_cap_reached_count", "expire_cycle_cpu_milliseconds"): print(l)
+
+#### script x6_policies.py
+# X6: what a full Redis does under noeviction, volatile-lru and allkeys-lru.
+# maxmemory 20mb; write 200,000 keys with 100-byte values.
+from resp import R
+r = R(); val = b"x" * 100
+def stat(section, key):
+    for l in r.call("INFO", section).decode().splitlines():
+        if l.startswith(key + ":"): return l.split(":", 1)[1]
+def run(policy, ttl_every=0, label=""):
+    r.call("CONFIG", "SET", "maxmemory", 0); r.call("FLUSHALL")
+    r.call("CONFIG", "SET", "maxmemory-policy", policy); r.call("CONFIG", "SET", "maxmemory", "20mb"); r.call("CONFIG", "RESETSTAT")
+    cmds = []
+    for i in range(200000):
+        if ttl_every and i % ttl_every == 0: cmds.append(["SET", f"cache:{i}", val, "EX", 3600])
+        else: cmds.append(["SET", f"{'cache' if ttl_every == 0 else 'durable'}:{i}", val])
+    res = r.pipe(cmds)
+    errors = [x for x in res if isinstance(x, Exception)]
+    print(f"{policy:12s} {label:34s} stored={r.call('DBSIZE'):7d} rejected={len(errors):6d} evicted_keys={stat('stats','evicted_keys'):>6s} used_memory={stat('memory','used_memory')}")
+    if errors: print("   first error:", errors[0])
+    return res
+res = run("noeviction", label="no key has a TTL")
+print("   while full under noeviction:")
+print("   > GET cache:1 ->", r.call("GET", "cache:1")[:10], "; > DEL cache:1 ->", r.call("DEL", "cache:1"), "; > EXPIRE cache:2 60 ->", r.call("EXPIRE", "cache:2", 60))
+print("   > SET new:1 x ->", r.call("SET", "new:1", "x"), "; > INCR new:counter ->", r.call("INCR", "new:counter"))
+for l in r.call("INFO", "errorstats").decode().splitlines():
+    if l.startswith("errorstat"): print("  ", l)
+for l in r.call("INFO", "commandstats").decode().splitlines():
+    if l.startswith("cmdstat_set:"): print("  ", l)
+run("volatile-lru", label="no key has a TTL")
+run("volatile-lru", ttl_every=2, label="half the keys have a TTL")
+first_ttl = sum(r.call("EXISTS", f"cache:{i}") for i in range(0, 2000, 2)); first_durable = sum(r.call("EXISTS", f"durable:{i}") for i in range(1, 2000, 2))
+print(f"   of the first 1,000 keys with a TTL, {first_ttl} survive; of the first 1,000 without, {first_durable} survive")
+print("  ", r.call("INFO", "keyspace").decode().strip().splitlines()[-1])
+run("allkeys-lru", label="no key has a TTL")
+r.call("CONFIG", "SET", "maxmemory", 0); r.call("CONFIG", "SET", "maxmemory-policy", "noeviction"); r.call("FLUSHALL")
+
+#### script x7_bigvalue.py
+# X7: one value larger than maxmemory. allkeys-lru, maxmemory 6mb, 3,000 keys of 1 KB, then an 8 MB SET.
+from resp import R
+r = R()
+def stat(section, key):
+    for l in r.call("INFO", section).decode().splitlines():
+        if l.startswith(key + ":"): return l.split(":", 1)[1]
+r.call("CONFIG", "SET", "maxmemory", 0); r.call("FLUSHALL"); r.call("CONFIG", "SET", "maxmemory-policy", "allkeys-lru"); r.call("CONFIG", "SET", "maxmemory", "6mb"); r.call("CONFIG", "RESETSTAT")
+r.pipe([["SET", f"small:{i}", b"y" * 1024] for i in range(3000)])
+print("after 3,000 x 1 KB keys: DBSIZE", r.call("DBSIZE"), "used_memory", stat("memory", "used_memory"), "maxmemory", stat("memory", "maxmemory"), "evicted", stat("stats", "evicted_keys"))
+print("> SET big <8 MB> ->", r.call("SET", "big", b"z" * (8 * 1024 * 1024)))
+print("> DBSIZE ->", r.call("DBSIZE"), "; > EXISTS big ->", r.call("EXISTS", "big"), "; evicted_keys", stat("stats", "evicted_keys"), "; used_memory", stat("memory", "used_memory"))
+r.call("CONFIG", "SET", "maxmemory", 0); r.call("CONFIG", "SET", "maxmemory-policy", "noeviction"); r.call("FLUSHALL")
+
+#### script x8_lru.py
+import sys,random
+sys.path.insert(0,sys.argv[0].rsplit('/',1)[0])
+from resp import R
+r=R()
+K=50000; M=25000
+print(f"K={K} old keys (100 B values, key i has idle time (K-i) s so key 0 is the oldest), then add M={M} fresh keys; maxmemory = used_memory right after loading the K keys")
+print("A perfect LRU would evict exactly the oldest keys. 'precision' = share of evicted old keys that are among the E oldest (E = number evicted).")
+val=b"x"*100
+r.call("FLUSHALL")
+r.call("CONFIG","SET","maxmemory","0"); r.call("CONFIG","SET","maxmemory-policy","allkeys-lru")
+r.call("SET","tmpl",val); dump=r.call("DUMP","tmpl")
+for samples in [1,2,3,5,10,20,64]:
+    r.call("FLUSHALL"); r.call("CONFIG","SET","maxmemory","0"); r.call("CONFIG","SET","maxmemory-samples",samples)
+    r.call("CONFIG","RESETSTAT")
+    cmds=[["RESTORE",f"old:{i}",0,dump,"IDLETIME",K-i] for i in range(K)]
+    res=r.pipe(cmds)
+    assert all(not isinstance(x,Exception) for x in res), [x for x in res if isinstance(x,Exception)][:1]
+    info=r.call("INFO","memory").decode()
+    used=int([l for l in info.splitlines() if l.startswith("used_memory:")][0].split(":")[1])
+    r.call("CONFIG","SET","maxmemory",used)
+    cmds=[["SET",f"new:{i}",val] for i in range(M)]
+    r.pipe(cmds)
+    # survivors
+    keys=r.call("KEYS","old:*")
+    surv={int(k.decode().split(":")[1]) for k in keys}
+    evicted_old=[i for i in range(K) if i not in surv]
+    E=len(evicted_old)
+    newkeys=len(r.call("KEYS","new:*"))
+    top=sum(1 for i in evicted_old if i<E)
+    mean_rank_pct=sum(i for i in evicted_old)/max(E,1)/K*100
+    # mean idle percentile of evicted keys (0=youngest..100=oldest): old key i has age percentile 100*(1-i/K)
+    pct=sum(100*(1-i/K) for i in evicted_old)/max(E,1)
+    maxsurv_oldest=min(surv) if surv else None
+    print(f"samples={samples:2d}: evicted_old={E:6d} precision={top/E*100:5.1f}%  mean age-percentile of evicted keys={pct:5.1f}  oldest survivor rank={maxsurv_oldest}  fresh keys lost={M-newkeys}")
+r.call("CONFIG","SET","maxmemory","0"); r.call("CONFIG","SET","maxmemory-samples",5)
+
+#### script x9_lfu.sh
+#!/bin/zsh
+# X9a: how the LFU counter grows with accesses, for several lfu-log-factor values. One key, INCR via redis-benchmark (pipelined), counter read with OBJECT FREQ.
+RC="/opt/homebrew/opt/redis/bin/redis-cli -p 7104"; RB=/opt/homebrew/opt/redis/bin/redis-benchmark
+$=RC CONFIG SET maxmemory-policy allkeys-lfu >/dev/null
+echo "lfu-log-factor | counter after N accesses (N = 1 new key, 10, 100, 1000, 10000, 100000, 1000000)"
+for f in 0 1 10 100; do
+  $=RC CONFIG SET lfu-log-factor $f >/dev/null
+  line="factor $f:"
+  for n in 10 100 1000 10000 100000 1000000; do
+    $=RC DEL foo >/dev/null; $=RC SET foo 0 >/dev/null
+    fresh=$($=RC OBJECT FREQ foo)
+    [ $n -gt 1 ] && $RB -p 7104 -q -n $((n-1)) -c 1 -P 100 INCR foo >/dev/null 2>&1
+    line="$line N=$n:$($=RC OBJECT FREQ foo)"
+  done
+  echo "$line (a fresh key reads $fresh)"
+done
+$=RC CONFIG SET lfu-log-factor 10 >/dev/null
+
+#### script x9b_decay.sh
+#!/bin/zsh
+# X9b: LFU decay. A key restored with FREQ 100; lfu-decay-time 1 (minute). Read OBJECT FREQ every 30 s for 3.5 minutes.
+RC="/opt/homebrew/opt/redis/bin/redis-cli -p 7104"
+$=RC CONFIG SET maxmemory-policy allkeys-lfu >/dev/null; $=RC CONFIG SET lfu-decay-time 1 >/dev/null
+$=RC SET tmpl v >/dev/null
+$=RC --no-raw DUMP tmpl > /dev/null
+python3 - <<'PY'
+import time; from resp import R
+r = R(); r.call("CONFIG","SET","maxmemory-policy","allkeys-lfu")
+d = r.call("DUMP", "tmpl"); r.call("DEL", "decay"); print("> RESTORE decay 0 <dump> FREQ 100 ->", r.call("RESTORE", "decay", 0, d, "FREQ", 100))
+t0 = time.time()
+for i in range(8):
+    print(f"t={time.time()-t0:5.1f} s  OBJECT FREQ decay -> {r.call('OBJECT','FREQ','decay')}", flush=True)
+    time.sleep(30)
+PY
+
+#### script x10_size.py
+import sys,time,socket
+import numpy as np
+from collections import OrderedDict
+sys.path.insert(0,sys.argv[0].rsplit('/',1)[0])
+from resp import R
+# usage: exp_zipf.py N alpha warm meas "C1,C2,.." "policy1,policy2" [seed]
+N=int(sys.argv[1]); alpha=float(sys.argv[2]); warm=int(sys.argv[3]); meas=int(sys.argv[4])
+Cs=[int(x) for x in sys.argv[5].split(',')]; pols=sys.argv[6].split(','); seed=int(sys.argv[7]) if len(sys.argv)>7 else 1
+rng=np.random.default_rng(seed)
+p=np.arange(1,N+1,dtype=np.float64)**(-alpha); p/=p.sum(); cdf=np.cumsum(p)
+reqs=np.searchsorted(cdf, rng.random(warm+meas)).astype(np.int64)
+r=R(); val=b"x"*100; PERKEY=int(sys.argv[8]) if len(sys.argv)>8 else 160; B=20
+def used():
+    for l in r.call("INFO","memory").decode().splitlines():
+        if l.startswith("used_memory:"): return int(l.split(":")[1])
+def exact_lru(C):
+    od=OrderedDict(); hits=0
+    for i,k in enumerate(reqs.tolist()):
+        if k in od:
+            od.move_to_end(k)
+            if i>=warm: hits+=1
+        else:
+            od[k]=1
+            if len(od)>C: od.popitem(last=False)
+    return hits/meas
+print(f"N={N} keys, Zipf alpha={alpha}, 100 B values, warm-up {warm} + measured {meas} cache-aside requests (GET, SET on miss), seed {seed}")
+print("policy        target_C  actual_keys  hit_ratio  evicted_keys  | oracle_top_C  exact_LRU_sim | req/s")
+for C in Cs:
+    oracle=float(cdf[C-1])  # C most popular keys held statically
+    ex=exact_lru(C)
+    for pol in pols:
+        r.call("CONFIG","SET","maxmemory","0"); r.call("FLUSHALL"); r.call("CONFIG","SET","maxmemory-policy",pol); r.call("CONFIG","SET","maxmemory-samples",5)
+        base=used()
+        lim=base+C*PERKEY; r.call("CONFIG","SET","maxmemory",lim); r.call("CONFIG","RESETSTAT")
+        # sequential cache-aside
+        hits=0; t0=time.time()
+        sock=r.s; f=r.f; enc=r.enc
+        rl=reqs.tolist()
+        for b0 in range(0,len(rl),B):
+            ks=rl[b0:b0+B]
+            sock.sendall(b"".join(enc(("GET",f"z:{k}")) for k in ks))
+            miss=[]
+            for j,k in enumerate(ks):
+                l=f.readline()
+                if l[:2]==b"$-":
+                    miss.append(k)
+                else:
+                    f.read(int(l[1:-2])+2)
+                    if b0+j>=warm: hits+=1
+            if miss:
+                ms=list(dict.fromkeys(miss))
+                sock.sendall(b"".join(enc(("SET",f"z:{k}",val)) for k in ms))
+                for _ in ms: f.readline()
+        dt=time.time()-t0
+        n=r.call("DBSIZE")
+        ev=[l for l in r.call("INFO","stats").decode().splitlines() if l.startswith("evicted_keys:")][0].split(":")[1]
+        print(f"{pol:13s} {C:8d} {n:11d}  {hits/meas:9.4f}  {ev:>12s}  | {float(cdf[n-1]):12.4f}  {ex:13.4f} | {(warm+meas)/dt:7.0f}",flush=True)
+r.call("CONFIG","SET","maxmemory","0"); r.call("FLUSHALL")
+
+#### script x11a_scan_pause.py
+import sys,time,random
+sys.path.insert(0,sys.argv[0].rsplit('/',1)[0])
+from resp import R
+r=R(); val=b"x"*100
+C=20000; H=1000; HOT_READS=50; SCAN=100000
+print(f"Scan pollution: cache holds ~{C} keys; {H} hot keys each read {HOT_READS} times; 2 s pause; then {SCAN} distinct one-off keys written once (a full scan); then count surviving hot keys")
+print("policy        hot_survivors  cache_keys_at_end  evicted_keys")
+for pol in ["allkeys-lru","allkeys-lfu","allkeys-random"]:
+    random.seed(3)
+    r.call("CONFIG","SET","maxmemory","0"); r.call("FLUSHALL"); r.call("CONFIG","SET","maxmemory-policy",pol); r.call("CONFIG","SET","maxmemory-samples",5)
+    info=r.call("INFO","memory").decode(); base=int([l for l in info.splitlines() if l.startswith("used_memory:")][0].split(":")[1])
+    r.call("CONFIG","SET","maxmemory",base+C*160); r.call("CONFIG","RESETSTAT")
+    r.pipe([["SET",f"hot:{i}",val] for i in range(H)])
+    # fill the rest of the cache with 'warm' one-off keys so it is full
+    r.pipe([["SET",f"warm:{i}",val] for i in range(C)])
+    reads=[f"hot:{i}" for i in range(H) for _ in range(HOT_READS)]; random.shuffle(reads)
+    r.pipe([["GET",k] for k in reads])
+    time.sleep(2.2)
+    r.pipe([["SET",f"scan:{i}",val] for i in range(SCAN)])
+    res=r.pipe([["EXISTS",f"hot:{i}"] for i in range(H)])
+    surv=sum(res)
+    n=r.call("DBSIZE")
+    ev=[l for l in r.call("INFO","stats").decode().splitlines() if l.startswith("evicted_keys:")][0].split(":")[1]
+    print(f"{pol:14s} {surv:6d}/{H}   {n:10d}   {ev:>10s}")
+r.call("CONFIG","SET","maxmemory","0"); r.call("FLUSHALL")
+
+#### script x11b_scan_live.py
+# X11b: a scan in the middle of normal traffic. Cache-aside reads with Zipf popularity (alpha 0.8) over 2,000,000 keys,
+# cache sized for about 200,000 keys. After warm-up, a batch job reads 400,000 distinct one-off keys (scan:i, GET then SET),
+# interleaved one-for-one with normal reads. Hit ratio of the NORMAL reads is reported per window of 200,000 normal reads.
+import sys, time
+import numpy as np
+from resp import R
+N = 2000000; ALPHA = 0.8; C = 200000; WARM = 3000000; BEFORE = 1000000; SCAN = 400000; AFTER = 2400000; W = 200000; B = 20
+rng = np.random.default_rng(5)
+p = np.arange(1, N + 1, dtype=np.float64) ** (-ALPHA); p /= p.sum(); cdf = np.cumsum(p)
+normal = np.searchsorted(cdf, rng.random(WARM + BEFORE + SCAN + AFTER)).tolist()
+r = R(); val = b"x" * 100
+def used():
+    for l in r.call("INFO", "memory").decode().splitlines():
+        if l.startswith("used_memory:"): return int(l.split(":")[1])
+def stream():
+    i = 0
+    for _ in range(WARM + BEFORE): yield ("n", normal[i]); i += 1
+    for s in range(SCAN): yield ("n", normal[i]); i += 1; yield ("s", s)
+    for _ in range(AFTER): yield ("n", normal[i]); i += 1
+print(f"N={N}, alpha={ALPHA}, cache ~{C} keys, warm-up {WARM}, then windows of {W} normal reads; scan of {SCAN} one-off keys interleaved 1:1 during windows {BEFORE//W + 1}-{(BEFORE+SCAN)//W}")
+for pol in sys.argv[1].split(","):
+    r.call("CONFIG", "SET", "maxmemory", 0); r.call("FLUSHALL"); r.call("CONFIG", "SET", "maxmemory-policy", pol); r.call("CONFIG", "SET", "maxmemory-samples", 5)
+    r.call("CONFIG", "SET", "maxmemory", used() + C * 160); r.call("CONFIG", "RESETSTAT")
+    sock, f, enc = r.s, r.f, r.enc
+    seen = 0; hits = 0; windows = []; t0 = time.time(); batch = []
+    def flush(batch):
+        global seen, hits
+        sock.sendall(b"".join(enc(("GET", f"{'z' if k == 'n' else 'scan'}:{v}")) for k, v in batch))
+        miss = []
+        for k, v in batch:
+            l = f.readline()
+            if l[:2] == b"$-": miss.append((k, v))
+            else:
+                f.read(int(l[1:-2]) + 2)
+            if k == "n":
+                seen += 1
+                if l[:2] != b"$-" and seen > WARM: hits += 1
+                if seen > WARM and (seen - WARM) % W == 0: windows.append(hits / W); hits = 0
+        if miss:
+            ms = list(dict.fromkeys(miss))
+            sock.sendall(b"".join(enc(("SET", f"{'z' if k == 'n' else 'scan'}:{v}", val)) for k, v in ms))
+            for _ in ms: f.readline()
+    for item in stream():
+        batch.append(item)
+        if len(batch) == B: flush(batch); batch = []
+    if batch: flush(batch)
+    dt = time.time() - t0
+    print(f"{pol:14s} keys={r.call('DBSIZE')} req/s~{(WARM+BEFORE+2*SCAN+AFTER)/dt:.0f}  hit ratio per window: " + " ".join(f"{x:.3f}" for x in windows), flush=True)
+r.call("CONFIG", "SET", "maxmemory", 0); r.call("CONFIG", "SET", "maxmemory-policy", "noeviction"); r.call("FLUSHALL")
+
+#### script chain.sh
+#!/bin/zsh
+cd ${0:a:h}
+{ echo "## X9a LFU counter growth by lfu-log-factor (x9_lfu.sh)"; ./x9_lfu.sh; echo; } > x9a.out 2>&1
+{ echo "## X9b LFU decay with lfu-decay-time 1 (x9b_decay.sh)"; ./x9b_decay.sh; echo; } > x9b.out 2>&1
+{ echo "## X11a scan pollution with a pause before the scan (x11a_scan_pause.py)"; python3 x11a_scan_pause.py; echo; } > x11a.out 2>&1
+{ echo "## X11b a scan interleaved with normal Zipf traffic (x11b_scan_live.py)"; python3 x11b_scan_live.py allkeys-lru,allkeys-lfu,allkeys-random; echo; } > x11b.out 2>&1
+{ echo "## X10 hit ratio against cache size, Zipf 0.8 over 4,000,000 keys (x10_size.py 4000000 0.8 3000000 2000000 20000,40000,120000,400000,1200000 allkeys-lru,allkeys-lfu,allkeys-random 1 160)"; python3 x10_size.py 4000000 0.8 3000000 2000000 20000,40000,120000,400000,1200000 allkeys-lru,allkeys-lfu,allkeys-random 1 160; echo; } > x10.out 2>&1
+echo done > chain.done

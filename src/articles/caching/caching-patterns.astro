@@ -1,0 +1,261 @@
+---
+import Term from '../../components/caching/shared/Term.astro';
+import ArticleRef from '../../components/caching/shared/ArticleRef.astro';
+import WritePolicyFigure from '../../components/caching/caching-patterns/WritePolicyFigure.astro';
+import CeilingFigure from '../../components/caching/caching-patterns/CeilingFigure.astro';
+import WriteOrderFigure from '../../components/caching/caching-patterns/WriteOrderFigure.astro';
+import OverloadFigure from '../../components/caching/caching-patterns/OverloadFigure.astro';
+import WriteBehindFigure from '../../components/caching/caching-patterns/WriteBehindFigure.astro';
+import FlushConflictFigure from '../../components/caching/caching-patterns/FlushConflictFigure.astro';
+---
+<p>In the <ArticleRef slug="">introduction</ArticleRef>, a shop's product page learned to read from <Term kind="redis">Redis</Term> first. On a <Term kind="hit" mark>hit</Term> the page comes straight back; on a <Term kind="miss" mark>miss</Term> the application reads the <Term kind="database">database</Term> and keeps a copy in Redis for next time. That handles reads. Now the merchant cuts the price of a kettle from £39 to £35. The database has the new price at once. Redis still holds a copy that says £39, and nothing in the read path will notice.</p>
+
+<p>Every caching pattern answers two questions. Who puts data into the cache when it is missing: the application, or a layer that sits in front of the cache? And when the data changes, what happens to the cached copy, and does the change reach the database before or after the user is told it is saved? The four names you will meet in documentation and design reviews, <strong>cache-aside</strong>, <strong>read-through</strong>, <strong>write-through</strong> and <strong>write-behind</strong>, are four sets of answers to those two questions.</p>
+
+<p>This article takes them one at a time, with the same shop throughout. By the end you will be able to say what each pattern does on a read and on a write, predict what each leaves behind when something fails halfway, and choose one for a piece of data from how often it is read, how often it changes, and how stale or how lost a value is allowed to be.</p>
+
+<h2 id="cache-aside-writes">The write path of cache-aside</h2>
+
+<p>The introduction's read path is <strong>cache-aside</strong>: the application looks in Redis first and fills it on a miss. Facebook's memcache paper calls the same arrangement a demand-filled look-aside cache. Here it is again, caching the product record as JSON rather than the whole page:</p>
+
+<pre><code>{`def get_product(product_id):
+    key = f"product:{product_id}"
+    cached = redis.get(key)                       # GET product:42
+    if cached is not None:
+        return json.loads(cached)                 # a hit
+    product = db.fetch_product(product_id)        # a miss: ask the database
+    redis.set(key, json.dumps(product), ex=300)   # SET product:42 … EX 300
+    return product`}</code></pre>
+
+<p>A write in cache-aside always goes to the database; the database is the source of truth, and Redis only ever holds copies. The open question is what the write should then do to the copy. There are three possible answers. The application can leave Redis alone and let the copy expire. It can delete the key. Or it can update the key with the new value.</p>
+
+<p>Figure 1 runs all three on the same shop. Each row is one product. The first box shows the version of that product in the database; the second shows the version cached in Redis, with a thin bar for how much of its 12-second lifetime is left. Reads and writes appear on the right as they happen. When the cached version is older than the database's, the box turns to the <Term kind="stale" mark>stale</Term> colour, and a read of it is a stale read: a hit that returns the wrong price.</p>
+
+<WritePolicyFigure number={1} />
+
+<p>Start with the application leaving Redis alone. Watch a <Term kind="write" mark>write</Term> land on a popular product: the database moves to the next version, the cached copy does not, and every read until the copy <Term kind="expiry" mark>expires</Term> returns the old price. Whenever you look, roughly a quarter to two-fifths of the reads so far have been stale. Notice that the hit ratio stays high all the same. A stale read is still a hit; the hit ratio cannot tell you whether the hits were right.</p>
+
+<p>Now switch to deleting the key. The stale reads disappear. In their place, the first read after each write is a miss: it finds nothing in Redis, reads the new version from the database and caches it. Finally, switch to updating the key. There are no stale reads and the read after a write still hits, so the hit ratio is the highest of the three.</p>
+
+<p>Leaving the copy alone is not wrong in itself. It is what you get, deliberately, for data where a bounded delay is acceptable, and the bound is the key's TTL. <ArticleRef slug="expiration-and-eviction">Cache expiration and eviction</ArticleRef> is about choosing that number. For a price, a stale read is a customer seeing one number on the page and another at checkout, so the write should do something to the copy. Of the two remaining options, updating looks strictly better in Figure 1. Yet deleting is the usual choice. The next section is about why.</p>
+
+<h2 id="delete-or-update">Why delete is the usual choice, and what it costs</h2>
+
+<p>The cache-aside write path, as Microsoft's Azure guidance and Facebook's memcache paper both describe it, writes the database and then deletes the cached key:</p>
+
+<pre><code>{`def change_price(product_id, price):
+    db.update_price(product_id, price)        # 1. the source of truth first
+    redis.delete(f"product:{product_id}")     # 2. then drop the copy: DEL product:42`}</code></pre>
+
+<p>There are three reasons to delete rather than update.</p>
+
+<p>First, a delete is <strong>idempotent</strong>: doing it twice leaves the same state as doing it once. On a real Redis server, the first <code>DEL product:42</code> returned 1 and a second returned 0, and the key was gone either way. That matters because writes get retried, and because two writers can finish in either order. Two deletes in either order leave the key absent; two updates in the wrong order leave the older value cached. Facebook gives exactly this reason for deleting. The races themselves, and the remaining one that a delete does not close, are the subject of <ArticleRef slug="invalidation">Cache invalidation and consistency</ArticleRef>.</p>
+
+<p>Second, the writer often does not have the cached value. A cached product page might combine the product row, its stock level, its average rating and the merchant's name. The code that changes the price knows the new price. To update the cache it would have to rebuild the whole page, on every write, in every place that writes. To delete, it only needs the key.</p>
+
+<p>Third, a delete never puts anything in the cache that nobody has asked for. Only reads fill the cache, so memory goes to data that is actually read.</p>
+
+<p>The cost is the miss after each write, and it is worth working out how large it is. Take one key that receives reads at an average rate <em>r</em> and writes at an average rate <em>w</em>, and call the ratio <em>k</em> = <em>r</em> ÷ <em>w</em> the reads per write. With delete-on-write, a read misses exactly when the event just before it, among that key's reads and writes, was a write. If reads and writes arrive at random and independently, each event is a write with probability <em>w</em> ÷ (<em>r</em> + <em>w</em>), whatever came before it. So:</p>
+
+<p class="formula">miss ratio = <em>w</em> ÷ (<em>r</em> + <em>w</em>) = 1 ÷ (<em>k</em> + 1)<br />hit ratio = <em>k</em> ÷ (<em>k</em> + 1)</p>
+
+<p>This is the hit ratio to expect from writes alone, before any expiry or eviction takes more. A key read four times per write hits about 80% of the time; one read per write gives 50%; nineteen reads per write gives 95%. Figure 2 checks it. Both rows receive the same random reads and writes to one key; the top row deletes on each write, the bottom row updates.</p>
+
+<CeilingFigure number={2} />
+
+<p>Watch the top row and you will see the rule directly: every write is followed by one miss, never more, and the reads after it hit. Drag the slider down to one read per write and, within a minute or so, the hit ratio settles near half. Then look at the bottom row. Updating removes every miss, but the readout "Update: cache writes never read" counts a different waste: a cache write that was replaced by the next write before anyone read it. By the same reasoning as above, that happens to 1 ÷ (<em>k</em> + 1) of the updates.</p>
+
+<p>Real traffic is not this random, so treat <em>k</em> ÷ (<em>k</em> + 1) as an estimate, not a limit. The firm limit runs the other way. A miss needs a write since the previous read, so a key cannot miss more often than it is written, and its hit ratio is at least 1 − 1 ÷ <em>k</em>. Traffic reaches that floor when every write is followed by a read, as when people look at what they have just changed: 75% at four reads per write, and nothing at all at one. Writes that come in bursts, with no reads between them, do better than the formula. So a key read four times per write that hits 77% of the time may be losing nothing but its writes.</p>
+
+<p>The introduction showed that the miss ratio, not the hit ratio, sets database load. Put that together with these results and you have the first practical rule for choosing a pattern: data that is written nearly as often as it is read cannot be cached usefully by deleting on write. A key read ninety-nine times per write loses about one read in a hundred to its writes, which is fine. A key read twice per write loses about one in three, and up to one in two, and you should either update it on write, or ask whether it belongs in the cache at all.</p>
+
+<h2 id="write-through">Write-through: updating the cache on every write</h2>
+
+<p>Updating the cached copy as part of the write is called <strong>write-through</strong>: the write goes through the cache to the database, and returns only when both hold the new value. The name is borrowed from processor caches.</p>
+
+<p>Be careful with the term, because sources use it in two ways. In Oracle Coherence, a product with a cache layer that talks to the database itself, the application writes to the cache and the cache writes the database before returning. In Amazon's ElastiCache guidance, the application writes the database and then writes the cache. With Redis it is almost always the second, because open-source Redis never talks to your database. Every pattern in this article is code, either in your application or in a library in front of Redis. In this article, write-through means the second: the application writes the database, then sets the new value in Redis.</p>
+
+<pre><code>{`def change_price(product_id, price):
+    product = db.update_price(product_id, price)    # returns the updated row
+    redis.set(f"product:{product_id}", json.dumps(product), ex=300)`}</code></pre>
+
+<p>What it buys is in Figure 2's bottom row: no miss after a write. That matters most for data a user reads straight after changing it, such as their own basket or settings. With delete, their next read is a miss and pays a database read. With write-through, it is a hit that returns what they just wrote. For keys written often, it also avoids the loss of hit ratio worked out above.</p>
+
+<p>The costs are the three reasons for deleting, seen from the other side, plus one more. The writer must produce the full cached value. Two writers can set their values in the opposite order from their database commits and leave the older one cached, a race that <ArticleRef slug="invalidation">Cache invalidation and consistency</ArticleRef> shows step by step. Amazon's guidance says of write-through that the data in the cache "is never stale"; that holds only while one process writes the key at a time, both of its writes succeed, and no reader fills the key from an older read. Every write puts a value in Redis, whether or not anyone reads it; Amazon calls that cache churn, and the cure is a TTL on every write-through <code>SET</code>, so unread values leave on their own. And every save now waits for two systems instead of one. Amazon calls this the write penalty, and notes that users tolerate a slower save better than a slower page.</p>
+
+<p>That TTL is easy to lose: a plain <code>SET</code> replaces the key's expiry along with its value. In a check for this article, a key stored with <code>SET product:7 … EX 300</code> had a <code>TTL</code> of 300, and after a plain <code>SET product:7 …</code> it was -1, meaning it would never expire. That matters more for write-through than for the read path, because every write, in every place that writes, sends a <code>SET</code>. One that forgets <code>EX</code> slowly turns a cache into a store of permanent keys. Either pass <code>EX</code> on every write, or pass <code>KEEPTTL</code> (Redis 6.0 and later) to keep the remaining lifetime. If you want write-through to refresh only keys that are already cached, add <code>XX</code>: <code>SET product:8 … XX EX 300</code> returned nil and created nothing when the key was absent, and replaced the value when it was present.</p>
+
+<p>A write-through write is two writes to two systems, and nothing makes them one transaction. So the order matters, because a failure can happen between them. Figure 3 steps through a failure after the first write, in each order.</p>
+
+<WriteOrderFigure number={3} />
+
+<p>Step through the database-first order. The failure leaves Redis holding the old price. Readers get a stale hit until the copy expires or the next write replaces it. That is the same outcome as a cache-aside writer that dies before its delete, and in both cases the TTL is the bound on how long it lasts.</p>
+
+<p>Now choose Redis first. This time the failure leaves Redis holding a price the database never accepted: a constraint rejected it, or the transaction was rolled back, or the writer died before committing. That is worse than stale. A stale value was true once; this one never was, and the checkout, which reads the database, will charge a different price from the one on the page. So write the database first, then Redis.</p>
+
+<p>"First" means after the transaction commits. Code that touches the cache inside a transaction block, as ORM code easily does, sends its <code>SET</code> or <code>DEL</code> before the commit. If the transaction then rolls back, Redis holds a value that never existed, which is Figure 3's Redis-first failure in its most common form. Even a delete is early: a reader can miss, read the old row and cache it before the commit lands. Many frameworks have a hook that runs code only after a successful commit, such as Django's <code>transaction.on_commit</code>; that is where the cache write belongs.</p>
+
+<p>Cache-aside's delete has an order too. Azure's guidance is to update the database before removing the cached item, and its reason is not a crash but a race: delete first, and a reader can miss, read the old row and put it back before the database write lands. That race also belongs to the invalidation article; the order you want is the same either way.</p>
+
+<h2 id="read-through">Read-through: letting a cache layer do the loading</h2>
+
+<p>So far the application has done all the work: checking Redis, querying the database on a miss, filling the cache. In <strong>read-through</strong> caching, a layer in front of the cache does the loading. The application asks the layer for product 42; if the layer has no copy, it calls a loader function that you give it, stores the result and returns it. The application never queries the database for that data itself. Oracle Coherence describes read-through this way, and in the Redis world the Java client Redisson offers it: you attach a <code>MapLoader</code> to a Redis-backed map, and a missing entry is loaded through it. You may already use it under another name: from the caller's side, Spring's <code>@Cacheable</code> annotation and .NET's <code>HybridCache.GetOrCreateAsync</code> are read-through too, with the annotated method or the factory function you pass as the loader.</p>
+
+<p>It is worth being clear about what does not change. Redis sees the same work either way: a read that misses, then a write that fills the key. The difference is where the code lives and who owns it. With a loader, one place decides how a key is named, how long it lives and how it is loaded, instead of every caller repeating the logic. That one place is also the natural home for coalescing many simultaneous misses on one key into a single load, which <ArticleRef slug="stampedes">Cache stampedes and the thundering herd</ArticleRef> covers.</p>
+
+<p>There is also a difference in failure, and it is easy to credit to the wrong thing. Bronson and colleagues use a look-aside cache as their example of the metastable failure the introduction described. Suppose the cache is lost at a busy moment and every request misses. The database cannot answer them all, so queries queue and slow down. The application waits for each one only so long, then gives up. In cache-aside as it is usually written, the code that would have filled the cache is the code that just gave up. So the late answers are thrown away, the cache stops refilling, and the database stays overloaded.</p>
+
+<p>Figure 4 runs that scenario. Redis is emptied at 10 seconds. The choice above the figure changes one thing only: what happens to a database query after the request that sent it has given up.</p>
+
+<OverloadFigure number={4} />
+
+<p>Start with the first option, which is cache-aside as usually written. For ten seconds all is well: about 90% of requests hit, and the database is less than half busy. When Redis restarts, the first hundred or so queries come back in time and refill the most popular keys, which is why the hit ratio jumps back to about 55%. After that, look at the database wait. Every new miss joins a queue that grows faster than the database empties it, every answer arrives after the application has given up, and nothing more is cached. Redis is up, holding only the hundred or so keys that refilled in the first second, and it gets no more. The hit ratio stays flat for as long as you let it run.</p>
+
+<p>Now let late answers be cached. The first seconds look identical: the same misses, the same queue, the same requests failing. The difference is that each result is stored when it finally arrives, whether or not the request that asked for it is still waiting. Popular keys come back first because they were asked for most often. As the hit ratio climbs, fewer requests reach the database, the queue drains, and about fifteen seconds after the restart every request is answered in time again.</p>
+
+<p>Finally, let the database skip the queries nobody will wait for. Those requests still fail, but the database now spends all its time on queries someone is still waiting for, so every answer it produces arrives in time and is cached. This recovers fastest: about six seconds after the restart, every request is answered in time.</p>
+
+<p>So the trap needs two things together: the database spends its capacity on answers nobody is waiting for, and nobody keeps those answers. Remove either and the cache refills. It also needs a database with little headroom. In this model, half as much database capacity again, or a five-second timeout instead of one, lets even the first option recover. A little less does not help: at 140 queries a second the model stays stuck.</p>
+
+<p>Where does read-through come in? Bronson and colleagues argue that in this state, filling the cache should take priority over answering the client, and that a read-through cache can arrange it by giving its database queries a more generous timeout than the client's. That is the second option. But a read-through layer does not guarantee it. A loader that is cancelled when its caller gives up caches nothing late, just like the first option; <code>HybridCache</code>, for example, cancels a shared load once every caller waiting for it has cancelled. And a cache-aside application can behave like the second by finishing the query in the background and caching the result after the request has failed. If you rely on fills outliving requests, check what your code or library does when the caller gives up. The third option, deadlines that stop the database working on abandoned queries, is open to either pattern; <ArticleRef slug="operating-a-cache">Operating a cache</ArticleRef> covers it, with shedding load and warming a cache.</p>
+
+<p>The model is simplified to show this one property. It has no retries, which make overload worse. And in the third option it knows on arrival that a query would be late, where a real system finds out when a deadline passes or a connection pool gives up waiting.</p>
+
+<p>Read-through has a price too. The loader becomes the one path to that data, so the layer must be as available as the data it guards; if it fails, there is no application code that knows how to go to the database instead. And some data is awkward to express as "load one key": a search result built from several queries is easier to cache aside, in the code that already builds it.</p>
+
+<h2 id="write-behind">Write-behind: acknowledging before the database</h2>
+
+<p>Every pattern so far writes the database before telling the user their change is saved. <strong>Write-behind</strong>, also called write-back, does not. The write goes to the cache, the user is told it is done, and the database is updated later by a background process, the flusher. Coherence describes it as writing modified entries to the database after a configured delay. Redisson's map writer has a write-behind mode that does the same, sending writes in batches after a delay of one second by default.</p>
+
+<p>Two things make that attractive. The user does not wait for the database. And the database does less work, because several changes to the same item during the delay can be <strong>coalesced</strong> into one write of the final value, and several items can be sent in one transaction.</p>
+
+<p>The clearest case in a shop is the page-view counter. Recording every view as a database write is a lot of writes for a number nobody needs to the second. With write-behind, each view is one <code>INCR</code> in Redis, and a flusher moves the totals into the database every few seconds:</p>
+
+<pre><code>{`def record_view(product_id):
+    redis.incr(f"views:{product_id}")         # the view is counted here …
+    redis.sadd("views:pending", product_id)   # … and marked for the flusher
+    # the request returns now; the database has not seen this view
+
+def flush():                                  # runs every few seconds
+    while (product_id := redis.spop("views:pending")) is not None:
+        count = redis.getdel(f"views:{product_id}")   # read and reset in one command
+        if count:
+            db.add_views(product_id, int(count))`}</code></pre>
+
+<p>Here is the arithmetic. If views arrive at <em>r</em> a second across <em>n</em> counters, and the flusher runs every <em>T</em> seconds, the database receives at most <em>n</em> writes every <em>T</em> seconds, however high <em>r</em> climbs. That is the gain. The price is that between flushes, views exist only in Redis. At a random moment, the time since the last flush is anywhere from 0 to <em>T</em>, on average <em>T</em> ÷ 2, so on average <em>r</em> × <em>T</em> ÷ 2 acknowledged views are held nowhere else, and just before a flush it is the full <em>r</em> × <em>T</em>. If Redis restarts without having saved them, or fails over to a replica that had not yet received them, they are gone. Figure 5 lets you set <em>T</em>, and has a button that restarts Redis.</p>
+
+<WriteBehindFigure number={5} />
+
+<p>Let it run at five seconds and watch the badge over Redis climb, then drop to zero as the flusher's <Term kind="write">writes</Term> leave for the database. Now press Restart Redis just before a flush: everything in that badge is lost, though every one of those visitors was told their view counted. Drag the interval out to 30 seconds and the database's writes almost stop, while the badge, and the loss from a restart, grows six times larger.</p>
+
+<p>I checked this on a real server. On Redis 8.10 running without persistence, I incremented two counters and pushed two items onto a queue list, then shut the server down without saving, as a crash would, and restarted it. <code>DBSIZE</code> returned 0: the counters and the queue were gone. Redis's persistence settings shrink that window, and <ArticleRef slug="replication-and-persistence">Redis replication, persistence and failover</ArticleRef> sets out what each one can still lose. None makes it zero for free, and with write-behind every lost write is one you already acknowledged. Coherence puts it plainly: write-behind makes the cache the system of record until the queue is flushed. Coherence softens that by keeping copies of each entry on other members of its cluster; a single Redis with persistence off has no such copy, so the business has to accept losing whatever is waiting.</p>
+
+<p>Two details in the flusher above matter. It uses <code>GETDEL</code> (Redis 6.2 and later), which returns a counter and deletes it in one command, so no increment can slip in between the read and the delete. To check that this matters, I ran 200,000 increments from 20 concurrent clients against one counter while a flusher emptied it as fast as it could. With <code>GETDEL</code>, the flushed totals added up to exactly 200,000, in two runs. With a <code>GET</code> followed by a separate <code>DEL</code>, about half the increments vanished: 99,409 and 98,614 in two runs, with the flusher holding one connection. The loss is this large because the flusher ran continuously. One that runs every few seconds loses less, but any gap between reading and deleting loses the increments that land in it. The other detail: if <code>db.add_views</code> fails after <code>GETDEL</code>, the count is held only in the flusher's memory. A real flusher retries, and has to retry without counting the same views twice. A crash between <code>SPOP</code> and <code>GETDEL</code> is milder: the counter keeps its count but is off the pending list until its next view.</p>
+
+<p>Counters are the easy case, because adding is order-independent and a counter has one writer: the flusher. Write-behind of whole objects raises two harder problems. The first is order. The flusher writes in the order it drains its queue, so a database that expects a customer row before their order row can receive them the other way round; Coherence warns that write-behind "may re-order database updates". The second is other writers. If anything writes the database directly, Redis is no longer the only owner of the row. Figure 6 shows what that costs.</p>
+
+<FlushConflictFigure number={6} />
+
+<p>Step through it and notice that every individual step was correct. The merchant's edit was saved, the pricing job's update was committed, and the flusher wrote exactly what it was given. The loss comes from the flusher writing a whole object that it read before the pricing job ran. Coherence says such conflicts have to be handled "heuristically or escalated" to a person. In practice that means write-behind is safe only for data that nothing else writes, or that the flusher can merge rather than replace, as adding a count does.</p>
+
+<p>So write-behind is justified when losing a few seconds of acknowledged writes is acceptable and the database could not otherwise keep up: view and like counters, rate-limiting tallies, "last seen" timestamps, buffering a burst of events. It is not for orders, payments, stock levels or anything a customer was promised.</p>
+
+<h2 id="variations">Two variations: write-around and refresh-ahead</h2>
+
+<p>Two more names turn up often enough to know.</p>
+
+<p><strong>Write-around</strong>, another name from processor caches, means writes go to the database and do not populate the cache; only reads load data into it. It is the write side of cache-aside: the write goes around the cache. On its own it says nothing about the copy already cached, so it has to be paired with a delete or with an acceptably short TTL, which brings you back to Figure 1.</p>
+
+<p><strong>Refresh-ahead</strong> reloads a popular entry before it expires, so readers keep hitting. Coherence's version: with a 60-second expiry and a refresh-ahead factor of 0.5, a read of an entry that is between 30 and 60 seconds old returns the cached value at once and starts a background reload; a read after 60 seconds loads synchronously as usual. With Redis, the reader can check the remaining lifetime with <code>PTTL</code>, which returns milliseconds, and start one background reload when it falls below a threshold. Send the <code>PTTL</code> in the same pipeline as the <code>GET</code>, or keep a "refresh after" time inside the value, so the check does not cost a second round trip. Only keys that are being read get refreshed, so refresh-ahead keeps hot keys warm and lets cold ones expire. Starting exactly one reload per key, rather than one per reader, is part of the stampede problem, and <ArticleRef slug="stampedes">Cache stampedes and the thundering herd</ArticleRef> derives a better rule for when to refresh.</p>
+
+<h2 id="failures">How each pattern fails</h2>
+
+<p>Each pattern has appeared with its own failure. It helps to see them side by side, because the failure you can live with is often what decides between patterns. The table assumes the application writes the database before the cache wherever there is a choice.</p>
+
+<div class="table-scroll" role="region" tabindex="0" aria-label="Failure behaviour of each caching pattern">
+<table>
+  <thead><tr><th scope="col">Pattern</th><th scope="col">Redis unreachable</th><th scope="col">Failure between the two steps of a write</th><th scope="col">Redis restarts empty</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Cache-aside</th><td>Reads can treat the error as a miss and go to the database. Writes still commit; the delete fails.</td><td>Stale copy until its TTL.</td><td>Refills itself on reads; the database meanwhile takes every miss. Under overload it can stop refilling, unless late answers are cached or abandoned queries are skipped (Figure 4).</td></tr>
+    <tr><th scope="row">Read-through</th><td>Depends on the layer. Some treat a Redis error as a miss and call the loader. Others rethrow it, as Spring's default error handler does, so the read fails unless you configure it to fall through.</td><td>Not a write pattern; pairs with any of the others.</td><td>Refills itself on reads. Under overload, keeps refilling only if its loads may finish after the request gives up.</td></tr>
+    <tr><th scope="row">Write-through</th><td>Writes commit to the database; the cache update fails.</td><td>Stale copy until its TTL (database first). A value that was never committed, if Redis is written first.</td><td>Keys that are only read never return, because only writes put them there (Amazon's guidance points this out). In practice, reads also fill on a miss.</td></tr>
+    <tr><th scope="row">Write-behind</th><td>Writes cannot be accepted at all, or must go to the database directly, around the queue, which risks Figure 6's overwrite when the queue later flushes.</td><td>Acknowledged writes not yet flushed are lost.</td><td>Every queued write is lost.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>A few of these need a sentence more.</p>
+
+<p>How quickly an unreachable Redis fails depends on what broke. If Redis is stopped but its host is up, the connection is refused at once: with the server stopped, <code>redis-cli GET product:42</code> printed "Connection refused" within 5 milliseconds. If the host or the network is down, nothing answers at all, and the client waits for its connect timeout. Against an address where nothing answered, <code>redis-cli</code> was still waiting after 30 seconds; with a 2-second timeout set, it gave up within a few seconds. A Redis that is up but slow holds requests in the same way. Waits like these are how a cache outage becomes a site outage, so set both a connect timeout and a command timeout; <ArticleRef slug="clients-and-pipelining">Redis clients: round trips, pipelining and atomic operations</ArticleRef> covers choosing them.</p>
+
+<p>Once the error arrives, Facebook's rule for failed cache reads is a good default: treat the error as a miss, but skip storing the value afterwards, so as not to add load to a cache or network that may be overloaded.</p>
+
+<p>Treating errors as misses keeps the site working, but every request now reaches the database (the <ArticleRef slug="">introduction</ArticleRef> gave the arithmetic). Figure 4 showed what happens when it cannot cope.</p>
+
+<h2 id="choosing">Choosing a pattern</h2>
+
+<p>Most applications need less than this article has covered. Cache-aside reads, delete on write, and a TTL on every key are the right starting point for most data, because each part fails safely: a lost delete is bounded by the TTL, a lost cache is a slower site rather than a broken one, and a lost write is impossible because the database is always written first. The other patterns are additions for specific data, chosen by a few questions.</p>
+
+<p><strong>How many times is this key read between writes?</strong> With delete-on-write, expect a key's hit ratio to be about <em>k</em> ÷ (<em>k</em> + 1), and never less than 1 − 1 ÷ <em>k</em>. At a hundred reads per write that is irrelevant. At two or three it is about 67% to 75%, and as little as 50% to 67% if people read what they have just written: update those keys on write instead, or leave them out of the cache. Count it per kind of key from your logs, because a product page and a stock level have very different ratios.</p>
+
+<p><strong>Who reads straight after writing?</strong> If the person who made a change expects to see it at once, as with a basket, a profile or a setting, write-through on that path gives them a hit with the new value. Read-your-writes in general, including across several caches, is a topic of the invalidation article.</p>
+
+<p><strong>Does the writer have the cached value?</strong> If the cached value is assembled from several sources, updating it on every write means rebuilding it everywhere a source changes. Delete, and let the next read assemble it.</p>
+
+<p><strong>How stale may a read be?</strong> Every pattern here can serve an old value for up to the TTL after a failure, and the invalidation article shows races that can do the same. If no staleness is acceptable, as for the price used to charge a customer, read that value from the database, not the cache. Azure's guidance gives the same advice for security-sensitive data, for a different reason: a shared cache can expose it.</p>
+
+<p><strong>Can you lose a write you have acknowledged?</strong> If not, do not use write-behind. If you can, and something else writes the same data, still do not, unless the flusher can merge rather than overwrite.</p>
+
+<p><strong>What happens when Redis restarts?</strong> Whether cache-aside recovers depends on how much load the database can take with an empty cache, and on whether late answers are kept or abandoned queries skipped. Figure 4 shows all three cases. <ArticleRef slug="stampedes">Cache stampedes and the thundering herd</ArticleRef> and <ArticleRef slug="operating-a-cache">Operating a cache</ArticleRef> cover warming a cache and shedding load.</p>
+
+<div class="table-scroll" role="region" tabindex="0" aria-label="Summary of caching patterns">
+<table>
+  <thead><tr><th scope="col">Pattern</th><th scope="col">On a miss</th><th scope="col">On a write</th><th scope="col">Main risk</th><th scope="col">Use for</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Cache-aside, delete on write</th><td>Application loads and fills</td><td>Database, then <code>DEL</code></td><td>One miss per write; stale until TTL if the delete is lost</td><td>Most read-heavy data; the default</td></tr>
+    <tr><th scope="row">Write-through</th><td>As cache-aside</td><td>Database, then <code>SET … EX</code></td><td>Out-of-order writers; unread values; a dropped TTL</td><td>Data read right after it is written; keys written often</td></tr>
+    <tr><th scope="row">Read-through</th><td>A loader in front of Redis</td><td>Any of the others</td><td>The loader is the only path to the data</td><td>Keeping how data is loaded and cached in one place</td></tr>
+    <tr><th scope="row">Write-behind</th><td>As cache-aside</td><td>Redis now, database later</td><td>Acknowledged writes lost; reordering; overwriting other writers</td><td>Counters and buffers where some loss is acceptable</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="what-you-can-decide">What you can now decide</h2>
+
+<p>A caching pattern is a decision about two things: who fills the cache on a miss, and when a write reaches the database relative to the user being told it is saved. With that in hand you can now:</p>
+
+<ul>
+  <li>write a cache-aside read and write path, and say why the write deletes rather than updates, and why the database goes first;</li>
+  <li>estimate how often a key deleted on every write will hit, from its reads per write, and the floor it cannot fall below;</li>
+  <li>add write-through where users read their own writes, with an expiry on every <code>SET</code>, after the transaction commits;</li>
+  <li>explain why a cache that loses its contents under overload can stop refilling, and the two ways out: keep the answers that arrive late, or stop the database working on queries nobody is waiting for;</li>
+  <li>decide whether write-behind is acceptable for a piece of data, from how much loss is tolerable and who else writes it;</li>
+  <li>predict what each pattern leaves behind when a write fails halfway.</li>
+</ul>
+
+<p>All of these patterns store something under a key. What that something should be, and what the key must contain so that one user never receives another's answer, is the next article: <ArticleRef slug="keys-and-values">Cache keys and cached values</ArticleRef>.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+
+<ul>
+  <li>Rajesh Nishtala and others, <a href="https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf">Scaling Memcache at Facebook</a>, NSDI 2013. Section 2 describes the demand-filled look-aside cache and the reason for deleting rather than updating; section 3.1 the rule of treating get errors as misses without refilling.</li>
+  <li>Nathan Bronson, Abutalib Aghayev, Aleksey Charapko and Timothy Zhu, <a href="https://sigops.org/s/conferences/hotos/2021/papers/hotos21-s11-bronson.pdf">Metastable Failures in Distributed Systems</a>, HotOS 2021. Section 2.2 is the look-aside cache example behind Figure 4, and section 3 the argument that a read-through cache can give filling the cache priority over answering the client.</li>
+  <li>Microsoft, <a href="https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside">Cache-Aside pattern</a>, Azure Architecture Center. The read and write path, the order of the database update and the delete, and when the pattern is unsuitable.</li>
+  <li>Amazon Web Services, <a href="https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/Strategies.html">Caching strategies</a>, ElastiCache developer guide. The page is headed "Caching strategies for Memcached", but the patterns are the same for Redis: lazy loading, write-through and its write penalty, cache churn and adding a TTL.</li>
+  <li>Oracle, <a href="https://docs.oracle.com/en/middleware/standalone/coherence/14.1.1.2206/develop-applications/caching-data-sources.html">Caching Data Sources</a>, Coherence 14.1.1 documentation. Definitions of read-through, write-through, write-behind and refresh-ahead, with write-behind's requirements.</li>
+  <li>Redisson, <a href="https://redisson.pro/docs/data-and-services/collections/">Collections: Map persistence</a>. Read-through, write-through and write-behind for a Redis-backed map in Java.</li>
+  <li>Read-through in frameworks: Spring, <a href="https://docs.spring.io/spring-framework/reference/integration/cache/annotations.html">Declarative annotation-based caching</a> (<code>@Cacheable</code>); Microsoft, <a href="https://learn.microsoft.com/en-us/aspnet/core/performance/caching/hybrid">HybridCache library in ASP.NET Core</a>, including when a shared load is cancelled. Committing before touching the cache: Django, <a href="https://docs.djangoproject.com/en/5.2/topics/db/transactions/#performing-actions-after-commit">Performing actions after commit</a>.</li>
+  <li>Redis documentation: <a href="https://redis.io/docs/latest/commands/set/">SET</a> (the <code>EX</code>, <code>KEEPTTL</code> and <code>XX</code> options), <a href="https://redis.io/docs/latest/commands/del/">DEL</a>, <a href="https://redis.io/docs/latest/commands/getdel/">GETDEL</a>, <a href="https://redis.io/docs/latest/commands/pttl/">PTTL</a>.</li>
+  <li>Measured behaviour quoted in this article (deletes, TTLs after <code>SET</code>, <code>SET … XX</code>, <code>GETDEL</code> against <code>GET</code> then <code>DEL</code>, loss on restart, connection refused against waiting on an unreachable host) was observed on Redis 8.10.3 on macOS, with persistence off. Every other number in the figures comes from an illustrative model, described in each figure's caption.</li>
+</ul>
+
+<style>
+  .table-scroll { overflow-x: auto; max-width: 100%; margin: 1.6rem 0; }
+  .table-scroll table { display: table; min-width: 36rem; width: 100%; margin: 0; border-collapse: collapse; font: .82rem/1.6 var(--font-sans); }
+  .table-scroll th, .table-scroll td { padding: .55rem .6rem; border-bottom: 1px solid var(--color-rule); text-align: left; vertical-align: top; }
+  .table-scroll thead th { border-bottom-color: var(--color-rule-strong); font-weight: 600; }
+  .table-scroll tbody th { font-weight: 600; }
+  .table-scroll code { font-size: .76rem; }
+  .table-scroll:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 3px; }
+  .formula { margin: 1.2rem 0 1.4rem; text-align: center; font: 1.05rem/1.9 var(--font-serif); }
+</style>

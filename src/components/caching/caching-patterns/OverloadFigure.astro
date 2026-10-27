@@ -1,0 +1,95 @@
+---
+// Figure: who finishes the load after Redis restarts (cache-aside versus read-through).
+import SimFigure from '../shared/SimFigure.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './patterns.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="pattern-overload" title="What happens to a query nobody is waiting for" advance={5000} legend={['client', 'hit', 'miss', 'error']}
+  caption="Illustrative model: 500 requests a second over 1,000 keys with skewed popularity; Redis holds 600 keys and is emptied at 10 s. The database answers 100 queries a second in arrival order. The application waits 1 second for a miss, then gives up. The choice decides what happens to a query that cannot be answered within that second. One request in 25 is drawn as a moving dot. No retries and no coalescing of duplicate loads. In the third option the model knows on arrival that a query would be late; a real system finds out when a deadline passes.">
+  <Choice slot="params" name="abandoned" label="A query the application has given up on" value="discard"
+    options={[{ value: 'discard', label: 'runs; answer discarded' }, { value: 'cache', label: 'runs; answer cached' }, { value: 'drop', label: 'is never run' }]} />
+  <Fragment slot="stats">
+    <Readout name="hit" label="Hit ratio, last second" value="–" kind="hit" />
+    <Readout name="answered" label="Answered within 1 s" value="–" kind="client" />
+    <Readout name="wait" label="Database wait" value="0 s" kind="database" />
+  </Fragment>
+  <div slot="after" data-chart></div>
+  <Fragment slot="text">
+    <p>One request in 25 is drawn as a dot travelling from the clients to the application and Redis, and on a miss to the database. A hit returns as a filled dot; a request that waits too long returns as a cross. The chart marks the moment Redis is emptied.</p>
+    <p>For the first ten seconds Redis is warm: about 90% of requests hit, the database receives about 40 queries a second, well under half of what it can answer, and every request is answered within a second. At 10 s Redis restarts empty and every request misses at once.</p>
+    <p>When a late query still runs and its answer is discarded, as in cache-aside as usually written, the first hundred or so queries return in time and their keys are cached, which brings the hit ratio back to about 55%. Every later query waits behind a queue that keeps growing, returns after the application has given up, and is cached by no one. Redis stays at about a hundred keys, only hits are answered, and the database wait passes a minute: the system does not recover even though Redis is running again.</p>
+    <p>When a late query still runs and its answer is cached, as a loader detached from the request does, the same queries return just as late, but each result is stored whether or not anyone is still waiting. The hit ratio climbs back to about 90% within ten seconds, the queue drains, and by about 25 s every request is answered in time again.</p>
+    <p>When a query that would be late is never run, those requests still fail, but the database spends all its time on queries someone is waiting for, and every answer is cached. The hit ratio is back near 90% by 20 s, and from about 16 s every request is answered in time.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { createScene, spread } from '../shared/scene.mjs';
+  import { lineChart } from '../shared/chart.mjs';
+  import { overload } from './overload-model.mjs';
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="pattern-overload"]').forEach(root => {
+    const scene = createScene(root.querySelector<HTMLElement>('[data-scene]')!, {
+      label: 'Clients send requests to an application, which reads Redis and, on a miss, queries the database',
+      nodes: [
+        { id: 'clients', kind: 'client', label: 'Clients', count: 3 },
+        { id: 'app', kind: 'app', label: 'Application' },
+        { id: 'redis', kind: 'redis', label: 'Redis' },
+        { id: 'database', kind: 'database', label: 'Database' },
+      ],
+      edges: [
+        { id: 'client-app', from: 'clients', to: 'app' },
+        { id: 'app-redis', from: 'app', to: 'redis' },
+        { id: 'app-database', from: 'app', to: 'database' },
+      ],
+      layout: (width, compact) => {
+        // On phones the database sits further from the right edge, so its queue count fits.
+        const [a, b, c] = compact ? [44, (width - 40) / 2, width - 84] : spread(width, 3, 110);
+        return { height: compact ? 220 : 190, positions: { clients: [a, compact ? 110 : 95], app: [b, compact ? 110 : 95], redis: [c, compact ? 48 : 42], database: [c, compact ? 165 : 145] } };
+      },
+    });
+    const chart = lineChart(root.querySelector<HTMLElement>('[data-chart]')!, {
+      label: 'Hit ratio and share of requests answered within one second, each second',
+      height: 220,
+      x: { label: 'Simulated time (s)', window: 60 },
+      y: { label: 'Per cent of requests', domain: [0, 100] },
+      series: [
+        { id: 'hit', label: 'Hit ratio', kind: 'hit' },
+        { id: 'answered', label: 'Answered within 1 s', kind: 'client' },
+        // A vertical rule at the restart, drawn as a two-point series (the shared chart has only horizontal rules).
+        { id: 'restart', label: 'Redis emptied', kind: 'redis', dash: '2 3' },
+      ],
+    });
+    let shown: any = null, drawn = 0;
+    const seconds = (ms: number) => (ms < 10000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 1000)} s`);
+    mountSim(root, {
+      seed: 1,
+      create: (params, seed) => overload({ abandoned: params.abandoned, sample: 25 }, seed),
+      update: () => false,
+      render(model: any) {
+        if (model !== shown) { shown = model; drawn = 0; chart.clear(); }
+        for (; drawn < model.samples.length; drawn++) {
+          const s = model.samples[drawn];
+          chart.push('hit', s.t, s.hitRatio * 100);
+          chart.push('answered', s.t, s.answered * 100);
+        }
+        if (model.restarted) chart.set('restart', [[model.restartedAt / 1000, 0], [model.restartedAt / 1000, 100]]);
+        chart.render();
+        scene.dots(model.movers.active());
+        const last = model.samples.at(-1);
+        const queue = model.queueLength();
+        scene.node('redis').set({ badge: `${model.cache.size} keys`, sublabel: model.restarted && model.sim.now - model.restartedAt < 3000 ? 'restarted' : '' });
+        scene.node('database').set({ queue: [queue, 6], sublabel: `${queue.toLocaleString('en-GB')} waiting` });
+        scene.node('app').set({ sublabel: ({ discard: 'late: discarded', cache: 'late: cached', drop: 'late: not run' } as Record<string, string>)[model.params.abandoned] });
+        setReadouts(root, {
+          hit: last ? `${Math.round(last.hitRatio * 100)}%` : '–',
+          answered: last ? `${Math.round(last.answered * 100)}%` : '–',
+          wait: seconds(model.wait()),
+        });
+      },
+    });
+  });
+</script>

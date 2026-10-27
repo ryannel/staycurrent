@@ -1,0 +1,201 @@
+---
+import Term from '../../components/caching/shared/Term.astro';
+import ArticleRef from '../../components/caching/shared/ArticleRef.astro';
+import RepeatedWork from '../../components/caching/introduction/RepeatedWork.astro';
+import ReadPath from '../../components/caching/introduction/ReadPath.astro';
+import HitRatio from '../../components/caching/introduction/HitRatio.astro';
+import MissesAndLoad from '../../components/caching/introduction/MissesAndLoad.astro';
+import LatencySpread from '../../components/caching/introduction/LatencySpread.astro';
+import Popularity from '../../components/caching/introduction/Popularity.astro';
+import SmallCache from '../../components/caching/introduction/SmallCache.astro';
+import CacheLayers from '../../components/caching/introduction/CacheLayers.astro';
+import StaleCopy from '../../components/caching/introduction/StaleCopy.astro';
+import CacheOutage from '../../components/caching/introduction/CacheOutage.astro';
+---
+<p>Picture an online shop. Every time someone opens a product page, the application asks the database for the product, its price, its stock and its reviews, and builds the page from the answers. Most of the time the answers are the same as they were a second ago. The database does the same work again anyway, for every visitor.</p>
+<p>That is fine until traffic grows. Then the database becomes the slowest and most expensive part of the system, and much of what it does is repetition. The usual answer is a cache: a separate store that keeps copies of recent answers so the application can reuse them. In practice that store is very often Redis.</p>
+<p>This article explains what a cache buys and what it costs, using small simulations you can run and some arithmetic you can check. By the end you will be able to say how much a cache would reduce latency and database load for a given hit ratio, why a cache much smaller than your data can still work, and which new problems a cache brings with it. The rest of the collection then shows how to solve those problems with Redis.</p>
+
+<section id="repeated-work">
+<h2>The same answers, again and again</h2>
+<p>Start with no cache at all. In Figure 1, visitors send <Term kind="client" mark>requests</Term> for product pages to an application, and the application asks the <Term kind="database">database</Term> for each one. Some products are far more popular than others, as they are in any shop. Watch the bars under the drawing for a minute.</p>
+<RepeatedWork number={1} />
+<p>The bars count how often the database has computed the answer for each of the six most popular products. Within a minute, product:1 has been computed about 40 times, and about three in four of all queries have recomputed an answer the database had already produced. Nothing about product:1 changed in between. Now move the slider to double the visitors, and watch the queries a second shown under the database: within ten seconds they double too. The number of different products asked for can hardly rise, because this small shop sells only 50.</p>
+<p>So the database's load is set by how many people visit, not by how much data there is or how often it changes. That is the waste a cache removes. If the application kept the answer for product:1 after computing it once, every later request for product:1 could reuse it, as long as the answer is still correct.</p>
+</section>
+
+<section id="what-redis-is">
+<h2>What Redis is</h2>
+<p>Redis is an in-memory key-value server. It runs as its own process, usually on its own machine or as a managed service, and applications connect to it over TCP. Every key lives in memory, which is why reads are fast and why the data held is limited by memory. Redis can also write its data to disk, but a cache usually does not depend on that.</p>
+<p>The application talks to Redis with short commands: <code>GET key</code> returns the value stored under a key, and <code>SET key value</code> stores one. Values are not only strings. Redis also stores hashes, lists, sets, sorted sets and other structures, with commands that operate on them in place, such as incrementing one field of a hash. Redis runs one command at a time, so a single command is never interleaved with another client's. A cache uses a small part of this; <ArticleRef slug="how-redis-works">article 7</ArticleRef> explains how Redis executes commands and spends memory.</p>
+<p>Valkey, a fork of Redis 7.2 started in 2024 after Redis changed its licence, behaves the same for the caching ideas and core commands in this collection, so I say Redis throughout. Where an article relies on a feature added to Redis after the fork, it names the version, and <ArticleRef slug="operating-a-cache">article 11</ArticleRef> covers the licences when you choose a server or service.</p>
+</section>
+
+<section id="read-path">
+<h2>Keeping a copy: the cache-aside read path</h2>
+<p>The simplest way to use Redis as a cache is called <strong>cache-aside</strong>, or lazy loading. The cache sits to one side of the application's normal path, and the application decides when to use it. To read a product:</p>
+<ol>
+  <li>Ask <Term kind="redis">Redis</Term> for the product's key.</li>
+  <li>If Redis has it, that is a <Term kind="hit" mark>hit</Term>: use the stored value and stop.</li>
+  <li>If not, that is a <Term kind="miss" mark>miss</Term>: query the database as you would without a cache, then <Term kind="write" mark>store</Term> the answer in Redis for next time.</li>
+</ol>
+<p>Figure 2 walks through two requests for the same product. Step through it with Next.</p>
+<ReadPath number={2} />
+<p>The first request costs three trips: to Redis, to the database, and back to Redis to store the answer. The second costs one. The colours in that figure are the ones every figure in this collection uses: a grey dot is a request that has not been answered yet, Redis is red, the database is blue, a hit is a filled green dot, a miss is an orange ring, and a write to Redis is a teal square.</p>
+<p>In application code, the read path is a few lines. Here it is in Python with the <code>redis-py</code> client; other languages look much the same:</p>
+<pre><code>import redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
+
+cache = redis.Redis(host="cache.internal", decode_responses=True,
+                    socket_timeout=0.05, socket_connect_timeout=0.05,
+                    retry=Retry(NoBackoff(), 0))   # no retries on the cache path
+
+def product_page(product_id):
+    key = f"product:&#123;product_id&#125;"
+    try:
+        cached = cache.get(key)
+    except redis.RedisError:            # Redis down or too slow: treat it as a miss
+        cached = None
+    if cached is not None:              # hit
+        return cached
+    page = build_page(db, product_id)   # miss: do the work
+    try:
+        cache.set(key, page, ex=60)     # keep a copy for 60 seconds
+    except redis.RedisError:
+        pass                            # the page is correct without the copy
+    return page</code></pre>
+<p>Three details matter already. First, the key: <code>product:42</code> names exactly one answer. Anything that changes the answer, such as the visitor's currency or language, has to be part of the key, or one visitor can receive another's page. <ArticleRef slug="keys-and-values">Article 3</ArticleRef> is about choosing keys.</p>
+<p>Second, the <code>ex=60</code>. It sends <code>SET product:42 … EX 60</code>, which stores the value and gives it a <strong>time to live</strong> (TTL) of 60 seconds, after which Redis treats it as gone and removes it. Setting the expiry in the same command matters. If the application sent <code>SET</code> and then a separate <code>EXPIRE</code> command and crashed in between, the key would have no expiry and would never leave. Here is the miss, the fill and the hit from Figure 2, run against Redis 8.10:</p>
+<pre><code>$ redis-cli GET product:42
+(nil)
+$ redis-cli SET product:42 '&#123;"id":42,"name":"Desk lamp","price":"34.00"&#125;' EX 60
+OK
+$ redis-cli GET product:42
+"&#123;\"id\":42,\"name\":\"Desk lamp\",\"price\":\"34.00\"&#125;"
+$ redis-cli TTL product:42
+(integer) 60</code></pre>
+<p>Third, the timeouts, the <code>retry</code> setting and the two <code>except</code> clauses. Without them, a Redis that is down or not answering makes every request fail or wait. By default <code>redis-py</code> 8.1 waits up to five seconds for each attempt and retries a failed command ten times, pausing between attempts. With Redis stopped, this function without the <code>retry</code> line took 8 to 9 seconds a page on my laptop. Losing the cache would then take the site down with it. With short timeouts, no retries and the two <code>except</code> clauses, the application treats an unreachable Redis as a miss and goes to the database instead, a choice called failing open. Measured the same way, it fell back to the database in under a millisecond when Redis was stopped, and in about 100 ms when nothing at Redis's address replied (50 ms each for the <code>GET</code> and the <code>SET</code>). Retrying would only make the visitor wait longer for an answer the database can already give; <ArticleRef slug="clients-and-pipelining">article 8</ArticleRef> covers where retries do help. Whether the database can take the extra load is the subject of Figure 10.</p>
+<p>Cache-aside is not the only pattern. A cache can also load from the database itself (read-through), or be written at the same time as the database (write-through), or before it (write-behind). <ArticleRef slug="caching-patterns">Article 2</ArticleRef> compares them, including how each behaves when the cache fails; this article sticks to cache-aside because it is the most common and the easiest to reason about.</p>
+</section>
+
+<section id="where-redis-sits">
+<h2>Where Redis sits among other caches</h2>
+<p>Redis is not the only cache a request passes through. Figure 3 places the others alongside it.</p>
+<CacheLayers number={3} />
+<p>The browser and a content delivery network (CDN) keep whole HTTP responses, controlled by headers such as <code>Cache-Control</code>. They are the cheapest caches of all when they apply, but they are a separate subject, and this collection does not cover them.</p>
+<p>At the other end, the database caches too. PostgreSQL's shared buffers and MySQL's InnoDB buffer pool keep recently used table and index pages in memory. That is why a database is often faster than you might expect for repeated queries. But a page cache still leaves the database parsing, planning and executing each query, joining tables, sorting, and handling the connection. An application cache skips all of that, and it can hold answers that no table contains, such as a rendered page or a computed total.</p>
+<p>The application can also keep copies in its own memory. That is the fastest place of all, with no network trip, but each process has its own copy: ten application servers hold ten copies, fill them separately, and can disagree with each other. Redis is the shared middle layer: one copy that every application process sees, one network hop away. The two can be combined. <ArticleRef slug="cluster-and-hot-keys">Article 10</ArticleRef> covers in-process caches in front of Redis.</p>
+</section>
+
+<section id="hit-ratio">
+<h2>Hit ratio</h2>
+<p>A cache is only useful if requests hit it. The number that says how often they do is the <strong>hit ratio</strong>: hits divided by all lookups. If 950 of 1,000 requests hit, the hit ratio is 95%. Its complement, the share of requests that miss, is the <strong>miss ratio</strong>, here 5%.</p>
+<p>Figure 4 runs the read path continuously. Redis starts empty and has room for every product; each stored answer expires after 60 seconds of simulated time. Watch the counters.</p>
+<HitRatio number={4} />
+<p>At first almost every request misses, because Redis has nothing. Requests for popular products soon start returning green, and the hit ratio climbs. After a few simulated minutes (press <strong>Skip ahead 5 minutes</strong> rather than wait), the hit ratio over the last 100 requests settles at around three in four.</p>
+<p>It does not reach 100%, for two reasons you can see. Rarely viewed products are requested so seldom that their answer has expired, or was never stored, by the time the next request comes. And even the most popular product misses once a minute, when its copy expires. Both are normal. Every cache has a hit ratio below 100%, and most of the decisions in this collection move it up or down.</p>
+<p>Redis counts hits and misses itself, in the <code>keyspace_hits</code> and <code>keyspace_misses</code> fields of the <code>INFO stats</code> command. Treat that as a rough guide rather than your cache's hit ratio. It counts every read of a key, by any command from any client: on the test server <code>TTL</code>, <code>EXISTS</code>, <code>TYPE</code> and <code>OBJECT ENCODING</code> each counted as a hit. The ratio you want is the one your application measures: a <code>GET</code> that returns a value is a hit, a nil is a miss. <ArticleRef slug="operating-a-cache">Article 11</ArticleRef> covers what to monitor.</p>
+</section>
+
+<section id="what-it-buys">
+<h2>What the hit ratio buys</h2>
+<p>Suppose a Redis read takes L<sub>c</sub> and a database read takes L<sub>d</sub>. Every request pays for the Redis read. A miss also pays for the database read, and that happens on a share 1 − h of requests, where h is the hit ratio. So the average request takes:</p>
+<p class="intro-equation">mean latency = L<sub>c</sub> + (1 − h) × L<sub>d</sub></p>
+<p>I have left out the write that stores the answer after a miss, which costs about as much as the first Redis read. The database's share is simpler still. If R requests arrive each second, only the misses reach the database:</p>
+<p class="intro-equation">database reads a second = R × (1 − h)</p>
+<p>The database's load depends only on the miss ratio. Figure 5 puts numbers to both formulas: 1,000 requests a second, an assumed 1 ms for a Redis read and 20 ms for a database read. Each dot is one request in one second. Choose a hit ratio and count the rings.</p>
+<MissesAndLoad number={5} />
+<p>Going from 0% to 90% takes the database from 1,000 reads a second to 100. Then try 95% and 99%. The hit ratio rises by only four points, but the database reads fall from 50 to 10: five times fewer. The ratio of the two miss ratios gives it directly, (1 − 0.95) / (1 − 0.99) = 0.05 / 0.01 = 5. Going on to 99.9% cuts them tenfold again.</p>
+<p>Mean latency improves much less. From 95% to 99% it goes from 2.0 ms to 1.2 ms, because every request still pays the 1 ms Redis read. Once a cache works at all, raising the hit ratio further mostly protects the database. When you hear that a cache's hit ratio fell from 99% to 98%, read it as "the database's read load just doubled".</p>
+<p>Is 1 ms for a Redis read realistic? On my laptop, one client sending one <code>GET</code> at a time over the loopback interface completed about 10,000 a second, with a median of 0.095 ms each (measured with <code>redis-benchmark</code> against Redis 8.10.3). Most of that time is the client and the operating system, not Redis. Over a real network, add the network's round trip, typically a fraction of a millisecond within one data centre. So 1 ms is a cautious guess, not a measurement.</p>
+<p>The same arithmetic says when a cache is not worth having. Without a cache every request costs L<sub>d</sub>. With one, a hit costs L<sub>c</sub>, and a miss costs L<sub>c</sub> + L<sub>d</sub> + L<sub>c</sub>, counting the write that stores the answer. The cache helps when its average is lower:</p>
+<p class="intro-equation">L<sub>c</sub> + (1 − h)(L<sub>d</sub> + L<sub>c</sub>) &lt; L<sub>d</sub><br />(1 − h)(L<sub>d</sub> + L<sub>c</sub>) &lt; L<sub>d</sub> − L<sub>c</sub><br />h &gt; 2L<sub>c</sub> / (L<sub>d</sub> + L<sub>c</sub>)</p>
+<p>With 1 ms and 20 ms, that is 2 / 21, about 10%: easy to clear. But the closer the database's cost is to Redis's, the higher the bar. Caching the answer to a 1 ms primary-key lookup buys little; caching the answer to a 200 ms aggregate buys a lot.</p>
+</section>
+
+<section id="tail">
+<h2>Tail latency: the mean hides the misses</h2>
+<p>A mean of about 2 ms at 95% sounds as if a typical request takes 2 ms. Almost no request does. Requests are either hits, at about 1 ms, or misses, at about 21 ms. The mean is an average of two very different groups. Figure 6 draws the same model as a histogram of 5,000 requests, with some random variation in each cost.</p>
+<LatencySpread number={6} />
+<p>Notice where the markers fall. The median (p50, the latency half of the requests beat) sits inside the tall green peak of hits. The 99th percentile (p99, the latency 99% of requests beat) sits in the low orange band of misses. It stays there at 80%, 90%, 95% and even 98%, and only drops into the hits at 99.5%, once fewer than 1% of requests miss.</p>
+<p>That is a useful rule of thumb. A cache improves the typical request as soon as most requests hit. It improves the slowest 1% only when the miss ratio falls below 1%. Until then, p99 latency is set by the database.</p>
+<p>A page that makes many cache lookups is worse off, because it is slow whenever any one of them misses. If a page needs 20 answers and each hits 99% of the time, all 20 hit on only 0.99<sup>20</sup> ≈ 82% of pages, so 18% of pages include at least one miss. At 95% per lookup, 64% of pages do. Fetching the 20 keys in one round trip, which <ArticleRef slug="clients-and-pipelining">article 8</ArticleRef> covers, saves round trips but not misses.</p>
+</section>
+
+<section id="skew">
+<h2>Popularity skew and the working set</h2>
+<p>So far Redis has had room for every product. Real data is usually much larger than the memory you would want to pay for, so a cache normally holds a fraction of it. Whether that works depends on how unevenly requests are spread across items.</p>
+<p>Requests are rarely even. A few products, articles, users or search terms get a large share of the traffic, and a long tail of others are requested now and then. A common model for this is a <strong>Zipf-like distribution</strong>: the item ranked k-th by popularity receives requests in proportion to 1 / k<sup>s</sup>. The exponent s sets the skew. At s = 0 every item is equally popular; the larger s, the more traffic concentrates on the top. Figure 7 sorts 100,000 products from most to least popular and shows how much of the traffic the most popular of them receive. Its horizontal axis is logarithmic, so the top 1% and top 10% get as much room as the rest. The dashed line is what even popularity would give. Move the exponent and watch the curve pull away from it.</p>
+<Popularity number={7} />
+<p>At s = 1, the most popular 1% of these 100,000 products receive 62% of all requests, and the most popular 10% receive 81%. A cache holding a tenth of the catalogue could, at best, serve four requests in five. At s = 0 the same cache could serve one in ten. Notice too that at s = 1 the curve is nearly straight on this axis: each tenfold increase in the products held adds about the same share of requests.</p>
+<p>Which exponent is realistic? It has to be measured. In a 1999 study of six web proxy traces, Breslau, Cao, Fan, Phillips and Shenker found Zipf-like popularity in all of them, with s between 0.64 and 0.83. In those traces the top 1% of documents drew 20% to 35% of requests, and it took 25% to 40% of documents to draw 70%. Set the slider to 0.64 or 0.83 to see how much flatter that is than s = 1. (The share the top 1% receives also depends on how many items there are, and their traces were of different sizes, so compare the shapes rather than the exact numbers.) Your own workload may be more or less skewed. You can find out from an access log: count requests per key, sort the counts, and see how much of the traffic the top 1% and top 10% of keys account for.</p>
+<p>The set of items a workload touches over a period, and so needs at hand to be fast, is called its <strong>working set</strong>, a term from Peter Denning's 1968 work on memory paging. A cache works well when it can hold the part of the working set that receives most of the requests.</p>
+<p>A real cache does not know in advance which items are popular, though. It keeps what was requested recently, and when it runs out of room it removes a key to make space. Removing a key to make room is called <strong>eviction</strong>, and the rule for choosing which key is the eviction policy. A common rule is to evict the <strong>least recently used</strong> (LRU) key. Figure 8 shows what that holds. Every square is one of 2,500 products, most popular at the top left. Filled squares are in Redis. The dashed outline marks the most popular products, the ones an ideal cache of the same size would hold.</p>
+<SmallCache number={8} />
+<p>With room for 250 keys, Redis holds most of the 50 most popular products, but only about half of the 250 inside the outline. The rest of its room goes to a scatter of unpopular products further down. Each of those was requested once recently, so it is not yet the least recently used. Those squares flicker as they arrive and are pushed out again. Every slot they occupy is a slot a popular product could have used, which is why the hit ratio, about 62%, falls short of the ideal 73%.</p>
+<p>Now drag the slider. From 25 to 250 keys, the hit ratio rises from about 29% to 62%. From 250 to 1,000, four times as much memory, it rises only to about 84%. Each extra key holds a less popular product than the one before, so memory buys less and less.</p>
+<p>A real Redis behaves the same way. I replayed Zipf-like traffic (s = 1) for 100,000 products through Redis 8.10 with its <code>allkeys-lru</code> eviction policy and a memory limit, at about 670 requests a second. With room for about 1% of the products, 49% of requests hit; with room for 10%, 74% hit. An exact LRU simulation of the same requests reached 50% and 74%, and an ideal cache holding the most popular products would reach 62% and 81%. Redis does not track an exact order of use, but at this pace its choices came within about a point of exact LRU; <ArticleRef slug="expiration-and-eviction">article 4</ArticleRef> explains how it approximates LRU, how to choose a policy, and the case where the approximation falls short.</p>
+</section>
+
+<section id="costs">
+<h2>What a cache costs</h2>
+<p>A cache adds three costs: an answer can be out of date, the database comes to depend on the cache, and the cache uses memory. Each shapes much of the rest of the collection.</p>
+<h3>A copy can be wrong</h3>
+<p>The database is the source of truth. Redis holds whatever the application stored there, and it does not know when the database changes. Figure 9 follows one price change.</p>
+<StaleCopy number={9} />
+<p>For 40 seconds every visitor saw the old price. The answer was <Term kind="stale" mark>stale</Term>: it was a hit, it was fast, and it was wrong. Only the <Term kind="expiry" mark>expiry</Term> ended it.</p>
+<p>A copy stored before a change can outlive the change by at most its TTL, here 60 seconds. That makes the TTL a bound on staleness, but a rough one. A miss that read the database just before the change can store the old price just after it, and that copy then lasts another full 60 seconds. <ArticleRef slug="invalidation">Article 5</ArticleRef> covers that race. Choosing a TTL still means asking how wrong an answer is allowed to be, and for roughly how long.</p>
+<p>Shorter TTLs mean fresher answers and more misses. Deleting or updating the key when the data changes makes stale answers rarer, though the same race can still put an old value back. <ArticleRef slug="expiration-and-eviction">Article 4</ArticleRef> covers choosing a TTL and <ArticleRef slug="invalidation">article 5</ArticleRef> covers keeping a cache consistent with its database. Some values, such as the price you actually charge at checkout, should not be read from a cache at all.</p>
+<h3>The database comes to depend on the cache</h3>
+<p>At a 95% hit ratio, the database sees one request in twenty. That is the point of the cache. It also means the database may now be sized, or allowed to stay small, for one request in twenty. Figure 10 shows what happens when Redis disappears and the application fails open, as the code above does. The model has a database that can serve 40 reads a second; anything beyond that fails. Switch Redis to Down, watch for a few seconds, then switch it back.</p>
+<CacheOutage number={10} />
+<p>With Redis running, the database serves about 5 reads a second. With Redis down, every request needs the database, about 100 a second, and the 60 or so beyond its capacity fail every second. The size of the jump is 1 / (1 − h): 10 times at a 90% hit ratio, 20 times at 95%, 100 times at 99%. The higher your hit ratio, the more load the cache is hiding, and the harder its loss hits the database.</p>
+<p>Then notice what happens after the shaded band, when Redis comes back. It comes back empty, so for a few seconds misses still exceed the database's capacity. This model recovers quickly because its database fails the excess at once. A real database under overload tends to slow down for every request instead, and then the cache may not refill at all, because queries that time out never store their answers. Bronson and colleagues call this kind of self-sustaining overload a metastable failure. <ArticleRef slug="stampedes">Article 6</ArticleRef> covers floods of misses for the same keys, and <ArticleRef slug="operating-a-cache">article 11</ArticleRef> covers running a cache as the load-bearing dependency it becomes.</p>
+<h3>Memory is not free</h3>
+<p>Every cached value costs memory: the value itself, the key, and some bookkeeping per key. On my test server, the small product above took 96 bytes according to <code>MEMORY USAGE</code>. That figure came from a macOS build with a different memory allocator from typical Linux servers, so treat it as a rough size, not a constant. Multiply by millions of keys and memory decides how much of the working set fits, and so the hit ratio you can reach. <ArticleRef slug="keys-and-values">Article 3</ArticleRef> covers keeping values small and <ArticleRef slug="operating-a-cache">article 11</ArticleRef> covers sizing.</p>
+<p>A server you run yourself also needs to be told it is a cache. A fresh Redis has no memory limit (<code>maxmemory 0</code>), and its eviction policy is <code>noeviction</code>. With no limit, Redis keeps growing until the machine runs out of memory. With a limit but the default policy, Redis refuses new writes when it is full instead of evicting old keys. Neither is what a cache wants. Managed services usually set a limit for you, and several default to <code>volatile-lru</code>, which evicts only keys that have a TTL, so keys stored without one can still fill the memory. Setting a limit and a policy is part of <ArticleRef slug="expiration-and-eviction">article 4</ArticleRef>.</p>
+</section>
+
+<section id="collection">
+<h2>What you can decide now, and what comes next</h2>
+<p>You can now look at a workload and reason about caching it. A cache pays off when the same expensive answers are requested repeatedly and can be slightly out of date. What the database still sees is set by the miss ratio: R × (1 − h) reads, so moving from 95% to 99% matters far more than it sounds. Its benefit to latency is quickly exhausted, and the slowest requests stay slow until fewer than 1% miss. How much memory a given hit ratio needs depends on how skewed your traffic is, which you can measure from your own logs. And each cache brings three questions with it: how stale may an answer be, what happens to the database without the cache, and how much memory the working set needs.</p>
+<p>The rest of the collection answers those questions, in this order:</p>
+<ol class="intro-map">
+  <li><strong>Application caching with Redis.</strong> This introduction.</li>
+  <li><strong>Caching patterns.</strong> Cache-aside, read-through, write-through and write-behind: how each reads, writes and fails.</li>
+  <li><strong>Cache keys and cached values.</strong> What to cache, how to name it, and how to store it compactly.</li>
+  <li><strong>Cache expiration and eviction.</strong> Choosing a TTL, how Redis expires keys, and how its eviction policies decide what to remove.</li>
+  <li><strong>Cache invalidation and consistency.</strong> The races that leave stale data behind, and how to prevent them.</li>
+  <li><strong>Cache stampedes and the thundering herd.</strong> Why many simultaneous misses for one key overload a database, and how to prevent them.</li>
+  <li><strong>How Redis works.</strong> The event loop, data structures and memory, and what makes a command slow.</li>
+  <li><strong>Redis clients.</strong> Round trips, pipelining and atomic operations.</li>
+  <li><strong>Redis replication, persistence and failover.</strong> What snapshots, the append-only file and replicas protect, and what each can lose.</li>
+  <li><strong>Redis Cluster, sharding and hot keys.</strong> Spreading keys across servers, and relieving keys that concentrate load.</li>
+  <li><strong>Operating a cache.</strong> Monitoring, capacity planning and surviving the cache's failure.</li>
+  <li><strong>Designing a cache.</strong> One application taken from requirements to a complete cache design.</li>
+</ol>
+<p>Articles 1 to 6 are about caching as a design problem, using Redis for every example. Articles 7 to 10 open up Redis itself. Articles 11 and 12 bring the two together. The articles list at the top of this page links to each one as it is published.</p>
+</section>
+
+<section id="sources">
+<h2>Sources and further reading</h2>
+<p>Measurements in this article were made on Redis 8.10.3 (a Homebrew build on macOS, arm64, using the libc memory allocator), with client and server on one machine. They are the <code>redis-cli</code> transcripts, the 0.095 ms median round trip, the hit ratios of a real Redis under paced Zipf-like traffic, the keyspace counters, the 96-byte key, and the fail-open timings of the read-path code (redis-py 8.1.0 on Python 3.14, against a stopped Redis and an address that never answers). The <code>redis-py</code> default timeout and retry policy are from its 8.1.0 source. Every other number comes from an illustrative model, described in each figure's caption.</p>
+<ul>
+  <li>Redis documentation: <a href="https://redis.io/docs/latest/commands/set/"><code>SET</code></a> (the <code>EX</code>, <code>PX</code> and <code>KEEPTTL</code> options), <a href="https://redis.io/docs/latest/commands/info/"><code>INFO</code></a> (<code>keyspace_hits</code> and <code>keyspace_misses</code>), <a href="https://redis.io/docs/latest/develop/using-commands/keyspace/">the keyspace</a>, and <a href="https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/benchmarks/">benchmarking</a>, which explains why a single client mostly measures the network and the client.</li>
+  <li>Lee Breslau, Pei Cao, Li Fan, Graham Phillips and Scott Shenker, <a href="https://pages.cs.wisc.edu/~cao/papers/zipf-implications.html">“Web Caching and Zipf-like Distributions: Evidence and Implications”</a>, IEEE INFOCOM 1999. The source of the exponents 0.64 to 0.83 and the shares of documents and requests quoted above.</li>
+  <li>Peter J. Denning, “The Working Set Model for Program Behavior”, Communications of the ACM 11(5), 1968.</li>
+  <li>Nathan Bronson, Abutalib Aghayev, Aleksey Charapko and Timothy Zhu, <a href="https://sigops.org/s/conferences/hotos/2021/papers/hotos21-s11-bronson.pdf">“Metastable Failures in Distributed Systems”</a>, HotOS 2021. Section 2.2 describes how losing a look-aside cache with a 90% hit rate multiplies database queries tenfold and can keep the cache from refilling.</li>
+  <li>Rajesh Nishtala and others, <a href="https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf">“Scaling Memcache at Facebook”</a>, NSDI 2013. A large deployment of the cache-aside pattern this article introduces.</li>
+  <li>Microsoft Azure Architecture Center, <a href="https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside">“Cache-Aside pattern”</a>.</li>
+  <li>Managed defaults: <a href="https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/ParameterGroups.Engine.html">Amazon ElastiCache parameters</a> and <a href="https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-configure">Azure Cache for Redis configuration</a> both give <code>volatile-lru</code> as the default <code>maxmemory-policy</code>.</li>
+  <li>PostgreSQL documentation, <a href="https://www.postgresql.org/docs/current/runtime-config-resource.html">resource consumption</a> (<code>shared_buffers</code>), and MySQL documentation, <a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool.html">the InnoDB buffer pool</a>.</li>
+  <li><a href="https://valkey.io/">Valkey</a>, the fork of Redis 7.2.</li>
+  <li>redis-py 8.1.0 source: <a href="https://github.com/redis/redis-py/blob/v8.1.0/redis/_defaults.py"><code>_defaults.py</code></a> (socket timeouts of five seconds; ten retries with jittered exponential backoff from 10 ms, capped at one second), <a href="https://github.com/redis/redis-py/blob/v8.1.0/redis/client.py"><code>client.py</code></a> (the <code>Redis</code> constructor's default <code>retry</code>), <a href="https://github.com/redis/redis-py/blob/v8.1.0/redis/retry.py"><code>retry.py</code></a> (retries on connection errors and timeouts) and <a href="https://github.com/redis/redis-py/blob/v8.1.0/redis/exceptions.py"><code>exceptions.py</code></a>, where <code>ConnectionError</code> and <code>TimeoutError</code> are both kinds of <code>RedisError</code>.</li>
+</ul>
+</section>
+
+<style>
+  .intro-equation { margin: 1.25rem 0 1.4rem; text-align: center; font-family: var(--font-serif); font-size: 1.05rem; }
+  .intro-map li { margin-bottom: .45rem; }
+</style>

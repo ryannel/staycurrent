@@ -1,0 +1,442 @@
+# Evidence for article 5, Cache invalidation and consistency
+# Redis 8.10.3 (Homebrew, macOS arm64, malloc=libc), started with:
+#   redis-server --port 7105 --save '' --appendonly no --dir <temporary directory>
+# Every script checks INFO tcp_port is 7105 before running. Commands were run with redis-cli
+# (sections A-O) or a minimal RESP client in Python (sections P, Q). Run 2026-10-27.
+# The 'database' in every trace is the application's and is not shown; only Redis commands are real.
+
+## A. Server and defaults
+redis_version:8.10.3
+os:Darwin 25.6.0 arm64
+arch_bits:64
+tcp_port:7105
+> CONFIG GET maxmemory-policy
+  maxmemory-policy
+  noeviction
+> CONFIG GET notify-keyspace-events
+  notify-keyspace-events
+  
+> CONFIG GET lazyfree-lazy-user-del
+  lazyfree-lazy-user-del
+  no
+> FLUSHALL
+  OK
+
+## B. Race 1: a slow reader refills an old value after the writer's delete
+# Database holds price 39. Reader misses and reads 39 from the database (not shown: the database is the application's).
+> GET product:42
+  
+# Writer commits 35 to the database, then deletes the cached copy. There is nothing to delete yet.
+> DEL product:42
+  0
+# The reader resumes and stores the 39 it read earlier, with a one-hour TTL.
+> SET product:42 {"price":39} EX 3600
+  OK
+> GET product:42
+  {"price":39}
+> TTL product:42
+  3600
+# A second delete (for example from the next write) is the only thing besides expiry that removes it.
+> DEL product:42
+  1
+
+## C. Race 2: two writers update the cache out of order
+> SET product:42 {"price":39} EX 3600
+  OK
+# Database order: W1 commits 37, then W2 commits 35. Their cache writes arrive W2 first, then W1.
+> SET product:42 {"price":35} EX 3600
+  OK
+> SET product:42 {"price":37} EX 3600
+  OK
+> GET product:42
+  {"price":37}
+# With delete-on-write the same reordering is harmless: two deletes in either order leave the key absent.
+> DEL product:42
+  1
+> DEL product:42
+  0
+> EXISTS product:42
+  0
+
+## D. SET ... IFEQ semantics (Redis 8.4+)
+> SET k old EX 100
+  OK
+> SET k new IFEQ wrong
+  
+> GET k
+  old
+> SET k new IFEQ old
+  OK
+> GET k
+  new
+> TTL k
+  -1
+# IFEQ is an ordinary SET: without EX or KEEPTTL the old TTL is dropped (-1 above). With EX:
+> SET k newer IFEQ new EX 100
+  OK
+> TTL k
+  100
+> SET k newest IFEQ newer KEEPTTL
+  OK
+> TTL k
+  100
+# On a missing key IFEQ fails:
+> DEL k
+  1
+> SET k value IFEQ anything
+  
+> EXISTS k
+  0
+# IFEQ with GET returns the old value:
+> SET k a
+  OK
+> SET k b IFEQ a GET
+  a
+> GET k
+  b
+# DELEX compare-and-delete:
+> DELEX k IFEQ a
+  0
+> DELEX k IFEQ b
+  1
+> EXISTS k
+  0
+# NX with a lease placeholder:
+> SET k lease:7f3a NX PX 10000
+  OK
+> SET k lease:9c21 NX PX 10000
+  
+> GET k
+  lease:7f3a
+> DEL k
+  1
+
+## E. A lease held in the key itself (placeholder plus SET ... IFEQ, Redis 8.4+)
+# Reader R misses, then takes the lease by writing a placeholder with a unique token, before reading the database.
+> GET product:42
+  
+> SET product:42 lease:r-81c2 NX PX 10000
+  OK
+# A second reader S misses too. Its NX fails: someone is already loading this key.
+> GET product:42
+  lease:r-81c2
+> SET product:42 lease:s-4d07 NX PX 10000
+  
+# R reads 39 from the database and pauses. Writer W commits 35 and deletes the key, which removes R's placeholder.
+> DEL product:42
+  1
+# R resumes and fills only if its own placeholder is still there. It is not, so the old value is refused.
+> SET product:42 {"price":39} IFEQ lease:r-81c2 EX 3600
+  
+> EXISTS product:42
+  0
+# The next reader takes a new lease, reads 35 and fills.
+> SET product:42 lease:t-0b9e NX PX 10000
+  OK
+> SET product:42 {"price":35} IFEQ lease:t-0b9e EX 3600
+  OK
+> GET product:42
+  {"price":35}
+> TTL product:42
+  3600
+# Without a racing write, the fill succeeds:
+> DEL product:42
+  1
+> SET product:42 lease:u-11aa NX PX 10000
+  OK
+> SET product:42 {"price":35} IFEQ lease:u-11aa EX 3600
+  OK
+> GET product:42
+  {"price":35}
+# A lease that expires (PX 200, filler takes 400 ms) also refuses the late fill:
+> DEL product:42
+  1
+> SET product:42 lease:v-5e5e NX PX 200
+  OK
+> SET product:42 {"price":35} IFEQ lease:v-5e5e EX 3600
+  
+> EXISTS product:42
+  0
+# A late fill cannot overwrite a newer reader's lease either (tokens differ):
+> SET product:42 lease:w-2222 NX PX 10000
+  OK
+> SET product:42 {"price":39} IFEQ lease:v-5e5e EX 3600
+  
+> GET product:42
+  lease:w-2222
+> DEL product:42
+  1
+
+## F. Versioned values: set only if newer (Lua script, any Redis version with scripting)
+script: local cur = redis.call("HGET", KEYS[1], "v") if (not cur) or tonumber(cur) < tonumber(ARGV[1]) then redis.call("HSET", KEYS[1], "v", ARGV[1], "data", ARGV[2]) redis.call("EXPIRE", KEYS[1], ARGV[3]) return 1 else return 0 end
+# W2's version 8 (price 35) arrives first, then W1's late version 7 (price 37):
+> EVAL local cur = redis.call("HGET", KEYS[1], "v") if (not cur) or tonumber(cur) < tonumber(ARGV[1]) then redis.call("HSET", KEYS[1], "v", ARGV[1], "data", ARGV[2]) redis.call("EXPIRE", KEYS[1], ARGV[3]) return 1 else return 0 end 1 product:42 8 {"price":35} 3600
+  1
+> EVAL local cur = redis.call("HGET", KEYS[1], "v") if (not cur) or tonumber(cur) < tonumber(ARGV[1]) then redis.call("HSET", KEYS[1], "v", ARGV[1], "data", ARGV[2]) redis.call("EXPIRE", KEYS[1], ARGV[3]) return 1 else return 0 end 1 product:42 7 {"price":37} 3600
+  0
+> HGETALL product:42
+  v
+  8
+  data
+  {"price":35}
+# A repeat of version 8 is also refused (not newer):
+> EVAL local cur = redis.call("HGET", KEYS[1], "v") if (not cur) or tonumber(cur) < tonumber(ARGV[1]) then redis.call("HSET", KEYS[1], "v", ARGV[1], "data", ARGV[2]) redis.call("EXPIRE", KEYS[1], ARGV[3]) return 1 else return 0 end 1 product:42 8 {"price":35} 3600
+  0
+# The catch: after a DEL, the cache has forgotten version 8, and a late version 7 is accepted.
+> DEL product:42
+  1
+> EVAL local cur = redis.call("HGET", KEYS[1], "v") if (not cur) or tonumber(cur) < tonumber(ARGV[1]) then redis.call("HSET", KEYS[1], "v", ARGV[1], "data", ARGV[2]) redis.call("EXPIRE", KEYS[1], ARGV[3]) return 1 else return 0 end 1 product:42 7 {"price":37} 3600
+  1
+> HGETALL product:42
+  v
+  7
+  data
+  {"price":37}
+# Invalidating with a tombstone that carries the new version (and a TTL) instead of DEL keeps the knowledge:
+> DEL product:42
+  1
+> HSET product:42 v 8 data 
+  2
+> EXPIRE product:42 3600
+  1
+> EVAL local cur = redis.call("HGET", KEYS[1], "v") if (not cur) or tonumber(cur) < tonumber(ARGV[1]) then redis.call("HSET", KEYS[1], "v", ARGV[1], "data", ARGV[2]) redis.call("EXPIRE", KEYS[1], ARGV[3]) return 1 else return 0 end 1 product:42 7 {"price":37} 3600
+  0
+> HGETALL product:42
+  v
+  8
+  data
+  
+# A reader that finds an empty data field treats it as a miss; its fill (version 8 from the database) replaces the tombstone only if newer, so it must use >= for fills of the same version, or the writer uses version 8 and fills carry their row version.
+> DEL product:42
+  1
+
+## G. Set only if newer built from SET ... IFEQ (Redis 8.4+): read, compare in the application, write if unchanged
+> SET product:42 v7|{"price":37} EX 3600
+  OK
+# Writer A reads the current value, sees version 7, and wants to write version 9.
+> GET product:42
+  v7|{"price":37}
+# Meanwhile writer B writes version 8 with the same method:
+> SET product:42 v8|{"price":36} IFEQ v7|{"price":37} EX 3600
+  OK
+# A's write is conditional on the value it read; it fails, so A reads again, compares 9 > 8, and retries:
+> SET product:42 v9|{"price":35} IFEQ v7|{"price":37} EX 3600
+  
+> GET product:42
+  v8|{"price":36}
+> SET product:42 v9|{"price":35} IFEQ v8|{"price":36} EX 3600
+  OK
+> GET product:42
+  v9|{"price":35}
+# A late writer with version 8 reads v9, sees 8 < 9, and writes nothing.
+> DEL product:42
+  1
+
+## H. WATCH aborts a transaction if the key changed (optimistic check-and-set; taught in article 8)
+(skipped here; see research-C section H)
+
+## F2. Versioned values with tombstones: the script used in the article
+# A value is a hash {version, value}; a tombstone is a hash {version} with no value field.
+# Write if the cache has nothing, or an older version, or a tombstone of the same version.
+local cur = tonumber(redis.call("HGET", KEYS[1], "version") or "-1")
+local new = tonumber(ARGV[1])
+local dead = redis.call("HEXISTS", KEYS[1], "value") == 0
+if new > cur or (new == cur and dead and ARGV[2] ~= "") then
+  redis.call("DEL", KEYS[1])
+  if ARGV[2] == "" then redis.call("HSET", KEYS[1], "version", ARGV[1])
+  else redis.call("HSET", KEYS[1], "version", ARGV[1], "value", ARGV[2]) end
+  redis.call("EXPIRE", KEYS[1], ARGV[3])
+  return 1
+end
+return 0
+SHA c5a0b714b22d022de10de56b4233ab4087eec93f
+# Cache holds version 7 (price 39). Reader R misses later... first, start from a cached v7:
+> EVALSHA <script> 1 product:42 7 {"price":39} 3600
+  1
+# Race 1 with versions. The key expires or is evicted: (simulate with DEL)
+> DEL product:42
+  1
+# R misses and reads version 7 (price 39) from the database, then pauses.
+# W commits version 8 (price 35) and invalidates by writing a tombstone for version 8 (empty value):
+> EVALSHA <script> 1 product:42 8  3600
+  1
+> HGETALL product:42
+  version
+  8
+# R resumes and tries to fill version 7: refused.
+> EVALSHA <script> 1 product:42 7 {"price":39} 3600
+  0
+# The next reader treats the tombstone as a miss, reads version 8, and fills: accepted (same version, replacing a tombstone).
+> EVALSHA <script> 1 product:42 8 {"price":35} 3600
+  1
+> HGETALL product:42
+  version
+  8
+  value
+  {"price":35}
+> TTL product:42
+  3600
+# Race 2 with versions: W1 (version 9) and W2 (version 10) update the cache out of order.
+> EVALSHA <script> 1 product:42 10 {"price":33} 3600
+  1
+> EVALSHA <script> 1 product:42 9 {"price":34} 3600
+  0
+> HGET product:42 value
+  {"price":33}
+# A duplicate or replayed event (version 10 again, with a value) is refused because it is not newer:
+> EVALSHA <script> 1 product:42 10 {"price":33} 3600
+  0
+# The weakness: if the key is evicted or deleted, the cache forgets version 10 and a late version 9 is accepted.
+> DEL product:42
+  1
+> EVALSHA <script> 1 product:42 9 {"price":34} 3600
+  1
+> HGET product:42 value
+  {"price":34}
+> DEL product:42
+  1
+
+## I. Delayed double delete: whether the second delete catches the slow reader depends on timing
+# Case A: the reader's stale SET lands 150 ms after the first delete; the second delete is at 500 ms.
+> DEL product:42
+  0
+  [+150 ms] reader SET old value
+  [+500 ms] second DEL -> 1
+> GET product:42
+  
+# Case B: the reader is slower: its SET lands 650 ms after the first delete, after the second delete.
+> DEL product:42
+  0
+  [+500 ms] second DEL -> 0
+  [+650 ms] reader SET old value
+> GET product:42
+  {"price":39}
+> TTL product:42
+  3600
+> DEL product:42
+  1
+
+## K. Generation counter for a group of keys
+> SET gen:category:7 1
+  OK
+> SET category:7:g1:page:1 [...] EX 3600
+  OK
+> SET category:7:g1:page:2 [...] EX 3600
+  OK
+# A product in category 7 changes. One INCR makes every g1 page unreachable:
+> INCR gen:category:7
+  2
+> GET gen:category:7
+  2
+> EXISTS category:7:g2:page:1
+  0
+> DBSIZE
+  3
+> TTL category:7:g1:page:1
+  3600
+# The g1 keys remain in memory until their TTL or eviction. A reader pays one extra lookup, batchable:
+> MGET gen:category:7
+  2
+
+## L. Tag set for a group of keys
+> SET search:kettle:p1 [...] EX 3600
+  OK
+> SET search:steel:p1 [...] PX 300
+  OK
+> SADD tag:product:42 search:kettle:p1 search:steel:p1
+  2
+# search:steel:p1 has expired, but its name stays in the tag set:
+> EXISTS search:steel:p1
+  0
+> SMEMBERS tag:product:42
+  search:kettle:p1
+  search:steel:p1
+# Invalidate: read the members, delete them and the set.
+> SMEMBERS tag:product:42
+  search:kettle:p1
+  search:steel:p1
+> UNLINK search:kettle:p1 search:steel:p1 tag:product:42
+  2
+
+## M. Pub/Sub is at-most-once
+> PUBLISH invalidate product:42
+  0
+# 0 subscribers received it; the message is not stored anywhere.
+
+## N. A recent-write marker for read-your-writes
+> SET recent-write:user:7 1 EX 10
+  OK
+> EXISTS recent-write:user:7
+  1
+> TTL recent-write:user:7
+  10
+> DEL recent-write:user:7
+  1
+
+## K2. A generation counter that is lost brings old keys back
+# The application treats a missing generation as 1.
+> SET gen:category:7 1
+  OK
+> SET category:7:g1:page:1 old page EX 3600
+  OK
+> INCR gen:category:7
+  2
+> SET category:7:g2:page:1 new page EX 3600
+  OK
+# The counter is evicted (simulated with DEL). The next reader finds no generation, assumes 1, and reads the old page:
+> DEL gen:category:7
+  1
+> GET gen:category:7
+  
+> GET category:7:g1:page:1
+  old page
+# Remedy: when the counter is missing, start it from a value no earlier generation used, such as the time in milliseconds, with NX so concurrent readers agree:
+> SET gen:category:7 1793140000000 NX
+  OK
+> GET gen:category:7
+  1793140000000
+> EXISTS category:7:g1793140000000:page:1
+  0
+> FLUSHALL
+  OK
+
+## O. Delete hold-off with a short tombstone and NX fills (the memcache 'hold-off' idea in Redis)
+# The writer replaces the value with a tombstone that lives 2 s; fills use NX and so cannot replace it.
+> SET product:42 {"price":39} EX 3600
+  OK
+> SET product:42 tombstone PX 2000
+  OK
+> SET product:42 {"price":39} NX EX 3600
+  
+> GET product:42
+  tombstone
+# After the hold-off ends, a late stale fill is accepted again:
+> SET product:42 {"price":39} NX EX 3600
+  OK
+> GET product:42
+  {"price":39}
+> FLUSHALL
+  OK
+
+## P. DEL versus UNLINK of a large tag set (client-observed time for the command to return; one laptop, libc malloc)
+(script: py/unlink.py, SADD in batches of 10,000 names, then DEL or UNLINK, three runs each)
+DEL of a 1,000-member set: 0.20, 0.41, 0.24 ms (client-observed, three runs)
+UNLINK of a 1,000-member set: 0.22, 0.22, 0.42 ms (client-observed, three runs)
+DEL of a 100,000-member set: 3.11, 3.47, 3.33 ms (client-observed, three runs)
+UNLINK of a 100,000-member set: 0.19, 0.18, 0.25 ms (client-observed, three runs)
+DEL of a 1,000,000-member set: 42.49, 47.48, 41.09 ms (client-observed, three runs)
+UNLINK of a 1,000,000-member set: 0.17, 0.20, 0.18 ms (client-observed, three runs)
+
+## Q. Race 1 on a real Redis with a simulated database (py/race_real.py)
+# Two reader threads (a read every ~0.2 s each); on a miss a reader notes the database version,
+# sleeps an exponential fill time, then SET race:42 <version> EX ttl. A writer commits (increments
+# the version) then DEL race:42. A sampler GETs every 5 ms and compares with the database version.
+# 60 s per run. The point is only that the race occurs with real commands; the counts are too
+# small for rates, and the article's rates come from the model in race-model.mjs.
+writes/s 1, mean fill 50 ms, TTL 5 s, 60 s: writes 71, fills 73, stale fills 2, share of samples stale 2.77% (w x fill = 5.00%)
+writes/s 1, mean fill 50 ms, TTL 60 s, 60 s: writes 71, fills 72, stale fills 4, share of samples stale 1.41% (w x fill = 5.00%)
+writes/s 0.2, mean fill 50 ms, TTL 5 s, 60 s: writes 19, fills 29, stale fills 1, share of samples stale 4.69% (w x fill = 1.00%)
+writes/s 1, mean fill 10 ms, TTL 5 s, 60 s: writes 71, fills 68, stale fills 1, share of samples stale 0.48% (w x fill = 1.00%)
+
+# An earlier run of the same script, the same day, gave for the 1,000,000-member set:
+# DEL 57.05, 68.68, 57.42 ms; UNLINK 0.12, 0.14, 0.12 ms. The article quotes "about 40 to 70 ms".

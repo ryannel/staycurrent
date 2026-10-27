@@ -7,6 +7,18 @@ overview and the database guide's linked reading, while removing obsolete conten
 and unused infrastructure. The [earlier direction](history/site-direction-2026-10-02.md)
 records the wider coverage discussion.
 
+## Application caching publication, from 27 October 2026
+
+The user commissioned a collection on application caching with Redis, judged
+against Ciechanowski's Gears and Sam Rose's Load Balancing, and authorised
+publishing each article once it is complete. The collection lives at
+`/learn/databases/caching/` beside the other database and storage reading; the
+field guide's caches section and the homepage link to it. Twelve articles are
+planned; only published ones enter reading, search and navigation, and planned
+titles appear as plain text. See the
+[commission](article-work/caching-2026-10-27/commission.md) and
+[plan](article-work/caching-2026-10-27/plan.md).
+
 ## Relational collection publication, 26 October 2026
 
 The user authorised full publication of all 59 reviewed replacement articles from

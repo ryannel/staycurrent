@@ -1,0 +1,677 @@
+Evidence for article 3, Cache keys and cached values
+Gathered 2026-10-27. Redis 8.10.3 (Homebrew build, macOS 25.6 arm64, mem_allocator:libc, not jemalloc),
+started as: redis-server --port 7103 --dir <private mktemp dir> --save '' --appendonly no --daemonize yes
+Absolute byte counts from MEMORY USAGE are specific to this libc build; comparisons between representations are more portable.
+Every command below was run as shown; output is indented under it.
+
+# Part 1: key design
+
+## Environment
+
+  redis_version:8.10.3
+  os:Darwin 25.6.0 arm64
+  arch_bits:64
+  mem_allocator:libc
+redis-cli -p 7103 CONFIG GET hash-max-listpack-entries
+  1) "hash-max-listpack-entries"
+  2) "512"
+redis-cli -p 7103 CONFIG GET hash-max-listpack-value
+  1) "hash-max-listpack-value"
+  2) "64"
+redis-cli -p 7103 CONFIG GET proto-max-bulk-len
+  1) "proto-max-bulk-len"
+  2) "536870912"
+redis-cli -p 7103 CONFIG GET lazyfree-lazy-user-del
+  1) "lazyfree-lazy-user-del"
+  2) "no"
+redis-cli -p 7103 FLUSHALL
+  OK
+
+## Keys are binary-safe names with no namespaces; key bytes cost memory
+
+redis-cli -p 7103 SET k 1
+  OK
+redis-cli -p 7103 MEMORY USAGE k
+  (integer) 20
+redis-cli -p 7103 SET shop:listing:category=shoes&currency=GBP&sort=popular 1
+  OK
+redis-cli -p 7103 MEMORY USAGE shop:listing:category=shoes&currency=GBP&sort=popular
+  (integer) 74
+redis-cli -p 7103 STRLEN shop:listing:category=shoes&currency=GBP&sort=popular
+  (integer) 1
+redis-cli -p 7103 SET shop:listing:3f0a9c41d2b7e5a8 1
+  OK
+redis-cli -p 7103 MEMORY USAGE shop:listing:3f0a9c41d2b7e5a8
+  (integer) 48
+redis-cli -p 7103 SET  emptykey
+  OK
+redis-cli -p 7103 GET 
+  "emptykey"
+redis-cli -p 7103 DEL 
+  (integer) 1
+
+## Every input that changes the answer: a key without the currency serves the wrong page
+
+redis-cli -p 7103 SET listing:shoes:popular {"currency":"GBP","items":[{"id":42,"price":"£49.00"}]} EX 60
+  OK
+# a shopper paying in euros builds the same key, because the key leaves out the currency
+redis-cli -p 7103 GET listing:shoes:popular
+  "{\"currency\":\"GBP\",\"items\":[{\"id\":42,\"price\":\"\xc2\xa349.00\"}]}"
+redis-cli -p 7103 SET listing:v1:shoes:popular:EUR {"currency":"EUR","items":[{"id":42,"price":"€57.00"}]} EX 60
+  OK
+redis-cli -p 7103 SET listing:v1:shoes:popular:GBP {"currency":"GBP","items":[{"id":42,"price":"£49.00"}]} EX 60
+  OK
+redis-cli -p 7103 GET listing:v1:shoes:popular:EUR
+  "{\"currency\":\"EUR\",\"items\":[{\"id\":42,\"price\":\"\xe2\x82\xac57.00\"}]}"
+
+## Changing the Redis type under one key name: WRONGTYPE
+
+redis-cli -p 7103 SET product:42 {"id":42,"name":"Trail shoe","price":4900,"stock":17}
+  OK
+# new code stores products as hashes under the same name
+redis-cli -p 7103 HGET product:42 price
+  (error) WRONGTYPE Operation against a key holding the wrong kind of value
+redis-cli -p 7103 TYPE product:42
+  string
+redis-cli -p 7103 DEL product:42
+  (integer) 1
+redis-cli -p 7103 HSET product:42 id 42 name Trail shoe price 4900 stock 17
+  (integer) 4
+# old code still reads strings
+redis-cli -p 7103 GET product:42
+  (error) WRONGTYPE Operation against a key holding the wrong kind of value
+redis-cli -p 7103 DEL product:42
+  (integer) 1
+
+## Versioned key namespaces: old keys stay until they expire or are evicted
+
+(set 200 keys catalog:v1:product:N and 20 keys catalog:v2:product:N, each EX 3600, by pipe)
+redis-cli -p 7103 DBSIZE
+  (integer) 226
+redis-cli -p 7103 --scan --pattern 'catalog:v1:*' | wc -l
+  200
+redis-cli -p 7103 SCAN 0 MATCH catalog:v1:* COUNT 10
+  1) "144"
+  2)  1) "catalog:v1:product:200"
+      2) "catalog:v1:product:138"
+      3) "catalog:v1:product:101"
+      4) "catalog:v1:product:106"
+      5) "catalog:v1:product:126"
+      6) "catalog:v1:product:124"
+      7) "catalog:v1:product:55"
+      8) "catalog:v1:product:45"
+      9) "catalog:v1:product:37"
+     10) "catalog:v1:product:82"
+redis-cli -p 7103 TTL catalog:v1:product:1
+  (integer) 3600
+redis-cli -p 7103 FLUSHALL
+  OK
+
+# Part 2: strings and hashes
+
+## One product as a JSON string and as a hash
+
+redis-cli -p 7103 SET product:json:42 {"id":42,"name":"Trail running shoe","price":4900,"currency":"GBP","stock":17,"brand":"Fellside","category":"shoes","rating":4.6}
+  OK
+redis-cli -p 7103 STRLEN product:json:42
+  (integer) 129
+redis-cli -p 7103 OBJECT ENCODING product:json:42
+  "raw"
+redis-cli -p 7103 MEMORY USAGE product:json:42
+  (integer) 194
+redis-cli -p 7103 HSET product:hash:42 id 42 name Trail running shoe price 4900 currency GBP stock 17 brand Fellside category shoes rating 4.6
+  (integer) 8
+redis-cli -p 7103 OBJECT ENCODING product:hash:42
+  "listpack"
+redis-cli -p 7103 MEMORY USAGE product:hash:42
+  (integer) 155
+# reading one field
+redis-cli -p 7103 HGET product:hash:42 price
+  "4900"
+redis-cli -p 7103 HMGET product:hash:42 price stock nosuchfield
+  1) "4900"
+  2) "17"
+  3) (nil)
+# changing one field in place; the other fields are untouched
+redis-cli -p 7103 HINCRBY product:hash:42 stock -1
+  (integer) 16
+redis-cli -p 7103 HGET product:hash:42 name
+  "Trail running shoe"
+# the string must be read whole, parsed, changed and written whole
+redis-cli -p 7103 GET product:json:42
+  "{\"id\":42,\"name\":\"Trail running shoe\",\"price\":4900,\"currency\":\"GBP\",\"stock\":17,\"brand\":\"Fellside\",\"category\":\"shoes\",\"rating\":4.6}"
+
+## 1,000 products: memory per key (libc allocator; compare, do not quote absolutes as Linux figures)
+
+redis-cli -p 7103 FLUSHALL
+  OK
+  sum of MEMORY USAGE over 1,000 product:json:N keys: 181613 bytes (181.6 per key)
+  sum of MEMORY USAGE over 1,000 product:hash:N keys: 151977 bytes (152.0 per key)
+  encodings: raw listpack
+  STRLEN product:json:5 = 127
+# Redis 8.10 compact hash (HIMPORT): fieldset is per connection, so both commands go on one connection
+  OK
+  OK
+  template-listpack
+  373
+  Trail running shoe
+redis-cli -p 7103 MEMORY USAGE product:hash:42
+  (integer) 148
+
+## A long field moves a hash to the larger encoding
+
+redis-cli -p 7103 DEL h64 h65
+  (integer) 0
+redis-cli -p 7103 HSET h64 id 1 description xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  (integer) 2
+redis-cli -p 7103 OBJECT ENCODING h64
+  "listpack"
+redis-cli -p 7103 MEMORY USAGE h64
+  (integer) 115
+redis-cli -p 7103 HSET h65 id 1 description xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  (integer) 2
+redis-cli -p 7103 OBJECT ENCODING h65
+  "hashtable"
+redis-cli -p 7103 MEMORY USAGE h65
+  (integer) 233
+
+## 1,000 compact hashes (Redis 8.10 HIMPORT), same products, one connection
+
+  sum of MEMORY USAGE over 1,000 product:compact:N keys: 97977 bytes (98.0 per key)
+  OBJECT ENCODING product:compact:5: template-listpack
+  HGETALL product:compact:5 == HGETALL product:hash:5: False
+redis-cli -p 7103 CONFIG GET hash-min-template-entries
+  1) "hash-min-template-entries"
+  2) "0"
+  (HGETALL differs only in field order: compact hash returns fields in template order with values reordered; contents identical.)
+
+# Part 3: hash-field expiry, negative caching, no compression in memory
+
+## Hash-field expiry (HEXPIRE since 7.4; HSETEX/HGETEX since 8.0)
+
+redis-cli -p 7103 FLUSHALL
+  OK
+redis-cli -p 7103 HSET product:42 name Trail running shoe description Light shoe for rough ground price 4900 stock 17
+  (integer) 4
+redis-cli -p 7103 EXPIRE product:42 3600
+  (integer) 1
+redis-cli -p 7103 MEMORY USAGE product:42
+  (integer) 132
+redis-cli -p 7103 OBJECT ENCODING product:42
+  "listpack"
+redis-cli -p 7103 HEXPIRE product:42 5 FIELDS 1 stock
+  1) (integer) 1
+redis-cli -p 7103 OBJECT ENCODING product:42
+  "listpackex"
+redis-cli -p 7103 MEMORY USAGE product:42
+  (integer) 172
+redis-cli -p 7103 HTTL product:42 FIELDS 3 stock name nosuch
+  1) (integer) 5
+  2) (integer) -1
+  3) (integer) -2
+redis-cli -p 7103 TTL product:42
+  (integer) 3600
+redis-cli -p 7103 INFO keyspace
+  # Keyspace
+  db0:keys=1,expires=1,avg_ttl=0,subexpiry=1
+# wait 6 seconds
+redis-cli -p 7103 HGETALL product:42
+  1) "name"
+  2) "Trail running shoe"
+  3) "description"
+  4) "Light shoe for rough ground"
+  5) "price"
+  6) "4900"
+redis-cli -p 7103 HMGET product:42 name stock
+  1) "Trail running shoe"
+  2) (nil)
+  expired_subkeys:1
+  expired_subkeys_active:1
+  expired_keys:0
+  expired_keys_active:0
+# refill the stock field with its own 5-second TTL in one command (8.0+)
+redis-cli -p 7103 HSETEX product:42 EX 5 FIELDS 1 stock 16
+  (integer) 1
+redis-cli -p 7103 HTTL product:42 FIELDS 1 stock
+  1) (integer) 5
+# a plain HSET on the field clears its TTL
+redis-cli -p 7103 HSET product:42 stock 15
+  (integer) 0
+redis-cli -p 7103 HTTL product:42 FIELDS 1 stock
+  1) (integer) -1
+redis-cli -p 7103 HSETEX product:42 EX 100 FIELDS 1 stock 15
+  (integer) 1
+redis-cli -p 7103 HINCRBY product:42 stock -1
+  (integer) 14
+redis-cli -p 7103 HTTL product:42 FIELDS 1 stock
+  1) (integer) 100
+# HGETEX reads a field and can change its TTL
+redis-cli -p 7103 HGETEX product:42 EX 30 FIELDS 1 stock
+  1) "14"
+redis-cli -p 7103 HTTL product:42 FIELDS 1 stock
+  1) (integer) 30
+
+## When the last field expires, the key goes too
+
+redis-cli -p 7103 HSETEX onlyttl PX 300 FIELDS 2 a 1 b 2
+  (integer) 1
+redis-cli -p 7103 EXISTS onlyttl
+  (integer) 0
+  expired_subkeys:3
+  expired_keys:0
+
+## Memory cost of a field TTL on an otherwise identical hash
+
+redis-cli -p 7103 DEL plain withkeyttl withfieldttl
+  (integer) 0
+redis-cli -p 7103 HSET plain name Trail running shoe price 4900 stock 17
+  (integer) 3
+redis-cli -p 7103 HSET withkeyttl name Trail running shoe price 4900 stock 17
+  (integer) 3
+redis-cli -p 7103 EXPIRE withkeyttl 3600
+  (integer) 1
+redis-cli -p 7103 HSET withfieldttl name Trail running shoe price 4900 stock 17
+  (integer) 3
+redis-cli -p 7103 HEXPIRE withfieldttl 3600 FIELDS 1 stock
+  1) (integer) 1
+redis-cli -p 7103 MEMORY USAGE plain
+  (integer) 77
+redis-cli -p 7103 MEMORY USAGE withkeyttl
+  (integer) 90
+redis-cli -p 7103 MEMORY USAGE withfieldttl
+  (integer) 122
+redis-cli -p 7103 OBJECT ENCODING withfieldttl
+  "listpackex"
+
+## Negative caching: nil means not cached, so absence needs a sentinel
+
+redis-cli -p 7103 GET user:1000
+  (nil)
+redis-cli -p 7103 SET user:999  EX 30
+  OK
+redis-cli -p 7103 GET user:999
+  ""
+redis-cli -p 7103 EXISTS user:999
+  (integer) 1
+redis-cli -p 7103 SET sku:XJ-0000 __NOTFOUND__ EX 30
+  OK
+redis-cli -p 7103 GET sku:XJ-0000
+  "__NOTFOUND__"
+redis-cli -p 7103 TTL sku:XJ-0000
+  (integer) 30
+# when the record is created, the create path deletes the sentinel
+redis-cli -p 7103 DEL sku:XJ-0000
+  (integer) 1
+
+## Redis stores bytes as given; it does not compress values in memory
+
+(SET big:x to 100,000 bytes of 'x' with redis-cli -x)
+redis-cli -p 7103 STRLEN big:x
+  (integer) 100000
+redis-cli -p 7103 MEMORY USAGE big:x
+  (integer) 114712
+  json 1141 bytes, zlib 135 bytes
+redis-cli -p 7103 STRLEN listing:z
+  (integer) 135
+redis-cli -p 7103 CONFIG GET rdbcompression
+  1) "rdbcompression"
+  2) "yes"
+
+## Does HSETEX on one field touch the other fields or the key's TTL? (the HSETEX page says previous TTLs on the key are discarded)
+
+redis-cli -p 7103 DEL product:7
+  (integer) 1
+redis-cli -p 7103 HSET product:7 name Trail running shoe description Light shoe for rough ground stock 17
+  (integer) 3
+redis-cli -p 7103 EXPIRE product:7 3600
+  (integer) 1
+redis-cli -p 7103 HEXPIRE product:7 600 FIELDS 1 name
+  1) (integer) 1
+redis-cli -p 7103 HSETEX product:7 EX 5 FIELDS 1 stock 16
+  (integer) 1
+redis-cli -p 7103 HGETALL product:7
+  1) "stock"
+  2) "16"
+  3) "name"
+  4) "Trail running shoe"
+  5) "description"
+  6) "Light shoe for rough ground"
+redis-cli -p 7103 TTL product:7
+  (integer) 3600
+redis-cli -p 7103 HTTL product:7 FIELDS 3 name description stock
+  1) (integer) 600
+  2) (integer) -1
+  3) (integer) 5
+
+# Part 4: big values (Python raw-socket client on loopback, script big.py below)
+  value     1,024 bytes: SET    0.14 ms, GET median of 5    0.13 ms (loopback)
+  value   102,400 bytes: SET    0.23 ms, GET median of 5    0.23 ms (loopback)
+  value 1,048,576 bytes: SET    0.68 ms, GET median of 5    0.34 ms (loopback)
+  value 20,971,520 bytes: SET    5.84 ms, GET median of 5    3.91 ms (loopback)
+  MEMORY USAGE bighash SAMPLES 0: :38277580
+  HLEN bighash: :1000000
+  DEL bighash took 81.9 ms at the client; slowest PING from a second client during the run: 79.8 ms; median PING 0.180 ms
+  UNLINK bighash2 took 0.4 ms at the client; slowest PING during the run: 0.4 ms
+  SLOWLOG GET (threshold set to 1000 microseconds): DEL bighash logged at 81642 microseconds; UNLINK bighash2 not logged.
+  INFO memory after UNLINK: lazyfree_pending_objects:0
+
+## Finding big keys: redis-cli --bigkeys and --memkeys (keyspace: blob of 20 MiB, 1,000 JSON products, one 5,000-field hash)
+
+redis-cli -p 7103 --bigkeys (summary lines)
+  [00.00%] Biggest string found so far "product:57" with 50 bytes
+  [00.00%] Biggest string found so far "product:364" with 51 bytes
+  [86.13%] Biggest string found so far "blob" with 20971520 bytes
+  [88.32%] Biggest hash   found so far "views:2026-10-27" with 5000 fields
+  Biggest   hash found "views:2026-10-27" has 5000 fields
+  Biggest string found "blob" has 20971520 bytes
+redis-cli -p 7103 --memkeys (summary lines)
+  [00.00%] Biggest string found so far "product:57" with 93 bytes
+  [00.00%] Biggest string found so far "product:364" with 94 bytes
+  [86.13%] Biggest string found so far "blob" with 20987927 bytes
+  [88.32%] Biggest hash   found so far "views:2026-10-27" with 204520 bytes
+  Biggest   hash found "views:2026-10-27" has 204520 bytes
+  Biggest string found "blob" has 20987927 bytes
+
+## MGET: one command for a page of products; nil for each missing key
+
+redis-cli -p 7103 MGET product:1 product:2 product:99999 product:3
+  1) "{\"id\":1,\"name\":\"Trail running shoe\",\"price\":4900}"
+  2) "{\"id\":2,\"name\":\"Trail running shoe\",\"price\":4900}"
+  3) (nil)
+  4) "{\"id\":3,\"name\":\"Trail running shoe\",\"price\":4900}"
+redis-cli -p 7103 CONFIG RESETSTAT
+  OK
+redis-cli -p 7103 MGET product:1 product:2 product:99999
+  1) "{\"id\":1,\"name\":\"Trail running shoe\",\"price\":4900}"
+  2) "{\"id\":2,\"name\":\"Trail running shoe\",\"price\":4900}"
+  3) (nil)
+  keyspace_hits:2
+  keyspace_misses:1
+
+# Part 5: compression on real data (Python, not Redis). Scripts comp.py and inline script below.
+Python 3.14.5, zlib 1.2.12, arm64; HTML sample: dist/learn/databases/relational/hierarchies/index.html
+kind  size_bytes  codec      out_bytes  ratio  compress_us  decompress_us  json_loads_us
+json         367 zlib-1          260   0.71          6.5            1.9            2.0
+json         367 zlib-6          259   0.71          6.8            2.0            2.0
+json         367 zstd-3          279   0.76          3.7            1.8            2.0
+json        1237 zlib-1          455   0.37          8.2            2.6            5.1
+json        1237 zlib-6          432   0.35         10.2            2.5            5.1
+json        1237 zstd-3          458   0.37          4.9            2.2            5.1
+json        4192 zlib-1          783   0.19         11.6            3.5           14.9
+json        4192 zlib-6          708   0.17         20.5            3.5           14.9
+json        4192 zstd-3          779   0.19          8.9            3.5           14.9
+json       18482 zlib-1         2662   0.14         25.3            8.5           61.5
+json       18482 zlib-6         2231   0.12         84.0            7.8           61.5
+json       18482 zstd-3         2459   0.13         20.6            7.4           61.5
+json       65731 zlib-1         8668   0.13         87.9           21.3          211.0
+json       65731 zlib-6         6743   0.10        412.5           18.9          211.0
+json       65731 zstd-3         7680   0.12         48.2           25.5          211.0
+json      262328 zlib-1        32971   0.13        526.3           77.8          879.3
+json      262328 zlib-6        24286   0.09       2006.4           61.7          879.3
+json      262328 zstd-3        26519   0.10        181.5           76.6          879.3
+html         256 zlib-1          155   0.61          4.9            1.6            nan
+html         256 zlib-6          153   0.60          5.1            1.6            nan
+html         256 zstd-3          158   0.62          3.2            2.0            nan
+html        1024 zlib-1          360   0.35          7.0            2.2            nan
+html        1024 zlib-6          345   0.34          8.3            2.2            nan
+html        1024 zstd-3          362   0.35          4.2            2.1            nan
+html        4096 zlib-1          932   0.23         11.8            3.7            nan
+html        4096 zlib-6          848   0.21         18.2            3.5            nan
+html        4096 zstd-3          923   0.23          8.8            4.3            nan
+html       16384 zlib-1         3546   0.22         29.8            9.3            nan
+html       16384 zlib-6         3157   0.19         76.4            8.8            nan
+html       16384 zstd-3         3334   0.20         24.5            9.4            nan
+html       65536 zlib-1        12877   0.20        110.9           28.8            nan
+html       65536 zlib-6        10692   0.16        425.8           25.2            nan
+html       65536 zstd-3        11345   0.17         67.4           31.6            nan
+html      163332 zlib-1        36941   0.23        440.8           80.1            nan
+html      163332 zlib-6        30135   0.18       1808.9           67.3            nan
+html      163332 zstd-3        30836   0.19        217.5           97.1            nan
+
+Second JSON sample (prose-heavy): typescript/lib/de/diagnosticMessages.generated.json, sliced
+     1149 bytes: zlib-1 0.50, zlib-6 0.48, zstd-3 0.51
+     4232 bytes: zlib-1 0.40, zlib-6 0.37, zstd-3 0.39
+    16546 bytes: zlib-1 0.35, zlib-6 0.30, zstd-3 0.32
+    65540 bytes: zlib-1 0.32, zlib-6 0.26, zstd-3 0.28
+   262221 bytes: zlib-1 0.32, zlib-6 0.26, zstd-3 0.26
+
+Prose-heavy JSON, timings (median, microseconds, Python 3.14.5 on Apple arm64)
+size_bytes codec out_bytes ratio compress_us decompress_us json_loads_us
+1149 zlib-1 569 0.50 9.5 2.8 2.8
+1149 zstd-3 583 0.51 5.5 3.0 2.8
+4232 zlib-1 1702 0.40 17.4 5.4 7.8
+4232 zstd-3 1665 0.39 13.7 6.0 7.8
+16546 zlib-1 5748 0.35 44.3 14.2 28.3
+16546 zstd-3 5327 0.32 39.7 14.7 28.3
+65540 zlib-1 21101 0.32 168.6 44.8 162.3
+65540 zstd-3 18421 0.28 112.9 47.4 162.3
+262221 zlib-1 84048 0.32 1476.1 186.6 686.5
+262221 zstd-3 68241 0.26 558.0 175.2 686.5
+
+# Scripts
+## ev.sh
+#!/bin/bash
+# Run redis-cli commands against port 7103, echoing each command and its output.
+R=/opt/homebrew/opt/redis/bin/redis-cli
+r() { echo "redis-cli -p 7103 $*"; $R -p 7103 --no-raw "$@" | sed 's/^/  /'; }
+section() { echo; echo "## $*"; echo; }
+## big.py
+# Big values: transfer time of a large string, and how a large delete holds up another client.
+# Raw RESP over loopback to port 7103. Python 3, no third-party modules.
+import socket, time, threading
+def conn():
+    s = socket.create_connection(("127.0.0.1", 7103)); s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1); return s
+def enc(*args):
+    out = [b"*%d\r\n" % len(args)]
+    for a in args:
+        a = a if isinstance(a, bytes) else str(a).encode()
+        out.append(b"$%d\r\n%s\r\n" % (len(a), a))
+    return b"".join(out)
+def read_reply(s, buf=bytearray()):
+    # minimal reader: returns once a full reply for simple/int/bulk types is read
+    f = s.makefile("rb")
+    line = f.readline()
+    t = line[:1]
+    if t in b"+-:": return line
+    if t == b"$":
+        n = int(line[1:-2])
+        if n < 0: return None
+        data = f.read(n + 2); return data[:-2]
+    if t == b"*":
+        n = int(line[1:-2]); return [read_one(f) for _ in range(n)]
+    return line
+def read_one(f):
+    line = f.readline(); t = line[:1]
+    if t == b"$":
+        n = int(line[1:-2]); return None if n < 0 else f.read(n + 2)[:-2]
+    return line
+def cmd(s, *args):
+    s.sendall(enc(*args)); return read_reply(s)
+
+a = conn(); b = conn()
+cmd(a, "FLUSHALL"); cmd(a, "CONFIG", "SET", "slowlog-log-slower-than", "1000"); cmd(a, "SLOWLOG", "RESET")
+for size in (1024, 100*1024, 1024*1024, 20*1024*1024):
+    v = b"v" * size
+    t = time.perf_counter(); cmd(a, "SET", "blob", v); ts = time.perf_counter() - t
+    times = []
+    for _ in range(5):
+        t = time.perf_counter(); r = cmd(a, "GET", "blob"); times.append(time.perf_counter() - t)
+        assert len(r) == size
+    times.sort()
+    print(f"  value {size:>9,} bytes: SET {ts*1000:7.2f} ms, GET median of 5 {times[2]*1000:7.2f} ms (loopback)")
+
+# Build a hash with 1,000,000 fields in batches.
+def build(name):
+    for start in range(0, 1_000_000, 10_000):
+        args = ["HSET", name]
+        for i in range(start, start + 10_000): args += [f"f{i}", "v"]
+        cmd(a, *args)
+build("bighash")
+print("  MEMORY USAGE bighash SAMPLES 0:", cmd(a, "MEMORY", "USAGE", "bighash", "SAMPLES", "0").decode().strip())
+print("  HLEN bighash:", cmd(a, "HLEN", "bighash").decode().strip())
+# Second client sends PING every 2 ms; record the worst wait while the first client deletes the hash.
+lat = []; stop = False
+def pinger():
+    while not stop:
+        t = time.perf_counter(); cmd(b, "PING"); lat.append((t, time.perf_counter() - t)); time.sleep(0.002)
+th = threading.Thread(target=pinger); th.start(); time.sleep(0.2)
+t0 = time.perf_counter(); cmd(a, "DEL", "bighash"); d = time.perf_counter() - t0
+time.sleep(0.2); stop = True; th.join()
+print(f"  DEL bighash took {d*1000:.1f} ms at the client; slowest PING from a second client during the run: {max(x[1] for x in lat)*1000:.1f} ms; median PING {sorted(x[1] for x in lat)[len(lat)//2]*1000:.3f} ms")
+build("bighash2")
+lat = []; stop = False
+th = threading.Thread(target=pinger); th.start(); time.sleep(0.2)
+t0 = time.perf_counter(); cmd(a, "UNLINK", "bighash2"); d = time.perf_counter() - t0
+time.sleep(0.3); stop = True; th.join()
+print(f"  UNLINK bighash2 took {d*1000:.1f} ms at the client; slowest PING during the run: {max(x[1] for x in lat)*1000:.1f} ms")
+sl = cmd(a, "SLOWLOG", "GET", "10")
+print("  SLOWLOG entries (command, microseconds):")
+# crude parse
+s = a; s.sendall(enc("SLOWLOG", "GET", "10")); f = s.makefile("rb")
+## comp.py
+# Compression ratio and time on real JSON and HTML, sliced to target sizes.
+# JSON: mdn-data css/properties.json (real structured data with prose strings).
+# HTML: a built article page from this site's dist/.
+import json, zlib, time, statistics, sys, platform, glob
+from compression import zstd
+ROOT = "/Users/ryannel/Workspace/staycurrent/"
+props = json.load(open(ROOT + "node_modules/.pnpm/mdn-data@2.27.1/node_modules/mdn-data/css/properties.json"))
+items = list(props.items())
+html_files = sorted(glob.glob(ROOT + "dist/learn/databases/**/index.html", recursive=True), key=lambda p: -len(open(p, 'rb').read()))
+html = open(html_files[0], 'rb').read()
+html = html[html.find(b"<main"):] if b"<main" in html else html
+def json_of(target):
+    out = {}
+    for k, v in items:
+        out[k] = v
+        if len(json.dumps(out, separators=(",", ":"))) >= target: break
+    return json.dumps(out, separators=(",", ":")).encode()
+def t(fn, n):
+    xs = []
+    for _ in range(n):
+        a = time.perf_counter(); fn(); xs.append(time.perf_counter() - a)
+    return statistics.median(xs) * 1e6
+print(f"Python {platform.python_version()}, zlib {zlib.ZLIB_RUNTIME_VERSION}, {platform.machine()}; HTML sample: {html_files[0].replace(ROOT,'')}")
+print("kind  size_bytes  codec      out_bytes  ratio  compress_us  decompress_us  json_loads_us")
+for kind in ("json", "html"):
+    for target in (256, 1024, 4096, 16384, 65536, 262144):
+        data = json_of(target) if kind == "json" else html[:target]
+        if kind == "json" and len(data) < target * 0.9: continue
+        n = 2000 if len(data) < 20000 else 300 if len(data) < 100000 else 60
+        loads = t(lambda: json.loads(data), n) if kind == "json" else float('nan')
+        for name, c, d in (("zlib-1", lambda x: zlib.compress(x, 1), zlib.decompress),
+                           ("zlib-6", lambda x: zlib.compress(x, 6), zlib.decompress),
+                           ("zstd-3", lambda x: zstd.compress(x, 3), zstd.decompress)):
+            z = c(data); assert d(z) == data
+            print(f"{kind:5} {len(data):10} {name:8} {len(z):10} {len(z)/len(data):6.2f} {t(lambda: c(data), n):12.1f} {t(lambda: d(z), n):14.1f} {loads:14.1f}")
+
+## Defaults checked while revising (2026-10-27)
+redis-cli -p 7103 CONFIG GET hash-max-listpack-*
+  hash-max-listpack-value	64
+  hash-max-listpack-entries	512
+redis-cli -p 7103 CONFIG GET lazyfree-*
+  lazyfree-lazy-user-flush	no
+  lazyfree-lazy-eviction	no
+  lazyfree-lazy-server-del	no
+  lazyfree-lazy-user-del	no
+  lazyfree-lazy-expire	no
+
+
+## Repair round 1 (2026-10-27): HSETEX and field TTLs, re-checked on port 7113 (Redis 8.10.3, --save '', temporary directory)
+redis-cli -p 7113 HSET p name Trail running shoe price 4900 stock 17
+  3
+redis-cli -p 7113 EXPIRE p 3600
+  1
+redis-cli -p 7113 HEXPIRE p 100 FIELDS 1 price
+  1
+redis-cli -p 7113 HEXPIRE p 200 FIELDS 1 stock
+  1
+redis-cli -p 7113 HSETEX p EX 5 FIELDS 1 stock 16
+  1
+redis-cli -p 7113 TTL p
+  3600
+redis-cli -p 7113 HTTL p FIELDS 2 price stock
+  100
+  5
+# HSETEX with no expiry option clears the named field's TTL only
+redis-cli -p 7113 HSETEX p FIELDS 1 stock 15
+  1
+redis-cli -p 7113 HTTL p FIELDS 2 price stock
+  100
+  -1
+redis-cli -p 7113 TTL p
+  3600
+# KEEPTTL keeps the named field's TTL
+redis-cli -p 7113 HSETEX p KEEPTTL FIELDS 1 price 4800
+  1
+redis-cli -p 7113 HTTL p FIELDS 1 price
+  100
+# a full rebuild with HSET clears the stock field's TTL unless it is set again
+redis-cli -p 7113 HSETEX p EX 5 FIELDS 1 stock 15
+  1
+redis-cli -p 7113 HSET p name Trail running shoe price 4800 stock 14
+  0
+redis-cli -p 7113 HTTL p FIELDS 1 stock
+  -1
+# HINCRBY keeps it
+redis-cli -p 7113 HSETEX p EX 50 FIELDS 1 stock 14
+  1
+redis-cli -p 7113 HINCRBY p stock -1
+  13
+redis-cli -p 7113 HTTL p FIELDS 1 stock
+  50
+# MGET on a hash key returns nil, so hashes need one HGETALL each
+redis-cli -p 7113 HSET product:1 price 4900
+  1
+redis-cli -p 7113 MGET product:1
+  
+redis-cli -p 7113 HGETALL product:1
+  price
+  4900
+
+## Repair round 1: another client's PING while one client loops GET (raw sockets, separate processes, loopback)
+# baseline
+PING n=1512 median 0.267 ms p99 2.373 ms
+# while another process loops GET of a 20 MiB string
+PING n=1159 median 1.351 ms p99 3.392 ms
+GET blob x2158
+# while another process loops GET of a 1 KiB string
+PING n=1616 median 0.148 ms p99 0.936 ms
+GET small x48775
+# baseline repeated after the runs
+PING n=1628 median 0.141 ms p99 0.328 ms
+# Reviewer's run on port 7153 (keys-and-values-review-1.txt, Part 5): baseline median 0.156 ms, under 20 MiB GETs median 2.113 ms.
+# The article quotes 'from about 0.2 ms to between 1 and 2 ms', covering both runs.
+
+## Scripts for the PING run
+### pinger.py
+# PING every 2 ms for `secs` seconds on a raw socket; print median and p99 in ms.
+import socket, sys, time, statistics
+secs = float(sys.argv[1]); s = socket.create_connection(('127.0.0.1', 7113)); s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+lat = []; end = time.time() + secs
+while time.time() < end:
+    t = time.perf_counter(); s.sendall(b'PING\r\n'); buf = b''
+    while not buf.endswith(b'\r\n'): buf += s.recv(64)
+    lat.append((time.perf_counter() - t) * 1000); time.sleep(0.002)
+lat.sort(); print(f"PING n={len(lat)} median {statistics.median(lat):.3f} ms p99 {lat[int(len(lat)*0.99)]:.3f} ms")
+### getter.py
+# Loop GET of key argv[1] for argv[2] seconds, reading each full reply.
+import socket, sys, time
+key = sys.argv[1].encode(); secs = float(sys.argv[2]); s = socket.create_connection(('127.0.0.1', 7113))
+cmd = b'*2\r\n$3\r\nGET\r\n$%d\r\n%s\r\n' % (len(key), key); end = time.time() + secs; n = 0
+while time.time() < end:
+    s.sendall(cmd); head = b''
+    while not head.endswith(b'\r\n'): head += s.recv(1)
+    left = int(head[1:-2]) + 2
+    while left: left -= len(s.recv(min(left, 1 << 20)))
+    n += 1
+print(f"GET {key.decode()} x{n}")
+
+## Repair round 1: model checks for the revised figures (node, deploy-probe.mjs, seed 4, start 8 s, 2 product changes a second)
+2 strict         base 6.9 peakR 13.5 peakE 30.5 lastErr 52000 stale tot 0 peakS 0 lastStale 0 held@23 {"1":144,"2":51}
+2 tolerant       base 6.9 peakR 38.5 peakE 0 lastErr 0 stale tot 0 peakS 0 lastStale 0 held@23 {"1":90,"2":121}
+2 versioned      base 6.9 peakR 19.5 peakE 0 lastErr 0 stale tot 97 peakS 9.5 lastStale 43500 held@23 {"1":157,"2":136}
+2 versioned-all  base 6.9 peakR 20 peakE 0 lastErr 0 stale tot 0 peakS 0 lastStale 0 held@23 {"1":154,"2":135}
+  Figure 6 bytes: JSON string 129 (STRLEN, Part 2); HGETALL names+values of the same 8 fields = 88; HGET price = 4; twelve products assumed equal size.
+  Figure 8 (300 s, seed 3): off 99.8%/0 markers; on repeated 16.0%/6; on random 99.8%/67; filter repeated 0.0%/0; filter random 0.6%/0.
+  Bloom filter size: bits per element = -ln p / (ln 2)^2 = 9.585 for p = 0.01 (Bloom 1970; standard result).

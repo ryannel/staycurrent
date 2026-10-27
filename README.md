@@ -32,6 +32,7 @@ Every push to `main` builds and deploys to GitHub Pages through
 | `/learn/databases/relational/` | Relational introduction and collection |
 | `/learn/databases/relational/sandbox/` | Browser PostgreSQL sandbox with free exploration and linked tutorials |
 | `/learn/databases/relational/*/` | Published relational articles, practical guides and preserved route aliases |
+| `/learn/databases/caching/` | Application caching with Redis: an illustrated collection, published article by article |
 | `/learn/databases/column-stores/` | Illustrated column-store essay with four experiments |
 | `/learn/databases/object-storage/` | Published introduction and thirteen focused articles, using Amazon S3 |
 | `/learn/databases/object-storage/sandbox/` | Fourteen local model lessons, with 78 editable request steps |
@@ -67,6 +68,13 @@ records are in `docs/article-work/postgresql-rebuild/`. The subsequent review of
 and four new lessons, is recorded in `docs/article-work/relational-depth-review/`.
 Review alone does not
 authorise publication of a new commission.
+
+The 27 October caching commission publishes an illustrated collection on
+application caching with Redis at `/learn/databases/caching/`, one article at a
+time as each passes review. `src/lib/caching-collection.ts` holds reading order and
+publication state; `src/components/caching/shared/` is the figure toolkit. Run
+`CACHING_DRAFT_PREVIEW=1 pnpm dev` to read unpublished drafts. Plan, brief, reviews
+and evidence are in `docs/article-work/caching-2026-10-27/`.
 
 The 26 October commission publishes all 59 reviewed replacement articles from
 `src/articles/relational-rebuild/` at the normal relational URLs. The accepted

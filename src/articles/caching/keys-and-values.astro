@@ -1,0 +1,313 @@
+---
+import Term from '../../components/caching/shared/Term.astro';
+import ArticleRef from '../../components/caching/shared/ArticleRef.astro';
+import Granularity from '../../components/caching/keys-and-values/Granularity.astro';
+import MissingInput from '../../components/caching/keys-and-values/MissingInput.astro';
+import Normalise from '../../components/caching/keys-and-values/Normalise.astro';
+import Deploy from '../../components/caching/keys-and-values/Deploy.astro';
+import Compression from '../../components/caching/keys-and-values/Compression.astro';
+import StringOrHash from '../../components/caching/keys-and-values/StringOrHash.astro';
+import FieldTtl from '../../components/caching/keys-and-values/FieldTtl.astro';
+import NegativeCache from '../../components/caching/keys-and-values/NegativeCache.astro';
+---
+<p>So far in this collection the shop has cached one thing: a product, as JSON, under the key <code>product:42</code>. Real pages ask for more. A listing page shows twelve products filtered by category, sorted three ways and priced in the shopper's currency. A product page shows a stock level that changes with every sale. Old links point at products that no longer exist. And next week's deploy changes the shape of the cached product.</p>
+
+<p>Each of those raises the same three questions. What should one cache entry hold? What must its key say? And how should the value be stored? The answers decide whether the cache is correct, whether it hits often enough to be worth having, and how much memory and network it uses. Mistakes here are quiet. A cache with a bad key still returns fast <Term kind="hit" mark>hits</Term>; some of them are wrong.</p>
+
+<p>This article works through those questions with the same shop. By the end you will be able to decide what one entry holds, what its key must say, and how to store its value safely and compactly.</p>
+
+<h2 id="granularity">What one entry should hold</h2>
+
+<p>The first decision is the unit of caching. For a listing page you could cache any of these:</p>
+
+<ul>
+  <li>each product <strong>row</strong>, exactly as the database returns it;</li>
+  <li>each product <strong>object</strong>, assembled from several tables (name, images, average rating);</li>
+  <li>the <strong>query result</strong>: the list of products in a category, in a sort order;</li>
+  <li>the <strong>rendered fragment</strong>: the finished HTML of the listing;</li>
+  <li>a <strong>computed aggregate</strong>, such as "best sellers this hour".</li>
+</ul>
+
+<p>Bigger units save more work per <Term kind="hit">hit</Term>: a cached fragment skips the queries, the assembly and the rendering. Smaller units are shared by more requests and are touched by fewer changes. Which effect wins depends on how often the data changes, and Figure 1 lets you set that.</p>
+
+<p>It runs the same stream of page views through two Redis caches side by side. The shop has 48 products in four categories, and a listing page shows its category's twelve products. On the left, Redis holds whole pages: one entry per category, sort order and currency, 24 in all. On the right, Redis holds the 48 products, and the application builds each page from twelve of them. When a product changes, the application deletes every entry that contains it, as the <ArticleRef slug="caching-patterns">caching patterns</ArticleRef> article recommended. Start with the slider at 12 changes a minute and watch what one change does to each grid.</p>
+
+<Granularity number={1} />
+
+<p>Each change empties one cell on the right and a whole row of six on the left, because the changed product appears on its category's page in three sort orders and two currencies. Every emptied cell is a <Term kind="miss" mark>miss</Term> waiting for the next view. At 12 changes a minute, the page cache already hits only about 85% of the time while the product cache stays above 99%. Drag the slider to 120 and the page cache falls to around 45%, reading six or seven database rows per view, while the product cache still hits about 97%. Now drag it to zero and press Reset: both caches hit every time, and the page cache does it with one lookup per view instead of twelve.</p>
+
+<p>The <ArticleRef slug="caching-patterns">caching patterns</ArticleRef> article showed why. If an entry is read at rate <em>r</em> and deleted at rate <em>d</em>, its hit ratio is at most <em>r</em> ÷ (<em>r</em> + <em>d</em>), or <em>k</em> ÷ (<em>k</em> + 1) where <em>k</em> is reads per change. The question for granularity is what happens to <em>k</em> as an entry gets bigger. Both parts of it move the wrong way:</p>
+
+<p class="formula">reads per change of an entry = (rate of requests that need exactly this entry) ÷ (sum of the change rates of everything in it)</p>
+
+<p>A page entry is needed only by views of that one page. A product entry is needed by views of any of the six pages that show it, so it is read six times as often as an average page. A page entry contains twelve products, any of which can change it, so it is deleted twelve times as often. Together that is 6 × 12 = 72 times as many reads per change for the product entry.</p>
+
+<p>That is why you will often see an application cache the pieces and assemble the page per request. The price is the work left to the application: twelve lookups instead of one, plus sorting, currency conversion and rendering, which this model does not charge for. The twelve lookups can go as a single <code>MGET</code> command, so they cost one network round trip; <ArticleRef slug="clients-and-pipelining">Redis clients</ArticleRef> covers what round trips cost. A common middle ground caches two things: the list of product ids for a page, which changes only when a product joins, leaves or moves in the order, and the products themselves. The id list for "sorted by price" can change whenever a price does, so it must be deleted on every price change unless you compare the order first, but the currency no longer splits it, because prices are converted after reading.</p>
+
+<p>The opposite choice is right when the data rarely changes and the whole result is expensive. A "best sellers this hour" aggregate that takes 300 ms to compute and is allowed to be a minute old should be cached whole, with a TTL (time to live) of a minute and no deletion on write. The test is the formula above: estimate how often the entry is read and how often anything in it changes. If reads per change are in the hundreds, cache the big unit. If they are in single figures, cache smaller pieces, or accept staleness and let a TTL bound it instead of deleting on every change.</p>
+
+<p>Volatile parts deserve their own entries for the same reason. A product object that includes its stock level is changed by every sale. Moving the stock out of the product entry stops each sale from deleting the name, description and images along with it. We will come back to how to do that in Redis <a href="#field-expiry">below</a>.</p>
+
+<h2 id="identity">Everything that changes the answer belongs in the key</h2>
+
+<p>Once you know what an entry holds, its key has to name it. A cache key is an identity: two requests that should get the same answer must build the same key, and two requests that should get different answers must build different keys. The second half is the one that goes wrong. Figure 2 shows the shop's first listing cache, keyed by category and sort order. Step through it.</p>
+
+<MissingInput number={2} />
+
+<p>The second shopper's request was a fast, successful hit. No error was raised, nothing was logged, and the response looked right to everything except the shopper. That is what makes missing inputs dangerous: the cache reports success while returning the wrong answer, and it will keep doing so for every euro shopper until the entry expires.</p>
+
+<p>On a real Redis server it looks just as innocent. The key without the currency hands back whatever was stored first; the fix is to put the currency in the key:</p>
+
+<pre><code>{`$ redis-cli GET listing:shoes:popular
+"{\\"currency\\":\\"GBP\\",\\"items\\":[{\\"id\\":42,\\"price\\":\\"£49.00\\"}]}"
+$ redis-cli GET listing:shoes:popular:EUR
+"{\\"currency\\":\\"EUR\\",\\"items\\":[{\\"id\\":42,\\"price\\":\\"€57.00\\"}]}"`}</code></pre>
+
+<p>So list every input the code that builds the value reads, not only the ones in the URL. The usual ones that get missed are:</p>
+
+<ul>
+  <li>the <strong>language and region</strong>, often read from a header or a cookie rather than the URL;</li>
+  <li>the <strong>currency</strong>, the tax rules or the customer's price tier;</li>
+  <li><strong>feature flags</strong> and A/B test variants;</li>
+  <li>the <strong>API version</strong> or the representation, such as JSON for the app and HTML for the website;</li>
+  <li>the user's <strong>permissions</strong>, which decide which items or fields they may see;</li>
+  <li>the <strong>tenant</strong> or organisation, in a service shared by several customers;</li>
+  <li>the user's <strong>identity</strong>, for anything personal.</li>
+</ul>
+
+<p>The last three items in that list are where a cache bug becomes a data leak, and a missing tenant is the classic way one customer sees another's data. If a cached response includes anything one user may see and another may not, either the key must contain whatever decides visibility, or the value should not be cached in a shared entry at all. Microsoft's cache-aside guidance goes further and warns that the pattern may not suit sensitive data in a shared cache at all. A safer structure is the one from the previous section: cache the shared, public part, and add the personal part per request.</p>
+
+<p>Every input you add to a key also divides the entry's readers. A page keyed by currency is shared by half as many requests; a page keyed by user is shared by none. Before adding an input to a key, ask whether the cached value could instead leave that input out and have it applied after reading, as the product cache did with currency in Figure 1. Leaving an input out of the key is only safe if it is also left out of the value.</p>
+
+<h2 id="normalisation">One answer, one name</h2>
+
+<p>The opposite mistake is quieter still: two requests for the same answer that build different keys. Nothing is wrong except the hit ratio, and the extra copies take memory. It happens whenever the key is built from the request as it arrived. Figure 3 generates 2,000 requests for the 24 listing pages, with URLs that vary the way real links do. Try each way of building the key, from top to bottom.</p>
+
+<Normalise number={3} />
+
+<p>Built from the raw URL, the 2,000 requests produce 1,620 keys for 24 answers, and only 19% of requests hit, even in a cache with unlimited memory that never expires. Each step of <strong>normalisation</strong>, rewriting the request into one canonical form before building the key, merges names that mean the same thing:</p>
+
+<ol>
+  <li><strong>Order.</strong> <code>?category=shoes&amp;currency=GBP</code> and <code>?currency=GBP&amp;category=shoes</code> are the same request. Sort parameters by name, or better, build the key from named fields in a fixed order.</li>
+  <li><strong>Irrelevant inputs.</strong> Tracking parameters such as <code>utm_source</code>, session ids and cache-busting timestamps do not change the page. Build the key from the inputs the code actually uses, not from everything it was sent. This step alone takes the hit ratio from 44% to 94%.</li>
+  <li><strong>Defaults and spelling.</strong> A missing <code>sort</code> means <code>sort=popular</code>; <code>Shoes</code> means <code>shoes</code>. Fill in defaults, lower-case where the database ignores case, and use canonical ids rather than slugs or names.</li>
+</ol>
+
+<p>After all three, there are exactly 24 keys, one per answer, and 98.8% of requests hit, which is the most an unlimited cache can manage when each page must miss once. The last option in the figure drops the currency too. The hit ratio rises again, to 99.4%, and more than half the requests now get a page priced in the wrong currency. So the aim is not the highest hit ratio but exactly one key per answer.</p>
+
+<p>The safest way to get there is to build keys in one function that takes the inputs as typed values, not as a URL, so that every caller produces the same string for the same answer:</p>
+
+<pre><code>{`def listing_key(category: str, sort: str = "popular", currency: str = "GBP", page: int = 1) -> str:
+    return f"shop:listing:v3:{category.lower()}:{sort}:{currency}:{page}"
+
+# listing_key("Shoes", currency="GBP") == "shop:listing:v3:shoes:popular:GBP:1"`}</code></pre>
+
+<p>That key follows the convention the Redis documentation recommends: sections separated by colons, the type of object first, then its identity. Redis has no namespaces, so the colons are only a convention, but tools and people both rely on it. Each part of the key has a job:</p>
+
+<ul>
+  <li><strong><code>shop:</code></strong> is the application. Two services sharing one Redis will otherwise both write <code>user:42</code> and corrupt each other's entries. Redis access control lists can also limit a user to keys matching a pattern such as <code>shop:*</code>, which only works if the prefix is consistent.</li>
+  <li><strong><code>listing:</code></strong> is the kind of entry, so you can find, count and measure a whole kind at once.</li>
+  <li><strong><code>v3:</code></strong> is the version of the value's shape, the subject of the next section.</li>
+  <li>The rest is the identity, every input that changes the answer, always in the same order.</li>
+</ul>
+
+<p>The examples from here on leave the <code>shop:</code> prefix off to keep them short; in a real deployment they would carry it.</p>
+
+<p>Two hazards come with building keys from strings. The first is the separator. User input such as a search phrase can contain a colon, so <code>search:a:b</code> could mean the phrase "a" on page "b" or the phrase "a:b". Escape such inputs or hash them.</p>
+
+<p>The second is length. Key bytes are stored like any other bytes: on my test server <code>MEMORY USAGE</code> reported 20 bytes for a one-character key holding the number 1 and about 75 bytes for a 54-character key holding the same value, about a byte per character. The Redis documentation calls a 1,024-byte key "a bad idea", for memory and for the cost of comparing keys, and suggests hashing a long input instead.</p>
+
+<p>When you hash, keep a readable prefix and hash only the variable tail, such as <code>shop:search:v1:</code> followed by a SHA-256 of the normalised query, so you can still tell what an entry is when you find it. Very short cryptic keys are the opposite mistake: the documentation's example is that <code>u1000flw</code> saves little over <code>user:1000:followers</code> and costs readability.</p>
+
+<p>If you run Redis Cluster, one more rule applies to keys you read together: a multi-key command such as <code>MGET</code> works only when all its keys live in the same hash slot, the unit Cluster uses to divide keys between servers. That is <ArticleRef slug="cluster-and-hot-keys">Redis Cluster, sharding and hot keys</ArticleRef>.</p>
+
+<h2 id="versions">When a deploy changes the shape of a value</h2>
+
+<p>Cached values outlive the code that wrote them. Suppose version 2 of the shop stores prices as an amount and a currency instead of a formatted string. During a rolling deploy, old and new instances run side by side against the same Redis, so each version will read entries the other one wrote. What happens depends on how the key and the reader are designed. Figure 4 runs a deploy across six instances, one replaced every three seconds, while products keep changing. Watch the chart with each choice, from top to bottom.</p>
+
+<Deploy number={4} />
+
+<p>With the same key and a reader that cannot handle the other shape, requests fail as soon as the first instance is replaced. Both directions fail: new instances cannot read old entries, and old instances cannot read the entries new ones write on their misses. The surprise is how long it lasts. The last instance is replaced at 23 seconds, yet failures continue until about 50 seconds, because the old entries are still in Redis until their 30-second TTL runs out. With an hour's TTL, the deploy would break the site for an hour.</p>
+
+<p>With the same key and a reader that treats an unfamiliar shape as a miss, nothing fails. But while both versions run, each overwrites what the other wrote, and the database sees up to about five times its normal read rate. This is also what you get if you store a version number inside the value and compare it on read, the mechanism Rails uses for record changes with its separate "cache version": no extra memory, but during a deploy the versions fight over each key until it ends.</p>
+
+<p>With the version in the key, <code>product:v2:42</code> beside <code>product:v1:42</code>, the two versions never overwrite each other's entries. Version 2 starts with no entries, so database reads rise while its keys fill, to between two and three times the usual rate at the peak, and Redis holds both sets for a while.</p>
+
+<p>But watch the stale-reads counter with that option. Each product change deletes the cached copy, as cache-aside does, and an instance deletes only the key its own version uses. A change handled by a version 1 instance deletes <code>product:v1:42</code> and leaves <code>product:v2:42</code> in place, so version 2 instances keep serving the old price until that entry's TTL runs out, and the same happens the other way round. In the figure about a hundred reads are <Term kind="stale" mark>stale</Term>, and they go on until about 44 seconds, well after the deploy has finished. Choose the last option, where each change deletes the key under both versions, and they disappear, for almost no extra database reads.</p>
+
+<p>So while two versions run, the write path must delete the entry under every version that may still be read, in practice the current one and the previous one. A rollback is the same problem in reverse: version 1 entries that nothing deleted while version 2 ran are served again, up to a full TTL stale. Keep deleting under the old version until a rollback is no longer possible, or clear its keys before rolling back. Keeping a cache in step with its database in general is the subject of <ArticleRef slug="invalidation">Cache invalidation and consistency</ArticleRef>.</p>
+
+<p>Nothing removes an old version's keys early: on a test server, all 200 keys I wrote under <code>catalog:v1:</code> were still there, with their hour-long TTLs, after I switched to <code>catalog:v2:</code>. They leave by expiring, by eviction or by your deleting them, which is one more reason every cache entry should have a TTL. To clear them by hand, walk them with <code>SCAN</code> and the pattern <code>catalog:v1:*</code> and remove them with <code>UNLINK</code>; avoid <code>KEYS</code>, which blocks the server while it examines every key, as <ArticleRef slug="how-redis-works">How Redis works</ArticleRef> explains.</p>
+
+<p>Changing the Redis type of a value is the strictest case. A key holding a string cannot be read as a hash, or the other way round:</p>
+
+<pre><code>{`$ redis-cli SET product:42 '{"id":42,"name":"Trail shoe","price":4900,"stock":17}'
+OK
+$ redis-cli HGET product:42 price
+(error) WRONGTYPE Operation against a key holding the wrong kind of value`}</code></pre>
+
+<p>So a change from a JSON string to a hash must come with a new key name, or every reader of the other kind fails.</p>
+
+<p>In practice, make most changes additive: add fields, never rename or retype them, and write readers that ignore unknown fields and supply defaults for missing ones. Such changes need no new version. When a change cannot be additive, bump the version in the key, delete under both versions on every change, and roll the deploy out gradually so the new keys fill at a pace the database can serve; switching every instance at once causes a burst of simultaneous misses, the subject of <ArticleRef slug="stampedes">Cache stampedes</ArticleRef>.</p>
+
+<h2 id="formats">Choosing a format for the value</h2>
+
+<p>Redis does not care what a value contains. A string value is any sequence of bytes up to 512 MB, and Redis never parses it: I stored 135 bytes of zlib-compressed JSON with <code>SET</code> and read back the same 135 bytes. The format is the application's choice, and it is paid for in the application's CPU and in network bytes rather than in Redis.</p>
+
+<p><strong>JSON</strong> is the usual default for good reasons. Every language reads it, you can read it yourself with <code>redis-cli</code> when something goes wrong, and adding fields is easy. Its costs are size, since every field name is repeated in every value, and the time to parse it on every read, which the next figure measures.</p>
+
+<p><strong>Binary formats</strong> such as Protocol Buffers, Avro or MessagePack are typically smaller and faster to decode, but they need a library, often a shared schema, and the bytes are unreadable when you inspect Redis by hand. I have not measured them against JSON for this article, so if parsing shows up in your profiles, measure your own values.</p>
+
+<p><strong>Your language's native serialisation</strong>, such as Python's <code>pickle</code> or Java's built-in object serialisation, is the one to avoid. It ties cached values to one version of your classes, and worse, it turns the cache into a way to run code. Python's documentation is blunt: <code>pickle</code> "is not secure", and malicious data can "execute arbitrary code during unpickling". Anyone who can write to your Redis, through a leaked password, an exposed port or a bug elsewhere, could then run code inside every application server that reads the cache. A data-only format such as JSON cannot do that. Securing Redis itself is part of <ArticleRef slug="operating-a-cache">Operating a cache</ArticleRef>.</p>
+
+<p>Whatever the format, store what readers need and no more. Caching an object from your ORM (object-relational mapper) whole tends to drag in columns nobody displays, such as the cost price, and sometimes data that should never leave the database. Build the cached value deliberately, field by field.</p>
+
+<h2 id="compression">Compressing values</h2>
+
+<p>Redis does not compress values in memory. A string of 100,000 repeated <code>x</code> characters, about as compressible as data gets, occupied about 115,000 bytes by <code>MEMORY USAGE</code>, more than its length. The <code>rdbcompression</code> setting, on by default, applies only to snapshot files on disk. If you want smaller values in memory, the application compresses before <code>SET</code> and decompresses after <code>GET</code>.</p>
+
+<p>Is it worth it? Memory falls by the compression ratio. Latency is less obvious, because compression is paid once per write but decompression on every read. For one read of a value of <em>S</em> bytes that compresses to <em>C</em> bytes over a link of <em>B</em> bytes a second:</p>
+
+<p class="formula">uncompressed read ≈ <em>S</em> ÷ <em>B</em><br />compressed read ≈ <em>C</em> ÷ <em>B</em> + decompression time</p>
+
+<p>Both pay the same network round trip on top, and the same parsing afterwards. Compression makes a read faster only if the transfer time it saves, (<em>S</em> − <em>C</em>) ÷ <em>B</em>, is more than the time it takes to decompress. Figure 5 puts measured sizes, decompression times and JSON parsing times into the formula. Start at 16 KB on a 10 Gbit/s link and compare the ends of the two bars, then switch to 1 Gbit/s.</p>
+
+<Compression number={5} />
+
+<p>On the fast link the compressed bar is slightly longer: a 16 KB value reads about 6 microseconds slower compressed, because decompressing takes longer than sending the bytes it saved. On the slow link it is about 75 microseconds faster. At 1 KB the difference is a few microseconds either way, too small to matter beside a network round trip of a hundred microseconds or more.</p>
+
+<p>Notice the grey part of each bar too. On the fast link, parsing the JSON takes longer than moving the uncompressed bytes at every size: at 256 KB it is about 0.7 ms, against 0.2 ms to send the value. On a fast network, a smaller format or a smaller value does more for read time than compression. On the slow link the bytes dominate, and compression pays.</p>
+
+<p>Move the slider up and watch the last readout: at 1,000 reads a second, 64 KB values would use about half of a 1 Gbit/s link uncompressed. For large values, the bandwidth and memory saved are the real gains, whatever the effect on one read. Fewer bytes also means less time on Redis's single thread writing replies, which every other client shares.</p>
+
+<p>Ratios depend on the data: the mostly-prose JSON in the figure shrank to between half and a quarter of its size, while repetitive structured JSON reached about 13% and HTML from this site about 20%. Practical points that do not depend on the data:</p>
+
+<ul>
+  <li>Compress only values above a few kilobytes. Small values compress poorly one at a time; for many small values of one shape, zstd can train a shared dictionary on samples of them.</li>
+  <li>Choose a fast codec. In my measurements zstd at level 3 compressed a 256 KB value in about 0.56 ms against 1.5 ms for zlib at level 1, and to 26% of its size against 32%. Writers pay this on every write.</li>
+  <li>Put a one-byte marker at the front of each value saying how it is encoded. Then compressed and uncompressed values can live side by side, and you can change codec or dictionary later without a new key version.</li>
+</ul>
+
+<h2 id="strings-or-hashes">Strings or hashes</h2>
+
+<p>So far every value has been a string: one blob of bytes under one key. Redis also offers a <strong>hash</strong>, a key holding a small map of fields to values, which suits objects such as a product. Figure 6 shows the same eight-field product stored both ways, with sizes measured on my test server. Pick each thing the application might want to do, and watch which parts of the value cross the network.</p>
+
+<StringOrHash number={6} />
+
+<p>For the whole product the two are close. The hash used about a sixth less memory on average over 1,000 products, because it stores the values without JSON's quotes and punctuation.</p>
+
+<p>The difference is what you can do with part of a value. Reading the price brings back 4 bytes from the hash and all 129 from the string, which the application must then parse. Recording a sale is one <code>HINCRBY</code> on the hash, applied inside Redis. On the string it is a read, a change and a write, and if two processes do that at once, one sale is lost; <ArticleRef slug="clients-and-pipelining">Redis clients</ArticleRef> covers the atomic operations that prevent it.</p>
+
+<p>For a cache, partial access matters less than it sounds, because a cache that deletes on write rarely updates values in place. A hash is the better choice when readers often need only a few fields of a large object, when one field is a counter, or when fields need different lifetimes, which is the next section. A string is the better choice when:</p>
+
+<ul>
+  <li>the value is always read whole, so there is nothing to gain from fields;</li>
+  <li>it is nested, since hash fields hold only strings and nested objects would have to be flattened or serialised into a field anyway;</li>
+  <li>it is already a serialised or compressed blob;</li>
+  <li>you read many at once, as the listing choice in the figure shows: one <code>MGET</code> fetches twelve strings, while hashes need one <code>HGETALL</code> each, pipelined;</li>
+  <li>it contains a long field. By default a hash is stored compactly only while every field name and value is at most 64 bytes and there are at most 512 fields. On my test server a two-field hash used 115 bytes with a 64-byte description and 233 bytes with a 65-byte one. A product with a paragraph of description belongs in a string, or the description in its own key.</li>
+</ul>
+
+<p>Redis 8.10 also adds compact hashes, which store a set of field names once and only the values in each hash. They and the encodings behind the 64-byte limit are part of <ArticleRef slug="how-redis-works">How Redis works</ArticleRef>.</p>
+
+<h2 id="field-expiry">Parts that change at different speeds</h2>
+
+<p>The product page shows a stock level that should be at most five seconds old, beside a name, description and images that can safely be an hour old. A TTL on the key applies to the whole value, so it has to suit the most volatile part. Figure 7 shows what that costs. The bars are the remaining lifetimes of each field in the cached hash.</p>
+
+<FieldTtl number={7} />
+
+<p>With one TTL, every field's bar drains in five seconds and every <Term kind="expiry" mark>expiry</Term> forces a rebuild of the whole product, about eleven times a minute, mostly re-reading a description that has not changed. With the expiry on the stock field alone, only that bar drains quickly. The next read finds the stock missing, fetches just the stock, and leaves everything else in place.</p>
+
+<p>Redis has supported a TTL on individual hash fields since version 7.4 (<code>HEXPIRE</code>, <code>HTTL</code>, <code>HPERSIST</code>), and since 8.0 it can set a field and its TTL in one command with <code>HSETEX</code>, or read a field and change its TTL with <code>HGETEX</code>. Valkey added hash-field expiry in 9.0. On Redis 8.10.3 the cycle in Figure 7 looked like this:</p>
+
+<pre><code>{`$ redis-cli HSET product:42 name "Trail running shoe" description "Light shoe for rough ground" price 4900 stock 17
+(integer) 4
+$ redis-cli EXPIRE product:42 3600
+(integer) 1
+$ redis-cli HEXPIRE product:42 5 FIELDS 1 stock
+1) (integer) 1
+# six seconds later
+$ redis-cli HMGET product:42 name stock
+1) "Trail running shoe"
+2) (nil)
+$ redis-cli HSETEX product:42 EX 5 FIELDS 1 stock 16
+(integer) 1`}</code></pre>
+
+<p>A few details matter when you use it:</p>
+
+<ul>
+  <li>A field's TTL is separate from the key's. Above, the key kept its hour while the stock field had five seconds.</li>
+  <li>Every write of a volatile field must carry its TTL: <code>HSETEX … EX 5 FIELDS …</code>, or <code>HSET</code> followed by <code>HEXPIRE</code> in one transaction. That includes the code that rebuilds the whole product. A plain <code>HSET</code>, or an <code>HSETEX</code> without <code>EX</code>, clears the field's TTL, and the stock then lives as long as the key. <code>HINCRBY</code> keeps it.</li>
+  <li><code>HSETEX</code> changes only the fields it names. With <code>EX</code> or <code>PX</code> it sets their TTL, with <code>KEEPTTL</code> it keeps it, and with neither it clears it, as <code>HSET</code> does. The key's TTL and the other fields are untouched.</li>
+  <li>When the last field of a hash expires, the key disappears too. Redis counts these in <code>expired_subkeys</code> in <code>INFO stats</code>, not <code>expired_keys</code>, which matters if you watch expiry rates.</li>
+  <li>Field TTLs cost memory: the same four-field hash used 132 bytes with only a key TTL and 172 bytes once one field had its own TTL.</li>
+</ul>
+
+<p>Reading code must treat a missing field as a partial miss: fetch the fields it needs, and reload only those that came back empty. The alternative that works on any version is a separate key, <code>product:42:stock</code> with its own short TTL beside <code>product:42</code> with a long one, fetched together with one <code>MGET</code>. Either way, the principle is the one from Figure 1: give data that changes at different speeds different entries, or at least different lifetimes. How long those lifetimes should be is the subject of <ArticleRef slug="expiration-and-eviction">Cache expiration and eviction</ArticleRef>.</p>
+
+<h2 id="negative-caching">Caching that something does not exist</h2>
+
+<p>Some lookups find nothing: an old link to a deleted product, a mistyped product code, an id a crawler invented. In plain cache-aside these always reach the database, because there is no value to store. A <code>GET</code> that returns nil means "not in the cache", and the application cannot tell "not cached" from "does not exist".</p>
+
+<p><strong>Negative caching</strong> stores the absence itself: a value that cannot be a real one, such as an empty string or an explicit marker, with a short TTL.</p>
+
+<pre><code>{`$ redis-cli GET sku:XJ-0000
+(nil)                                  # not cached: ask the database
+$ redis-cli SET sku:XJ-0000 __NOTFOUND__ EX 30
+OK
+$ redis-cli GET sku:XJ-0000
+"__NOTFOUND__"                         # cached absence: answer "not found" without the database`}</code></pre>
+
+<p>The reading code then has three cases, not two: a value, the marker, or nil. Figure 8 adds lookups for missing ids, drawn as crossed-out circles (∅), to a shop whose real products are all cached. Start with "Cache nothing" and watch what each ∅ becomes at Redis: a green dot answered there, or an orange ring sent on to the database. Then cache "not found", first with a few repeated ids and then with a new id every time.</p>
+
+<NegativeCache number={8} />
+
+<p>With a few repeated ids, negative caching absorbs almost all of them; only the rarely requested ids, whose markers expire before anyone asks again, still reach the database. With a new id every time, it does nothing for the database, because no id is asked for twice, and it fills Redis with markers nobody reads. Lookups for things that do not exist going straight to the database are often called <strong>cache penetration</strong>, and the random kind is how a scraper or an attacker can push load through a cache.</p>
+
+<p>Defences against the random kind work before the cache: reject ids that are not well formed, limit the request rate per client, or keep a <strong>Bloom filter</strong> of the ids that exist. A Bloom filter is a compact bit array that can say "definitely absent" without asking the database, and occasionally says "maybe present" for an id that is not. Choose the third option in the figure: almost every ∅ is now answered without the database, repeated or random, and no markers pile up.</p>
+
+<p>The filter has its own costs. For a 1% false-positive rate it needs about 10 bits per id (−ln 0.01 ÷ (ln 2)² ≈ 9.6), about 1.2 MB for a million products. Every new id must be added when its record is created, and a standard Bloom filter cannot remove ids, so deleted products keep answering "maybe". Redis 8 documents Bloom filter commands (<code>BF.ADD</code>, <code>BF.EXISTS</code>), though not every build includes them; the Homebrew build I tested did not.</p>
+
+<p>Negative caching has two risks. The first is creation: if a product is created while a "not found" marker for it is cached, shoppers are told it does not exist until the marker expires. Keep the TTL short and delete the marker in the code that creates the record. A slow reader can still put a stale marker back after that delete, which is one of the races in <ArticleRef slug="invalidation">Cache invalidation and consistency</ArticleRef>. The second is caching failure as absence: a database timeout is not "not found". Cache the marker only when the database positively answered that the record does not exist.</p>
+
+<h2 id="big-values">Keeping values small</h2>
+
+<p>A single string value can be up to 512 MB, but large values cost more than their memory. Two costs grow with size, besides the usual one that a big value contains many things, so it changes often and is expensive to rebuild.</p>
+
+<p><strong>Network.</strong> Bandwidth is value size times read rate. A 1 MB value read 1,000 times a second is 1 GB a second, 8 Gbit/s, from one key on one server. A small change in what you cache, from the list of ids to the list of full products, say, can multiply that.</p>
+
+<p><strong>Time on Redis's one thread.</strong> Redis runs commands one at a time, and the same thread writes replies to the network, a slice at a time between other clients' work. Looking up a 20 MiB value took Redis about a microsecond; sending it is what costs. While one client fetched that value in a loop, another client's <code>PING</code> went from about 0.2 ms to between 1 and 2 ms. Deleting or expiring a hash, set, sorted set or list with many elements can hold the thread far longer, unless Redis frees it in the background. <ArticleRef slug="how-redis-works">How Redis works</ArticleRef> explains both, with <code>UNLINK</code> and the lazy-free settings that avoid the second.</p>
+
+<p>The remedy is the advice of this article: cache the pieces a request needs, split collections into one key per item or into pages, compress values over a few kilobytes, and keep long fields out of hashes. To find what you already have, <code>redis-cli --bigkeys</code> reports the largest key of each type and <code>--memkeys</code> the largest by memory; on a test keyspace both found a 20 MiB string among a thousand small products in one pass. They walk the keyspace with <code>SCAN</code>, so they can run against a live server; add <code>-i 0.1</code> to pause between batches on a busy one.</p>
+
+<h2 id="decide">What you can now decide</h2>
+
+<p>A cache entry is three decisions: what it holds, what it is called, and how it is stored. You can now:</p>
+
+<ul>
+  <li>choose the unit of caching from reads per change, knowing that bigger entries are both read by fewer requests and changed by more writes;</li>
+  <li>list every input that changes an answer, put each one in the key or keep it out of the value, and never share an entry across users or tenants who may see different things;</li>
+  <li>build each key in one function, from typed inputs, in a fixed order, with an application prefix and a version, so each answer has exactly one name;</li>
+  <li>change a value's shape safely, with additive changes and tolerant readers by default, and a new key version when a change cannot be additive, deleting under every live version on each change;</li>
+  <li>pick a data-only format, and compress large values when memory or bandwidth matters more than a few microseconds per read;</li>
+  <li>choose between a string and a hash, and give volatile fields their own lifetime with hash-field expiry or a separate key;</li>
+  <li>cache "not found" for repeated misses, and filter ids before the cache when the misses are random;</li>
+  <li>find and avoid large values before they hold up other clients.</li>
+</ul>
+
+<p>Every entry in this article carried a TTL, and several sections leaned on it as a safety net: for old key versions, for "not found" markers, for volatile fields. How long that TTL should be, how Redis actually removes expired keys, and what it evicts when memory runs out are the subject of the next article, <ArticleRef slug="expiration-and-eviction">Cache expiration and eviction</ArticleRef>.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+
+<ul>
+  <li>Redis documentation, <a href="https://redis.io/docs/latest/develop/using-commands/keyspace/">Keys and values</a>: key naming conventions, key length advice, the 512 MB limit, hash tags, and <code>SCAN</code> against <code>KEYS</code>.</li>
+  <li>Redis documentation, <a href="https://redis.io/docs/latest/develop/data-types/hashes/">Redis hashes</a>, and the command pages for <a href="https://redis.io/docs/latest/commands/hexpire/">HEXPIRE</a> (since 7.4.0), <a href="https://redis.io/docs/latest/commands/hsetex/">HSETEX</a> and <a href="https://redis.io/docs/latest/commands/hgetex/">HGETEX</a> (since 8.0.0) and <a href="https://redis.io/docs/latest/commands/himport/">HIMPORT</a> (8.10). Valkey's <a href="https://valkey.io/commands/hexpire/">HEXPIRE</a> is available since Valkey 9.0. The behaviour of <code>HSETEX</code> on fields it does not name follows <code>hsetexCommand</code> in <a href="https://github.com/redis/redis/blob/8.10.3/src/t_hash.c">src/t_hash.c</a> at Redis 8.10.3, and was observed on that version.</li>
+  <li>Redis documentation: <a href="https://redis.io/docs/latest/commands/memory-usage/">MEMORY USAGE</a>, <a href="https://redis.io/docs/latest/commands/mget/">MGET</a>, <a href="https://redis.io/docs/latest/commands/unlink/">UNLINK</a>, <a href="https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/">ACL</a> key patterns, <a href="https://redis.io/docs/latest/develop/tools/cli/">redis-cli</a> (<code>--bigkeys</code>, <code>--memkeys</code> and <code>-i</code>), and <a href="https://redis.io/docs/latest/develop/data-types/probabilistic/bloom-filter/">Bloom filter</a>.</li>
+  <li>Burton H. Bloom, <a href="https://dl.acm.org/doi/10.1145/362686.362692">Space/time trade-offs in hash coding with allowable errors</a>, Communications of the ACM, 1970, for the filter and its false-positive trade-off.</li>
+  <li>Zstandard, <a href="https://github.com/facebook/zstd#the-case-for-small-data-compression">the case for small data compression</a>, on training dictionaries for many small values.</li>
+  <li>Ruby on Rails Guides, <a href="https://guides.rubyonrails.org/caching_with_rails.html">Caching with Rails</a>: cache keys and cache versions, the version-in-value approach.</li>
+  <li>Python documentation, <a href="https://docs.python.org/3/library/pickle.html">pickle</a>, for the warning about unpickling untrusted data.</li>
+  <li>Microsoft, <a href="https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside">Cache-Aside pattern</a>, Azure Architecture Center, on sensitive data in a shared cache.</li>
+  <li>Rajesh Nishtala and others, <a href="https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf">Scaling Memcache at Facebook</a>, NSDI 2013, for a large system that caches both rows and computed results and fetches many keys per request.</li>
+  <li>Measured behaviour quoted in this article (key and value sizes from <code>MEMORY USAGE</code>, <code>WRONGTYPE</code>, versioned keys left behind, hash-field expiry and <code>HSETEX</code>, the "not found" marker, the effect of a large reply on another client, <code>--bigkeys</code> and <code>--memkeys</code>) was observed on Redis 8.10.3 on macOS with the system allocator and persistence off. Compression and parsing sizes and times were measured in Python 3.14 on the same laptop. Everything else in the figures comes from an illustrative model, described in each figure's caption.</li>
+</ul>

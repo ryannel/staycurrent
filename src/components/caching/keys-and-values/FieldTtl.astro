@@ -1,0 +1,89 @@
+---
+// Figure: one TTL on the whole product versus a TTL on the stock field only.
+import SimFigure from '../shared/SimFigure.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './kv.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="kv-field-ttl" title="One TTL for the product, or one for its stock" advance={1000}
+  legend={[{ kind: 'hit', label: 'Read from Redis' }, { kind: 'miss', label: 'Whole product rebuilt' }, { kind: 'expiry', label: 'Stock field expired, re-read alone' }]}
+  caption="Illustrative model: one product page read twice a second on average. The stock shown may be at most 5 seconds old; the other fields may be an hour old. The database costs are assumptions: 40 ms to build the whole product (joins for description, images and reviews), 1 ms to read the stock alone.">
+  <Choice slot="params" name="mode" label="Expiry on" value="key" options={[
+    { value: 'key', label: 'The whole key: 5 s' },
+    { value: 'field', label: 'The stock field: 5 s, the rest 1 hour' },
+  ]} />
+  <Fragment slot="stats">
+    <Readout name="builds" label="Whole-product rebuilds" kind="miss" />
+    <Readout name="stock" label="Stock-only reads" kind="expiry" />
+    <Readout name="db" label="Database time, last minute" kind="database" />
+  </Fragment>
+  <Fragment slot="text">
+    <p>With one TTL on the key, the TTL has to suit the field that changes fastest, so every field expires every 5 seconds. Each expiry makes the next read rebuild the whole product: about 11 rebuilds and roughly 450 ms of database time a minute, almost all of it spent re-reading a description that has not changed.</p>
+    <p>With a TTL on the stock field only, the stock field disappears every 5 seconds and the next read fetches just the stock; the other fields stay for an hour. The page shows equally fresh stock for about 11 ms of database time a minute.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+  import { fieldTtl, remaining, FIELDS } from './field-ttl-model.mjs';
+  import { responsiveSvg } from './draw.mjs';
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="kv-field-ttl"]').forEach(root => {
+    let rows: { bar: SVGElement; left: SVGElement; track: number }[] = [];
+    let event: SVGElement | null = null;
+    responsiveSvg(root.querySelector<HTMLElement>('[data-scene]')!,
+      'The hash product:42 in Redis, one row per field, each with a bar showing how much of its time to live remains.',
+      (svg, width, compact) => {
+        const pad = 12, nameW = compact ? 92 : 110, leftW = compact ? 64 : 84;
+        const rowH = 26, top = 34;
+        const boxW = Math.min(width, 640);
+        const x0 = (width - boxW) / 2;
+        svgEl('rect', { class: 'kv-hash-box', x: x0, y: 0, width: boxW, height: top + FIELDS.length * rowH + 8, rx: 5 }, svg);
+        svgEl('text', { class: 'kv-hash-title', x: x0 + pad, y: 21 }, svg).textContent = 'product:42  (a hash in Redis)';
+        const trackX = x0 + pad + nameW, track = boxW - pad * 2 - nameW - leftW;
+        rows = FIELDS.map((f, i) => {
+          const y = top + i * rowH;
+          svgEl('text', { class: 'kv-field-name', x: x0 + pad, y: y + 15 }, svg).textContent = f.label;
+          svgEl('rect', { class: 'kv-field-track', x: trackX, y: y + 5, width: track, height: 12, rx: 2 }, svg);
+          const bar = svgEl('rect', { class: 'kv-field-bar', x: trackX, y: y + 5, width: track, height: 12, rx: 2 }, svg);
+          const left = svgEl('text', { class: 'kv-field-left', x: trackX + track + 8, y: y + 15 }, svg);
+          return { bar, left, track };
+        });
+        const boxBottom = top + FIELDS.length * rowH + 8;
+        event = svgEl('text', { class: 'kv-event', x: width / 2, y: boxBottom + 24, 'text-anchor': 'middle' }, svg);
+        return boxBottom + 34;
+      });
+
+    const fmt = (ms: number) => (ms >= 60000 ? `${Math.floor(ms / 60000)} min ${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')} s` : `${(ms / 1000).toFixed(1)} s`);
+    mountSim(root, {
+      seed: 2,
+      create: (params: any, seed: number) => fieldTtl({ mode: params.mode }, seed),
+      render(model: any) {
+        const now = model.sim.now;
+        remaining(model).forEach((f, i) => {
+          const row = rows[i];
+          if (!row) return;
+          row.bar.setAttribute('width', String(Math.max(0, f.share * row.track)));
+          row.bar.setAttribute('data-short', String(f.ttl <= model.params.stockTtl));
+          row.left.setAttribute('class', f.left > 0 ? 'kv-field-left' : 'kv-field-gone');
+          row.left.textContent = f.left > 0 ? fmt(f.left) : 'expired';
+        });
+        if (event) {
+          const last = model.last;
+          const recent = last && now - last.at < 900;
+          const text = !recent ? '' : last.outcome === 'hit' ? 'Read: every field present' : last.outcome === 'stock' ? 'Read: stock missing, re-read stock only' : 'Read: fields missing, whole product rebuilt';
+          event.textContent = text;
+          event.setAttribute('data-cache-kind', !recent ? 'neutral' : last.outcome === 'hit' ? 'hit' : last.outcome === 'stock' ? 'expiry' : 'miss');
+        }
+        const minutes = Math.max(now, 1) / 60000;
+        setReadouts(root, {
+          builds: now < 5000 ? '–' : `${(model.totals.productBuilds / minutes).toFixed(1)} a minute`,
+          stock: now < 5000 ? '–' : `${(model.totals.stockReads / minutes).toFixed(1)} a minute`,
+          db: `${Math.round(model.windows.dbMs.count(now)).toLocaleString('en-GB')} ms`,
+        });
+      },
+    });
+  });
+</script>

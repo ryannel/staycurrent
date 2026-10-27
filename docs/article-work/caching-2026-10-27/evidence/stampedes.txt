@@ -1,0 +1,214 @@
+# Evidence for article 6: Cache stampedes and the thundering herd
+# Collected 2026-10-27 on Redis 8.10.3 (macOS arm64, malloc=libc), one laptop.
+# Server: redis-server --port 7106 --dir <temporary directory> --save '' --appendonly no; shut down at the end.
+# Scripts: evidence/stampedes-scripts/ (commands.sh, resp.mjs, lab.mjs). Model code: src/components/caching/stampedes/*.mjs
+# In redis-cli output piped to a file, an empty line is a nil reply.
+
+################ A to F. Command behaviour (commands.sh)
+redis_version:8.10.3
+os:Darwin 25.6.0 arm64
+tcp_port:7106
+
+## B. Acquire a rebuild lock: SET ... NX PX
+> SET lock:trending tok-A NX PX 5000
+  OK
+> SET lock:trending tok-B NX PX 5000
+  
+> GET lock:trending
+  tok-A
+> PTTL lock:trending
+  4969
+
+## C. Release only your own lock
+# Redis 8.4+: DELEX ... IFEQ token. B tries to release A's lock, then A releases its own.
+> DELEX lock:trending IFEQ tok-B
+  0
+> GET lock:trending
+  tok-A
+> DELEX lock:trending IFEQ tok-A
+  1
+> EXISTS lock:trending
+  0
+# Before 8.4: a Lua script that compares and deletes atomically.
+# script: if redis.call("get",KEYS[1]) == ARGV[1] then return redis.call("del",KEYS[1]) else return 0 end
+> SET lock:trending tok-A NX PX 5000
+  OK
+> EVAL if redis.call("get",KEYS[1]) == ARGV[1] then return redis.call("del",KEYS[1]) else return 0 end 1 lock:trending tok-B
+  0
+> EVAL if redis.call("get",KEYS[1]) == ARGV[1] then return redis.call("del",KEYS[1]) else return 0 end 1 lock:trending tok-A
+  1
+
+## D. A lock that expires during a slow rebuild, released with plain DEL
+> SET lock:trending tok-A NX PX 300
+  OK
+# A's rebuild takes 400 ms; at about 350 ms, B misses and tries the lock
+> SET lock:trending tok-B NX PX 300
+  OK
+# At about 400 ms A's rebuild fails; A releases in a finally block with plain DEL
+> DEL lock:trending
+  1
+> SET lock:trending tok-C NX PX 300
+  OK
+# Same timeline, released with DELEX IFEQ
+> SET lock:trending tok-A NX PX 300
+  OK
+> SET lock:trending tok-B NX PX 300
+  OK
+> DELEX lock:trending IFEQ tok-A
+  0
+> SET lock:trending tok-C NX PX 300
+  
+> GET lock:trending
+  tok-B
+
+## E. Reading a value and its remaining lifetime together (soft and hard expiry)
+> SET trending [42,17,8] EX 600
+  OK
+> MULTI / GET trending / PTTL trending / EXEC
+  OK
+  QUEUED
+  QUEUED
+  [42,17,8]
+  599988
+# The same two commands pipelined without MULTI (one round trip)
+  [42,17,8]
+  599975
+# PTTL on a missing key and on a key without a TTL
+> PTTL nosuchkey
+  -2
+> SET plain x
+  OK
+> PTTL plain
+  -1
+
+## F. Storing the rebuild time with the value for XFetch: a hash with value and delta (ms)
+> HSET trending:x v [42,17,8] delta 212
+  2
+> EXPIRE trending:x 60
+  1
+> HMGET trending:x v delta / PTTL trending:x (pipelined)
+  [42,17,8]
+  212
+  59990
+
+################ G to J. Stampede experiments (lab.mjs)
+# Every Redis command is real. The database is simulated: a 200 ms timer with a counter of queries and of
+# queries running at once. Requests arrive as a seeded Poisson process at 500 a second and are spread
+# at random over four application 'processes', each with its own Redis connection (one Node.js process
+# stands in for all four). Latency is measured in the client and includes the simulated database.
+# Lock: SET lock:trending <random token> NX PX 5000, re-check GET, query, SET trending ... PX, DELEX lock IFEQ token;
+# losers poll GET every 20 ms (15 to 25 ms at random), giving up after 3 s (none did: gaveUp not printed as non-zero).
+# Stale: value stored with the hard TTL (15 s); GET and PTTL pipelined; stale when PTTL < hard - soft (10 s), then the
+# first request to take the lock refreshes in the background and every request returns the value it read.
+# XFetch: HMGET trending v delta and PTTL pipelined; rebuild when -delta*beta*ln(rand) >= PTTL; the request that
+# rebuilds waits for it; HSET v and delta (measured ms), then PEXPIRE.
+
+# Experiment G: a cold hot key. Key absent at start; Poisson 500 req/s for 3 s; 4 application processes; database 200 ms.
+none         seed 1: requests 1565, database queries 114, peak concurrent 114, latency p50 0 ms p99 201 ms max 202 ms, slower than 50 ms 114 (7.3%), served stale 0, waited on lock 0
+none         seed 2: requests 1566, database queries 115, peak concurrent 114, latency p50 0 ms p99 201 ms max 202 ms, slower than 50 ms 115 (7.3%), served stale 0, waited on lock 0
+none         seed 3: requests 1502, database queries 92, peak concurrent 92, latency p50 0 ms p99 202 ms max 206 ms, slower than 50 ms 92 (6.1%), served stale 0, waited on lock 0
+singleflight seed 1: requests 1565, database queries 4, peak concurrent 4, latency p50 0 ms p99 184 ms max 204 ms, slower than 50 ms 91 (5.8%), served stale 0, waited on lock 0
+singleflight seed 2: requests 1566, database queries 4, peak concurrent 4, latency p50 0 ms p99 169 ms max 203 ms, slower than 50 ms 82 (5.2%), served stale 0, waited on lock 0
+singleflight seed 3: requests 1502, database queries 4, peak concurrent 4, latency p50 0 ms p99 177 ms max 201 ms, slower than 50 ms 65 (4.3%), served stale 0, waited on lock 0
+lock         seed 1: requests 1557, database queries 1, peak concurrent 1, latency p50 0 ms p99 174 ms max 219 ms, slower than 50 ms 88 (5.7%), served stale 0, waited on lock 115
+lock         seed 2: requests 1471, database queries 1, peak concurrent 1, latency p50 0 ms p99 198 ms max 230 ms, slower than 50 ms 86 (5.8%), served stale 0, waited on lock 99
+lock         seed 3: requests 1563, database queries 1, peak concurrent 1, latency p50 0 ms p99 185 ms max 206 ms, slower than 50 ms 85 (5.4%), served stale 0, waited on lock 107
+
+# Experiment H: does skipping the re-check after taking the lock cause duplicate rebuilds? 30 runs each, 0.6 s bursts at 500 req/s.
+recheck=false: database queries per run: 1 1 1 1 1 1 1 2 1 1 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1; runs with more than one: 2
+recheck=true: database queries per run: 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1; runs with more than one: 0
+
+# Experiment I: a warm hot key over 30 s. Poisson 500 req/s, 4 processes, database 200 ms. TTL 5 s (none, lock, xfetch); stale: soft 5 s, hard 15 s.
+none         seed 7: requests 15131, database queries 516, peak concurrent 110, latency p50 0 ms p99 201 ms max 209 ms, slower than 50 ms 516 (3.4%), served stale 0, waited on lock 0
+lock         seed 7: requests 15056, database queries 5, peak concurrent 1, latency p50 0 ms p99 147 ms max 220 ms, slower than 50 ms 375 (2.5%), served stale 0, waited on lock 480
+stale        seed 7: requests 15131, database queries 5, peak concurrent 1, latency p50 0 ms p99 2 ms max 16 ms, slower than 50 ms 0 (0.0%), served stale 515, waited on lock 0
+xfetch       seed 7: requests 15101, database queries 15, peak concurrent 4, latency p50 0 ms p99 5 ms max 202 ms, slower than 50 ms 15 (0.1%), served stale 0, waited on lock 0, requests that found no value 0
+  xfetch cycles: 7; rebuilds per cycle: 3 4 1 1 1 1 4; mean 2.14; first rebuild started this many ms before expiry: 908 641 1280 1221 964 1145 926
+
+# Experiment J: XFetch on real Redis, longer run. Poisson 500 req/s, TTL 5 s, beta 1, 120 s.
+xfetch       seed 11: requests 59880, database queries 77, peak concurrent 9, latency p50 0 ms p99 6 ms max 210 ms, slower than 50 ms 78 (0.1%), served stale 0, waited on lock 0, requests that found no value 0
+  cycles 28; mean rebuilds per cycle 2.75; max 9; first rebuild before expiry: mean 1028 ms, min 622 ms, max 1624 ms
+
+# Predictions to compare (derived in the article): unprotected queries per expiry = r * delta = 500 * 0.2 = 100;
+# XFetch rebuilds per expiry ~ e^(1/beta) = 2.72 at beta = 1; first rebuild ~ delta*beta*(ln(r*delta*beta) + 0.5772) = 1.036 s before expiry.
+
+################ K. Settling XFetch's expected stampede size (MODEL, not Redis)
+# Vattani, Chierichetti and Lowenstein, PVLDB 8(8) 2015, read in full from https://www.vldb.org/pvldb/vol8/p886-vattani.pdf
+# Definition 3: stampede size = number of processes regenerating in [Z, Z+1), Z = first regeneration, recompute = 1 unit.
+# Theorem 7: Exp(lambda) is ((e^lambda - 1)(1/lambda + 1/e), (1/lambda) log n)-effective, where (s, gamma)-effective
+# (Definition 5) means E[S] <= (1 + o(1)) s. At lambda = 1 the bound is (e - 1)(1 + 1/e) = e - 1/e = 2.35, the figure
+# the paper's text quotes ('e - 1/e ~ 2.4 processes'). It comes from Lemma 16's series estimate. My reading (not
+# confirmed with the authors): that proof bounds E[S | T in (nu-i-1, nu-i)] by n e^(-lambda(nu-i)) = e^(lambda i),
+# which uses the smallest per-request rebuild probability in the stampede window rather than the largest.
+# Direct derivation (article): rebuild starts are a Poisson process with intensity n e^(-y/beta) at y units before
+# expiry; the intensity still ahead at the first start is Exp(1) with mean 1; the window of one rebuild after it adds
+# (e^(1/beta) - 1) times that; so E[S] = 1 + (e^(1/beta) - 1) = e^(1/beta), for n large. Lead: beta(ln(n beta) + 0.5772).
+# Simulation of the paper's model, seed 11 (columns: requests per rebuild time, beta, arrivals, method | mean size |
+# e^(1/beta) | paper's Theorem 7 value | mean lead in rebuild times | derived lead | share of cycles whose first
+# rebuild started less than one rebuild time before expiry). 'brute' simulates every request (2,000 cycles; 400 at
+# n >= 1000); 'fast' samples the rebuild-start process exactly (100,000 cycles).
+rate(per rebuild) beta arrivals method | mean size | e^(1/b) | paper bound | mean lead | derived lead | P(first starts <1 rebuild before expiry)
+10	0.5	poisson	brute	| 5.758 | 7.389 | 5.545 | 1.077 | 1.093 | 53.40%
+10	0.5	even	brute	| 5.290 | 7.389 | 5.545 | 1.142 | 1.093 | 47.15%
+10	0.5	poisson	fast	| 5.599 | 7.389 | 5.545 | 1.093 | 1.093 | 51.06%
+100	0.5	poisson	brute	| 7.193 | 7.389 | 5.545 | 2.260 | 2.245 | 0.10%
+100	0.5	even	brute	| 7.574 | 7.389 | 5.545 | 2.220 | 2.245 | 0.15%
+100	0.5	poisson	fast	| 7.424 | 7.389 | 5.545 | 2.242 | 2.245 | 0.14%
+1000	0.5	poisson	brute	| 7.360 | 7.389 | 5.545 | 3.394 | 3.396 | 0.00%
+1000	0.5	even	brute	| 6.735 | 7.389 | 5.545 | 3.447 | 3.396 | 0.00%
+1000	0.5	poisson	fast	| 7.424 | 7.389 | 5.545 | 3.393 | 3.396 | 0.00%
+10000	0.5	poisson	fast	| 7.424 | 7.389 | 5.545 | 4.544 | 4.547 | 0.00%
+10	0.75	poisson	brute	| 3.622 | 3.794 | 3.123 | 1.951 | 1.944 | 13.85%
+10	0.75	even	brute	| 3.380 | 3.794 | 3.123 | 1.968 | 1.944 | 11.15%
+10	0.75	poisson	fast	| 3.654 | 3.794 | 3.123 | 1.944 | 1.944 | 13.97%
+100	0.75	poisson	brute	| 3.804 | 3.794 | 3.123 | 3.650 | 3.671 | 0.00%
+100	0.75	even	brute	| 3.858 | 3.794 | 3.123 | 3.661 | 3.671 | 0.00%
+100	0.75	poisson	fast	| 3.798 | 3.794 | 3.123 | 3.672 | 3.671 | 0.00%
+1000	0.75	poisson	brute	| 3.970 | 3.794 | 3.123 | 5.356 | 5.398 | 0.00%
+1000	0.75	even	brute	| 3.542 | 3.794 | 3.123 | 5.441 | 5.398 | 0.00%
+1000	0.75	poisson	fast	| 3.798 | 3.794 | 3.123 | 5.399 | 5.398 | 0.00%
+10000	0.75	poisson	fast	| 3.798 | 3.794 | 3.123 | 7.126 | 7.125 | 0.00%
+10	1	poisson	brute	| 2.656 | 2.718 | 2.350 | 2.893 | 2.880 | 2.55%
+10	1	even	brute	| 2.461 | 2.718 | 2.350 | 2.913 | 2.880 | 1.25%
+10	1	poisson	fast	| 2.715 | 2.718 | 2.350 | 2.874 | 2.880 | 2.57%
+100	1	poisson	brute	| 2.743 | 2.718 | 2.350 | 5.183 | 5.182 | 0.00%
+100	1	even	brute	| 2.711 | 2.718 | 2.350 | 5.213 | 5.182 | 0.00%
+100	1	poisson	fast	| 2.729 | 2.718 | 2.350 | 5.176 | 5.182 | 0.00%
+1000	1	poisson	brute	| 2.833 | 2.718 | 2.350 | 7.530 | 7.485 | 0.00%
+1000	1	even	brute	| 2.690 | 2.718 | 2.350 | 7.508 | 7.485 | 0.00%
+1000	1	poisson	fast	| 2.729 | 2.718 | 2.350 | 7.479 | 7.485 | 0.00%
+10000	1	poisson	brute	| 2.665 | 2.718 | 2.350 | 9.742 | 9.788 | 0.00%
+10000	1	even	brute	| 2.828 | 2.718 | 2.350 | 9.738 | 9.788 | 0.00%
+10000	1	poisson	fast	| 2.729 | 2.718 | 2.350 | 9.782 | 9.788 | 0.00%
+10	1.5	poisson	brute	| 1.927 | 1.948 | 1.770 | 4.962 | 4.928 | 0.05%
+10	1.5	even	brute	| 1.860 | 1.948 | 1.770 | 5.027 | 4.928 | 0.00%
+10	1.5	poisson	fast	| 1.947 | 1.948 | 1.770 | 4.926 | 4.928 | 0.05%
+100	1.5	poisson	brute	| 1.954 | 1.948 | 1.770 | 8.369 | 8.382 | 0.00%
+100	1.5	even	brute	| 1.936 | 1.948 | 1.770 | 8.393 | 8.382 | 0.00%
+100	1.5	poisson	fast	| 1.947 | 1.948 | 1.770 | 8.380 | 8.382 | 0.00%
+1000	1.5	poisson	brute	| 1.962 | 1.948 | 1.770 | 11.779 | 11.836 | 0.00%
+1000	1.5	even	brute	| 1.823 | 1.948 | 1.770 | 11.983 | 11.836 | 0.00%
+1000	1.5	poisson	fast	| 1.947 | 1.948 | 1.770 | 11.834 | 11.836 | 0.00%
+10000	1.5	poisson	brute	| 1.823 | 1.948 | 1.770 | 15.299 | 15.290 | 0.00%
+10000	1.5	even	brute	| 2.078 | 1.948 | 1.770 | 15.303 | 15.290 | 0.00%
+10000	1.5	poisson	fast	| 1.947 | 1.948 | 1.770 | 15.288 | 15.290 | 0.00%
+10	2	poisson	brute	| 1.692 | 1.649 | 1.536 | 7.075 | 7.146 | 0.00%
+10	2	even	brute	| 1.656 | 1.649 | 1.536 | 7.195 | 7.146 | 0.00%
+10	2	poisson	fast	| 1.647 | 1.649 | 1.536 | 7.151 | 7.146 | 0.00%
+100	2	poisson	brute	| 1.640 | 1.649 | 1.536 | 11.731 | 11.751 | 0.00%
+100	2	even	brute	| 1.665 | 1.649 | 1.536 | 11.731 | 11.751 | 0.00%
+100	2	poisson	fast	| 1.647 | 1.649 | 1.536 | 11.756 | 11.751 | 0.00%
+1000	2	poisson	brute	| 1.677 | 1.649 | 1.536 | 16.450 | 16.356 | 0.00%
+1000	2	even	brute	| 1.655 | 1.649 | 1.536 | 16.420 | 16.356 | 0.00%
+1000	2	poisson	fast	| 1.647 | 1.649 | 1.536 | 16.362 | 16.356 | 0.00%
+10000	2	poisson	brute	| 1.640 | 1.649 | 1.536 | 20.942 | 20.961 | 0.00%
+10000	2	even	brute	| 1.585 | 1.649 | 1.536 | 20.851 | 20.961 | 0.00%
+10000	2	poisson	fast	| 1.647 | 1.649 | 1.536 | 20.967 | 20.961 | 0.00%
+# Reading: for n >= 100 the mean is e^(1/beta) for Poisson and equally spaced arrivals alike (2.72 at beta = 1), above
+# the Theorem 7 value at every beta, so that value cannot be an upper bound on the expectation.
+# The paper's own measurements agree with e^(1/beta): its Figure 7 (Goodreads trace, 10 s recompute, bursty
+# arrivals, sigma ~ 3.6) shows an average stampede size of about 2.9 at beta = 1, about 4 at beta = 0.75 and about 8
+# at beta = 0.5 (read from the plot rendered at 400 dpi), against e^(1/beta) = 2.72, 3.79, 7.39 and Theorem 7's
+# 2.35, 3.12, 5.55. Real Redis (experiment J): 2.75 rebuilds per expiry over 28 cycles.
+# Conclusion used in the article: about e ~ 2.7 rebuilds per expiry at beta = 1, and e^(1/beta) in general.
+# 2026-10-27 23:27 Redis on port 7106 shut down with SHUTDOWN NOSAVE; temporary directory removed.
