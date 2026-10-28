@@ -1,5 +1,14 @@
 # Caches and in-memory stores: proposed coverage map
 
+## Agreed framing, 28 October 2026
+
+Teach caching as a general subject. Use Redis as the concrete implementation for
+worked examples, presenting it as one of many choices rather than the default
+or the definition of caching. Distinguish general principles from Redis-specific
+commands, behaviour and guarantees, and explain relevant alternatives where they
+change a reader's decision. Carry this framing into future briefs, drafts and
+reviews. This note does not authorise publication or approve the proposed tree below.
+
 Revised field allocation, 18 October 2026. **Proposal for user discussion.**
 The [independent derivation](../planning/databases-depth-2026-10-18/caching-proposal.md)
 and [ability breakdown](../planning/databases-depth-2026-10-18/caching-abilities.md)
