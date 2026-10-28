@@ -231,13 +231,42 @@ export function lineChart(container, { label, height = 200, x = {}, y = {}, seri
       }
       for (const line of lines.values()) {
         const visible = line.points.filter(p => p[0] >= x0 - (x1 - x0) * 0.02 && (!xLog || p[0] > 0));
-        const clampY = v => yScale(Math.max(y0, Math.min(y1, v)));
-        line.path.setAttribute('d', visible.map((p, i) => `${i ? 'L' : 'M'}${xScale(p[0]).toFixed(1)} ${clampY(p[1]).toFixed(1)}`).join(''));
+        line.path.setAttribute('d', clipPath(visible.map(p => [xScale(p[0]), yScale(p[1])]), margin.top, height - margin.bottom));
       }
     },
   };
   observe(container, w => { width = w; svg.setAttribute('viewBox', `0 0 ${w} ${height}`); svg.setAttribute('width', w); svg.setAttribute('height', height); chart.render(); })();
   return chart;
+}
+
+/**
+ * An SVG path through pixel points, clipped to the plot's vertical extent.
+ * A segment that leaves the plot is cut where it crosses the edge, so its
+ * slope is kept; clamping the point to the edge would bend the line.
+ */
+export function clipPath(points, top, bottom) {
+  const out = [];
+  let pen = false;
+  const at = (a, b, y) => [a[0] + ((y - a[1]) / (b[1] - a[1])) * (b[0] - a[0]), y];
+  const draw = (pt, move) => { out.push(`${move ? 'M' : 'L'}${pt[0].toFixed(1)} ${pt[1].toFixed(1)}`); };
+  const inside = p => p[1] >= top - 0.01 && p[1] <= bottom + 0.01;
+  if (points.length === 1 && inside(points[0])) draw(points[0], true);
+  for (let i = 1; i < points.length; i++) {
+    let a = points[i - 1], b = points[i];
+    // Cut the segment to the band top..bottom (y grows downwards).
+    for (const edge of [top, bottom]) {
+      const above = edge === top ? p => p[1] < edge : p => p[1] > edge;
+      if (above(a) && above(b)) { a = null; break; }
+      if (above(a)) a = at(a, b, edge);
+      else if (above(b)) b = at(a, b, edge);
+    }
+    if (!a) { pen = false; continue; }
+    const restart = !pen || a !== points[i - 1];
+    if (restart) draw(a, true);
+    draw(b, false);
+    pen = b === points[i];
+  }
+  return out.join('');
 }
 
 /**
