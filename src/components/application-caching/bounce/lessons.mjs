@@ -142,13 +142,14 @@ function app(x,y){
     text(x,y+49,'App',20);
 }
 function burst(t,small){
-  const W=small?440:760;
-  let s='';
+  const W=small?440:760, rowHeight=360, gap=small?64:80;
+  const dividerY=rowHeight+gap/2;
+  let s=stroke(`M24 ${dividerY}H${W-24}`,'--color-text-secondary',1,'opacity=".55"');
   for(let row=0;row<2;row++){
-    const offset=row*(small?360:300), y=(small?165:150)+offset;
-    const A=[small?50:65,y], S=[small?180:245,y];
-    const C=[small?335:465,(small?110:130)+offset];
-    const D=[small?335:665,(small?250:195)+offset],share=row===1;
+    const offset=row*(rowHeight+gap), y=(small?165:180)+offset;
+    const A=[small?50:100,y], S=[small?180:300,y];
+    const C=[small?335:580,110+offset];
+    const D=[small?335:580,250+offset],share=row===1;
     const fillAt=8.1;
     s+=text(W/2,20+offset,share?'Share one fill':'Each request reads',24);
     s+=stroke(qpath(A,route(A,S,-12),S));
@@ -176,44 +177,60 @@ function burst(t,small){
       (share?'One fills. Three wait.':'Four separate source reads.'):
       t<10.7?'Four answers return to the app':
       (share?'One source read. Four answers.':'Four source reads. Four answers.');
-    s+=text(W/2,(small?335:285)+offset,note,small?20:23);
+    s+=text(W/2,rowHeight-25+offset,note,small?20:23);
   }
-  return svg(s,small,small?720:615);
+  return svg(s,small,rowHeight*2+gap);
 }
 
 function memory(t,small){
-  const W=small?440:760, start=small?105:240, gap=small?64:78, slot=i=>start+i*gap,dx=small?375:675;
-  let s='';
+  const W=small?440:760, rowHeight=small?490:455, gap=small?64:80;
+  let s=stroke(`M24 ${rowHeight+gap/2}H${W-24}`,'--color-text-secondary',1,'opacity=".55"');
   for(let row=0;row<2;row++){
-    const y=row?480:145,keep=row===1,replaced=!keep&&t>=3.5;
-    s+=text(W/2,y-107,keep?'Skip saving the large result':'Save the large result',24);
-    s+=text(W/2,y-73,'Cache · 4 KiB',19);
-    s+=`<rect x="${start-32}" y="${y-41}" width="${gap*3+64}" height="84" rx="28" fill="none" stroke="var(--color-text-secondary)" stroke-width="1.6"/>`;
+    const keep=row===1, oy=row*(rowHeight+gap), saved=t>=4;
+    const A=[small?50:100,oy+250], S=[small?180:300,oy+250];
+    const C=[small?290:580,oy+145], D=[C[0],oy+345];
+    const unit=small?51:64, left=C[0]-unit*2, slot=i=>left+unit*(i+.5);
+    const sourceActive=!keep&&t>=7.1&&t<9.5;
+    s+=text(W/2,oy+28,keep?'Keep the small answers':'Save the large result',small?23:24);
+    s+=stroke(qpath(A,route(A,S,-10),S));
+    s+=stroke(qpath(S,route(S,C,-18),C));
+    s+=stroke(qpath(S,route(S,D,18),D),sourceActive?'--gold':'--color-rule-strong');
+    s+=app(...A)+server(...S)+database(...D,sourceActive);
+    s+=text(C[0],C[1]-51,'Cache · 4 KiB',22);
+    s+=`<rect x="${left-6}" y="${C[1]-32}" width="${unit*4+12}" height="64" rx="18" fill="${paper}" stroke="var(--teal)" stroke-width="1.6"/>`;
+    // Equal-width spaces make the byte budget visible; labels stay inside.
     for(let i=0;i<4;i++){
-      if(!replaced||i===3)s+=answerDot(slot(i),y,`P${7+i}`,'--teal',22);
-      if(!keep&&i<3&&t>=2.3&&t<3.5){const p=phase(t,2.3,3.5);s+=`<g opacity="${1-p}" transform="translate(0 ${-ease(p)*47})">${result(slot(i),y,1.3)}</g>`;}
+      const leaving=!keep&&i<3&&t>=2.8;
+      const opacity=leaving?1-phase(t,2.8,4):1;
+      if(opacity>0){
+        s+=`<g opacity="${opacity}" transform="translate(0 ${leaving?-phase(t,2.8,4)*18:0})">`;
+        s+=`<rect x="${slot(i)-unit/2+3}" y="${C[1]-25}" width="${unit-6}" height="50" rx="12" fill="${paper}" stroke="var(--teal)" stroke-width="1.4"/>`;
+        s+=text(slot(i),C[1]-2,`P${7+i}`,18)+text(slot(i),C[1]+17,'1 KiB',13,'--color-text-secondary')+'</g>';
+      }
     }
-    if(replaced){
-      s+=`<rect x="${slot(0)-26}" y="${y-27}" width="${gap*2+52}" height="54" rx="26" fill="${paper}" stroke="var(--purple)" stroke-width="1.8"/>`;
-      s+=text(slot(1),y+7,'3 KiB',23)+text(slot(1),y+44,'large result',18);
-    }else if(t<3.5||keep){
-      const x=small?36:110,yy=y-15;
-      s+=`<circle cx="${x}" cy="${yy}" r="29" fill="${paper}" stroke="var(--purple)" stroke-width="1.8"/>`+text(x,yy+5,'3 KiB',16);
-      if(keep&&t>=3.5)s+=text(x,yy+56,'not saved',small?15:18);
+    if(!keep&&t>=4){
+      const p=ease(phase(t,4,4.8));
+      s+=`<g opacity="${p}" transform="translate(0 ${-12*(1-p)})"><rect x="${left+3}" y="${C[1]-25}" width="${unit*3-6}" height="50" rx="12" fill="${paper}" stroke="var(--purple)" stroke-width="1.8"/>`;
+      s+=text(left+unit*1.5,C[1]-2,'Large result',small?17:19)+text(left+unit*1.5,C[1]+18,'3 KiB',15,'--color-text-secondary')+'</g>';
     }
-    // Three later requests ask for P7, P8 and P9. Occupancy remains 4 KiB;
-    // this illustration stops at the source reads, before those misses refill.
+    s+=text(C[0],C[1]-80,t<2.8?'Full · four small answers':keep?'Large result not saved':saved?'P7, P8 and P9 evicted':'Making room for 3 KiB',small?16:18,'--color-text-secondary');
+    let misses=0,hits=0;
     for(let i=0;i<3;i++){
-      const age=t-(5+i*.9),P=[slot(i),y],from=[slot(i),y+80],colour=colours[i];
-      if(t>=5)s+=text(slot(i),y+105,`P${7+i}`,18);
-      s+=travel(age,0,.75,from,P,colour);
-      if(keep){s+=travel(age,1,1.75,P,from,colour,true);}
-      else{s+=travel(age,1,2.2,P,[dx,y+115],colour,false,33);}
+      const age=t-(5.4+i*.35), key=`P${7+i}`, colour=products[i].colour;
+      const move=(a,b,from,to,answer=false,bend=0)=>moving(age,a,b,from,route(from,to,bend),to,colour,answer,key);
+      s+=move(0,.6,A,S,false,-10)+move(.6,1.2,S,C,false,-18);
+      if(age>=1.2){if(keep)hits++;else misses++;}
+      s+=move(1.2,1.7,C,S,keep,-18);
+      if(keep){
+        s+=pulse(age,1.2,...C,colour,38)+move(1.7,2.4,S,A,true,-10);
+      }else{
+        s+=move(1.7,2.5,S,D,false,18)+pulse(age,2.5,...D,colour,32);
+      }
     }
-    s+=database(dx,y+115,!keep&&t>=6&&t<10);
-    s+=text(small?180:320,y+141,t<5?'Each small answer uses 1 KiB':keep?'Three later hits':'Three later misses',small?19:22);
+    const note=t<5.4?'A new result needs 3 KiB':keep?`${hits} cache hits · 0 database reads`:`${misses} cache misses · ${Math.max(0,Math.min(3,Math.floor((t-7.9)/.35)+1))} database reads`;
+    s+=text(W/2,oy+rowHeight-18,note,small?20:23);
   }
-  return svg(s,small,680);
+  return svg(s,small,rowHeight*2+gap);
 }
 
 export const lessons={
@@ -221,5 +238,5 @@ export const lessons={
   identity:{title:'Two questions need two keys',duration:9000,render:t=>both(identity,clamp(t)*9),alt:'North’s P7 costs £20; south’s P7 costs £18. With only P7 as the cache key, south receives north’s £20 answer. Including the shop gives each answer its own entry, and south receives £18.',caption:'Figure 3. Both lookups hit. Only the key that includes the shop finds the right answer. Keys are shortened here; language, currency and format stay fixed.'},
   change:{title:'A copy can fall behind',duration:18000,render:t=>both(change,clamp(t)*18),alt:'The database and cache begin at £20. The database commits £22 while the cache still holds £20. The server then deletes the cached copy. A later request misses, reads £22 from the database and saves a new copy. No reads overlap the update in this example.',caption:'Figure 4. Commit £22, delete the old copy, then refill on the next miss. The purple pulse is the deletion; the coral ball is a later read. These are separate operations, with no overlapping read in this example.'},
   burst:{title:'Four requests, one piece of work',duration:13000,render:t=>both(burst,clamp(t)*13),alt:'Four coloured requests travel from the app to the server and miss an empty cache. Without coalescing, all four read the database. With coalescing inside one server process, one reads while three wait. Four answers travel back to the app in both cases.',caption:'Figure 5. Four requests leave the app; four answers return. Sharing the fill inside one server process avoids three database reads. Waiting must be bounded in a real service.'},
-  memory:{title:'An answer has to earn its space',duration:11000,render:t=>both(memory,clamp(t)*11),alt:'A four KiB cache holds P7, P8, P9 and P10 at one KiB each. Saving a three KiB result evicts P7, P8 and P9. Their next requests miss and go to the database. Skipping that admission retains all four products, so the same three requests hit.',caption:'Figure 6. Outlined circles hold saved answers; coloured balls are requests. The 3 KiB result displaces three 1 KiB answers if admitted. Both original callers receive the large result; this drawing compares what gets saved. The later misses are shown before refilling. Sizes include keys and bookkeeping; no entries expire.'},
+  memory:{title:'An answer has to earn its space',duration:11000,render:t=>both(memory,clamp(t)*11),alt:'A four KiB cache holds P7, P8, P9 and P10 at one KiB each. Saving a three KiB result evicts P7, P8 and P9. Their next requests miss and go to the database. Skipping that admission retains all four products, so the same three requests hit.',caption:'Figure 6. Each cache has a 4 KiB budget; equal widths show equal memory. Saving the 3 KiB result evicts P7, P8 and P9. The same three requests then leave the app: three misses above, three hits below. The comparison stops at the extra database reads, before refilling. Both original callers received the large result; only saving it differs. Sizes include keys and bookkeeping; no entries expire.'},
 };

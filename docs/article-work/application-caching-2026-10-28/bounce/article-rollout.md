@@ -266,3 +266,24 @@ unchanged; the figure height expands to retain its existing scale.
 Checked the rendered boundary on desktop and 375px phone in both themes.
 Draft build passes with the existing unrelated warnings. Saved
 `placement-separated-*` screenshots and restored System theme/default viewport.
+
+## Align destinations and repair the memory comparison
+
+Aligned Cache and Database vertically in Figure 5 and added the same breathing
+room and divider as Figure 2. Request timing and coalescing behaviour are unchanged.
+
+Rebuilt Figure 6 around four equal 1 KiB spaces, with labels inside their bounds.
+The large answer visibly occupies three spaces after P7–P9 leave; the alternative
+keeps all four small answers. Both panels now include App, Server and connected
+Cache/Database paths. Three labelled requests leave the app, check the cache and
+either return as hits or reach the database. Counts advance with those lookups
+and arrivals. The comparison still stops before miss refills; the caption makes
+this explicit. The byte budget, displaced keys and surrounding admission
+explanation are unchanged. A divider separates the two arrangements.
+
+Checked both figures on desktop and 375px phone in dark and light themes, including
+keyboard replay and pause/resume. Moved the memory status above the cache after
+the phone check revealed a crossing path. Existing five focused tests pass, and
+a render sweep of both changed figures has finite geometry throughout playback;
+the memory end state reports three misses/reads against three hits/zero reads.
+The draft build passes with the existing 36 unrelated dense-prose warnings.
