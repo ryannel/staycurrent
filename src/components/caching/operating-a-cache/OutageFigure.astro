@@ -1,0 +1,107 @@
+---
+// Figure: thirty seconds without Redis, with and without a limit on database work.
+import SimFigure from '../shared/SimFigure.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import ActionButton from '../shared/ActionButton.astro';
+import './operating.css';
+import { LIMITS } from './shop-model.mjs';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="op-outage" title="Thirty seconds without Redis" advance={5000} legend={['client', 'hit', 'miss', 'error']}
+  caption="Illustrative model: 1,000 product reads a second over 20,000 products with skewed popularity; Redis is an LRU cache of 12,500 products, warmed by earlier traffic, that answers about 90% of reads, and is unavailable from 10 s to 40 s, then returns with its data, as a promoted replica would. The database runs 8 queries at once, each taking 27 ms, so it answers 300 a second; the rest wait in arrival order, and it finishes every query it accepts, even after the request has given up. A request waits 1 second at most. A limit refuses a query at once when that many are already waiting or running. One request in 40 is drawn as a moving dot. No retries; a dead Redis is assumed to cost no time (a circuit breaker or a short timeout).">
+  <Choice slot="params" name="limit" label="Queries the database may hold" value="none"
+    options={LIMITS.map(l => ({ value: String(l), label: l === 'none' ? 'no limit' : String(l) }))} />
+  <ActionButton slot="actions" advance={30000}>Skip ahead 30 s</ActionButton>
+  <Fragment slot="stats">
+    <Readout name="answered" label="Answered within 1 s, last second" kind="client" />
+    <Readout name="wait" label="Wait for the database" kind="database" />
+    <Readout name="wasted" label="Queries answered after their request gave up" kind="error" />
+  </Fragment>
+  <div slot="after" data-chart></div>
+  <Fragment slot="text">
+    <p>The figure shows requests flowing from clients to an application, which reads Redis and, while Redis is unavailable or on a miss, queries the database. A chart below shows the share of requests answered within one second, each second, with the outage shaded; once a limit is chosen, the run with no limit stays on the chart as a faint line for comparison.</p>
+    <p>With no limit, the share answered falls from 100% to 41% in the first second of the outage and to almost nothing after that: every query joins a queue that grows by 700 a second, so every answer arrives after its request has given up. By the end of the outage the database is 70 seconds behind. When Redis returns at 40 s the 90% of reads that hit are answered again, but every miss joins the back of the same queue, so about one request in ten keeps failing until the database has worked through the backlog, at about 144 s: more than a minute and a half after Redis came back. The database finishes about 40,000 queries whose requests had already failed.</p>
+    <p>With a limit of 60, about 30% of requests are answered during the outage, the 300 a second the database can serve, each within a fifth of a second; the rest fail at once. Nothing is wasted, and every request is answered again from the moment Redis returns.</p>
+    <p>With a limit of 4, only 4 of the database's 8 workers are ever busy: about 14% of requests are answered during the outage, and even before it about 2% of requests are refused because a burst of misses finds 4 queries already running. With a limit of 300 the queue the limit allows is a full second long, so about 18% are answered in time and some 3,800 queries are wasted. With 600 almost nothing is answered in time during the outage, as with no limit, but the backlog is only 2 seconds long, so everything is answered again within 3 seconds of Redis returning.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { createScene, spread } from '../shared/scene.mjs';
+  import { lineChart } from '../shared/chart.mjs';
+  import { outage } from './shop-model.mjs';
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="op-outage"]').forEach(root => {
+    const scene = createScene(root.querySelector<HTMLElement>('[data-scene]')!, {
+      label: 'Clients send requests to an application, which reads Redis and, on a miss or while Redis is unavailable, queries the database',
+      nodes: [
+        { id: 'clients', kind: 'client', label: 'Clients', count: 3 },
+        { id: 'app', kind: 'app', label: 'Application' },
+        { id: 'redis', kind: 'redis', label: 'Redis' },
+        { id: 'database', kind: 'database', label: 'Database' },
+      ],
+      edges: [
+        { id: 'client-app', from: 'clients', to: 'app' },
+        { id: 'app-redis', from: 'app', to: 'redis' },
+        { id: 'app-database', from: 'app', to: 'database' },
+      ],
+      layout: (width, compact) => {
+        const [a, b, c] = compact ? [44, (width - 40) / 2, width - 84] : spread(width, 3, 110);
+        return { height: compact ? 220 : 190, positions: { clients: [a, compact ? 110 : 95], app: [b, compact ? 110 : 95], redis: [c, compact ? 48 : 42], database: [c, compact ? 165 : 145] } };
+      },
+    });
+    const narrow = root.clientWidth < 480;
+    const chart = lineChart(root.querySelector<HTMLElement>('[data-chart]')!, {
+      label: 'Share of requests answered within one second, each second, with the Redis outage shaded, and the run with no limit for comparison',
+      height: 220,
+      x: { label: 'Simulated time (s)', domain: [0, 160], tickStep: narrow ? 40 : 20 },
+      y: { label: 'Answered within 1 s (%)', domain: [0, 100] },
+      series: [
+        { id: 'answered', label: 'Answered within 1 s', kind: 'client', dash: '' },
+        { id: 'ghost', label: 'No limit, for comparison', kind: 'neutral', dash: '2 3' },
+      ],
+      bands: [{ id: 'down', x0: 10, x1: 40, label: 'Redis unavailable', kind: 'error' }],
+    });
+    // The no-limit run, computed once when the browser is idle, drawn faintly behind any limited run.
+    let ghost: [number, number][] | null = null;
+    const makeGhost = () => {
+      if (ghost) return;
+      const m = outage({ limit: 'none' }, 1);
+      m.sim.advance(161000);
+      ghost = m.samples.map((s: any) => [s.t, s.answered * 100] as [number, number]);
+    };
+    ('requestIdleCallback' in window ? (window as any).requestIdleCallback : setTimeout)(makeGhost);
+    let shown: any = null, drawn = 0;
+    const seconds = (ms: number) => (ms < 10000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 1000)} s`);
+    mountSim(root, {
+      seed: 1,
+      create: (params, seed) => outage({ limit: params.limit, sample: 40 }, seed),
+      update: () => false,
+      render(model: any) {
+        if (model !== shown) {
+          shown = model; drawn = 0; chart.clear();
+          if (model.params.limit !== 'none') { makeGhost(); chart.set('ghost', ghost!); }
+        }
+        for (; drawn < model.samples.length; drawn++) {
+          const s = model.samples[drawn];
+          chart.push('answered', s.t, s.answered * 100);
+        }
+        chart.render();
+        scene.dots(model.movers.active());
+        const up = model.redisUp();
+        const outstanding = model.db.outstanding();
+        scene.node('redis').set({ sublabel: up ? (model.sim.now >= model.params.upAt ? 'back, with its data' : '') : 'unavailable', highlight: !up });
+        scene.node('database').set({ queue: [outstanding, 6], sublabel: `${outstanding.toLocaleString('en-GB')} ${outstanding === 1 ? 'query' : 'queries'} held` });
+        scene.node('app').set({ sublabel: model.params.limit === 'none' ? 'no limit' : `limit ${model.params.limit}` });
+        const last = model.samples.at(-1);
+        setReadouts(root, {
+          answered: last ? `${Math.round(last.answered * 100)}%` : '–',
+          wait: seconds(model.db.wait()),
+          wasted: model.totals.wasted.toLocaleString('en-GB'),
+        });
+      },
+    });
+  });
+</script>

@@ -51,7 +51,7 @@ Redis: 7100 + article number for writers, 7150 + article number for reviewers.
 | 7 | how-redis-works | D | done | final: publish | a09369a4 |
 | 8 | clients-and-pipelining | D | done | final: fixed | 410cc517 |
 | 9 | replication-and-persistence | E | done | final: publish | 992d8a44 |
-| 10 | cluster-and-hot-keys | | | | |
+| 10 | cluster-and-hot-keys | E | done | final: publish | e370291f |
 | 11 | operating-a-cache | | | | |
 | 12 | designing-a-cache | | | | |
 
@@ -265,3 +265,13 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
   7172–7173) reviews started.
 - 2026-10-28: article 10 final review: publish, 0 blocking, 9 minor; live hot-node simulation judged unnecessary (Figure 6 carries the idea); about 450 words cuttable. Polish started (sonnet, dev 4430).
 - 2026-10-28: article 10 polished (9 minor fixes, about 450 words cut) and marked published.
+- 2026-10-28: article 10 live (e370291f, 10 figures, no errors). Article 11 final
+  review: 2 blocking (Figure 5 labels all memory as cached data despite the
+  buffer slice; the ACL example with default off and no admin user locks out
+  administration and breaks replica/Sentinel login), 11 minor; repair 2
+  started. Article 12 teaching review: 6 required/14 suggested (relay-lag
+  alert too loose for stock; "no fork with persistence off" wrong; TTL cap
+  needs a figure; read replicas for checkout contradicts its own rule).
+  Waiting for its technical review.
+- 2026-10-28: article 12 technical review: 8 required/14 suggested (Figure 2 at 1/100 scale quoted as the shop's; ACL users not replicated; fork claim; retries; basket durability). Repair 1 started (dev 4422, Redis 7112–7113). Article 11 repair told ACL users are not replicated.
+- 2026-10-28: article 11 repair 2 done (Figure 5 subtracts a 2% buffer slice; ACL file on every node with admin, replica, Sentinel, shop and metrics users, tested through a Sentinel failover and restart) and marked published.

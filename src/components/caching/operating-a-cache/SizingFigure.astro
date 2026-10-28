@@ -1,0 +1,95 @@
+---
+// Figure: from the memory a node has to the products it holds, the hit ratio and the database's load.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Choice from '../shared/Choice.astro';
+import './operating.css';
+import { chain, RESERVES } from './sizing-model.mjs';
+interface Props { number: number }
+const { number } = Astro.props;
+const sizes = [0.25, 0.5, 1, 2, 4];
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+const gbText = (v: number) => (v < 1 ? `${Math.round(v * 1024)} MB` : `${v} GB`);
+const rows = sizes.map(gb => ({ gb, cache: chain(gb, 'cache'), fork: chain(gb, 'fork') }));
+const steps = [
+  { id: 'data', label: 'Cached data', note: 'maxmemory less client buffers', kind: 'redis' },
+  { id: 'products', label: 'Products held', note: 'at 2,130 bytes each, measured', kind: 'redis' },
+  { id: 'hit', label: 'Hit ratio', note: 'upper bound: the most popular products', kind: 'hit' },
+  { id: 'db', label: 'Database queries a second', note: 'at 1,000 product reads a second', kind: 'database' },
+];
+const parts = [
+  { id: 'data', label: 'cached data' },
+  { id: 'clients', label: 'client buffers, inside maxmemory (illustrative)' },
+  { id: 'frag', label: 'fragmentation and allocator overhead' },
+  { id: 'repl', label: 'replica and AOF buffers' },
+  { id: 'cow', label: 'copy-on-write while a fork saves' },
+];
+---
+<SimFigure number={number} id="op-sizing" title="From the memory you buy to the load on the database" controls="none"
+  caption="Measured: a 2,000-byte cached product with a 14-byte key and a TTL took 2,130 bytes of used_memory on Redis 8.10.3 (macOS, libc malloc; a Linux build with jemalloc rounds differently). Illustrative: how the reserve divides between fragmentation, replica and AOF buffers and copy-on-write, and the client buffers' slice of maxmemory, drawn as 2% of the node; a catalogue of 2,000,000 products with Zipf popularity (exponent 0.9), 1,000 product reads a second, and a database that answers 300 queries a second. The hit ratio assumes the cache always holds the most popular products; a real eviction policy does a few points worse. The reserve is the share of the node kept out of maxmemory.">
+  <Slider slot="params" name="gb" label="Memory on the node" value={1} stops={sizes} labels={{ 0.25: '256 MB', 0.5: '512 MB', 1: '1 GB', 2: '2 GB', 4: '4 GB' }} />
+  <Choice slot="params" name="reserve" label="Reserve outside maxmemory" value="cache"
+    options={Object.entries(RESERVES).map(([value, r]) => ({ value, label: `${Math.round(r.share * 100)}%: ${r.label}` }))} />
+  <div class="op-chain" data-chain>
+    <div class="op-step" data-step="node">
+      <span class="op-step-label">Memory on the node<small>what you pay for, and where it goes</small></span>
+      <span class="op-meter">
+        <span class="op-bar-text" data-text></span>
+        <span class="op-stack" role="img" data-stack>{parts.map(part => <span class="op-seg" data-part={part.id}></span>)}</span>
+        <span class="op-stack-key">{parts.map(part => <span data-key={part.id}><span class="op-swatch" data-part={part.id}></span>{part.label}<b data-amount></b></span>)}</span>
+      </span>
+    </div>
+    {steps.map(step => (
+      <div class="op-step" data-step={step.id}>
+        <span class="op-step-label">{step.label}<small>{step.note}</small></span>
+        <span class="op-meter">
+          <span class="op-bar-text" data-text></span>
+          <span class="op-bar" data-cache-kind={step.kind}><span class="op-bar-fill" data-fill></span></span>
+        </span>
+      </div>
+    ))}
+  </div>
+  <Fragment slot="text">
+    <p>Each row follows from the one above. The first row divides the node's memory: maxmemory, shared by the cached data and the buffers of connected clients (drawn as 2% of the node, illustrative), and the reserve kept out of it. With no snapshots and no replica the reserve covers fragmentation (15% of the node); the ElastiCache default of 25% also covers replica and AOF buffers and some copy-on-write; the 50% reserve is mostly copy-on-write, for a fork saving while writes are heavy. Then maxmemory less the client buffers, divided by 2,130 bytes, gives the products held; the most popular products held give the best possible hit ratio; and the misses at 1,000 reads a second give the database's load, which must stay under its capacity of 300 a second.</p>
+    <div class="op-table-wrap"><table class="op-table">
+      <thead><tr><th>Memory</th><th class="num">Products held, 15% reserve</th><th class="num">Hit ratio</th><th class="num">Database queries a second</th><th class="num">Products held, 50% reserve</th><th class="num">Hit ratio</th><th class="num">Database queries a second</th></tr></thead>
+      <tbody>{rows.map(r => <tr><td>{gbText(r.gb)}</td><td class="num">{r.cache.products.toLocaleString('en-GB')}</td><td class="num">{pct(r.cache.hit)}</td><td class="num">{Math.round(r.cache.dbReads)}</td><td class="num">{r.fork.products.toLocaleString('en-GB')}</td><td class="num">{pct(r.fork.hit)}</td><td class="num">{Math.round(r.fork.dbReads)}</td></tr>)}</tbody>
+    </table></div>
+  </Fragment>
+</SimFigure>
+<script>
+  import { bindParams } from '../shared/player.mjs';
+  import { chain, RESERVES, DB_CAPACITY, GB, CLIENT_SHARE } from './sizing-model.mjs';
+
+  const parts: Record<string, string> = { frag: 'fragmentation', repl: 'replica and AOF buffers', cow: 'copy-on-write' };
+  const size = (bytes: number) => (bytes >= GB ? `${(bytes / GB).toFixed(2)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`);
+  document.querySelectorAll<HTMLElement>('[data-figure-id="op-sizing"]').forEach(root => {
+    const bar = (id: string, fraction: number, text: string) => {
+      const step = root.querySelector<HTMLElement>(`[data-step="${id}"]`)!;
+      step.querySelector<HTMLElement>('[data-fill]')!.style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`;
+      step.querySelector<HTMLElement>('[data-text]')!.textContent = text;
+    };
+    const node = root.querySelector<HTMLElement>('[data-step="node"]')!;
+    bindParams(root, params => {
+      const gb = Number(params.gb);
+      const reserve = RESERVES[String(params.reserve) as keyof typeof RESERVES];
+      const c = chain(gb, String(params.reserve));
+      const shares: Record<string, number> = { data: 1 - reserve.share - CLIENT_SHARE, clients: CLIENT_SHARE, ...reserve.parts };
+      for (const [part, share] of Object.entries(shares)) {
+        node.querySelector<HTMLElement>(`.op-seg[data-part="${part}"]`)!.style.width = `${share * 100}%`;
+        const key = node.querySelector<HTMLElement>(`[data-key="${part}"]`)!;
+        key.hidden = share === 0;
+        key.querySelector<HTMLElement>('[data-amount]')!.textContent = part === 'clients' ? size(c.clients) : part === 'data' ? size(c.dataBytes) : size(share * c.ram);
+      }
+      node.querySelector<HTMLElement>('[data-text]')!.textContent = `${gb < 1 ? `${gb * 1024} MB` : `${gb} GB`}: ${size(c.maxmemory)} maxmemory (${size(c.dataBytes)} for data), ${size(c.ram - c.maxmemory)} kept back`;
+      node.querySelector<HTMLElement>('[data-stack]')!.setAttribute('aria-label',
+        `${size(c.ram)} node: ${size(c.maxmemory)} maxmemory, of which ${size(c.dataBytes)} cached data and ${size(c.clients)} client buffers; ${Object.entries(reserve.parts).filter(([, v]) => v > 0).map(([k, v]) => `${size(v * c.ram)} ${parts[k]}`).join(', ')}`);
+      bar('data', c.dataBytes / (4 * GB), size(c.dataBytes));
+      bar('products', c.catalogueShare, `${c.products.toLocaleString('en-GB')}, ${Math.round(c.catalogueShare * 100)}% of the catalogue`);
+      bar('hit', c.hit, `${Math.round(c.hit * 100)}%`);
+      const over = c.dbReads > DB_CAPACITY;
+      bar('db', c.dbReads / 400, `${Math.round(c.dbReads)} of ${DB_CAPACITY}${over ? ': over capacity' : ''}`);
+      root.querySelector<HTMLElement>('[data-step="db"] .op-bar')!.dataset.cacheKind = over ? 'error' : 'database';
+    });
+  });
+</script>

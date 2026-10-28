@@ -1,0 +1,108 @@
+---
+// Figure: moving traffic onto an empty replacement cache: all at once, ramped, or reading the old cache first.
+import SimFigure from '../shared/SimFigure.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import ActionButton from '../shared/ActionButton.astro';
+import './operating.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="op-warmup" title="Bringing an empty cache into service" advance={5000} legend={['client', 'hit', 'miss', 'error']}
+  caption="Illustrative model, with the shop from Figure 2: 1,000 reads a second over 20,000 products, a database that answers 300 queries a second, and the limit of 60 queries in place throughout. The upper chart counts the queries the database finishes each second. At 10 s an empty replacement Redis starts taking over from a warm one, an LRU cache of 12,500 products that has been in use and answers about 90% of reads; the new one has the same size. The ramp sends 5% of requests to the new cache at first and all of them two minutes later. One request in 40 is drawn as a moving dot. No TTLs and no writes, so nothing needs invalidating in either cache.">
+  <Choice slot="params" name="strategy" label="Moving to the new cache" value="all"
+    options={[{ value: 'all', label: 'all at once' }, { value: 'ramp', label: 'over two minutes' }, { value: 'old', label: 'all at once, misses read the old cache' }]} />
+  <ActionButton slot="actions" advance={30000}>Skip ahead 30 s</ActionButton>
+  <Fragment slot="stats">
+    <Readout name="share" label="Requests using the new cache" kind="redis" />
+    <Readout name="hit" label="Its hit ratio, last second" kind="hit" />
+    <Readout name="failed" label="Requests refused so far" kind="error" />
+  </Fragment>
+  <div slot="after" data-chart></div>
+  <Fragment slot="text">
+    <p>The figure shows an application with two Redis servers, the old one warm and the new one empty, and a database. Two charts below show the queries the database finishes each second, against its capacity of 300, and the new cache's hit ratio.</p>
+    <p>All at once: in the first second after the switch the new cache answers about a quarter of requests, the database runs at its limit and refuses 39% of requests at once. It stays at capacity for about 15 seconds, refusing a share that falls from more than a third to under a tenth, about 2,000 requests in all, and the new cache's hit ratio passes 80% about 30 seconds after the switch.</p>
+    <p>Over two minutes: the database never passes about 210 queries a second and nothing is refused. The new cache's hit ratio passes 80% about 70 seconds after the switch and 85% after about 90 seconds, because it sees only a small share of traffic at first.</p>
+    <p>All at once, with misses reading the old cache: the old cache answers most of the new cache's misses, the database's load stays close to its usual 100 queries a second, never above about 120, nothing is refused, and the new cache's hit ratio passes 80% about 25 seconds after the switch, as fast as switching all at once.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { createScene, spread } from '../shared/scene.mjs';
+  import { lineChart } from '../shared/chart.mjs';
+  import { warmup, SHOP } from './shop-model.mjs';
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="op-warmup"]').forEach(root => {
+    const scene = createScene(root.querySelector<HTMLElement>('[data-scene]')!, {
+      label: 'Clients send requests to an application, which reads a new Redis or an old one and, on a miss, queries the database',
+      nodes: [
+        { id: 'clients', kind: 'client', label: 'Clients', count: 3 },
+        { id: 'app', kind: 'app', label: 'Application' },
+        { id: 'new', kind: 'redis', label: 'New Redis' },
+        { id: 'old', kind: 'redis', label: 'Old Redis' },
+        { id: 'database', kind: 'database', label: 'Database' },
+      ],
+      edges: [
+        { id: 'client-app', from: 'clients', to: 'app' },
+        { id: 'app-new', from: 'app', to: 'new' },
+        { id: 'app-old', from: 'app', to: 'old' },
+        { id: 'app-database', from: 'app', to: 'database' },
+      ],
+      layout: (width, compact) => {
+        const [a, b, c] = compact ? [44, (width - 40) / 2, width - 84] : spread(width, 3, 110);
+        return compact
+          ? { height: 330, positions: { clients: [a, 160], app: [b, 160], new: [c, 40], old: [c, 160], database: [c, 275] } }
+          : { height: 300, positions: { clients: [a, 145], app: [b, 145], new: [c, 35], old: [c, 145], database: [c, 255] } };
+      },
+    });
+    const narrow = root.clientWidth < 480;
+    const holder = root.querySelector<HTMLElement>('[data-chart]')!;
+    const loadEl = holder.appendChild(document.createElement('div'));
+    const hitEl = holder.appendChild(document.createElement('div'));
+    const xAxis = { label: 'Simulated time (s)', domain: [0, 160] as [number, number], tickStep: narrow ? 40 : 20 };
+    const chart = lineChart(loadEl, {
+      label: 'Database queries finished each second against the database capacity, with the moment of the switch marked',
+      height: 200,
+      x: xAxis,
+      y: { label: 'Queries finished a second', domain: [0, 400], tickStep: 100 },
+      series: [{ id: 'queries', label: 'Database queries finished', kind: 'database' }],
+      rules: [{ y: SHOP.dbRate, label: 'Database capacity', kind: 'error' }],
+      markers: [{ id: 'switch', x: 10, label: 'New cache starts', kind: 'redis' }],
+    });
+    const hits = lineChart(hitEl, {
+      label: "The new cache's hit ratio each second after the switch, with 80% marked",
+      height: 170,
+      x: xAxis,
+      y: { label: 'New cache hit ratio (%)', domain: [0, 100], tickStep: 20 },
+      series: [{ id: 'hit', label: "New cache's hit ratio", kind: 'hit' }],
+      rules: [{ y: 80, label: '80%', kind: 'neutral' }],
+    });
+    let shown: any = null, drawn = 0;
+    mountSim(root, {
+      seed: 1,
+      create: (params, seed) => warmup({ strategy: params.strategy, sample: 40 }, seed),
+      update: () => false,
+      render(model: any) {
+        if (model !== shown) { shown = model; drawn = 0; chart.clear(); hits.clear(); }
+        for (; drawn < model.samples.length; drawn++) {
+          const s = model.samples[drawn];
+          chart.push('queries', s.t, s.completed);
+          if (s.newHit != null) hits.push('hit', s.t, s.newHit * 100);
+        }
+        chart.render();
+        hits.render();
+        scene.dots(model.movers.active());
+        const outstanding = model.db.outstanding();
+        scene.node('new').set({ sublabel: `${model.newCache.size.toLocaleString('en-GB')} keys` });
+        scene.node('old').set({ sublabel: `${model.oldCache.size.toLocaleString('en-GB')} keys` });
+        scene.node('database').set({ queue: [outstanding, 6], sublabel: `${outstanding} ${outstanding === 1 ? 'query' : 'queries'} held` });
+        const last = model.samples.at(-1);
+        setReadouts(root, {
+          share: `${Math.round(model.share() * 100)}%`,
+          hit: last && last.newHit != null ? `${Math.round(last.newHit * 100)}%` : '–',
+          failed: model.totals.failed.toLocaleString('en-GB'),
+        });
+      },
+    });
+  });
+</script>
