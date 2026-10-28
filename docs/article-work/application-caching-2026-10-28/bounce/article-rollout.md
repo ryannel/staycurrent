@@ -113,3 +113,23 @@ Draft build passes with the existing unrelated warnings. Coordinator checked
 desktop and phone in both themes, final counts, keyboard replay/pause/resume,
 and restored System theme and the default viewport. Screenshots use
 `burst-app-*`.
+
+## App origin in the placement comparison
+
+Applied the user's same correction to Figure 2: each arrangement now includes
+the browser/App. Its first request reaches A, misses, fills, and returns to the
+App. A later request reaches B; B either fills its local copy or hits the shared
+copy, then returns the answer to the App. Kept the aligned desktop comparison,
+stacked phone panels, and uncrossed routes. Database reads remain omitted and
+explicitly scoped in the caption. The example's copy ownership is unchanged.
+
+Playback is 15.5 seconds to allow both requests to complete visibly. The two
+answers return at 6.2 seconds and 10.1 seconds (shared) or 12.7 seconds (local);
+the final summary follows both. 311 sampled frame pairs are finite, with the
+App present in every comparison and layout.
+
+Draft build passes with the existing 36 unrelated dense-prose warnings.
+Coordinator checked desktop and 375px phone layouts in both themes, the final
+copy counts, and keyboard replay/pause/resume. No overlapping labels or crossed
+routes. Restored System theme and the default viewport. Screenshots use
+`placement-app-*`. The collection remains behind its draft preview gate.
