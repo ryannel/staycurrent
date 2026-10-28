@@ -31,12 +31,32 @@ foundation path has eight articles; versioned fills is optional depth under
 freshness. New articles use fresh writers. First technical, reader and rendered
 reviews are independent of the writers; repairs retain unaffected judgements.
 
-The command lab has executed six scenarios on an owned Redis 8.10.3 instance
-with Python 3.14.5. Its source is an explicitly labelled Python model. See
-[native execution evidence](evidence/native-redis.md). The application client
-environment pins `redis==8.1.0`; its forthcoming evidence is separate.
+All nine articles are reviewed drafts, with 37 figures. The eight-article main
+path covers cache benefits and placement, keys, freshness, misses, memory,
+Redis integration and operation. Versioned fills is optional depth under
+freshness. Redis is one worked implementation of the general subject.
 
-The draft infrastructure passed a build/site check before articles were added.
-The built command-lab download matched its executed source by SHA-256. Article
-linting, controls, rendering and completed-route checks will be recorded against
-the delivered sources as they become available.
+- [Reader and assembled-collection review](reviews/reader.md)
+- [Technical review](reviews/technical.md)
+- [Rendered review](reviews/visual.md)
+- [Accepted repairs and delivery checks](reviews/coordination.md)
+- [Figure captures](screens/) and [mechanical evidence](evidence/)
+
+The command lab executed six scenarios on an owned Redis 8.10.3 instance with
+Python 3.14.5. The async adapter uses redis-py 8.1.0 and passed 17 scenarios in
+both the baseline and a changed-price variation. A separate conditional-fill lab
+executes competing publication orders and counterexamples. See
+[command evidence](evidence/native-redis.md), [adapter evidence](evidence/adapter.md)
+and [conditional-fill evidence](evidence/versioned.md). All seven reader downloads
+were compared byte for byte with their sources.
+
+The completed preview passes all 14 site rules, including dense-prose. Its 37
+figures were checked at 375 px and desktop, in both themes; controls, keyboard
+use and playback have recorded checks. The site's 24 checker tests also pass.
+Normal builds exclude these draft routes. Final source hashes and build evidence
+are retained in `evidence/delivery.json`.
+
+The browser illustrations use labelled teaching models. The native experiments
+use real Redis and an in-process source model; they do not measure production
+capacity, a real source database, replication failover or a managed deployment.
+Those limits remain beside the relevant claims and in the reviews.

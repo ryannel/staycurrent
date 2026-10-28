@@ -1,0 +1,161 @@
+---
+import { Code } from 'astro:components';
+import RequestFigure from '../../components/application-caching/redis/RequestFigure.astro';
+import DeadlineFigure from '../../components/application-caching/redis/DeadlineFigure.astro';
+const { hrefFor } = Astro.props;
+const download = (file: string) => `/review/application-caching/downloads/${file}`;
+const calls = `raw = await redis.get(context.key)
+# If there is no usable entry:
+product = await source.read(context)
+await redis.set(context.key, encode(context, product), ex=30)
+return product`;
+const setup = `from redis.asyncio import Redis
+from redis.asyncio.retry import Retry
+from redis.backoff import NoBackoff
+
+redis = Redis(
+    unix_socket_path=owned.path,
+    decode_responses=False,
+    max_connections=4,
+    socket_connect_timeout=0.020,
+    socket_timeout=0.020,
+    retry=Retry(NoBackoff(), 0),
+    protocol=2,
+)
+try:
+    # Pass this client to the application's ProductCache.
+    ...
+finally:
+    await redis.aclose()`;
+const envelope = `{
+  "schema": 1,
+  "context": {
+    "shop": "north", "id": "P7",
+    "locale": "en-GB", "currency": "GBP"
+  },
+  "kind": "product",
+  "product": {
+    "id": "P7", "name": "Blue mug", "price_pence": 2000,
+    "currency": "GBP", "revision": 1
+  }
+}`;
+const miss = `value = decode(raw, context)
+if value is not MISS:
+    return value       # A product, or the cached not-found result None.
+
+with self.sources.slot():
+    value = await self.source.read(context)
+raw = encode(context, value)`;
+const fill = `ttl = self.negative_ttl if value is None else self.positive_ttl
+await self.optional_write(
+    lambda: self.redis.set(context.key, raw, ex=ttl),
+    deadline, "fill",
+)
+return value`;
+const deadlineCode = `deadline = asyncio.get_running_loop().time() + 0.200
+product = await cache.read(Context(), deadline=deadline)`;
+const update = `updated, invalidated = await cache.change_price(Context(), 2200)
+# updated: price_pence 2200, revision 2
+# invalidated: whether DEL completed successfully
+card = await cache.read(Context())`;
+const run = `python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python adapter_demo.py --redis-server /path/to/redis-server
+# Change one source fact and inspect the returned prices and source-call counts:
+.venv/bin/python adapter_demo.py --initial-price-pence 1800`;
+---
+<p>Redis can hold the product card, but the application still decides how to obtain it, whether to use it and what to do when a command fails. A cache client turns <code>GET</code> and <code>SET</code> into ordinary function calls. The useful integration is the control flow around those calls.</p>
+<p>This article builds that flow for the public catalogue from <a href={hrefFor('index')}>Application caching</a>. P7 is the north shop’s blue mug, initially GBP 20.00 at revision 1. Its complete key is <code>product:v1:north:P7:en-GB:GBP</code>. Checkout uses the authoritative source’s transaction and stock checks; a cached display card does not reserve stock or authorise a sale.</p>
+<p>The downloadable adapter uses Python’s asynchronous redis-py client, version 8.1.0. It was exercised against Redis 8.10.3 with Python 3.14.5. The source is an explicitly labelled dictionary model. The Redis commands are real; the exercise does not measure a production database or service.</p>
+
+<h2 id="product-request">Follow a product request</h2>
+<p>The first caller finds no saved card. App A reads the source, builds the representation and saves it with an expiry. The next caller can reuse the saved answer. Figure 1 keeps App A’s result visible while Redis receives the copy. Step through the successful run, then make <code>SET</code> fail.</p>
+<RequestFigure />
+<p>When the fill fails, the first caller still gets GBP 20.00. App A already has that answer. The next caller may need another source read because Redis has no copy. A failed cache write therefore changes later work without necessarily failing this request.</p>
+<p>The successful path has four calls. This outline leaves validation, admission and deadlines to the sections below; the downloadable adapter includes them.</p>
+<Code code={calls} lang="python" theme="css-variables" />
+<p><code>await</code> means that this request waits for a result while the event loop can run other requests. It does not make the work disappear or move it into a durable job. Redis receives no source connection and never calls <code>source.read</code>.</p>
+<p>The <code>ex=30</code> option stores the value and its 30-second expiry in one <code>SET</code>. Sending <code>SET</code> and then a separate expiry command would leave a gap in which the value exists without its intended lifetime. A plain replacement <code>SET</code> also clears an existing expiry, unless an option preserves it. Every ordinary fill here supplies its own expiry.</p>
+
+<h2 id="client-lifetime">Reuse one client through the application</h2>
+<p>Open the client when the application starts and close it when the application shuts down. Pass it to requests through the adapter. The client’s pool lends connections to commands and reuses them when those commands finish. Creating a client for each lookup would repeatedly pay for connection setup.</p>
+<Code code={setup} lang="python" theme="css-variables" />
+<p>This configuration uses the practice runner’s owned Unix socket. The runner starts a disposable Redis with TCP disabled and verifies its identity before writing data. For a deployed service, supply the endpoint, authentication and TLS settings appropriate to that deployment. <a href={hrefFor('operating-caches')}>Operating a cache</a> explains those choices.</p>
+<p>The four-connection limit is an example, not a capacity recommendation. With this client’s ordinary pool, a fifth command that finds every connection occupied raises <code>MaxConnectionsError</code>. It does not wait for a free slot. Connection setup can still take time after a slot is obtained, so pool size alone does not bound the whole operation.</p>
+<p>A connection limit also does not limit how many application requests are waiting elsewhere. The adapter admits at most 64 concurrent calls and eight concurrent source operations on one event loop. A full gate raises <code>Busy</code> immediately. It creates no queue of pending fills. These local limits must fit the source budget across all application instances; <a href={hrefFor('cache-misses')}>Handling cache misses</a> develops that wider decision.</p>
+
+<h2 id="usable-values">Decide whether a value can be used</h2>
+<p>A successful <code>GET</code> returns bytes. Those bytes still need to describe the answer this request expects. The adapter uses an envelope, a small object that names the format, request context and kind of result alongside the product.</p>
+<Code code={envelope} lang="json" theme="css-variables" />
+<p><code>schema: 1</code> and the key’s <code>v1</code> name the representation format. <code>revision: 1</code> names the source product version. Raising the mug’s price changes its revision; it need not change the format. <a href={hrefFor('cache-keys')}>Cache keys</a> explains how the context determines safe sharing.</p>
+<figure class="reply-figure">
+  <figcaption><span>Figure 2</span> Four replies at the decoding branch</figcaption>
+  <div class="reply-grid">
+    <div><b>No key</b><code>GET → None</code><p>Return the <code>MISS</code> sentinel. Try the source through its gate.</p></div>
+    <div><b>Valid product</b><code>kind: "product"</code><p>Return the checked product. A zero price or empty name is still a value.</p></div>
+    <div><b>Established absence</b><code>kind: "not-found"</code><p>Return <code>None</code> as the application result. Do not read the source again.</p></div>
+    <div><b>Unusable content</b><code>schema: 0 · broken JSON</code><p>Record the unusable entry and return <code>MISS</code>. Do not invent a missing product.</p></div>
+  </div>
+  <p class="caption">The tagged not-found envelope has the same schema and context fields, with no <code>product</code> field. A cache miss and a cached absence take different branches.</p>
+</figure>
+<p>The decoder checks the schema, context, result tag and product fields. It also imposes a 4 KiB example value limit before parsing. It rejects a card for another shop, a string where integer pence is expected, malformed JSON and unsupported formats. The byte limit bounds parsing of ordinary responses after receipt; it does not stop an oversized Redis reply travelling over the connection.</p>
+<p>Rejected content becomes a miss and an observation for repair. The adapter does not delete it immediately: another request might have replaced it with a valid value between this read and a later delete. A successful source read can provide the next ordinary fill.</p>
+<Code code={miss} lang="python" theme="css-variables" />
+<p><code>MISS</code> is a unique object, tested by identity. A truthiness test such as <code>if value</code> would mix valid empty values with misses. Here <code>None</code> has a different meaning: the source successfully established that a product such as P99 is absent, or a valid cached envelope retained that answer.</p>
+<p>The example saves absence for five seconds and products for thirty. Both are illustrative insertion lifetimes. If P99 is created during those five seconds, its old absence can remain reusable until expiry or invalidation. A source timeout never establishes absence and is never saved as a not-found result.</p>
+
+<h2 id="fill-failures">Keep the source result when a fill fails</h2>
+<p>The source branch has a clear boundary. Before it returns, the request has no answer. After it returns a valid representation, the request can answer even if saving the optional copy fails.</p>
+<Code code={fill} lang="python" theme="css-variables" />
+<p><code>optional_write</code> records a failed Redis command and returns without discarding <code>value</code>. The driver checks this with a real Redis memory rejection: the server refuses <code>SET</code>, the key remains absent and the caller still receives GBP 20.00.</p>
+<p>Failures before the source read need more care. A temporary connection failure, timeout or exhausted Redis pool can lead to the bounded source path. An authentication or command fault raises <code>CacheFault</code> instead. It needs repair; treating it as an ordinary miss would hide a persistent problem.</p>
+<p>The distinction matters in redis-py because authentication errors inherit from <code>ConnectionError</code>. The adapter classifies them before general connection failures. If such a fault happens during an optional fill, it is still reported, but the successful source answer survives.</p>
+<p>A source failure propagates to the caller. No catch-all handler converts it into a product or an absence. A full source gate also propagates <code>Busy</code>. The surrounding service must turn that outcome into controlled refusal, rather than immediately repeating the same request.</p>
+
+<h2 id="deadlines">Fit the cache inside the request deadline</h2>
+<p>A timeout on each command is not a request deadline. Time spent obtaining a connection, reconnecting, reading the source and filling Redis all belongs to the same caller. The adapter accepts an absolute deadline from the event loop’s monotonic clock.</p>
+<Code code={deadlineCode} lang="python" theme="css-variables" />
+<p>This standalone call starts with 200 ms. Inside an existing request, pass the deadline already in force; do not grant a fresh 200 ms after earlier work has spent part of it. Figure 3 separates the work that obtains an answer from the work that merely stores a copy.</p>
+<DeadlineFigure />
+<p>The GET wrapper limits the whole lookup to 25 ms, including acquiring and preparing a connection. The client also limits connection setup and socket waits to 20 ms each. The source read must finish by the overall deadline. After that read succeeds, the optional fill gets at most 20 ms and less when the deadline is close.</p>
+<p>The fill leaves five milliseconds for returning the result. If that allowance has already gone, it is skipped. These numbers make the branches visible in the example. Choose actual limits from the caller’s requirements and measured behaviour; they do not promise that every event loop runs precisely on time.</p>
+<p>Retries are explicitly set to zero. A failed fill is not queued for replay after reconnection, when its saved payload may already be old. The adapter also creates no detached background task. A later request can obtain a new source result through the normal path.</p>
+<p>Cancellation stops this request’s wait. It cannot retract a command Redis has already received. In the pinned client, cancellation while reading a reply disconnects that connection and releases it back to the pool; a later command can reconnect. The driver checks recovery with a genuinely blocked Redis command, then performs a successful <code>PING</code> and <code>GET</code> using the same one-slot client.</p>
+<p>Python’s deadlines are cooperative: they cancel asynchronous work at points where it can yield. They cannot forcibly stop blocking source code or a coroutine that suppresses cancellation. A real source adapter must preserve cancellation and release its own connections. External cancellation also propagates during a fill; the cache wrapper must not turn an abandoned request into more source work.</p>
+
+<h2 id="source-updates">Change the source, then invalidate</h2>
+<p>Raise the source price to GBP 22.00 and advance the revision to 2. The adapter waits for the source’s successful commit result, then deletes the product key. The next read misses and fills from revision 2.</p>
+<Code code={update} lang="python" theme="css-variables" />
+<p>The returned flag says whether the invalidation completed successfully. If deletion fails, revision 2 remains committed at the source. The driver’s injected deletion failure leaves revision 1 in Redis, so a later cached read returns GBP 20.00. The update caller can see both the committed result and the failed invalidation.</p>
+<p>A real source mutation can time out after committing. The adapter does not blindly repeat it or claim that a timeout means rollback. The source integration needs its own way to resolve uncertain outcomes. The dictionary model has only an assignment as its commit point and does not test database transactions.</p>
+<p>Even a successful deletion leaves the familiar late-fill race. A reader takes revision 1, pauses, then fills it after another request commits revision 2 and deletes the key. The command lab reproduces that order. A new 30-second TTL does not make the old snapshot current.</p>
+<p>This adapter therefore implements the baseline cache-aside policy, not a stronger freshness guarantee. <a href={hrefFor('freshness')}>Freshness and invalidation</a> develops the promise the application can make, and <a href={hrefFor('versioned-fills')}>Versioned cache fills</a> examines rejecting older work. Reads requiring authoritative current state must use the source path appropriate to that operation.</p>
+
+<h2 id="practice">Exercise the complete adapter</h2>
+<p>Download these files into one directory: <a href={download('cache_adapter.py')}>cache_adapter.py</a>, <a href={download('adapter_demo.py')}>adapter_demo.py</a>, <a href={download('cache_lab.py')}>cache_lab.py</a> and <a href={download('requirements.txt')}>requirements.txt</a>. The <a href={download('adapter-README.md')}>practice instructions</a> describe the branches and their limits. Install a local Redis server, then run the driver with Python 3.14:</p>
+<Code code={run} lang="bash" theme="css-variables" />
+<p>The runner creates its own Redis process, private socket and temporary directory. It accepts a Redis executable, not an existing server address. The exact downloaded files produced the recorded results. Use <code>--json adapter-results.json</code> to retain the version, file hashes and scenario outcomes from your run.</p>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Adapter exercises and what they establish"><table><caption>What the driver checks</caption><thead><tr><th>Exercise</th><th>Expected observation</th></tr></thead><tbody>
+<tr><td>Miss, hit and actual expiry</td><td>Two initial reads call the source once. Expiry makes the next read call it again.</td></tr>
+<tr><td>Malformed, obsolete and mismatched values</td><td>Seven unusable variants lead to source reads. Zero and empty fields remain valid.</td></tr>
+<tr><td>Cached P99 absence, then a source failure</td><td>The absence hit saves a read. A failed source lookup writes no negative entry.</td></tr>
+<tr><td>Real rejected fill and exhausted pool</td><td>The successful source result survives. Source and request gates still limit admission.</td></tr>
+<tr><td>Injected slow GET, source and SET</td><td>A GET timeout may fall back; a source timeout propagates; a fill timeout retains the result.</td></tr>
+<tr><td>Cancellation and source changes</td><td>No fill is detached. The native client recovers. A failed invalidation leaves a visible old copy.</td></tr>
+</tbody></table></div>
+<p>The simulated faults occur at the client or dictionary boundary. They do not reproduce packet loss, database failure or fleet-wide load. The blocked-command cancellation check uses real Redis; it is a client lifecycle test, not a claim that an ordinary GET normally blocks like that.</p>
+<p>To adapt this code, supply a source that returns the agreed representation, commits changes with its own transaction rules and respects deadlines. Then choose the freshness allowance, source admission budget, client pool and deployment access settings for that application. Observe valid hits, unusable entries, errors and source work separately: a successful request can still reveal a cache that has stopped saving work.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+<p>Checked on 28 October 2026. The runnable driver records Redis 8.10.3, redis-py 8.1.0 and Python 3.14.5. The figures illustrate its control flow; their time limits are example configuration, not observed service latency.</p>
+<ul>
+  <li>Redis, <a href="https://redis.io/docs/latest/commands/set/">SET</a>: combined value and expiry writes, replacement and expiry preservation.</li>
+  <li>Redis, <a href="https://redis.io/docs/latest/develop/clients/redis-py/async/">Asynchronous operations</a>: shared clients, pool ownership and explicit shutdown.</li>
+  <li>redis-py 8.1.0, <a href="https://redis.readthedocs.io/en/v8.1.0/connections.html">Connection API</a> and <a href="https://github.com/redis/redis-py/blob/v8.1.0/redis/asyncio/connection.py">connection source</a>: limits, ordinary-pool exhaustion and cancellation cleanup.</li>
+  <li>redis-py 8.1.0, <a href="https://github.com/redis/redis-py/blob/v8.1.0/redis/asyncio/client.py">client source</a> and <a href="https://github.com/redis/redis-py/blob/v8.1.0/redis/asyncio/retry.py">retry source</a>: connection release and explicit retry counts.</li>
+  <li>Redis, <a href="https://redis.io/docs/latest/develop/clients/redis-py/error-handling/">Error handling</a> and <a href="https://redis.io/docs/latest/develop/clients/redis-py/produsage/">Production usage</a>: distinguish failure classes and configure bounded waits.</li>
+  <li>Python 3.14, <a href="https://docs.python.org/3.14/library/asyncio-task.html#timeouts">Timeouts and task cancellation</a>: absolute deadlines, cooperative cancellation and propagation.</li>
+</ul>
+<style>
+.reply-figure{margin:2rem 0;font:.87rem/1.55 var(--font-sans)}.reply-figure figcaption{font:1.15rem/1.4 var(--font-serif);margin-bottom:.65rem}.reply-figure figcaption span{font:.68rem var(--font-mono);text-transform:uppercase;color:var(--color-text-secondary);margin-right:.6rem}.reply-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--color-rule-strong);border:1px solid var(--color-rule-strong)}.reply-grid>div{background:var(--color-surface-alt);padding:1rem}.reply-grid b,.reply-grid code{display:block}.reply-grid code{margin:.5rem 0;font-size:.78rem;overflow-wrap:anywhere}.reply-grid p{font-size:.85rem;margin:0}.reply-grid p code{display:inline}.caption{font-size:.8rem;color:var(--color-text-secondary);margin:.65rem 0}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;font:.85rem/1.6 var(--font-sans)}caption{text-align:left;font-weight:600;margin-bottom:.6rem}th,td{text-align:left;vertical-align:top;padding:.7rem;border-bottom:1px solid var(--color-rule)}th{border-top:1px solid var(--color-rule-strong)}@media(max-width:500px){.reply-grid{grid-template-columns:1fr}.reply-grid>div{padding:.8rem}}
+</style>

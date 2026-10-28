@@ -1,0 +1,155 @@
+---
+import Walk from '../../components/application-caching/intro/Walk.astro';
+import Choices from '../../components/application-caching/intro/Choices.astro';
+const { hrefFor } = Astro.props;
+---
+<p>An application cache saves an answer so that a later request can reuse it. A shop can read a product’s name and price from its database once, save the product card, and return that copy to the next hundred readers. Those readers avoid the source lookup and the work of building the card again.</p>
+
+<p>The saving comes with another copy to manage. The database can change while the saved card stays the same. The cache can fill up, lose entries or stop answering. The application must still know which requests may share a card, when the card is too old, and how much work it can send to the source when no useful copy is available.</p>
+
+<p>Every example follows one invented shop. In shop <code>north</code>, product <code>P7</code> is a blue mug priced at GBP 20.00. Later, its price rises to GBP 22.00. The catalogue is public, and the cached card is for display. Checkout reads the authoritative source within its normal transaction and stock checks; a cached card does not authorise a sale.</p>
+
+<p>Redis supplies the worked shared cache in this collection. The decisions begin before choosing it: the same questions arise with another shared store or a cache inside the application process. We start with one request and one saved card.</p>
+
+<h2 id="reusing-an-answer">Reusing an answer</h2>
+
+<p>A cache entry pairs a <em>key</em>, the name used to find an answer, with a <em>value</em>, the saved answer itself. For P7, the key identifies a particular product card and the value holds its display name and price. The application asks for the key before doing the source work.</p>
+
+<p>Figure 1 starts with an empty cache. Step through the first request, then watch the source-read count when a second request arrives.</p>
+
+<Walk kind="read" number={1} />
+
+<p>The first lookup was a <em>miss</em>: there was no saved card. App A read the source, built the card and saved a copy. The second lookup was a <em>hit</em>: App A found the copy and returned it. Two callers received a card, but only one source read was needed.</p>
+
+<p>This arrangement is called <em>cache-aside</em>. The application sits beside the cache and decides when to read the source and fill the cache. Neither the source nor the cache performs those steps for it. A library can wrap the sequence in one function, but the same decisions still exist.</p>
+
+<p>The database may already keep its storage pages in memory. That saves disk reads inside the database. An application cache saves a different piece of work: the request to the database, the query it runs, and any assembly already included in the cached answer. A database page in memory is not a ready-made product card.</p>
+
+<p>The source remains responsible for accepted changes. Losing every cached card loses an optimisation, not the product catalogue. Rebuilding those cards still takes source work, however, so being able to reconstruct the data does not mean being able to serve every request during a cache failure.</p>
+
+<h2 id="what-a-hit-saves">What a hit saves</h2>
+
+<p>Suppose reading and assembling a card takes 20 ms. A shared-cache lookup takes 1 ms and saving a new copy takes another 1 ms. These are invented times, held constant to make the paths visible. They leave out work common to every request, such as receiving and sending HTTP.</p>
+
+<div class="cache-table-scroll"><table>
+  <caption>Work for one product-card request in the illustrative workload</caption>
+  <thead><tr><th>Path</th><th>Work in order</th><th>Elapsed time</th><th>Source reads</th></tr></thead>
+  <tbody><tr><td>No cache</td><td>Read and build the card</td><td>20 ms</td><td>1</td></tr><tr><td>Cache hit</td><td>Look up the saved card</td><td>1 ms</td><td>0</td></tr><tr><td>Cache miss</td><td>Look up, read and build, save</td><td>22 ms</td><td>1</td></tr></tbody>
+</table></div>
+
+<p>With 90 hits and 10 misses in 100 requests, the mean time for this work is 3.1 ms: <code>(90 × 1 + 10 × 22) ÷ 100</code>. The source receives ten reads instead of a hundred. But each miss takes 2 ms longer than the uncached path. A cache has made the common request cheaper while adding work to the uncommon one.</p>
+
+<p>The fraction of lookups that hit is the <em>hit ratio</em>, 90% here. It helps describe reuse, but it does not say what that reuse saved. Avoiding a 20 ms calculation matters more than avoiding a trivial lookup. If every request asks for a new answer, all hundred miss and the cache adds cost throughout.</p>
+
+<p>Placement changes that cost. A local cache lives in the memory of one application process. It avoids a network trip, but another process cannot see its entries. A shared cache is a separate service that several processes can ask. Figure 2 adds App B to show what each choice shares.</p>
+
+<Choices kind="placement" number={2} />
+
+<p>With local caches, App A filling P7 does nothing for App B. Each process warms its own copy, consumes its own memory and can hold a different version. With a shared cache, either app can reuse the fill. Both now wait on another service for each lookup, including its network and connection delays.</p>
+
+<p>A local cache is a plausible starting point when repeated work stays within one process. Sharing is useful when reuse is spread across many instances or duplicating the useful data costs too much memory. An adequate source query may need no application cache at all. <a href={hrefFor('cache-benefits')}>Deciding what and where to cache</a> develops the measurement and placement decision, including when a second cache layer earns its extra complexity.</p>
+
+<h2 id="which-requests-can-share-an-answer">Which requests can share an answer</h2>
+
+<p>The first drawing shortened the key to P7. That is enough only if every request for P7 means the same answer. Suppose another shop, <code>south</code>, also has a product P7, priced at GBP 18.00. A key containing only the product ID lets the south request find north’s card.</p>
+
+<Choices kind="identity" number={3} />
+
+<p>The wrong answer is a successful cache hit. Nothing timed out, and the source did not change. The application simply gave two different questions the same name.</p>
+
+<p>The complete key in this collection is <code>product:v1:north:P7:en-GB:GBP</code>. It names the product-card format, shop, product, language and currency. Changing the shop or the requested representation can change the answer, so it changes the key. The source and application supply that representation; Redis does not translate a name or convert a price.</p>
+
+<p>The <code>v1</code> part names the value’s format. It is separate from <code>revision: 1</code>, which records the source product version. Raising the price produces revision 2 in the same format. Changing the meaning or structure of the stored fields may require a new format.</p>
+
+<p>Not every request difference belongs in the key. Two readers of the same public card can share it; their request IDs need not create separate entries. A personalised answer may need a different boundary. <a href={hrefFor('cache-keys')}>Cache keys</a> works through those choices, including permissions, query parameters and how to represent a product that the source says does not exist.</p>
+
+<h2 id="when-the-source-changes">When the source changes</h2>
+
+<p>Now return to north’s card and raise the source price to GBP 22.00. The cached GBP 20.00 was once the right answer. It is now <em>stale</em>: it describes an earlier source state. Whether it remains acceptable depends on the use. A browsing page may allow a short delay; checkout must make its decision through the source’s transaction and stock rules.</p>
+
+<p>One way to end reuse is <em>expiry</em>. Give the entry a time to live, or TTL, and lookups stop returning it when that time ends. Our example uses 30 seconds from insertion. Expiry does not fetch a replacement: the next miss still has to do that work.</p>
+
+<p>Another way is <em>invalidation</em>: remove a copy because something has made it unsuitable. Figure 4 commits the source change, then deletes the cached card. Watch the interval when the two prices disagree.</p>
+
+<Walk kind="change" number={4} />
+
+<p>The deletion happens after the source commits. Deleting before commit would let a request miss, read the old source price and save it again. With commit first, the next ordinary miss can read the new value.</p>
+
+<p>There are still two separate operations. If the application stops after commit but before deletion, the source keeps GBP 22.00 and the cache can keep GBP 20.00. A read already in progress can also arrive late and refill an old card after the deletion. The successful sequence in Figure 4 contains no overlapping read; it does not prove that every possible order is safe.</p>
+
+<p>A 30-second TTL limits how long this insertion can be reused. It does not prove that its source data is at most 30 seconds old: the read may have taken time before insertion or observed an older source snapshot. <a href={hrefFor('freshness')}>Freshness and invalidation</a> follows those gaps, defines the freshness promise and shows when reading the source is the clearer solution.</p>
+
+<h2 id="when-requests-arrive-together">When requests arrive together</h2>
+
+<p>The first miss in Figure 1 finished before the second request arrived. A popular product need not be so orderly. If four requests arrive just after P7 expires, all four can miss before any of them saves a replacement.</p>
+
+<p>Figure 5 keeps the arrivals the same and changes who starts the source work. Select <strong>Callers share one fill</strong> and compare the count.</p>
+
+<Choices kind="burst" number={5} />
+
+<p>The four independent reads are a small <em>cache stampede</em>: several requests rebuild the same missing answer at once. Sharing that work is called <em>request coalescing</em>. One caller starts a fill and the others wait for its result. App A needs only one source read, though it still has four callers to answer.</p>
+
+<p>That sharing needs a boundary. Combining work inside App A does not stop App B from starting its own fill. A slow or failed fill also needs a bounded wait, so callers cannot accumulate indefinitely. Those details become part of the application’s miss path.</p>
+
+<p>Now imagine the entire cache is empty. The misses may be for thousands of different products, leaving little work to combine. At 1,000 card requests a second, a warm cache with 90% hits sends 100 reads a second to the source. If every request misses, it can send 1,000. This tenfold increase is an illustration, not a measured capacity limit.</p>
+
+<p>The source also has checkout and other work that the card cache never removed. If it cannot absorb the extra reads, unrestricted fallback can overload it. The application needs a limit on admitted source work and a defined response when that limit is reached. A timely failure can preserve capacity for requests that can still succeed.</p>
+
+<p><a href={hrefFor('cache-misses')}>Handling cache misses</a> builds that path: sharing fills, bounding waits, refreshing useful copies and controlling work during cache loss. These questions matter even when the normal hit ratio looks excellent, because a daily average can hide a damaging burst.</p>
+
+<h2 id="when-the-cache-fills">When the cache fills</h2>
+
+<p>A cache has room for only some answers. When a new answer needs space, it can remove a resident entry: <em>eviction</em>. That is different from expiry. A card can still be within its TTL and be evicted because another entry needs its memory.</p>
+
+<p>Count bytes as well as entries. Figure 6 gives four product cards 1 KiB each, including their keys and bookkeeping. A larger query result needs 3 KiB. The cache has a 4 KiB budget, so keeping that result requires three cards to leave.</p>
+
+<Choices kind="memory" number={6} />
+
+<p>The large answer was returned to its original caller in both versions. Saving it is a separate choice, called <em>admission</em>. Here no later request uses it, while the next three requests need the displaced cards. Keeping it turns three would-be hits into source reads.</p>
+
+<p>The application cannot know all future requests, but it can use observed reuse, sizes and source costs to make better choices. Eviction policies use clues such as recent or frequent access to choose what leaves. Admission can keep an unusually large or rarely reused answer out in the first place.</p>
+
+<p>The useful set changes as readers move through the catalogue. More memory helps when it retains answers that would otherwise be rebuilt; storing the whole catalogue is not automatically useful. <a href={hrefFor('cache-memory')}>Cache memory and eviction</a> develops the byte budget and compares policies against changing request traces, then applies the choices to Redis’s memory controls.</p>
+
+<h2 id="using-redis">Using Redis for the worked cache</h2>
+
+<p>The cache box can now become a concrete service. Redis can store an encoded product card as a string value under its complete key. <code>GET</code> reads it, <code>SET</code> stores it, and <code>DEL</code> removes it. The <code>EX</code> option on <code>SET</code> sets an expiry in seconds as part of the same command.</p>
+
+<pre><code>{`GET product:v1:north:P7:en-GB:GBP
+
+SET product:v1:north:P7:en-GB:GBP '<encoded card>' EX 30
+
+DEL product:v1:north:P7:en-GB:GBP`}</code></pre>
+
+<p>The middle line shows the command’s shape; <code>&lt;encoded card&gt;</code> stands for the application’s serialised value. It is not a useful card to paste into a real cache. The application reads the source on a miss, builds the value and issues that command. Redis has no knowledge of the product database behind it.</p>
+
+<p>A cache failure and a miss are different outcomes. A miss says the lookup completed without a value. A failure may say nothing about whether the value exists. If the source read succeeds but saving the copy fails, the application still has the card to return. If the source read fails, it has no basis for inventing a card or claiming the product is absent.</p>
+
+<p><a href={hrefFor('redis')}>Caching with Redis</a> turns this command sequence into a runnable adapter. It validates values, reuses client connections and keeps cache waits within the request’s time budget. Redis is one choice for this job; Valkey and Memcached are other shared stores, and language libraries provide local caches. Their capabilities differ, but none chooses the product’s acceptable freshness for the application.</p>
+
+<h2 id="keeping-the-cache-useful">Keeping the cache useful</h2>
+
+<p>Once the cache is running, its hit ratio is only one part of the result. Consider two invented one-minute observations of the same card service. In both, every miss reaches the source once.</p>
+
+<div class="cache-table-scroll"><table>
+  <caption>The same hit ratio with different source demand</caption>
+  <thead><tr><th>Observation</th><th>Earlier</th><th>Later</th></tr></thead>
+  <tbody><tr><td>Card requests per second</td><td>1,000</td><td>2,000</td></tr><tr><td>Cache hit ratio</td><td>90%</td><td>90%</td></tr><tr><td>Source reads per second</td><td>100</td><td>200</td></tr><tr><td>95% of card requests finish within</td><td>30 ms</td><td>90 ms</td></tr><tr><td>Cache errors</td><td>0</td><td>0</td></tr></tbody>
+</table></div>
+
+<p>The cache still answers nine lookups in ten, but traffic has doubled and source demand has doubled with it. The slower requests need investigation. The table alone cannot say whether the extra wait is in the source, the cache client or another part of the application. Tracing those paths gives the latency figures their meaning.</p>
+
+<p>Answers need checking too. A fast cache can keep serving GBP 20.00 after the shop’s freshness allowance has ended. Neither a low latency nor a high hit ratio establishes that the result is still acceptable.</p>
+
+<p><a href={hrefFor('operating-caches')}>Operating a cache</a> joins these observations into diagnosis and controlled changes. It also rehearses a cold or unavailable cache, because warm performance is only one mode of the service.</p>
+
+<p>For the product card, a workable design now has a clear shape. Repeated reads can share an answer with a complete identity. Its permitted age determines when reuse ends. Misses receive a bounded share of source capacity, and entries earn their memory through useful reuse. The deeper articles develop each decision far enough to implement and test it.</p>
+
+<section class="essay-sources" aria-labelledby="sources"><h2 id="sources">Sources and further reading</h2>
+<p>The shop, timings, request rates and byte budgets are illustrative. The drawings model application decisions; they do not run Redis or measure a database.</p>
+<ul>
+  <li>Microsoft, <a href="https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside">Cache-Aside pattern</a>: the lookup, source-read and fill sequence, update ordering and limitations of independent copies.</li>
+  <li>Redis documentation: <a href="https://redis.io/docs/latest/commands/get/">GET</a>, <a href="https://redis.io/docs/latest/commands/set/">SET</a>, <a href="https://redis.io/docs/latest/commands/del/">DEL</a> and <a href="https://redis.io/docs/latest/commands/expire/">EXPIRE</a>, for command behaviour and entry lifetimes.</li>
+  <li>Redis, <a href="https://redis.io/docs/latest/develop/reference/eviction/">Key eviction</a>: memory limits and removal policies for disposable cached data.</li>
+  <li>Amazon Builders’ Library, <a href="https://aws.amazon.com/builders-library/caching-challenges-and-strategies/">Caching challenges and strategies</a>: cold caches, request coalescing and maintaining bounded dependency work when a cache is unavailable.</li>
+</ul></section>

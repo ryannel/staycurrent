@@ -1,0 +1,125 @@
+---
+import Fill from '../../components/application-caching/versioned/Fill.astro';
+const { hrefFor } = Astro.props;
+const reserve = `# Before reading the source; token is new for this attempt.
+SET product:v1:north:P7:en-GB:GBP loading:<token> NX PX 5000
+
+# Only after SET returns OK:
+product = source.read_current_product(context)
+publish_if_still_loading(key, token, product)`;
+const publish = `-- KEYS[1]: complete product key
+-- ARGV[1]: token; ARGV[2]: product JSON; ARGV[3]: ready TTL in ms
+if redis.call('GET', KEYS[1]) ~= 'loading:' .. ARGV[1] then
+  return 0
+end
+redis.call('SET', KEYS[1], 'ready:' .. ARGV[2], 'PX', ARGV[3])
+return 1`;
+---
+<p>A versioned cache fill checks whether an answer still has permission to enter the cache. That matters when a source read pauses before saving its result. Another request can change the source and invalidate the cached copy while the first read is still in flight. An unconditional fill then puts the old answer back.</p>
+<p><a href={hrefFor('freshness')}>Freshness and invalidation</a> followed that race and introduced an authoritative revision lookup on each request. Here we keep the ordinary cache-aside read path and make publication conditional instead. First we will try remembering the newest source revision. Then we will give each fill a permission that deletion can revoke.</p>
+<p>The goal is precise: an old fill must not undo an invalidation that the cache has already processed after the fill reserved permission. This is useful protection, but it cannot reveal a source change whose invalidation has not arrived. The distinction will matter both to the code and to the caller waiting for its answer.</p>
+
+<section aria-labelledby="old-fill"><h2 id="old-fill">The old fill arrives last</h2>
+<p>Our shop’s P7 is still the blue mug. App A reads GBP 20.00, revision 1, then pauses. App B commits GBP 22.00, revision 2, and deletes the cached card. App A resumes and writes revision 1 into the now-empty key.</p>
+<p>Every operation succeeded. Deletion removed what the cache held at that moment; it did not remove the card in App A’s memory. Nor did it stop App A from saving that card later. Making each command atomic does not make this whole sequence one operation.</p>
+<p>Play Figure 1 with the unconditional rule. Watch the card wait at App A while App B changes the source. Then choose “Remember revision 2” and replay it.</p>
+<Fill />
+<p>The unconditional write restores the GBP 20.00 card. With revision 2 still recorded, the cache can recognise revision 1 as older and refuse it. The source read itself has not changed; only the decision to publish it has.</p>
+</section>
+
+<section aria-labelledby="remember-revision"><h2 id="remember-revision">Remembering a newer revision</h2>
+<p>A source revision identifies a particular state of the product. Suppose invalidation carries revision 2 and leaves that number in the cache, even after removing the card. A later fill carries revision 1. Comparing the two tells the cache something useful: it has already heard about a newer product.</p>
+<p>The comparison and replacement must happen atomically. If the application reads the remembered number and writes the card in separate calls, an invalidation can arrive between them. The earlier check then says nothing about the state being overwritten.</p>
+<p>Reordered notifications need the same care. Once the cache remembers revision 2, a late notification for revision 1 must not lower the number. Retain the maximum known revision. That maximum prevents a known regression; it does not prove that the source has made no further change.</p>
+<p>Now enable “Lose retained revision knowledge” in Figure 1. The remembered 2 disappears before App A’s fill arrives. If the implementation treats missing as zero, it accepts revision 1 again. <a href="https://engineering.fb.com/2022/06/08/core-infra/cache-made-consistent/">Meta’s account of cache consistency</a> describes this loss of version knowledge through eviction.</p>
+<p>Missing must mean unknown. A design that needs the remembered revision must restore trustworthy knowledge or bypass that fill path. It cannot bootstrap its knowledge from the delayed candidate whose age it is trying to judge. Keeping the number in a separate key only moves the lifetime problem to that key.</p>
+<p>The source’s numbering must survive deletion and recreation too. If a recreated P7 starts at revision 1 while old P7 had reached revision 20, ordinary numeric comparison no longer identifies newer data. Use an identity and revision scheme that orders those changes correctly. This is the same dependency requirement as the parent’s versioned keys.</p>
+</section>
+
+<section aria-labelledby="reserve"><h2 id="reserve">Reserve permission before reading</h2>
+<p>We can avoid retaining a source revision by retaining permission for one attempt instead. On a miss, App A first reserves a fresh token in the cache. Only then does it read the source. To publish, it must present that token while the cache still holds the matching reservation.</p>
+<p>The key has three possible states. It is absent; it is loading, with a token; or it is ready, with the product and its source revision. Invalidation deletes either a loading or a ready record. Successful publication replaces the loading record with the ready one, consuming the token.</p>
+<div class="cache-table-scroll"><table>
+<caption>One record, three states</caption>
+<thead><tr><th scope="col">Record before the operation</th><th scope="col">Operation</th><th scope="col">Result</th></tr></thead>
+<tbody>
+<tr><th scope="row">Absent</th><td>Reserve fresh token A</td><td>Loading A</td></tr>
+<tr><th scope="row">Loading A</th><td>Publish with A</td><td>Ready card; A is consumed</td></tr>
+<tr><th scope="row">Loading A or ready card</th><td>Invalidate</td><td>Absent</td></tr>
+<tr><th scope="row">Absent, loading B or ready card</th><td>Publish with A</td><td>Rejected; record unchanged</td></tr>
+</tbody></table></div>
+<p>Switch Figure 1 to the token rule. App A reserves token A, then reads revision 1. App B’s deletion removes token A. When the old card finally arrives, there is no matching reservation, so the cache refuses it. Missing state now works in our favour: absence cannot authorise publication.</p>
+<p>There are only two orders at the publication boundary. If publication happens first, deletion removes the ready card. If deletion happens first, publication finds no matching reservation and fails. Neither order leaves that attempt’s card in the cache after both operations finish.</p>
+<p>The reservation must precede the source read. Read revision 1 first, then let revision 2 commit and its deletion finish. A reservation made now would grant fresh permission to publish an old result. Starting a new attempt therefore means both a new token and a new source read.</p>
+
+<h3 id="redis-implementation">One implementation in Redis</h3>
+<p>Redis can reserve the missing key with <code>SET NX</code>, which writes only when no value exists. The token is a fresh identifier, never reused for another attempt. A securely generated random identifier is a practical choice, with uniqueness assumed. The labels A and B in the drawing are shortened names, not a two-token pool.</p>
+<pre><code>{reserve}</code></pre>
+<p>The five-second reservation lifetime is an illustrative cleanup setting for a stuck attempt. It is not the card’s freshness allowance. A request that finds an existing loading record needs a bounded waiting or fallback policy; <a href={hrefFor('cache-misses')}>Handling cache misses</a> owns that decision. Permission to publish does not prove that only one process is still doing source work.</p>
+<p>After reading, App A runs this short Lua script with the same key and token. The raw product JSON includes its source revision. The <code>loading:</code> and <code>ready:</code> prefixes distinguish record states; a reader must only decode a ready record as a card.</p>
+<pre><code>{publish}</code></pre>
+<p><a href="https://redis.io/docs/latest/develop/programmability/eval-intro/">Redis executes a script atomically</a>, so deletion cannot occur between this comparison and replacement. Return value 1 means publication succeeded; 0 means permission was absent or no longer matched. The source read remains outside the script and outside its guarantee.</p>
+<p>Use the same conditional operation on every completion path. An error, a timeout or an uncertain result must never trigger an unconditional <code>SET</code>. If publication succeeded but its reply was lost, repeating the script finds a ready record and returns 0. That is safe for the cache, but the second reply does not tell the client whether the first publication succeeded.</p>
+<p>This is one Redis implementation of a broader mechanism. <a href="https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf">Scaling Memcache at Facebook</a> describes fill tokens invalidated by deletion. Memcached’s <a href="https://docs.memcached.org/protocols/meta/">meta protocol</a> offers miss placeholders and compare-and-set operations. A local cache can use equivalent synchronisation around the record. Each implementation must preserve the same ordering and missing-state rules.</p>
+</section>
+
+<section aria-labelledby="permission-loss"><h2 id="permission-loss">When the permission disappears</h2>
+<p>Expiry, eviction and an empty restart can all remove the loading record. App A’s old token then fails because absent is not a match. If App B reserves a new token, A still fails because the tokens differ. Once B publishes, A fails because ready is not loading.</p>
+<p>Suppose the reservation expires while App A is still reading. App B reserves token B and reads the source again. Both processes may now be running, but only B has permission to fill. This is why the token protects publication without being a complete source-load control.</p>
+<p>A counter reset to a familiar number would break that reasoning. An old attempt carrying generation 1 could match a newly created generation 1. A generation counts cache state changes; a source revision identifies product state; a token identifies one attempt. The <code>v1</code> in our key identifies the representation format. These values name different things.</p>
+<p>Losing all cache state is also different from restoring earlier cache state. An old snapshot or a lagging promoted replica could bring token A back after its deletion. App A could then match it. Our reasoning assumes one cache history that never restores a revoked reservation.</p>
+<p><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/replication/">Redis replication is asynchronous by default</a>, and its documentation warns that even acknowledged writes can be lost during failover. <code>WAIT</code> does not establish the recovery boundary this protocol needs. A deployment must make attempts from before recovery unusable, or bypass the cache for the required source validation. A longer reservation lifetime does neither.</p>
+</section>
+
+<section aria-labelledby="unheard-change"><h2 id="unheard-change">What the cache has not heard</h2>
+<p>Now delay App B’s invalidation. App A reserves token A and reads revision 1. App B commits revision 2, but the delete has not reached the cache. App A publishes successfully because token A still matches. Until deletion arrives, the cache can serve GBP 20.00 beside an authoritative price of GBP 22.00.</p>
+<p>The token did exactly what we asked. No processed invalidation was undone. It could not tell the cache about an unseen commit. The parent’s delivery mechanism and observation-age rule still decide how long the old card may be used.</p>
+<p>A lagging source replica creates another path to the same result. App A reserves a fresh token after revision 2 committed, then reads revision 1 from that replica. Publication can succeed. Reserve-before-read orders the attempt; it does not make the chosen source current.</p>
+<p>Late and repeated deletes have a different cost. They can remove a newer revision 2 card, causing another miss, but a delete cannot restore revision 1. Call this extra work, rather than treating every removal of a newer card as a stale result.</p>
+<p>Finally, a rejected cache fill does not settle the waiting caller’s request. App A still holds revision 1 in memory. The public card may be allowed to use it within its observation-age allowance; a merchant requiring revision 2 or newer may not. Apply that requirement separately. A strict request may need another authoritative read, or fail if its deadline leaves no time. Checkout continues to use authoritative price and stock checks within its transaction.</p>
+</section>
+
+<section aria-labelledby="choose"><h2 id="choose">Choose where to establish the revision</h2>
+<p>These designs answer different questions. Choose the one that establishes what the reader needs without depending on cache knowledge you cannot keep valid.</p>
+<div class="cache-table-scroll"><table>
+<caption>What each check establishes</caption>
+<thead><tr><th scope="col">Design</th><th scope="col">What it establishes</th><th scope="col">What it depends on</th><th scope="col">Source work</th></tr></thead>
+<tbody>
+<tr><th scope="row">Remember maximum source revision</th><td>A fill does not go below the known revision.</td><td>Trustworthy revision knowledge survives, or missing knowledge blocks the path.</td><td>Source reads on misses; recovery may need validation.</td></tr>
+<tr><th scope="row">Revocable fill token</th><td>An invalidated attempt cannot publish later.</td><td>Unique tokens, atomic replacement and no resurrection of revoked records.</td><td>A new source read for each new attempt.</td></tr>
+<tr><th scope="row">Authoritative revision selector</th><td>The selected revision was current at that source read.</td><td>A suitable source read and a revision covering the whole answer.</td><td>A source revision lookup on every request.</td></tr>
+</tbody></table></div>
+<p>None freezes later source changes. If the authoritative lookup is cheap enough, the parent’s <a href={hrefFor('freshness') + '#revision-identity'}>versioned-key design</a> may be simpler to justify. Conditional fills earn their complexity when avoiding that lookup matters and the cache can uphold the required history.</p>
+</section>
+
+<section aria-labelledby="exercise"><h2 id="exercise">Exercise the competing orders</h2>
+<p>Download <a href="/review/application-caching/downloads/versioned_lab.py">versioned_lab.py</a> and its helper, <a href="/review/application-caching/downloads/cache_lab.py">cache_lab.py</a>, into one directory. You need Python 3 and a local <code>redis-server</code> executable on macOS or Linux. No Python packages are required. Run without Python’s <code>-O</code> option so the checks remain active:</p>
+<pre><code>python3 versioned_lab.py --json versioned-results.json</code></pre>
+<p>If Redis is not on your path, add <code>--redis-server /path/to/redis-server</code>. The script starts its own temporary Redis with TCP and persistence disabled, then removes it on exit. It prints a pass for each checked schedule and saves the commands and replies in the JSON file.</p>
+<p>The native experiment ran these schedules against Redis 8.10.3. Redis executed the reservation, deletion and Lua publication; a Python dictionary modelled the authoritative product. Each step waited for the preceding command’s reply, making the order repeatable without relying on a lucky race.</p>
+<div class="cache-table-scroll"><table>
+<caption>Observed cache results in the controlled experiment</caption>
+<thead><tr><th scope="col">Schedule</th><th scope="col">Publication</th><th scope="col">Cache afterwards</th></tr></thead>
+<tbody>
+<tr><th scope="row">Read 1 → commit 2 → delete → unconditional fill</th><td>Accepted</td><td>Revision 1</td></tr>
+<tr><th scope="row">Reserve A → read 1 → commit 2 → delete → publish A</th><td>Rejected</td><td>Absent</td></tr>
+<tr><th scope="row">Reserve A → read 1 → publish A → commit 2 → delete</th><td>Accepted, then deleted</td><td>Absent</td></tr>
+<tr><th scope="row">Expire A → reserve B → read 2 → publish A, then B</th><td>A rejected; B accepted</td><td>Revision 2</td></tr>
+<tr><th scope="row">Repeat B’s successful completion</th><td>Rejected</td><td>Revision 2 unchanged</td></tr>
+<tr><th scope="row">Reserve A → read 1 → commit 2 → publish A; delete still pending</th><td>Accepted</td><td>Revision 1 until deletion</td></tr>
+</tbody></table></div>
+<p>The source is revision 2 at the end of every schedule in the table. The candidate held by App A is still revision 1. Only the cache outcome is decided by the publication check; the caller’s result needs its own freshness decision.</p>
+<p>The experiment also rejected an old token on a fresh, empty Redis instance. It reproduced the unsafe alternatives: reserving after the read, splitting comparison from publication, and treating a lost revision as zero. Metadata loss was induced with deletion; a lagging source was modelled by returning revision 1. Neither a real eviction workload nor replication failover was measured.</p>
+<p>When testing an implementation, keep those counterexamples. A test that only publishes a current card cannot distinguish a conditional fill from an unconditional write. Force the old answer to arrive last, lose the metadata, repeat a completion, and delay the invalidation. Check source, cache and caller separately.</p>
+</section>
+
+<section aria-labelledby="sources"><h2 id="sources">Sources and further reading</h2>
+<ul>
+<li>Nishtala et al., <a href="https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf">Scaling Memcache at Facebook</a>, section 3.2.1: fill tokens and deletion that invalidates them.</li>
+<li>Meta Engineering, <a href="https://engineering.fb.com/2022/06/08/core-infra/cache-made-consistent/">Cache made consistent</a>: reordered fills and invalidations, including eviction of newer-version knowledge.</li>
+<li>Redis, <a href="https://redis.io/docs/latest/commands/set/">SET</a> and <a href="https://redis.io/docs/latest/develop/programmability/eval-intro/">Scripting with Lua</a>: conditional reservation and atomic cache operations.</li>
+<li>Redis, <a href="https://redis.io/docs/latest/operate/oss_and_stack/management/replication/">Replication</a>: asynchronous replication and the limits of acknowledgement during failover.</li>
+<li>Memcached, <a href="https://docs.memcached.org/protocols/meta/">Meta text protocol</a>: placeholders on misses and compare-and-set operations.</li>
+<li>On this site: <a href={hrefFor('freshness')}>Freshness and invalidation</a> for the caller’s promise and authoritative revision selection; <a href={hrefFor('cache-misses')}>Handling cache misses</a> for waiting and source admission.</li>
+</ul>
+</section>
