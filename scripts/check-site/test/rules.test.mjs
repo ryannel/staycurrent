@@ -129,10 +129,10 @@ test('dense-prose: caveat-stacked sentences, not plain ones or code', () => {
   const code = '<p>Run <code>SET product:42 "{\\"name\\": \\"mug\\", \\"price\\": 20, \\"stock\\": 3, \\"tags\\": [1, 2, 3]}" EX 300</code> to store it.</p>';
   assert.deepEqual(run('dense-prose', article({ body: plain + code })), []);
   const found = run('dense-prose', article({ body: dense }));
-  assert.ok(found.some((i) => i.message.startsWith('sentence') && i.message.includes('For a product cache')));
-  assert.ok(found.some((i) => i.message.startsWith('paragraph')));
+  assert.ok(found.some((i) => i.message.startsWith('This sentence') && i.message.includes('<code>') === false && i.message.includes('watched used_memory grow')));
+  assert.ok(found.some((i) => i.message.startsWith('This paragraph')));
   const long = `<p>${'A gear turns the next one along the shaft. '.repeat(10)}</p>`;
-  assert.ok(run('dense-prose', article({ body: long })).some((i) => i.message.startsWith('paragraph of 90 words')));
+  assert.ok(run('dense-prose', article({ body: long })).some((i) => i.message.startsWith('This paragraph runs to 90 words')));
   // Figures and sources are not running prose.
   assert.deepEqual(run('dense-prose', article({ body: `<figure>${dense}</figure><section class="essay-sources">${dense}</section>` })), []);
 });
