@@ -8,7 +8,7 @@ export function mountScene(root, scene) {
   const trafficSlider = root.querySelector('[data-traffic]');
   const trafficControl = root.querySelector('[data-traffic-control]');
   const trafficOutput = root.querySelector('[data-traffic-output]');
-  const traffic = scene.traffic ? { now: 0, requests: [], completed: 0 } : null;
+  let traffic = scene.traffic ? scene.traffic.create() : null;
   let trafficLevel = scene.traffic?.defaultLevel ?? 2, nextArrival = scene.traffic?.startAt ?? 0, requestIndex = 0;
   const output = root.querySelector('output');
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -16,7 +16,7 @@ export function mountScene(root, scene) {
   const duration = () => scene.durationFor?.(variant) ?? scene.duration;
   let visible = false, paused = false, finished = false, observer;
   const paint = fraction => {
-    drawing.innerHTML = scene.render(fraction, variant, traffic);
+    drawing.innerHTML = scene.render(fraction, variant, motion.matches ? null : traffic);
     root.dataset.progress = String(fraction);
   };
   const labelPause = () => {
@@ -28,14 +28,11 @@ export function mountScene(root, scene) {
     if (last) elapsed = Math.min(traffic ? Infinity : duration(), elapsed + Math.min(now - last, 100));
     last = now;
     if (traffic) {
-      traffic.now = elapsed;
+      scene.traffic.advance(traffic, elapsed);
       if (elapsed >= nextArrival) {
-        traffic.requests.push({ at: elapsed, index: requestIndex++ });
+        scene.traffic.arrive(traffic, elapsed, requestIndex++);
         nextArrival = elapsed + scene.traffic.intervals[trafficLevel - 1];
       }
-      const completed = traffic.requests.filter(request => elapsed - request.at >= scene.traffic.tripDuration);
-      traffic.completed += completed.length;
-      traffic.requests = traffic.requests.filter(request => elapsed - request.at < scene.traffic.tripDuration);
     }
     paint(Math.min(1, elapsed / duration()));
     if (traffic || elapsed < duration()) frame = requestAnimationFrame(tick);
@@ -46,7 +43,7 @@ export function mountScene(root, scene) {
   };
   const restart = () => {
     stop(); elapsed = 0; paused = false; finished = false;
-    if (traffic) { traffic.now = 0; traffic.requests = []; traffic.completed = 0; nextArrival = scene.traffic.startAt; requestIndex = 0; }
+    if (traffic) { traffic = scene.traffic.create(); nextArrival = scene.traffic.startAt; requestIndex = 0; }
     pause.hidden = motion.matches; labelPause();
     paint(motion.matches ? 1 : 0); start();
   };

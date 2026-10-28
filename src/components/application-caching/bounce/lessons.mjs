@@ -1,4 +1,5 @@
-import { clamp, phase, ease, paper, colours, text, stroke as baseStroke, qpath, result, ball, moving, pulse } from './scene.mjs';
+import { products, createWorkload, arrive, advance, finalWorkload } from './workload.mjs';
+import { keyCache, clamp, phase, ease, paper, colours, text, stroke as baseStroke, qpath, result, ball, moving, pulse } from './scene.mjs';
 
 const stroke=(d,colour='--color-text-secondary',width=1.6,extra='')=>baseStroke(d,colour,width,extra);
 
@@ -21,6 +22,7 @@ function database(x,y,active=false,value='') {
 const answerDot=(x,y,label,colour='--teal',r=23)=>`<circle cx="${x}" cy="${y}" r="${r}" fill="${paper}" stroke="var(${colour})" stroke-width="1.8"/>`+result(x,y-3,1)+text(x,y+43,label,18);
 
 function placement(t,small,traffic){
+  const state=traffic??finalWorkload();
   const W=small?440:760, rowHeight=small?610:420;
   let s='';
   for(let panel=0;panel<2;panel++){
@@ -36,7 +38,9 @@ function placement(t,small,traffic){
     // Source routes go around the cache, never through it.
     const da=small?pt(-80,445):route(A,D,-175);
     const db=small?pt(520,445):route(B,D,175);
-    const readA=t>=3&&t<5,readB=!shared&&t>=11.6&&t<13.6;
+    const stats=state.panels[panel];
+    const reading=target=>state.requests.some(r=>r.target===target&&r.outcomes[panel].hit===false&&(state.now-r.at)/1000/r.scale>=1.2&&(state.now-r.at)/1000/r.scale<2.8);
+    const readA=reading(0),readB=reading(1);
     s+=text(W/2,oy+30,shared?'Shared cache':'Local caches',24);
     for(const [a,b] of [[client,L],[L,A],[L,B],[A,CA],[B,CB]])
       s+=stroke(qpath(a,route(a,b),b));
@@ -48,52 +52,34 @@ function placement(t,small,traffic){
     s+=text(L[0],L[1]+49,'Load balancer',18);
     s+=server(...A,'')+server(...B,'');
     s+=text(A[0]-(small?20:0),A[1]-40,'Server A',20)+text(B[0]+(small?20:0),B[1]-40,'Server B',20);
-    s+=cache(...CA,t>=5.7,'')+text(CA[0],CA[1]+51,shared?'Cache':'Local cache',20);
-    if(!shared)s+=cache(...CB,t>=14.3,'')+text(CB[0],CB[1]+(small?51:-48),'Local cache',20);
+    s+=keyCache(...CA,stats.caches[0])+text(CA[0],CA[1]+56,shared?'Cache':'Local cache',20);
+    if(!shared)s+=keyCache(...CB,stats.caches[1])+text(CB[0],CB[1]+(small?56:-48),'Local cache',20);
     s+=database(...D,readA||readB);
-    const reads=t<3.8?0:!shared&&t>=12.6?2:1;
-    s+=text(D[0],D[1]+82,`${reads} ${reads===1?'read':'reads'}`,17,'--color-text-secondary');
-    // One complete cold request, including its source read and return journey.
-    s+=travel(t,.4,1.1,client,L,'--coral')+travel(t,1.1,1.8,L,A,'--coral');
-    s+=travel(t,1.8,2.4,A,CA,'--coral')+travel(t,2.4,3,CA,A,'--coral');
-    s+=moving(t,3,3.8,A,da,D,'--coral')+pulse(t,3.8,...D,'--gold',30);
-    s+=moving(t,4.2,5,D,da,A,'--coral',true);
-    s+=travel(t,5,5.7,A,CA,'--coral',true)+pulse(t,5.7,...CA);
-    s+=travel(t,5.7,6.3,CA,A,'--coral',true);
-    s+=travel(t,6.3,7,A,L,'--coral',true)+travel(t,7,7.7,L,client,'--coral',true);
-    s+=pulse(t,7.7,...client,'--coral',25);
-    // The next request is routed to B; only its local-cache miss reads again.
-    s+=travel(t,9,9.7,client,L,'--blue')+travel(t,9.7,10.4,L,B,'--blue');
-    s+=travel(t,10.4,11,B,CB,'--blue')+travel(t,11,11.6,CB,B,'--blue',shared);
-    if(shared){
-      s+=pulse(t,11,...CB,'--blue');
-      s+=travel(t,11.6,12.3,B,L,'--blue',true)+travel(t,12.3,13,L,client,'--blue',true);
-      s+=pulse(t,13,...client,'--blue',25);
-    }else{
-      s+=moving(t,11.6,12.6,B,db,D,'--blue')+pulse(t,12.6,...D,'--gold',30);
-      s+=moving(t,12.8,13.6,D,db,B,'--blue',true);
-      s+=travel(t,13.6,14.3,B,CB,'--blue',true)+pulse(t,14.3,...CB,'--blue');
-      s+=travel(t,14.3,14.9,CB,B,'--blue',true);
-      s+=travel(t,14.9,15.6,B,L,'--blue',true)+travel(t,15.6,16.3,L,client,'--blue',true);
-      s+=pulse(t,16.3,...client,'--blue',25);
+    s+=text(D[0],D[1]+82,`${stats.reads} ${stats.reads===1?'read':'reads'}`,17,'--color-text-secondary');
+    for(const r of state.requests){
+      const age=(state.now-r.at)/1000/r.scale,product=products[r.key],c=product.colour,k=product.key;
+      const target=r.target?B:A,cachePosition=r.target?CB:CA,sourceRoute=r.target?db:da;
+      const saved=[cachePosition[0]+(r.key-1)*24,cachePosition[1]];
+      const outcome=r.outcomes[panel];
+      const move=(start,end,from,to,answer=false)=>moving(age,start,end,from,route(from,to),to,c,answer,k);
+      s+=move(0,.3,client,L)+move(.3,.6,L,target)+move(.6,.9,target,saved);
+      s+=move(.9,1.2,saved,target,outcome.hit===true);
+      if(outcome.hit===false){
+        s+=moving(age,1.2,1.8,target,sourceRoute,D,c,false,k);
+        if(age>=1.8&&age<2.2)s+=ball(D[0],D[1]-34-Math.sin((age-1.8)*Math.PI/ .4)*5,c,true,0,1,k);
+        s+=moving(age,2.2,2.8,D,sourceRoute,target,c,true,k);
+        s+=move(2.8,3.2,target,saved,true)+pulse(age,3.2,...cachePosition,c,40);
+        s+=move(3.2,3.5,saved,target,true)+move(3.5,3.8,target,L,true)+move(3.8,4.1,L,client,true);
+      }else if(outcome.hit===true){
+        s+=pulse(age,.9,...cachePosition,c,40)+move(1.2,1.5,target,L,true)+move(1.5,1.8,L,client,true);
+      }
     }
-    // Once both cold requests finish, all further requests reuse a warm copy.
-    // Both arrangements receive the same arrivals; only the cold work differs.
-    for(const request of traffic?.requests ?? []){
-      const age=(traffic.now-request.at)/1000;
-      const target=request.index%2?B:A, saved=request.index%2?CB:CA;
-      const colour=colours[(request.index+2)%colours.length];
-      s+=travel(age,0,.4,client,L,colour)+travel(age,.4,.8,L,target,colour);
-      s+=travel(age,.8,1.2,target,saved,colour)+pulse(age,1.2,...saved,colour,33);
-      s+=travel(age,1.2,1.6,saved,target,colour,true);
-      s+=travel(age,1.6,2,target,L,colour,true)+travel(age,2,2.4,L,client,colour,true);
+    const misses=stats.misses[0]+stats.misses[1];
+    s+=text(W/2,oy+rowHeight-24,`${misses} cache ${misses===1?'miss':'misses'}`,24);
+    if(!shared){
+      s+=text(A[0],A[1]+49,`${stats.misses[0]} ${stats.misses[0]===1?'miss':'misses'}`,17,'--color-text-secondary');
+      s+=text(B[0],B[1]+49,`${stats.misses[1]} ${stats.misses[1]===1?'miss':'misses'}`,17,'--color-text-secondary');
     }
-    const busy=traffic && traffic.now>=19000;
-    if(busy)s+=text(small?W/2:client[0],small?oy+55:client[1]+77,`${traffic.completed+2} answers`,17,'--color-text-secondary');
-    const note=busy?'Warm caches. The database rests.':t<9?'First request → A':t<16.5?
-      (shared?'B reuses A’s copy':'B reads the database again'):
-      (shared?'One copy. One database read.':'Two copies. Two database reads.');
-    s+=text(W/2,oy+rowHeight-24,note,20);
   }
   return svg(s,small,rowHeight*2);
 }
@@ -230,7 +216,7 @@ function memory(t,small){
 }
 
 export const lessons={
-  placement:{title:'Where the copy lives',duration:19000,traffic:{startAt:19000,tripDuration:2400,defaultLevel:2,intervals:[1600,800,320],labels:['Quiet','Steady','Busy']},render:(t,variant,traffic)=>both((time,small)=>placement(time,small,traffic),clamp(t)*19),alt:'Two stacked arrangements have the same app, load balancer, servers A and B, and database. The load balancer sends the first request to A and the next to B. With local caches, both servers miss and read the database: two reads and two copies. With a shared cache, B reuses A’s copy: one database read. Answers return through the load balancer to the app. After those two requests, a continuing stream hits the warm caches in both arrangements. The optional traffic slider changes the arrival rate; database reads stay at two and one.',caption:'Figure 2. The load balancer sends the first request to A, the next to B. Local caches need two database reads; the shared cache needs one. Later traffic hits warm copies in both. The product stays unchanged and nothing expires here. Motion and timing are illustrative.'},
+  placement:{title:'Where the copy lives',duration:19000,traffic:{startAt:19000,create:createWorkload,advance,arrive,defaultLevel:2,intervals:[1600,800,320],labels:['Quiet','Steady','Busy']},render:(t,variant,traffic)=>both((time,small)=>placement(time,small,traffic),clamp(t)*19),alt:'The same P7, P8 and P9 requests reach A and B in both arrangements. Each local cache must learn each key separately, producing six cache misses. The shared cache learns each key once: three misses. Labelled colours identify product keys; the counters change when a lookup actually misses. Both eventually contain all three keys and later requests hit.',caption:'Figure 2. The same products now reach two servers. A local copy in A cannot prevent B’s miss. A shared copy can. Each key’s fill finishes before it is requested again here: six misses locally, three shared. Once warm, both arrangements hit. No expiry or eviction; timing is illustrative.'},
   identity:{title:'Two questions need two keys',duration:9000,render:t=>both(identity,clamp(t)*9),alt:'North’s P7 costs £20; south’s P7 costs £18. With only P7 as the cache key, south receives north’s £20 answer. Including the shop gives each answer its own entry, and south receives £18.',caption:'Figure 3. Both lookups hit. Only the key that includes the shop finds the right answer. Keys are shortened here; language, currency and format stay fixed.'},
   change:{title:'A copy can fall behind',duration:18000,render:t=>both(change,clamp(t)*18),alt:'The database and cache begin at £20. The database commits £22 while the cache still holds £20. The server then deletes the cached copy. A later request misses, reads £22 from the database and saves a new copy. No reads overlap the update in this example.',caption:'Figure 4. Commit £22, delete the old copy, then refill on the next miss. The purple pulse is the deletion; the coral ball is a later read. These are separate operations, with no overlapping read in this example.'},
   burst:{title:'Four requests, one piece of work',duration:13000,render:t=>both(burst,clamp(t)*13),alt:'Four coloured requests travel from the app to the server and miss an empty cache. Without coalescing, all four read the database. With coalescing inside one server process, one reads while three wait. Four answers travel back to the app in both cases.',caption:'Figure 5. Four requests leave the app; four answers return. Sharing the fill inside one server process avoids three database reads. Waiting must be bounded in a real service.'},

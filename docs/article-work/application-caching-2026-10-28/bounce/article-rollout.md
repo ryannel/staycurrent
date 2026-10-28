@@ -194,3 +194,47 @@ and one, exercised all three slider levels by keyboard and pause/resume. Checked
 desktop and 375px phone in light and dark. Phone controls use a full traffic row
 above Pause/Replay to avoid splitting the two buttons across lines. Screenshots
 use `traffic-*`; restored System theme and the normal viewport after checking.
+
+## Product identities and actual cache misses
+
+The reader correctly rejected counting answers in an all-P7 stream: it did not
+explain sharing across a varied workload. Figures 1–2 now use one product record
+for P7 (coral), P8 (purple), P9 (teal). Moving balls carry their key as well as
+colour; filled cache dots represent saved entries and dashed dots absent ones.
+The first figure joins each new product's own table rows, fills its own entry,
+and then reuses it. Nine requests produce three misses and six hits.
+
+The placement comparison starts both arrangements empty. Its model checks the
+relevant cache at lookup time, increments misses then, reads on a miss, and only
+adds an entry when the fill arrives. Each local process learns all three keys;
+the shared cache learns them once. Total misses and per-process local misses
+replace answer counts. The same request keys, target servers and arrival times
+feed both panels. The slider changes arrival spacing, not outcome rules.
+
+This trace spaces repeated cold keys so their fills finish first, even on Busy.
+Known-key requests occupy the gaps. After the three keys warm everywhere, hits
+continue in both arrangements; no expiry, eviction, update, or coalescing is
+smuggled into this lesson. A separate test intentionally overlaps P8 lookups and
+confirms both miss before its shared fill, rather than silently combining them.
+The later stampede lesson retains ownership of that case.
+
+Continuity repair updates the introduction, placement explanation, transition
+to key identity, and transition to concurrent misses. The example record now
+names the added products without inventing unnecessary product attributes.
+The next key lesson still returns to P7 and introduces south explicitly.
+
+Five focused tests in `bounce/workload.test.mjs` verify all traffic settings,
+equal request counts, six-versus-three misses and reads, bounded in-flight state,
+correct handling of a lookup before a fill, first-figure hit prerequisites,
+finite rendering, and the static fallback. The draft prose linter caught one
+long placement paragraph; it was split at the move from definition to Figure 2.
+
+Final confirmation: draft build passes with the original 36 warnings on 16
+unrelated pages; the article's dense-prose check is clear. Browser review covers
+both figures at desktop and 375px, light and dark, three-key cache contents,
+six-versus-three miss totals, all traffic settings, keyboard pause/resume and
+replay resetting misses. Requests now travel to their own key's position inside
+the cache, rather than every key landing on the middle dot. A player harness
+using the actual model also confirms replay reset and the reduced-motion static
+summary. Screenshots use `keys-*`. Restored System theme/default viewport and
+left the preview at the first diagram. Publication gate is unchanged.
