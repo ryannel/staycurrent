@@ -6,8 +6,9 @@ title line, where the contents list goes, the sources section, figure labels,
 links and anchors, and theme-safe CSS. One rule, `dense-prose`, warns about
 sentences that stack too many clauses, numbers and brackets, and paragraphs
 that run long, with limits measured on two human-written explainers (Gears and
-Load Balancing) so that their prose almost never trips them. It catches density, not unclear writing; prose quality stays
-with the style and review skills.
+Load Balancing) so that their prose almost never trips them. The `staycurrent-write` and `staycurrent-revise` skills run it on
+each draft and repair. It catches density, not unclear writing; prose quality
+stays with the writers and reviewers.
 
 ```bash
 pnpm check                                    # every issue, grouped by rule
