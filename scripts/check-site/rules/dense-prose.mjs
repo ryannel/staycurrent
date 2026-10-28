@@ -21,7 +21,7 @@ function prose(el) {
 const decode = (s) => s.replace(/&nbsp;|&#160;/g, ' ').replace(/&amp;/g, '&').replace(/&#39;|&rsquo;/g, '’').replace(/&quot;/g, '"');
 
 export function sentences(text) {
-  return text.replace(ABBREVIATIONS, '$1').split(/(?<=[.?!])\s+(?=[A-Z"“‘(])/).filter((s) => s.split(/\s+/).length > 2);
+  return text.replace(ABBREVIATIONS, '$1').split(/(?<=[.?!]["”’)]?)\s+(?=[A-Z"“‘(])/).filter((s) => s.split(/\s+/).length > 2);
 }
 
 export function load(sentence) {
