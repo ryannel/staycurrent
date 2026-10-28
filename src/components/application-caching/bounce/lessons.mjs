@@ -109,34 +109,50 @@ function change(t,small){
   return svg(s,small,H);
 }
 
+function app(x,y){
+  return `<rect x="${x-29}" y="${y-23}" width="58" height="46" rx="7" fill="${paper}" stroke="var(--color-text-secondary)" stroke-width="1.6"/>`+
+    stroke(`M${x-29} ${y-10}H${x+29}`,'--color-text-secondary',1)+
+    `<circle cx="${x-19}" cy="${y-16}" r="1.8" fill="var(--color-text-secondary)"/><circle cx="${x-12}" cy="${y-16}" r="1.8" fill="var(--color-text-secondary)"/>`+
+    text(x,y+49,'App',20);
+}
 function burst(t,small){
-  const W=small?440:760, sx=small?70:120,cx=small?220:380,dx=small?365:650;
+  const W=small?440:760;
   let s='';
   for(let row=0;row<2;row++){
-    const y=row?430:140,S=[sx,y],C=[cx,y-18],D=[dx,y+30],share=row===1;
+    const offset=row*(small?360:300), y=(small?165:150)+offset;
+    const A=[small?50:65,y], S=[small?180:245,y];
+    const C=[small?335:465,(small?110:130)+offset];
+    const D=[small?335:665,(small?250:195)+offset],share=row===1;
     const fillAt=8.1;
-    s+=text(W/2,y-105,share?'Share one fill':'Each request reads',24);
-    s+=stroke(qpath(S,route(S,C,-25),C))+stroke(qpath(S,route(S,D,35),D));
-    s+=server(...S)+cache(...C,t>=fillAt)+database(...D,t>=4&&t<6.8);
+    s+=text(W/2,20+offset,share?'Share one fill':'Each request reads',24);
+    s+=stroke(qpath(A,route(A,S,-12),S));
+    s+=stroke(qpath(S,route(S,C,-15),C))+stroke(qpath(S,route(S,D,15),D));
+    s+=app(...A)+server(...S)+cache(...C,t>=fillAt)+database(...D,t>=4&&t<6.8);
     for(let i=0;i<4;i++){
-      const colour=colours[i],start=1+i*.18;
-      s+=travel(t,start,start+.75,[sx-45,y-45+i*19],S,colour);
-      s+=travel(t,start+.75,start+1.45,S,C,colour,false,-25)+travel(t,start+1.45,start+2.15,C,S,colour,false,-25);
+      const colour=colours[i],start=1+i*.28,reply=8.6+i*.28;
+      // Every request leaves the same visible app; every answer returns there.
+      s+=travel(t,start,start+.75,A,S,colour,false,-12);
+      s+=travel(t,start+.75,start+1.45,S,C,colour,false,-15)+travel(t,start+1.45,start+2.15,C,S,colour,false,-15);
       if(!share||i===0){
-        s+=travel(t,3.7+i*.2,4.7+i*.2,S,D,colour,false,35);
-        if(t>=4.7+i*.2&&t<6.1+i*.2)s+=ball(dx-26+i*17,y+15-Math.abs(Math.sin(t*4+i))*7,colour);
-        s+=travel(t,6.1+i*.2,7.1+i*.2,D,S,colour,true,35);
-      }else if(t>=start+2.15&&t<8.6){
-        s+=ball(sx-45+i*27,y-38-Math.abs(Math.sin(t*2+i))*3,colour);
+        s+=travel(t,3.7+i*.2,4.7+i*.2,S,D,colour,false,15);
+        if(t>=4.7+i*.2&&t<6.1+i*.2)s+=ball(D[0]-26+i*17,D[1]-15-Math.abs(Math.sin(t*4+i))*7,colour);
+        s+=travel(t,6.1+i*.2,7.1+i*.2,D,S,colour,true,15);
+      }else if(t>=start+2.15&&t<reply){
+        s+=ball(S[0]+(i-2)*27,y-42-Math.abs(Math.sin(t*2+i))*3,colour,t>=8.6);
       }
-      if(t>=8.6&&t<10.2)s+=travel(t,8.6,10.2,S,[sx-45,y-45+i*19],colour,true);
+      s+=travel(t,reply,reply+1.2,S,A,colour,true,-12);
+      s+=pulse(t,reply+1.2,...A,colour,25);
     }
     // The first completed read saves the copy; waiters get its result.
-    s+=travel(t,7.1,8.1,S,C,'--coral',true,-25)+travel(t,8.1,8.6,C,S,'--coral',true,-25);
+    s+=travel(t,7.1,8.1,S,C,'--coral',true,-15)+travel(t,8.1,8.6,C,S,'--coral',true,-15);
     s+=pulse(t,8.1,...C);
-    s+=text(W/2,y+122,t<3.6?'Four requests. Empty cache.':t<8.6?(share?'One reads. Three wait.':'Four reads in flight.'):(share?'One source read. Four answers.':'Four source reads. Four answers.'),small?20:23);
+    const note=t<3.6?'Four requests from the app':t<8.6?
+      (share?'One fills. Three wait.':'Four separate source reads.'):
+      t<10.7?'Four answers return to the app':
+      (share?'One source read. Four answers.':'Four source reads. Four answers.');
+    s+=text(W/2,(small?335:285)+offset,note,small?20:23);
   }
-  return svg(s,small,590);
+  return svg(s,small,small?720:615);
 }
 
 function memory(t,small){
@@ -178,6 +194,6 @@ export const lessons={
   placement:{title:'Where the copy lives',duration:13000,render:t=>both(placement,clamp(t)*13),alt:'With local caches, server A saves an answer in its own cache. Server B misses its separate cache and must fill its own copy. With one shared cache, server B finds the answer saved by server A. Database reads are omitted from this comparison.',caption:'Figure 2. A local copy belongs to one server process. A shared copy lets B reuse A’s fill. Both ask for the same product; database reads are omitted here.'},
   identity:{title:'Two questions need two keys',duration:9000,render:t=>both(identity,clamp(t)*9),alt:'North’s P7 costs £20; south’s P7 costs £18. With only P7 as the cache key, south receives north’s £20 answer. Including the shop gives each answer its own entry, and south receives £18.',caption:'Figure 3. Both lookups hit. Only the key that includes the shop finds the right answer. Keys are shortened here; language, currency and format stay fixed.'},
   change:{title:'A copy can fall behind',duration:18000,render:t=>both(change,clamp(t)*18),alt:'The database and cache begin at £20. The database commits £22 while the cache still holds £20. The server then deletes the cached copy. A later request misses, reads £22 from the database and saves a new copy. No reads overlap the update in this example.',caption:'Figure 4. Commit £22, delete the old copy, then refill on the next miss. The purple pulse is the deletion; the coral ball is a later read. These are separate operations, with no overlapping read in this example.'},
-  burst:{title:'Four requests, one piece of work',duration:13000,render:t=>both(burst,clamp(t)*13),alt:'Four requests miss an empty cache. Without coalescing, all four read the database. With coalescing inside one server process, one reads while three wait. The completed fill supplies all four answers.',caption:'Figure 5. The same four misses in one server process. Sharing the fill avoids three database reads; all four callers still receive an answer. Waiting must be bounded in a real service.'},
+  burst:{title:'Four requests, one piece of work',duration:13000,render:t=>both(burst,clamp(t)*13),alt:'Four coloured requests travel from the app to the server and miss an empty cache. Without coalescing, all four read the database. With coalescing inside one server process, one reads while three wait. Four answers travel back to the app in both cases.',caption:'Figure 5. Four requests leave the app; four answers return. Sharing the fill inside one server process avoids three database reads. Waiting must be bounded in a real service.'},
   memory:{title:'An answer has to earn its space',duration:11000,render:t=>both(memory,clamp(t)*11),alt:'A four KiB cache holds P7, P8, P9 and P10 at one KiB each. Saving a three KiB result evicts P7, P8 and P9. Their next requests miss and go to the database. Skipping that admission retains all four products, so the same three requests hit.',caption:'Figure 6. Outlined circles hold saved answers; coloured balls are requests. The 3 KiB result displaces three 1 KiB answers if admitted. Both original callers receive the large result; this drawing compares what gets saved. The later misses are shown before refilling. Sizes include keys and bookkeeping; no entries expire.'},
 };

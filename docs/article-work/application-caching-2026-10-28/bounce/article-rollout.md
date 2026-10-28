@@ -93,3 +93,23 @@ new collection review.
 Draft build passes with the same unrelated warnings. Sampled placement frames
 are finite. Checked desktop and 375 px layouts in both themes, replay/pause, and
 the final two-copies/one-copy state. Updated screenshots use `placement-tidy-*`.
+
+## Request origin in the coalescing comparison
+
+The user noted that Figure 5 made the server appear to generate work. Added the
+same browser/App symbol used in Figure 1 to both comparisons. All four coloured
+requests now start at the App, pass through the Server, and return to the App
+carrying answers. Waiting remains at the server, where coalescing happens.
+Reply departures are staggered so all four can be followed; the final count
+appears after the last reply reaches the App. Captions and alternatives name
+the origin and destination. Source counts and the process boundary are unchanged.
+
+Kept cache and database branches separate, with compact geometry for phones.
+The changed scene has 261 finite sampled frame pairs, each containing an App
+in both comparisons and both layouts. This bounded repair retains the earlier
+technical review and shared-player evidence.
+
+Draft build passes with the existing unrelated warnings. Coordinator checked
+desktop and phone in both themes, final counts, keyboard replay/pause/resume,
+and restored System theme and the default viewport. Screenshots use
+`burst-app-*`.
