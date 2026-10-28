@@ -73,3 +73,23 @@ check does not recertify every colour in the unchanged first study.
 The pre-existing draft route gate, collection status and reading index are
 unchanged. This commission does not publish the collection or roll the style
 out across other collections.
+
+## Placement simplification after user feedback
+
+The user found Figure 2 messy. Removed the duplicate database drawings, source
+routes, crossing lines and dashed process enclosures. Desktop now compares two
+aligned arrangements side by side; phone stacks them. Each local cache sits
+beside its named owner. The shared arrangement has two uncrossed links to one
+cache. Every cache is labelled.
+
+The animation begins with A saving an answer, then B checking for that answer.
+B either misses its own cache and later fills it, or reuses A's shared copy.
+Database reads are deliberately offstage, stated in the caption and text
+alternative; Figure 1 still teaches that full path. Removed the diagram's source
+read counters. The surrounding placement explanation and example facts remain
+consistent. This is a bounded media repair confirmed by the coordinator, not a
+new collection review.
+
+Draft build passes with the same unrelated warnings. Sampled placement frames
+are finite. Checked desktop and 375 px layouts in both themes, replay/pause, and
+the final two-copies/one-copy state. Updated screenshots use `placement-tidy-*`.

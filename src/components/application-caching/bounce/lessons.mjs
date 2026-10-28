@@ -21,42 +21,42 @@ function database(x,y,active=false,value='') {
 const answerDot=(x,y,label,colour='--teal',r=23)=>`<circle cx="${x}" cy="${y}" r="${r}" fill="${paper}" stroke="var(${colour})" stroke-width="1.8"/>`+result(x,y-3,1)+text(x,y+43,label,18);
 
 function placement(t,small){
-  const W=small?440:760, H=600;
-  const ax=small?55:100,bx=small?210:325,dx=small?365:660;
+  // Same rows in both arrangements; only the ownership of the copy changes.
+  // The database work was taught in Figure 1 and is deliberately offstage here.
   let s='';
-  for(let row=0;row<2;row++){
-    const y=row?430:150, shared=row===1;
-    s+=text(W/2,y-116,shared?'One shared cache':'A cache in each process',24);
-    const A=[ax,y],B=[bx,y],D=[dx,y],C=[small?235:440,y-20];
+  for(let panel=0;panel<2;panel++){
+    const shared=panel===1, ox=small?0:panel*380, oy=small?panel*340:0;
+    const A=[ox+(small?85:70),oy+110],B=[A[0],oy+240];
+    const CA=[ox+(small?325:285),shared?oy+175:A[1]];
+    const CB=shared?CA:[CA[0],B[1]];
+    const centre=ox+(small?220:190);
+    s+=text(centre,oy+32,shared?'Shared cache':'Local caches',24);
+    s+=stroke(qpath(A,route(A,CA),CA))+stroke(qpath(B,route(B,CB),CB));
+    s+=server(...A,'Server A')+server(...B,'Server B');
+    // Local entries sit beside their owner, rather than on top of its symbol.
+    // Every cache is labelled. No route crosses another route or a label.
+    s+=cache(...CA,t>=2.4,'');
+    s+=text(CA[0],CA[1]+51,shared?'Cache':'Local cache',20);
     if(!shared){
-      for(const x of [ax,bx])s+=`<rect x="${x-43}" y="${y-97}" width="86" height="132" rx="30" fill="none" stroke="var(--color-text-secondary)" stroke-dasharray="3 5"/>`;
-      s+=stroke(qpath([ax,y-55],[dx,y-110],D))+stroke(qpath([bx,y-55],[dx,y-60],D));
-      s+=cache(ax,y-55,t>=4.4,'', '')+cache(bx,y-55,t>=9.4,'','');
-      s+=server(...A,'Server A')+server(...B,'Server B');
-      s+=database(...D,(t>=2&&t<3.4)||(t>=7&&t<8.4));
-      for(const [start,from,c] of [[1,A,'--coral'],[6,B,'--blue']]){
-        const p=[from[0],y-55];
-        s+=travel(t,start,start+.7,from,p,c)+travel(t,start+.7,start+1.7,p,D,c,false,-60);
-        s+=travel(t,start+2.4,start+3.4,D,p,c,true,-60)+travel(t,start+3.4,start+4.1,p,from,c,true);
-        s+=pulse(t,start+3.4,...p,c,31);
-      }
-      s+=text(W/2,y+100,t<6?'A fills its own copy':t<10.2?'B needs its own fill':'Two copies. Two source reads.',20);
-    } else {
-      // The second process has a separate route to the same retained answer.
-      const B2=[small?55:100,y+82];
-      s+=stroke(qpath(A,route(A,C,-15),C))+stroke(qpath(B2,route(B2,C,8),C));
-      s+=stroke(qpath(A,route(A,D,42),D));
-      s+=server(...A,'Server A')+server(...B2,'Server B')+cache(...C,t>=4.4);
-      s+=database(...D,t>=2.4&&t<3.3);
-      s+=travel(t,1,1.7,A,C,'--coral')+travel(t,1.7,2.4,C,A,'--coral');
-      s+=travel(t,2.4,3.1,A,D,'--coral',false,42)+travel(t,3.1,3.8,D,A,'--coral',true,42);
-      s+=travel(t,3.8,4.4,A,C,'--coral',true)+travel(t,4.4,5.1,C,A,'--coral',true);
-      s+=travel(t,6,7,B2,C,'--blue',false,8)+travel(t,7.4,8.4,C,B2,'--blue',true,8);
-      s+=pulse(t,4.4,...C)+pulse(t,7.4,...C,'--blue');
-      s+=text(small?270:470,y+119,t<6?'A saves a copy':t<9?'B finds it ready':'One copy. One source read.',20);
+      s+=cache(...CB,t>=9.7,'');
+      s+=text(CB[0],CB[1]+51,'Local cache',20);
     }
+    s+=travel(t,1,2.4,A,CA,'--coral',true);
+    s+=pulse(t,2.4,...CA);
+    s+=travel(t,4.4,5.6,B,CB,'--blue');
+    s+=travel(t,5.8,7,CB,B,'--blue',shared);
+    if(shared)s+=pulse(t,5.6,...CB,'--blue');
+    else{
+      // B obtains its own answer offstage, then saves it in its local cache.
+      s+=travel(t,8.3,9.7,B,CB,'--blue',true);
+      s+=pulse(t,9.7,...CB,'--blue');
+    }
+    const note=t<4.4?'A saves an answer':t<10?
+      (shared?'B reuses A’s copy':'B needs its own fill'):
+      (shared?'One copy, shared':'Two separate copies');
+    s+=text(centre,oy+330,note,20);
   }
-  return svg(s,small,H);
+  return svg(s,small,small?690:360);
 }
 
 function identity(t,small){
@@ -175,7 +175,7 @@ function memory(t,small){
 }
 
 export const lessons={
-  placement:{title:'Where the copy lives',duration:13000,render:t=>both(placement,clamp(t)*13),alt:'Two comparisons. With a cache in each server process, server A fills its copy and server B must read the database for another. With one shared cache, server A fills it and server B reuses that copy. Two source reads become one.',caption:'Figure 2. A local copy belongs to one server process. A shared copy can answer both. The coloured balls ask for the same product; motion and timing are illustrative.'},
+  placement:{title:'Where the copy lives',duration:13000,render:t=>both(placement,clamp(t)*13),alt:'With local caches, server A saves an answer in its own cache. Server B misses its separate cache and must fill its own copy. With one shared cache, server B finds the answer saved by server A. Database reads are omitted from this comparison.',caption:'Figure 2. A local copy belongs to one server process. A shared copy lets B reuse A’s fill. Both ask for the same product; database reads are omitted here.'},
   identity:{title:'Two questions need two keys',duration:9000,render:t=>both(identity,clamp(t)*9),alt:'North’s P7 costs £20; south’s P7 costs £18. With only P7 as the cache key, south receives north’s £20 answer. Including the shop gives each answer its own entry, and south receives £18.',caption:'Figure 3. Both lookups hit. Only the key that includes the shop finds the right answer. Keys are shortened here; language, currency and format stay fixed.'},
   change:{title:'A copy can fall behind',duration:18000,render:t=>both(change,clamp(t)*18),alt:'The database and cache begin at £20. The database commits £22 while the cache still holds £20. The server then deletes the cached copy. A later request misses, reads £22 from the database and saves a new copy. No reads overlap the update in this example.',caption:'Figure 4. Commit £22, delete the old copy, then refill on the next miss. The purple pulse is the deletion; the coral ball is a later read. These are separate operations, with no overlapping read in this example.'},
   burst:{title:'Four requests, one piece of work',duration:13000,render:t=>both(burst,clamp(t)*13),alt:'Four requests miss an empty cache. Without coalescing, all four read the database. With coalescing inside one server process, one reads while three wait. The completed fill supplies all four answers.',caption:'Figure 5. The same four misses in one server process. Sharing the fill avoids three database reads; all four callers still receive an answer. Waiting must be bounded in a real service.'},
