@@ -96,6 +96,7 @@ function picture(seconds,compact){
   }
   return s+'</svg>';
 }
+export { clamp, phase, ease, paper, colours, text, stroke, qpath, at, result, ball, moving, pulse };
 export const scene={title:'An answer, ready',duration,
  alt:'Nine coloured request balls ask for the same product. The first reaches the server, misses the cache and waits while the database joins matching P7 rows from Products and Prices. The server saves the joined result in the cache and replies. Eight later requests return through the cache while both database tables remain still.',
  render:t=>picture(clamp(t)*duration/1000,false)+picture(clamp(t)*duration/1000,true)
