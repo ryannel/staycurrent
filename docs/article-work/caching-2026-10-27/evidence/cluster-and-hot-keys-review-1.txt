@@ -1,0 +1,651 @@
+# Technical review 1 evidence: Redis Cluster, sharding and hot keys
+# Reviewer's own commands and output. Redis 8.10.3 (Homebrew, macOS, libc malloc). Wed Oct 28 01:00:42 CET 2026
+
+## R1. Model tests
+$ node --test src/components/caching/cluster-and-hot-keys/models.test.mjs
+✔ remedy numbers quoted in the prose (12.759417ms)
+✔ failover data: lengths, events and outages (0.313208ms)
+✔ tool data: true counts in order, LFU compresses them (0.0885ms)
+✔ sequence specs name only their own lanes (0.160458ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 252.327791
+
+## R2. Figure 1 ring model: FNV-1a ring (article) vs same ring with MD5 positions, 160 points per server, 20,000 keys product:0..19999
+import { addServer, fnv1a } from '/Users/ryannel/Workspace/staycurrent/src/components/caching/cluster-and-hot-keys/placement-model.mjs';
+import { createHash } from 'node:crypto';
+const md5 = t => createHash('md5').update(t).digest().readUInt32BE(0);
+function ringWith(hash, servers, points = 160) {
+  const marks = [];
+  for (let s = 0; s < servers; s++) for (let v = 0; v < points; v++) marks.push([hash(`server-${s}#${v}`), s]);
+  marks.sort((a, b) => a[0] - b[0]);
+  return key => { const h = hash(key); let i = marks.findIndex(m => m[0] >= h); if (i < 0) i = 0; return marks[i][1]; };
+}
+function moved(hash, n, count = 20000) {
+  const a = ringWith(hash, n), b = ringWith(hash, n + 1); let m = 0;
+  for (let i = 0; i < count; i++) { const k = `product:${i}`; if (a(k) !== b(k)) m++; }
+  return m / count;
+}
+console.log('n  ideal  article-model(fnv1a)  same-ring-md5  fnv1a-ring-share-per-server(before)');
+for (const n of [2,3,4,5,8]) {
+  const art = addServer('ring', n).moved;
+  // per-server share of keys with fnv1a ring, n servers
+  const f = ringWith(fnv1a, n); const c = new Array(n).fill(0); for (let i=0;i<20000;i++) c[f(`product:${i}`)]++;
+  console.log(n, (1/(n+1)).toFixed(3), art.toFixed(3), moved(md5, n).toFixed(3), c.map(x=>(x/20000).toFixed(2)).join(' '));
+}
+--- output
+n  ideal  article-model(fnv1a)  same-ring-md5  fnv1a-ring-share-per-server(before)
+2 0.333 0.236 0.308 0.37 0.63
+3 0.250 0.251 0.240 0.17 0.59 0.24
+4 0.200 0.300 0.172 0.14 0.38 0.23 0.25
+5 0.167 0.130 0.179 0.14 0.09 0.22 0.25 0.30
+8 0.111 0.102 0.118 0.06 0.07 0.21 0.18 0.22 0.07 0.10 0.10
+
+## R3. Cluster on 7161-7163 (redis-cli --cluster create): slots [0-5460] [5461-10922] [10923-16383]
+KEYSLOT product:42 -> 12456
+KEYSLOT product:43 -> 8329
+KEYSLOT user:{123}:profile -> 5970
+KEYSLOT user:{123}:cart -> 5970
+KEYSLOT foo{}{bar} -> 8363
+KEYSLOT foo{{bar}}zap -> 4015
+KEYSLOT foo{bar}{zap} -> 5061
+KEYSLOT {user}:123:profile -> 5474
+KEYSLOT {user}:456:profile -> 5474
+KEYSLOT product:0 -> 4129
+KEYSLOT product:1 -> 0
+
+## R4. Multi-key restrictions
+$ /opt/homebrew/opt/redis/bin/redis-cli -c -p 7161 mget product:42 product:43
+CROSSSLOT Keys in request don't hash to the same slot
+
+$ /opt/homebrew/opt/redis/bin/redis-cli -c -p 7161 mset cart:{u9}:items 3 cart:{u9}:total 4200
+OK
+$ /opt/homebrew/opt/redis/bin/redis-cli -p 7161 select 1
+ERR SELECT is not allowed in cluster mode
+
+# same node (7161 owns 0-5460), different slots: find two keys on 7161
+# MULTI, same node (7161), different slots (product:0 slot 4129, product:1 slot 0):
+OK
+QUEUED
+QUEUED
+CROSSSLOT Keys in request don't hash to the same slot
+
+# MULTI, second key on another node (product:42, slot 12456 on 7163):
+OK
+QUEUED
+MOVED 12456 127.0.0.1:7163
+
+EXECABORT Transaction discarded because of previous errors.
+
+
+# EVAL with two keys in different slots on the same node:
+CROSSSLOT Keys in request don't hash to the same slot
+
+# EVAL touching an undeclared key in another slot of the same node (allowed?):
+
+# SCAN on one node:
+2
+0
+## R5. redis-py 8.1.0 RedisCluster
+8.1.0
+[True, True]
+RedisClusterException MGET - all keys must map to the same key slot
+[b'kettle', b'mug']
+
+## R6. Key-by-key migration of slot 12456 from 7163 (C) to 7161 (A), by hand
+[7163]> set {product:42}:stock 7
+OK
+[7161]> cluster setslot 12456 importing 2e4fb323202bd557d9f9892c17bdb368a3ac63c4
+OK
+[7163]> cluster setslot 12456 migrating 6a5a8d849b578abbc179a686e96213784eebc798
+OK
+[7163]> migrate 127.0.0.1 7161 product:42 0 5000
+OK
+[7163]> get {product:42}:stock
+7
+[7163]> get product:42
+ASK 12456 127.0.0.1:7161
+
+# a never-existing key in the migrating slot:
+[7163]> cluster keyslot {product:42}:nope
+12456
+[7163]> get {product:42}:nope
+ASK 12456 127.0.0.1:7161
+
+[7163]> mget product:42 {product:42}:stock
+TRYAGAIN Multiple keys request during rehashing of slot
+
+[7161]> get product:42
+MOVED 12456 127.0.0.1:7163
+
+[7161]> ASKING; GET product:42; GET product:42 (same connection)
+OK
+kettle
+MOVED 12456 127.0.0.1:7163
+
+# finish the move
+[7163]> migrate 127.0.0.1 7161 {product:42}:stock 0 5000
+OK
+[7161]> cluster setslot 12456 node 6a5a8d849b578abbc179a686e96213784eebc798
+OK
+[7163]> cluster setslot 12456 node 6a5a8d849b578abbc179a686e96213784eebc798
+OK
+[7163]> get product:42
+MOVED 12456 127.0.0.1:7161
+
+[7161]> get product:42
+kettle
+
+## R7. redis-py 8.1.0 RedisCluster (reviewer venv run)
+8.1.0
+[True, True]
+RedisClusterException MGET - all keys must map to the same key slot
+[b'kettle', b'mug']
+
+## R8. Atomic slot migration via redis-cli --cluster reshard (8.10.3)
+>>> Send CLUSTER MEET to node 127.0.0.1:7165 to make it join the cluster.
+[OK] New node added correctly.
+dbsize per node [10016, 9997, 9990]
+$ redis-cli --cluster reshard 127.0.0.1:7161 --cluster-from <7163> --cluster-to <7165> --cluster-slots 1000 --cluster-yes
+>>> Check for open slots...
+>>> Check slots coverage...
+[OK] All 16384 slots covered.
+Ready to move 1000 slots.
+  Source nodes:
+  Destination node:
+  Resharding plan:
+Moving 1000 slots from 127.0.0.1:7163 to 127.0.0.1:7165
+Waiting for migration task 861093c456bdaf6654f7dd3f26e72ccf76748fd5 to complete.
+real 1.01
+user 0.00
+sys 0.00
+# 7163 log lines about migration:
+53494:M 28 Oct 2026 01:04:52.933 * Migrate task 861093c456bdaf6654f7dd3f26e72ccf76748fd5 created: src=2e4fb323202bd557d9f9892c17bdb368a3ac63c4, dest=f0fc30bc8e4f2a65ee40c5d7be2041ecd2e1b8fa, slots=10923-11922
+53494:M 28 Oct 2026 01:04:52.933 * Migrate task 861093c456bdaf6654f7dd3f26e72ccf76748fd5 started for slots: 10923-11922, destination address: 127.0.0.1:7165, (number of keys at start: 1823)
+53494:M 28 Oct 2026 01:04:52.934 * Starting BGSAVE for SYNC with target: slot migration destination socket (rdb-channel)
+53494:M 28 Oct 2026 01:04:52.935 * Background RDB transfer started by pid 58538 to slot migration destination socket
+58538:C 28 Oct 2026 01:04:52.936 * Fork CoW for RDB: current 0 MB, peak 0 MB, average 0 MB
+53494:M 28 Oct 2026 01:04:52.938 * The applied offset lag 0 is less than the threshold 1048576, pausing writes for slot handoff
+53494:M 28 Oct 2026 01:04:52.938 * Migrate task 861093c456bdaf6654f7dd3f26e72ccf76748fd5 preparing to handoff for slots: 10923-11922
+53494:M 28 Oct 2026 01:04:52.938 * Slot migration command stream drained, sending STREAM-EOF to the destination
+53494:M 28 Oct 2026 01:04:52.948 * Migrate task 861093c456bdaf6654f7dd3f26e72ccf76748fd5 completed for slots: 10923-11922 (migrated 1823 keys)
+53494:M 28 Oct 2026 01:04:52.973 * Background trim started for slots: 10923-11922 to trim 1823 keys.
+# 7165 log lines:
+53500:M 28 Oct 2026 01:04:52.932 * Import task 861093c456bdaf6654f7dd3f26e72ccf76748fd5 created: src=2e4fb323202bd557d9f9892c17bdb368a3ac63c4, dest=f0fc30bc8e4f2a65ee40c5d7be2041ecd2e1b8fa, slots=10923-11922
+53500:M 28 Oct 2026 01:04:52.932 * Import task 861093c456bdaf6654f7dd3f26e72ccf76748fd5 started for slots: 10923-11922, source address: 127.0.0.1:7163
+53500:M 28 Oct 2026 01:04:52.937 * RDB channel snapshot transfer completed for the import task.
+53500:M 28 Oct 2026 01:04:52.937 * Starting to stream accumulated buffer for the import task (0 bytes)
+53500:M 28 Oct 2026 01:04:52.937 * Successfully streamed accumulated buffer for the import task, applied offset: 0
+53500:M 28 Oct 2026 01:04:52.938 * Import task 861093c456bdaf6654f7dd3f26e72ccf76748fd5 is ready to takeover slots: 10923-11922
+53500:M 28 Oct 2026 01:04:52.948 * Import task 861093c456bdaf6654f7dd3f26e72ccf76748fd5 completed for slots: 10923-11922 (imported 1823 keys)
+# CLUSTER MIGRATION STATUS on 7165:
+id
+861093c456bdaf6654f7dd3f26e72ccf76748fd5
+slots
+10923-11922
+source
+2e4fb323202bd557d9f9892c17bdb368a3ac63c4
+dest
+f0fc30bc8e4f2a65ee40c5d7be2041ecd2e1b8fa
+operation
+import
+state
+completed
+last_error
+
+retries
+0
+create_time
+1793145892932
+start_time
+1793145892932
+end_time
+1793145892938
+write_pause_ms
+0
+
+## R9. ASM trimming with a tracking client on the source (7165 -> 7161, slots 10923-11922)
+tracking client on 7165 read product:18
+invalidate pushes seen: 0
+# 7165 log:
+53500:S 28 Oct 2026 01:05:08.434 * Cancelling the pending trim job for slots: 10923-11922
+# (7165 had become a replica of 7161 after losing its last slot, so its trim was cancelled; repeated on 7163 -> 7161, 500 slots 11923-12422)
+tracking client on 7163 read product:2
+invalidate pushes seen: 1
+# 7163 log:
+53494:M 28 Oct 2026 01:05:25.106 * Active trim scheduled for slots: 11923-12422
+53494:M 28 Oct 2026 01:05:25.110 * Active trim initiated for slots: 11923-12422, to trim 925 keys.
+53494:M 28 Oct 2026 01:05:25.159 * Active trim completed for slots: 11923-12422, 925 keys trimmed.
+
+## R10. Defaults and tools on 8.10.3
+[7161]> config get cluster-node-timeout
+cluster-node-timeout
+15000
+[7161]> config get cluster-port
+cluster-port
+0
+[7161]> config get cluster-require-full-coverage
+cluster-require-full-coverage
+yes
+[7161]> config get cluster-allow-reads-when-down
+cluster-allow-reads-when-down
+no
+[7161]> config get cluster-replica-validity-factor
+cluster-replica-validity-factor
+10
+[7161]> config get cluster-allow-replica-migration
+cluster-allow-replica-migration
+yes
+[7161]> config get tracking-table-max-keys
+tracking-table-max-keys
+1000000
+[7161]> config get cluster-slot-stats-enabled
+cluster-slot-stats-enabled
+no
+[7161]> config get cluster-slot-migration-handoff-max-lag-bytes
+cluster-slot-migration-handoff-max-lag-bytes
+1048576
+[7161]> config get maxmemory-policy
+maxmemory-policy
+noeviction
+$ redis-cli -p 7161 --hotkeys (policy noeviction)
+# average sizes per key type.  You can use -i 0.1 to sleep 0.1 sec
+# per 100 SCAN commands (not usually needed).
+
+[7161]> cluster slot-stats orderby cpu-usec limit 2
+ERR Unrecognized sort metric for ORDERBY.
+
+[7161]> cluster slot-stats orderby key-count limit 2
+13
+key-count
+5
+119
+key-count
+5
+[7161]> config set cluster-slot-stats-enabled yes
+ERR CONFIG SET failed (possibly related to argument 'cluster-slot-stats-enabled') - memory tracking cannot be enabled at runtime
+
+[7161]> config set cluster-slot-stats-enabled cpu net
+OK
+[7161]> config get cluster-slot-stats-enabled
+cluster-slot-stats-enabled
+cpu net
+[7161]> cluster slot-stats orderby cpu-usec limit 2
+0
+key-count
+1
+cpu-usec
+206
+network-bytes-in
+5600
+network-bytes-out
+21600
+4129
+key-count
+1
+cpu-usec
+44
+network-bytes-in
+560
+network-bytes-out
+2160
+[7161]> hotkeys start metrics 2 cpu net count 5
+OK
+[7161]> hotkeys stop
+OK
+[7161]> hotkeys get
+tracking-active
+0
+sample-ratio
+1
+selected-slots
+0
+5460
+10923
+12422
+12456
+all-commands-all-slots-us
+399
+net-bytes-all-commands-all-slots
+44880
+collection-start-time-unix-ms
+1793145942809
+collection-duration-ms
+126
+total-cpu-time-user-ms
+21
+total-cpu-time-sys-ms
+47
+total-net-bytes
+44880
+by-cpu-time-us
+product:1
+351
+product:0
+48
+by-net-bytes
+product:1
+40800
+product:0
+4080
+[7161]> hotkeys reset
+OK
+[7161]> config set cluster-slot-stats-enabled no
+OK
+$ redis-cli -p 7161 --hotkeys (full output)
+Error: ERR An LFU maxmemory policy is not selected, access frequency not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.
+
+# Scanning the entire keyspace to find hot keys as well as
+# average sizes per key type.  You can use -i 0.1 to sleep 0.1 sec
+# per 100 SCAN commands (not usually needed).
+
+exit=1
+
+## R11. CLIENT TRACKING on a single server, port 7160, raw RESP3 sockets (/private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/rev10/track.py, track2.py)
+import socket, time
+def conn():
+    s=socket.create_connection(('127.0.0.1',7160)); s.settimeout(0.3); return s
+def send(s,*a):
+    s.sendall(('*%d\r\n'%len(a)+''.join('$%d\r\n%s\r\n'%(len(str(x)),x) for x in a)).encode())
+def drain(s,wait=0.15):
+    time.sleep(wait); buf=b''
+    try:
+        while True:
+            d=s.recv(65536)
+            if not d: break
+            buf+=d
+    except socket.timeout: pass
+    return buf
+def inv(buf): return buf.count(b'invalidate')
+w=conn(); 
+def W(*a): send(w,*a); drain(w,0.05)
+def case(name, opts, actions):
+    a=conn(); send(a,'HELLO','3'); drain(a); send(a,'CLIENT','TRACKING','ON',*opts); print(name, 'tracking on ->', drain(a).strip()[:40])
+    out=[]
+    for act in actions:
+        kind=act[0]
+        if kind=='A': send(a,*act[1:]); b=drain(a); out.append((' '.join(map(str,act[1:])),'A sees invalidations=%d'%inv(b)))
+        else: W(*act[1:]); b=drain(a); out.append(('B: '+' '.join(map(str,act[1:])),'A invalidations=%d'%inv(b)+(' raw='+repr(b[-60:]) if inv(b) else '')))
+    for o in out: print('   ',o[0],'->',o[1])
+    a.close()
+W('SET','k','v1')
+case('default', [], [('A','GET','k'),('B','SET','k','v2'),('B','SET','k','v3'),('A','GET','k'),('B','EXPIRE','k','100'),('A','GET','k'),('B','DEL','k')])
+W('SET','k','v1')
+case('flushall', [], [('A','GET','k'),('B','FLUSHALL')])
+W('SET','k','v1','PX','300')
+case('expiry', [], [('A','GET','k'),('A','PING'),('A','PING'),('A','PING')]); time.sleep(0.5)
+W('SET','k','v1')
+case('noloop', ['NOLOOP'], [('A','GET','k'),('A','SET','k','mine'),('B','SET','k','other'),('A','GET','k'),('B','SET','k','other2')])
+W('SET','k','v1'); W('SET','j','v1')
+case('optin', ['OPTIN'], [('A','CLIENT','CACHING','YES'),('A','GET','k'),('A','GET','j'),('B','SET','k','x'),('B','SET','j','x')])
+W('SET','product:1','v'); W('SET','order:1','v')
+case('bcast', ['BCAST','PREFIX','product:'], [('B','SET','product:1','x'),('B','SET','order:1','x'),('B','SET','product:1','y'),('B','SET','product:9','new')])
+W('CONFIG','SET','tracking-table-max-keys','3')
+for i in range(6): W('SET','t%d'%i,'v')
+case('table-limit=3', [], [('A','GET','t0'),('A','GET','t1'),('A','GET','t2'),('A','GET','t3'),('A','GET','t4'),('A','GET','t5'),('A','PING')])
+send(w,'INFO','stats'); b=drain(w); print('   ', [l for l in b.decode().split('\r\n') if 'tracking' in l])
+W('CONFIG','SET','tracking-table-max-keys','1000000')
+--- output
+default tracking on -> b'+OK'
+    GET k -> A sees invalidations=0
+    B: SET k v2 -> A invalidations=1 raw=b'>2\r\n$10\r\ninvalidate\r\n*1\r\n$1\r\nk\r\n'
+    B: SET k v3 -> A invalidations=0
+    GET k -> A sees invalidations=0
+    B: EXPIRE k 100 -> A invalidations=1 raw=b'>2\r\n$10\r\ninvalidate\r\n*1\r\n$1\r\nk\r\n'
+    GET k -> A sees invalidations=0
+    B: DEL k -> A invalidations=1 raw=b'>2\r\n$10\r\ninvalidate\r\n*1\r\n$1\r\nk\r\n'
+flushall tracking on -> b'+OK'
+    GET k -> A sees invalidations=0
+    B: FLUSHALL -> A invalidations=1 raw=b'>2\r\n$10\r\ninvalidate\r\n_\r\n'
+expiry tracking on -> b'+OK'
+    GET k -> A sees invalidations=0
+    PING -> A sees invalidations=0
+    PING -> A sees invalidations=0
+    PING -> A sees invalidations=0
+noloop tracking on -> b'+OK'
+    GET k -> A sees invalidations=0
+    SET k mine -> A sees invalidations=0
+    B: SET k other -> A invalidations=0
+    GET k -> A sees invalidations=0
+    B: SET k other2 -> A invalidations=1 raw=b'>2\r\n$10\r\ninvalidate\r\n*1\r\n$1\r\nk\r\n'
+optin tracking on -> b'+OK'
+    CLIENT CACHING YES -> A sees invalidations=0
+    GET k -> A sees invalidations=0
+    GET j -> A sees invalidations=0
+    B: SET k x -> A invalidations=1 raw=b'>2\r\n$10\r\ninvalidate\r\n*1\r\n$1\r\nk\r\n'
+    B: SET j x -> A invalidations=0
+bcast tracking on -> b'+OK'
+    B: SET product:1 x -> A invalidations=1 raw=b'>2\r\n$10\r\ninvalidate\r\n*1\r\n$9\r\nproduct:1\r\n'
+    B: SET order:1 x -> A invalidations=0
+    B: SET product:1 y -> A invalidations=1 raw=b'>2\r\n$10\r\ninvalidate\r\n*1\r\n$9\r\nproduct:1\r\n'
+    B: SET product:9 new -> A invalidations=1 raw=b'>2\r\n$10\r\ninvalidate\r\n*1\r\n$9\r\nproduct:9\r\n'
+table-limit=3 tracking on -> b'+OK'
+    GET t0 -> A sees invalidations=0
+    GET t1 -> A sees invalidations=0
+    GET t2 -> A sees invalidations=0
+    GET t3 -> A sees invalidations=1
+    GET t4 -> A sees invalidations=1
+    GET t5 -> A sees invalidations=1
+    PING -> A sees invalidations=0
+    ['tracking_total_keys:3', 'tracking_total_items:3', 'tracking_total_prefixes:0']
+invalidation after 0.32 s (key PX 300), no command sent by anyone
+
+## R12. Failover behaviour, cluster-node-timeout lowered to 2000 ms on all nodes (qualitative check)
+# (a) kill -9 the primary 7161 (has replica 7165), full coverage yes (default). Probe GET product:43 on healthy 7162 every 20 ms. t=0 is probe start; kill at ~1 s.
+  0.00 s  ok
+  3.86 s  -CLUSTERDOWN The cluster is down
+  4.88 s  ok
+53491:M 28 Oct 2026 01:01:02.683 * Cluster state changed: ok
+53491:M 28 Oct 2026 01:07:35.543 * FAIL message received from 2e4fb323202bd557d9f9892c17bdb368a3ac63c4 () about 6a5a8d849b578abbc179a686e96213784eebc798 ()
+53491:M 28 Oct 2026 01:07:35.543 # Cluster state changed: fail
+53491:M 28 Oct 2026 01:07:36.558 * Cluster state changed: ok
+53500:S 28 Oct 2026 01:07:35.565 * Start of election delayed for 838 milliseconds (rank #0, offset 159804).
+53500:S 28 Oct 2026 01:07:36.489 * Starting a failover election for epoch 7.
+53500:S 28 Oct 2026 01:07:36.521 * Failover election won: I'm the new master.
+# (b) kill -9 primary 7163 (no replica), full coverage yes. Probe GET product:43 on healthy 7162.
+  0.00 s  ok
+  5.10 s  -CLUSTERDOWN The cluster is down
+# then CONFIG SET cluster-require-full-coverage no on the surviving primaries 7162, 7165
+[7162]> config set cluster-require-full-coverage no
+OK
+[7165]> config set cluster-require-full-coverage no
+OK
+[7162]> get product:43
+mug
+[7162]> set product:43 mug2
+OK
+[7163]> get product:42
+Could not connect to Redis at 127.0.0.1:7163: Connection refused
+# then full coverage yes, cluster-allow-reads-when-down yes
+[7162]> config set cluster-require-full-coverage yes
+OK
+[7165]> config set cluster-require-full-coverage yes
+OK
+[7162]> config set cluster-allow-reads-when-down yes
+OK
+[7162]> get product:43
+mug2
+[7162]> set product:43 mug3
+OK
+# 3 s later:
+[7162]> cluster info
+cluster_state:ok
+[7162]> get product:43
+mug3
+[7162]> set product:43 mug4
+OK
+[7162]> config get cluster-allow-reads-when-down
+cluster-allow-reads-when-down
+yes
+# Note: CONFIG SET cluster-require-full-coverage yes did not re-evaluate cluster_state (state is only recomputed on a cluster event), so the allow-reads-when-down write refusal was not reproduced here; the reply text 'CLUSTERDOWN The cluster is down and only accepts read commands' is in src/cluster.c line 1509 at 8.10.3.
+
+## R13. Source and documentation checks (Redis source fetched from raw.githubusercontent.com/redis/redis/8.10.3; docs from github.com/redis/docs main, 28 Oct 2026)
+# redis-cli.c: ASM chosen automatically for reshard AND rebalance when all nodes >= 8.4.0
+73:#define CLUSTER_MANAGER_ASM_MIN_VERSION     "8.4.0"
+8037:    if (clusterManagerShouldUseAtomicSlotMigration()) {
+8225:    int use_asm = !simulate && clusterManagerShouldUseAtomicSlotMigration();
+# redis-cli.c: rebalance skips masters with no slots unless --cluster-use-empty-masters
+    int nodes_involved = 0;
+    int use_empty = config.cluster_manager_command.flags &
+                    CLUSTER_MANAGER_CMD_FLAG_EMPTYMASTER;
+    involved = listCreate();
+    listIter li;
+    listNode *ln;
+    listRewind(cluster_manager.nodes, &li);
+    /* Compute the total cluster weight. */
+    while ((ln = listNext(&li)) != NULL) {
+        clusterManagerNode *n = ln->value;
+        if (n->flags & CLUSTER_MANAGER_FLAG_SLAVE || n->replicate)
+            continue;
+        if (!use_empty && n->slots_count == 0) {
+            n->weight = 0;
+            continue;
+# cluster_asm.c: active (main-thread) trim whenever any client uses tracking
+    /* Trigger active trim for the following cases:
+     * 1. Debug override: trim method is set to 'active'.
+     * 2. There are clients using client side caching (client tracking is enabled):
+     *   There is no way to invalidate specific slots in the client tracking
+     *   protocol. For now, we just use active trim to trim the slots.
+     * 3. Module subscribers: If any module is subscribed to TRIMMED event, we
+     *   assume module needs per key notification and cannot use background trim.
+     */
+    int activetrim = server.tracking_clients != 0 ||
+                     (asmManager->debug_trim_method == ASM_DEBUG_TRIM_ACTIVE) ||
+                     (asmManager->debug_trim_method == ASM_DEBUG_TRIM_DEFAULT &&
+                      moduleHasSubscribersForKeyspaceEvent(NOTIFY_KEY_TRIMMED));
+# config.c defaults
+3576:    createLongLongConfig("cluster-slot-migration-handoff-max-lag-bytes", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.asm_handoff_max_lag_bytes, 1*1024*1024, MEMORY_CONFIG, NULL, NULL), /* 1MB */
+3577:    createLongLongConfig("cluster-slot-migration-write-pause-timeout", NULL, MODIFIABLE_CONFIG, 0, LLONG_MAX, server.asm_write_pause_timeout, 10*1000, INTEGER_CONFIG, NULL, NULL), /* 10 seconds */
+# cluster_legacy.c election delay
+        server.cluster->failover_auth_time = mstime() +
+            500 + /* Fixed delay of 500 milliseconds, let FAIL msg propagate. */
+            random() % 500; /* Random delay between 0 and 500 milliseconds. */
+        server.cluster->failover_auth_count = 0;
+        server.cluster->failover_auth_sent = 0;
+        server.cluster->failover_auth_rank = clusterGetSlaveRank();
+        /* We add another delay that is proportional to the slave rank.
+         * Specifically 1 second * rank. This way slaves that have a probably
+         * less updated replication offset, are penalized. */
+        server.cluster->failover_auth_time +=
+            server.cluster->failover_auth_rank * 1000;
+# cluster.c error replies
+         * but the slot is not "stable" currently as there is
+         * a migration or import in progress. */
+        addReplyError(c,"-TRYAGAIN Multiple keys request during rehashing of slot");
+    } else if (error_code == CLUSTER_REDIR_DOWN_STATE) {
+        addReplyError(c,"-CLUSTERDOWN The cluster is down");
+    } else if (error_code == CLUSTER_REDIR_DOWN_RO_STATE) {
+        addReplyError(c,"-CLUSTERDOWN The cluster is down and only accepts read commands");
+    } else if (error_code == CLUSTER_REDIR_DOWN_UNBOUND) {
+# redis.conf: cluster-slot-stats-enabled (8.10.3)
+# The config accepts multiple values as a space-separated list:
+#   - cpu: Track CPU usage per slot (cpu-usec metric)
+#   - net: Track network bytes per slot (network-bytes-in, network-bytes-out metrics)
+#   - mem: Track memory usage per slot (memory-bytes metric)
+#   - yes: Enable all tracking (equivalent to "cpu net mem")
+#   - no: Disable all tracking (default)
+#
+# Example: cluster-slot-stats-enabled "cpu net"
+#
+# Note: Memory tracking (mem) can ONLY be enabled at startup. If you try to enable
+# memory tracking via CONFIG SET when it wasn't enabled at startup, the command will
+# fail. However, you can disable memory tracking at runtime by removing the 'mem' flag.
+# Once disabled, memory tracking cannot be re-enabled without restarting the server.
+#
+# cluster-slot-stats-enabled no
+# spec: MIGRATE order
+[`MIGRATE`](/content/commands/migrate.md) will connect to the target instance, send a serialized version of
+the key, and once an OK code is received, the old key from its own dataset
+will be deleted. From the point of view of an external client a key exists
+either in A or B at any given time.
+# spec: performance wording
+Normal operations are handled exactly as in the case of a single Redis instance. This means that in a Redis Cluster with N master nodes you can expect the same performance as a single Redis instance multiplied by N as the design scales linearly. At the same ti
+# spec: availability with two failures
+In the example of a cluster composed of N master nodes where every node has a single replica, the majority side of the cluster will remain available as long as a single node is partitioned away, and will remain available with a probability of `1-(1/(N*2-1))` when two nodes are partitioned away (afte
+
+For example, in a cluster with 5 nodes and a single replica per node, there is a `1/(5*2-1) = 11.11%` probability that after two nodes are partitioned away from the majority, the cluster will no longer be available.
+# spec: topology commands
+
+An alternative is to just refresh the whole client-side cluster layout
+using the [`CLUSTER SHARDS`](/content/commands/cluster-shards.md), or the deprecated [`CLUSTER SLOTS`](/content/commands/cluster-slots.md), command
+when a MOVED redirection is received. When a redirection is encountered, it
+# scaling doc: minimal cluster
+240:Note that the **minimal cluster** that works as expected must contain
+241-at least three master nodes. For deployment, we strongly recommend
+242-a six-node cluster, with three masters and three replicas.
+# CLUSTER SLOT-STATS doc: since 8.2.0; Redis Software / Redis Cloud: not supported
+86:since: 8.2.0
+127:| <span title="Not supported">&#x274c; Standard</span><br /><span title="Not supported"><nobr>&#x274c; Active-Active</nobr></span> | <span title="Not supported">&#x274c; Standard</span><br /><span title="Not supported"><nobr>&#x274c; Active-Active</nobr></span> |  |
+# HOTKEYS doc: since 8.6.0; probabilistic top-K; per node; redis-py/go-redis cluster clients do not support it
+21:since: 8.6.0
+35:The general workflow is for the user to initiate a hotkeys tracking process which should run for some time. The keys' metrics are recorded inside a probabilistic data structure, after which the user is able to fetch the top K metrics.
+48:The redis-py and go-redis cluster clients, and redis-rs async cluster connections, don't support `HOTKEYS`. With these clients, connect directly to a single node instead.
+# client-side caching reference: CLIENT CACHING affects only the next command
+258:The `CACHING` command affects the command executed immediately after it.
+# client-side caching reference: ping the invalidation connection
+349:2. Both when using RESP2 with Pub/Sub, or RESP3, ping the invalidation channel periodically (you can send PING commands even when the connection is in Pub/Sub mode!). If the connection looks broken and we are not able to receive ping backs, after
+# CSC intro: library versions
+| Client | Version |
+| :-- | :-- |
+| [`redis-py`](/content/develop/clients/redis-py/connect.md#connect-using-client-side-caching) | v5.1.0 |
+| [`Jedis`](/content/develop/clients/jedis/connect.md#connect-using-client-side-caching) | v5.2.0 |
+| [`node-redis`](/content/develop/clients/nodejs/connect.md#connect-using-client-side-caching) | v5.1.0 |
+| [`go-redis`](/content/develop/clients/go/connect.md#connect-using-client-side-caching) | v9.22.0 |
+# redis-py connect doc
+-   `protocol`: (Required) You must pass a value of `3` here because
+    client-side caching requires the [RESP3](/content/develop/reference/protocol-spec.md#resp-versions)
+    protocol.
+> Client-side caching requires redis-py v5.1.0 or later.
+> To maximize compatibility with all Redis products, client-side caching
+> is supported by Redis v7.4 or later.
+# redis-py 8.1.0 redis/connection.py: CSC refuses servers that are not named redis or older than 7.4.0
+    MIN_ALLOWED_VERSION = "7.4.0"
+        if (
+            server_name != self.DEFAULT_SERVER_NAME
+            or compare_versions(server_ver, self.MIN_ALLOWED_VERSION) == 1
+        ):
+            raise ConnectionError(
+                "To maximize compatibility with all Redis products, client-side caching is supported by Redis 7.4 or later"  # noqa: E501
+            )
+# redis-py 8.1.0 cluster topology discovery uses CLUSTER SLOTS
+                        cluster_slots = str_if_bytes(r.execute_command("CLUSTER SLOTS"))
+# MONITOR doc
+In this particular case, running a single `MONITOR` client can reduce the
+throughput by more than 50%.
+Running more `MONITOR` clients will reduce throughput even more.
+# antirez, issue 2576
+The reason is:
+1. Normal heartbeat packets carry the full configuration of a node, that can be replaced in an idempotent way with the old in order to update an old config. This means they contain the slots configuration for a node, in raw form, that uses 2k of space with16k slots, but would use a prohibitive 8k of space using 65k slots.
+2. At the same time it is unlikely that Redis Cluster would scale to more than 10
+# Redis blog, atomic slot migration benchmark
+Workload 10M keys, 512-byte values (~5GB) 1:10 write:read ratio simulating a cache access pattern 10 threads, each using 50 clients (500 connections), to simulate continuous load Test Environment Redis 8.
+The migration completed in 6.4 seconds in total: 0.9, 2.
+192-219 seconds using a key-by-key approach.
+
+## R14. Measurement windows behind the article's resharding table (read from the writer's evidence, lines cited)
+233:# Load (load.py): 4 processes, each a redis-py 8.1.0 RedisCluster client sending GET product:<uniform random> at 1,000/s paced, 45 s, socket timeout 1 s.
+234:# Baseline 8 s run without resharding: 32,005 GETs, all hits; latency p50 0.31 ms, p99 4.7 ms, p99.9 13.3 ms, max 60 ms (Python clients on a busy laptop).
+245:# wall time of the reshard command: real 3.07
+258:outcomes {'hit': 180016} total 180016
+259:latency ms p50 0.298 p99 3.052 p99.9 12.840 max 59.9
+270:# moving the same slot ranges as C6: 7195:0-1364, 7196:5461-6826, 7197:10923-12287. Same load (4 x 1,000 GET/s), 60 s, started 10 s before.
+272:moved 49894 keys in 4096 slots in 220.47 s
+273:# Server-side error counts afterwards (reset before the run; the load stopped 50 s into the 220 s migration):
+279:outcomes {'hit': 209343} total 209343
+280:latency ms p50 0.252 p99 20.890 p99.9 61.146 max 144.8
+# => ASM column: 180,016 reads and p99 3.1 ms cover a 45 s run, of which the move was ~3.1 s (~12,000 reads at 4,000/s).
+# => Key-by-key column: 209,343 reads, p99 20.9 ms and 328 MOVED / 2 ASK cover the first ~50 s of a 220 s migration (load ran 60 s), i.e. at most the first source node's slots.
+
+## R15. Scaling Memcache at Facebook, section 3.2.3 (pdftotext of the USENIX PDF)
+Replication Within Pools
+
+Within some pools, we use replication to improve the latency and efﬁciency of memcached servers. We choose
+to replicate a category of keys within a pool when (1)
+the application routinely fetches many keys simultaneously, (2) the entire data set ﬁts in one or two memcached
+servers and (3) the request rate is much higher than what
+a single server can manage.

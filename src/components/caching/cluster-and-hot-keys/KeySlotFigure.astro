@@ -1,0 +1,102 @@
+---
+// Figure 2: from key to hash slot to node, for the keys of one command.
+import SimFigure from '../shared/SimFigure.astro';
+import './cluster.css';
+interface Props { number: number }
+const { number } = Astro.props;
+const presets = [
+  { label: 'Two products', value: 'MGET product:42 product:43' },
+  { label: 'One user, hash tag', value: 'MGET user:{123}:profile user:{123}:cart' },
+  { label: 'Tag on the wrong part', value: 'MGET {user}:123:profile {user}:456:profile' },
+  { label: 'Odd braces', value: 'MGET foo{}{bar} foo{{bar}}zap foo{bar}{zap}' },
+];
+---
+<SimFigure number={number} id="cluster-keyslot" title="From key to hash slot to node" controls="none"
+  caption="Computed in your browser with the CRC16 function Redis uses; every slot shown matched CLUSTER KEYSLOT on a Redis 8.10.3 cluster for every key I checked. The three nodes own slots as redis-cli --cluster create divides them among three primaries.">
+  <Fragment slot="params">
+    <label class="cluster-keys-field">
+      <span class="cache-param-label">Keys in one command</span>
+      <input type="text" data-keys value={presets[0].value} spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="cluster-keyslot-verdict" />
+    </label>
+    <div class="cluster-presets" role="group" aria-label="Examples">
+      {presets.map(p => <button type="button" class="cache-button" data-preset={p.value}>{p.label}</button>)}
+    </div>
+  </Fragment>
+  <div data-slotbar></div>
+  <div class="table-scroll" role="region" tabindex="0" aria-label="Each key's hashed part, slot and node">
+    <table class="cluster-key-table">
+      <thead><tr><th scope="col">Key (hashed part marked)</th><th scope="col">Slot</th><th scope="col">Node</th></tr></thead>
+      <tbody data-rows></tbody>
+    </table>
+  </div>
+  <p class="cluster-verdict" id="cluster-keyslot-verdict" data-verdict aria-live="polite"></p>
+  <Fragment slot="text">
+    <p>product:42 hashes to slot 12456 on node C and product:43 to slot 8329 on node B, so MGET product:42 product:43 fails with CROSSSLOT, and a cluster client would send one GET to each node. user:{'{'}123{'}'}:profile and user:{'{'}123{'}'}:cart hash only the tag "123", both land in slot 5970 on node B, and the MGET is accepted. {'{'}user{'}'}:123:profile and {'{'}user{'}'}:456:profile also share a slot, 5474, because only "user" is hashed: every user's profile would land on one node. In foo{'{'}{'}'}{'{'}bar{'}'} the first braces are empty, so the whole key is hashed (slot 8363); in foo{'{'}{'{'}bar{'}'}{'}'}zap the hashed part is "{'{'}bar" (slot 4015); in foo{'{'}bar{'}'}{'{'}zap{'}'} only "bar" (slot 5061).</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { placement, parseKeys, evenRanges, SLOTS } from './slots.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+
+  const NODES = evenRanges(3).map(r => [r]);
+  const NAMES = ['A', 'B', 'C'];
+  document.querySelectorAll<HTMLElement>('[data-figure-id="cluster-keyslot"]').forEach(root => {
+    const input = root.querySelector<HTMLInputElement>('[data-keys]')!;
+    const rowsEl = root.querySelector<HTMLElement>('[data-rows]')!;
+    const verdict = root.querySelector<HTMLElement>('[data-verdict]')!;
+    const bar = root.querySelector<HTMLElement>('[data-slotbar]')!;
+    const svg = svgEl('svg', { class: 'cache-svg cluster-slotbar', role: 'img', 'aria-label': 'The 16,384 hash slots divided between nodes A, B and C, with a mark at each key’s slot' }, bar);
+    let width = 0, current: any = null;
+
+    const escape = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+    const draw = () => {
+      if (!width || !current) return;
+      const compact = width < 480;
+      const left = 4, right = width - 4, span = right - left;
+      const height = 84;
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`); svg.setAttribute('width', String(width)); svg.setAttribute('height', String(height));
+      svg.replaceChildren();
+      const x = (slot: number) => left + (slot / (SLOTS - 1)) * span;
+      NODES.forEach(([[a, b]], i) => {
+        svgEl('rect', { class: 'cluster-range', 'data-cache-kind': 'redis', x: x(a), y: 38, width: x(b) - x(a), height: 18, rx: 2, 'data-shade': String(i) }, svg);
+        svgEl('text', { class: 'cluster-range-label', x: (x(a) + x(b)) / 2, y: 74, 'text-anchor': 'middle' }, svg).textContent = compact ? `${NAMES[i]}: ${a}–${b}` : `Node ${NAMES[i]}: slots ${a}–${b}`;
+      });
+      const placed: { px: number; row: number }[] = [];
+      current.rows.forEach((r: any) => {
+        const px = x(r.slot);
+        svgEl('path', { class: 'cluster-slot-mark', d: `M${px} 30V58` }, svg);
+        // Two rows of labels: a label goes up a row when it would touch one already in the lower row.
+        if (placed.some(p => p.px === px)) return;
+        const row = placed.some(p => p.row === 0 && Math.abs(p.px - px) < 40) ? 1 : 0;
+        placed.push({ px, row });
+        const t = svgEl('text', { class: 'cluster-slot-label', x: Math.max(left + 18, Math.min(right - 18, px)), y: row ? 14 : 26, 'text-anchor': 'middle' }, svg);
+        t.textContent = String(r.slot);
+      });
+    };
+    const update = () => {
+      const { command, keys } = parseKeys(input.value);
+      const shown = keys.slice(0, 12);
+      current = placement(shown, NODES);
+      rowsEl.innerHTML = current.rows.map((r: any) => {
+        const k = r.key;
+        const keyHtml = `${escape(k.slice(0, r.start))}<mark>${escape(k.slice(r.start, r.end))}</mark>${escape(k.slice(r.end))}`;
+        return `<tr><td><code>${keyHtml}</code></td><td>${r.slot}</td><td>${NAMES[r.node]}</td></tr>`;
+      }).join('');
+      const name = command ?? 'a multi-key command';
+      let text = '';
+      if (!shown.length) text = 'Type one or more keys, separated by spaces.';
+      else if (shown.length === 1) text = `One key: slot ${current.rows[0].slot}, on node ${NAMES[current.rows[0].node]}.`;
+      else if (current.slots === 1) text = `${shown.length === 2 ? 'Both' : `All ${shown.length}`} keys are in slot ${current.rows[0].slot}: ${name} is accepted by node ${NAMES[current.rows[0].node]}, in one round trip.`;
+      else text = `${shown.length} keys in ${current.slots} slots on ${current.nodes} node${current.nodes > 1 ? 's' : ''}: ${name} fails with CROSSSLOT. A cluster client would split it into ${current.nodes === 1 ? 'one command per slot, sent to that node' : `one request to each of the ${current.nodes} nodes`}.`;
+      if (keys.length > shown.length) text += ' (Showing the first 12 keys.)';
+      verdict.textContent = text;
+      draw();
+    };
+    input.addEventListener('input', update);
+    root.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(b => b.addEventListener('click', () => { input.value = b.dataset.preset!; update(); }));
+    const check = () => { const w = Math.round(bar.clientWidth); if (w && w !== width) { width = w; draw(); } };
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(check).observe(bar);
+    check();
+    update();
+  });
+</script>

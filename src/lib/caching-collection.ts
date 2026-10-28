@@ -37,7 +37,7 @@ export const cachingCollection: CachingEntry[] = [
     description: 'What a request to Redis costs, how pipelining and batching reduce it, and how to make changes atomic.' },
   { slug: 'replication-and-persistence', title: 'Redis replication, persistence and failover', type: 'Deep dive', status: 'published',
     description: 'What snapshots, the append-only file and replicas protect, what each can lose, and how Sentinel fails over.' },
-  { slug: 'cluster-and-hot-keys', title: 'Redis Cluster, sharding and hot keys', type: 'Deep dive', status: 'planned',
+  { slug: 'cluster-and-hot-keys', title: 'Redis Cluster, sharding and hot keys', type: 'Deep dive', status: 'published',
     description: 'How Redis Cluster spreads keys across shards, and how to find and relieve keys that concentrate load.' },
   { slug: 'operating-a-cache', title: 'Operating a cache: monitoring, capacity and failure', type: 'Deep dive', status: 'planned',
     description: 'Running a cache as a load-bearing dependency: what to measure, how to size it, and how to survive its failure.' },

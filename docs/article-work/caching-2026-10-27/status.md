@@ -50,7 +50,7 @@ Redis: 7100 + article number for writers, 7150 + article number for reviewers.
 | 6 | stampedes | C | done | final: publish | c07149d8 |
 | 7 | how-redis-works | D | done | final: publish | a09369a4 |
 | 8 | clients-and-pipelining | D | done | final: fixed | 410cc517 |
-| 9 | replication-and-persistence | | | | |
+| 9 | replication-and-persistence | E | done | final: publish | 992d8a44 |
 | 10 | cluster-and-hot-keys | | | | |
 | 11 | operating-a-cache | | | | |
 | 12 | designing-a-cache | | | | |
@@ -256,3 +256,12 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
 - 2026-10-28: article 9 final review: publish, 0 blocking, 10 minor (load-time figure from an overloaded laptop; Figure 11 wording), 300–350 words cuttable. Polish started (sonnet, dev 4429).
 - 2026-10-28: article 10 repair 1 done (ring uses fmix32 over FNV-1a, 18% moved 4→5; new stepped atomic-migration figure; OPTIN, hash tags, RESP3 7.4+ fixed). Final review started (dev 4480, Redis 7190–7196), asked to judge the missing live hot-node simulation.
 - 2026-10-28: article 9 polished (load time given as a range with conditions; Figure 11 wording names its metric; persistence-off stated; about 330 words cut) and marked published.
+- 2026-10-28: article 9 live (992d8a44, 11 figures, no errors).
+- 2026-10-28: article 11 repair 1 done (Figure 2 limit control; stacked memory
+  bar; per-shard monitoring; ACL and buffers fixed); final review started (dev
+  4481, Redis 7181–7184), asked whether Figure 5's unsubtracted buffer slice
+  contradicts the lesson. Article 12 drafted (6,400 words, 2 figures, 17-item
+  checklist); round-1 teaching (dev 4462) and technical (dev 4472, Redis
+  7172–7173) reviews started.
+- 2026-10-28: article 10 final review: publish, 0 blocking, 9 minor; live hot-node simulation judged unnecessary (Figure 6 carries the idea); about 450 words cuttable. Polish started (sonnet, dev 4430).
+- 2026-10-28: article 10 polished (9 minor fixes, about 450 words cut) and marked published.
