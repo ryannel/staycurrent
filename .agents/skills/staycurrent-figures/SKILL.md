@@ -7,6 +7,8 @@ Use the finished explanations in [Sequence diagrams](../../../src/reference-arti
 
 Use the collection's [example facts](../staycurrent-continuity/SKILL.md), selecting what the explanation needs. Keep shared data and outcomes in one place. Use site colour tokens. For stepped figures, use the shared player and [implementation guide](references/stepper.md).
 
+Look for playful, visually interesting animations that help the reader see how the subject works. Let movement and transformation carry the explanation where they make it clearer.
+
 Check [rendering and accessibility](references/render-checks.md) on the finished page with the preview/build owner.
 
 Distinguish illustrations from observed system behaviour. For database claims requiring execution evidence, follow [database verification](references/database-verification.md).
