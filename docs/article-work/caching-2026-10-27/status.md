@@ -49,7 +49,7 @@ Redis: 7100 + article number for writers, 7150 + article number for reviewers.
 | 5 | invalidation | C | done | final: fixed, verified | c3b6a969 |
 | 6 | stampedes | C | done | final: publish | c07149d8 |
 | 7 | how-redis-works | D | done | final: publish | a09369a4 |
-| 8 | clients-and-pipelining | | | | |
+| 8 | clients-and-pipelining | D | done | final: fixed | 410cc517 |
 | 9 | replication-and-persistence | | | | |
 | 10 | cluster-and-hot-keys | | | | |
 | 11 | operating-a-cache | | | | |
@@ -235,3 +235,24 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
   build (30 s: 97%/97%, 19%/37%), live with 9 figures, no errors. Article 8
   repair 2 done (redis-py WATCH timeout reported as conflict reproduced 5/5;
   request-id marker remedy measured); marked published.
+- 2026-10-28: article 8 live (410cc517, 8 figures, no errors).
+- 2026-10-28: writer for article 12 started (Redis 7112, dev 4422).
+- 2026-10-28: article 11 drafted (7,150 words, 5 figures; FLUSHALL blocking
+  differs inside MULTI since 7.4; per-shard monitoring not covered). Round-1
+  teaching (dev 4461) and technical (dev 4471, Redis 7167–7169) reviews
+  started; teaching reviewer asked to judge figure density.
+- 2026-10-28: article 10 teaching review: 3 required/16 suggested (Figure 1 hash ring bunches keys with FNV-1a on near-identical strings; Figure 5 prose contradicts the figure; Zipf s claim contradicts the introduction). Waiting for its technical review.
+- 2026-10-28: article 9 repair 1 done (Figure 11 capacity slider shows the reversal near 380 reads/s; replica-serve-stale-data measured; durability claims corrected). Final review started (dev 4479, Redis 7175–7179).
+- 2026-10-28: article 10 technical review: 5 required/16 suggested (ring hash skew; resharding table mixes windows; OPTIN covers only the next command; split counter under one hash tag relieves nothing; near caches need RESP3 and 7.4+). Repair 1 started (dev 4420, Redis 7120, 7195–7199).
+- 2026-10-28: shared chart.mjs fix (b4eba068): line charts now clip at the
+  plot edge instead of clamping out-of-range points, which bent lines (found
+  by article 11's teaching review: a load line crossed capacity at 1,500 not
+  300). All 8 published pages re-checked on a clean static build, no errors;
+  article 4's off-scale spikes still draw correctly. Article 11 round 1:
+  teaching 7 required/13 suggested (density; per-shard monitoring), technical
+  4 required/13 suggested (client output buffers count against maxmemory;
+  ACL breaks normal clients; libc fragmentation; CONFIG SET dir protected).
+  Repair 1 started (dev 4421, Redis 7111, 7181–7184).
+- 2026-10-28: article 9 final review: publish, 0 blocking, 10 minor (load-time figure from an overloaded laptop; Figure 11 wording), 300–350 words cuttable. Polish started (sonnet, dev 4429).
+- 2026-10-28: article 10 repair 1 done (ring uses fmix32 over FNV-1a, 18% moved 4→5; new stepped atomic-migration figure; OPTIN, hash tags, RESP3 7.4+ fixed). Final review started (dev 4480, Redis 7190–7196), asked to judge the missing live hot-node simulation.
+- 2026-10-28: article 9 polished (load time given as a range with conditions; Figure 11 wording names its metric; persistence-off stated; about 330 words cut) and marked published.

@@ -35,7 +35,7 @@ export const cachingCollection: CachingEntry[] = [
     description: 'How one Redis process executes commands, stores data and spends memory, and what makes a command slow.' },
   { slug: 'clients-and-pipelining', title: 'Redis clients: round trips, pipelining and atomic operations', type: 'Deep dive', status: 'published',
     description: 'What a request to Redis costs, how pipelining and batching reduce it, and how to make changes atomic.' },
-  { slug: 'replication-and-persistence', title: 'Redis replication, persistence and failover', type: 'Deep dive', status: 'planned',
+  { slug: 'replication-and-persistence', title: 'Redis replication, persistence and failover', type: 'Deep dive', status: 'published',
     description: 'What snapshots, the append-only file and replicas protect, what each can lose, and how Sentinel fails over.' },
   { slug: 'cluster-and-hot-keys', title: 'Redis Cluster, sharding and hot keys', type: 'Deep dive', status: 'planned',
     description: 'How Redis Cluster spreads keys across shards, and how to find and relieve keys that concentrate load.' },

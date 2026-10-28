@@ -1,0 +1,778 @@
+Evidence for article 9, Redis replication, persistence and failover
+Redis 8.10.3 (Homebrew, macOS arm64, libc malloc), Apple M3 Max laptop, 36 GB.
+Ports: primary 7109; replicas and Sentinels 7190-7194. Every server started with --save '' --appendonly no and a temporary
+directory under the session scratchpad; persistence was switched on per experiment with BGSAVE, CONFIG SET or --appendonly yes.
+IMPORTANT CONDITION: the laptop was heavily loaded by other work throughout (load average 130-285 on 14 cores, swapping).
+Times measured in seconds (Sentinel detection, timeouts) are unaffected at that scale; anything in milliseconds
+(fork, load, fsync, WAIT, switchover duration) is noisy and must not be presented as typical.
+kill -9 simulates a process crash; the operating system survives, so it does not test power loss (what fsync protects against).
+Helper functions: scripts/lib.sh and scripts/sent.sh (reproduced at the end). Wall-clock times are in each server's log.
+
+################ e1  (script: scripts/e1.*)
+== E1A no persistence: 1000 writes, kill -9, restart
+save
+
+appendonly
+no
+DBSIZE before crash: 1000
+DBSIZE after restart: 0
+
+== E1B RDB snapshot: 600 INCR, BGSAVE, 400 INCR, kill -9, restart
+Background saving started
+rdb_changes_since_last_save:0
+rdb_last_bgsave_status:ok
+counter before crash: 1000
+rdb_changes_since_last_save:400
+-rw-r--r--@ 1 ryannel  wheel   106 Oct 27 23:44 dump.rdb
+counter after restart: 600
+82089:M 27 Oct 2026 23:44:51.698 * Done loading RDB, keys loaded: 1, keys expired: 0.
+82089:M 27 Oct 2026 23:44:51.699 * DB loaded from disk: 0.001 seconds
+
+################ e1c  (script: scripts/e1c.*)
+== E1C snapshot restore: expiry times are absolute; deletes after the snapshot are undone
+OK
+OK
+OK
+Background saving started
+-- after the snapshot: the price changes; the application deletes product:42 and product:7 is re-cached
+1
+OK
+t=23:45:02 GET product:42 -> 
+waiting 25 s so banner:today (EX 20) passes its expiry time...
+t=23:45:27 after kill -9 and restart:
+GET product:42 -> {"name":"Kettle","price":"39.00"}   TTL 3573
+GET product:7  -> {"name":"Mug","price":"8.00"}
+GET banner:today -> 
+83325:M 27 Oct 2026 23:45:27.668 * Done loading RDB, keys loaded: 2, keys expired: 1.
+
+################ e1d  (script: scripts/e1d.*)
+== E1D append-only file, everysec: 1000 INCR, kill -9, restart
+OK
+appendfsync
+everysec
+1
+counter before crash: 1000
+total 72
+-rw-r--r--@ 1 ryannel  wheel     89 Oct 27 23:45 appendonly.aof.1.base.rdb
+-rw-r--r--@ 1 ryannel  wheel  27249 Oct 27 23:45 appendonly.aof.1.incr.aof
+-rw-r--r--@ 1 ryannel  wheel    102 Oct 27 23:45 appendonly.aof.manifest
+file appendonly.aof.1.base.rdb seq 1 type b
+file appendonly.aof.1.incr.aof seq 1 type i startoffset 0
+-- tail of the incremental file (RESP):
+*5^M
+$3^M
+SET^M
+$9^M
+product:2^M
+$2^M
+v2^M
+$4^M
+PXAT^M
+$13^M
+1793141198378^M
+*5^M
+$3^M
+SET^M
+$9^M
+product:3^M
+$2^M
+v3^M
+$4^M
+PXAT^M
+$13^M
+1793141198378^M
+*2^M
+$3^M
+DEL^M
+$9^M
+product:3^M
+counter after restart: 1000  product:1 TTL 60  product:3 -> ''
+83606:M 27 Oct 2026 23:45:38.779 * DB loaded from base file appendonly.aof.1.base.rdb: 0.001 seconds
+83606:M 27 Oct 2026 23:45:38.780 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.001 seconds
+83606:M 27 Oct 2026 23:45:38.780 * DB loaded from append only file: 0.003 seconds
+-- rewrite
+Background append only file rewriting started
+total 16
+-rw-r--r--@ 1 ryannel  wheel  152 Oct 27 23:45 appendonly.aof.2.base.rdb
+-rw-r--r--@ 1 ryannel  wheel    0 Oct 27 23:45 appendonly.aof.2.incr.aof
+-rw-r--r--@ 1 ryannel  wheel  106 Oct 27 23:45 appendonly.aof.manifest
+file appendonly.aof.2.base.rdb seq 2 type b
+file appendonly.aof.2.incr.aof seq 2 type i startoffset 27249
+
+################ e1e  (script: scripts/e1e.*)
+== E1E fork time and RDB load time against dataset size (DEBUG POPULATE, 100-byte values)
+keys=1000000 used_memory=173434176 rss=177717248 fork_usec=[ 11040 5167 6515 ] rdb_bytes=39777608 bgsave_sec=4 load=4.932 seconds keys_after=1000000
+keys=3000000 used_memory=526624512 rss=320618496 fork_usec=[ 14476 17826 12522 ] rdb_bytes=123776450 bgsave_sec=12 load=13.707 seconds keys_after=3000000
+keys=6000000 used_memory=1053872048 rss=430014464 fork_usec=[ 169493 16572 36510 ] rdb_bytes=249774713 bgsave_sec=30 load=28.342 seconds keys_after=6000000
+
+################ e1f  (script: scripts/e1f.*)
+== E1F RDB load time, repeated (1M keys, 100-byte values)
+ 0:04  up 20 days,  2:40, 3 users, load averages: 132.19 179.46 164.55
+fork latest_fork_usec:18378 used_memory used_memory_human:165.44M
+28 Oct 2026 00:04:18.602 * DB loaded from disk: 2.925 seconds
+28 Oct 2026 00:04:21.845 * DB loaded from disk: 2.808 seconds
+28 Oct 2026 00:04:24.474 * DB loaded from disk: 2.168 seconds
+ 0:04  up 20 days,  2:41, 3 users, load averages: 126.49 175.90 163.54
+
+################ e1g  (script: scripts/e1g.*)
+== E1G a failed snapshot stops writes (stop-writes-on-bgsave-error yes)
+stop-writes-on-bgsave-error yes 
+OK
+Background saving started
+rdb_last_bgsave_status:err
+SET -> MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk. Commands that may modify the data set are disabled, because this instance is configured to report errors during writes if RDB snapshotting fails (stop-writes-on-bgsave-error option). Please check the Redis logs for details about the RDB error.
+GET -> v1
+DEL -> MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk. Commands that may modify the data set are disabled, because this instance is configured to report errors during writes if RDB snapshotting fails (stop-writes-on-bgsave-error option). Please check the Redis logs for details about the RDB error.
+
+################ r1  (script: scripts/r1.*)
+== R1 a replica's first synchronisation
+-- replica log
+27 Oct 2026 23:50:16.499 * Connecting to MASTER 127.0.0.1:7109
+27 Oct 2026 23:50:16.499 * MASTER <-> REPLICA sync started
+27 Oct 2026 23:50:16.499 * Non blocking connect for SYNC fired the event.
+27 Oct 2026 23:50:16.500 * Master replied to PING, replication can continue...
+27 Oct 2026 23:50:16.501 * Partial resynchronization not possible (no cached master)
+27 Oct 2026 23:50:16.503 * PSYNC is not possible, initialize RDB channel.
+27 Oct 2026 23:50:21.865 * Starting to receive RDB and replication stream in parallel.
+27 Oct 2026 23:50:21.867 * MASTER <-> REPLICA sync: receiving streamed RDB from master with EOF to disk
+27 Oct 2026 23:50:21.868 * MASTER <-> REPLICA sync: Loading DB in memory
+27 Oct 2026 23:50:21.881 * MASTER <-> REPLICA sync: Flushing old data
+27 Oct 2026 23:50:21.882 * Loading RDB produced by version 8.10.3
+27 Oct 2026 23:50:21.882 * RDB age 0 seconds
+27 Oct 2026 23:50:21.882 * RDB memory usage when created 1.02 Mb
+27 Oct 2026 23:50:21.884 * Done loading RDB, keys loaded: 1000, keys expired: 0.
+27 Oct 2026 23:50:21.884 * MASTER <-> REPLICA sync: Finished with success
+27 Oct 2026 23:50:21.884 * MASTER <-> REPLICA sync: Starting to stream replication buffer into the db (0 bytes).
+27 Oct 2026 23:50:21.884 * MASTER <-> REPLICA sync: Successfully streamed replication buffer into the db (0 bytes in total)
+-- primary log
+27 Oct 2026 23:50:16.501 * Replica 127.0.0.1:7190 asks for synchronization
+27 Oct 2026 23:50:16.502 * Full resync requested by replica 127.0.0.1:7190 
+27 Oct 2026 23:50:16.502 * Replication backlog created, my new replication IDs are '7df8a37af29bc5d7a326bc41cc57851cb71dcf91' and '0000000000000000000000000000000000000000'
+27 Oct 2026 23:50:16.502 * Replica 127.0.0.1:7190 is capable of rdb channel synchronization, and partial sync isn't possible. Full sync will continue with dedicated rdb channel.
+27 Oct 2026 23:50:16.504 * Replica 127.0.0.1:7190 asks for synchronization
+27 Oct 2026 23:50:16.504 * Full resync requested by replica 127.0.0.1:7190 (rdb-channel)
+27 Oct 2026 23:50:16.504 * Delay next BGSAVE for diskless SYNC
+27 Oct 2026 23:50:21.864 * Starting BGSAVE for SYNC with target: replicas sockets (rdb-channel)
+27 Oct 2026 23:50:21.865 * Starting to deliver RDB and replication stream to replica: 127.0.0.1:7190
+27 Oct 2026 23:50:21.866 * Background RDB transfer started by pid 92570 to replica socket
+27 Oct 2026 23:50:21.867 * BGSAVE done, 1000 keys saved, 0 keys skipped, 27012 bytes written.
+27 Oct 2026 23:50:21.885 * Connection with replica (rdbchannel) 127.0.0.1:7190 lost.
+27 Oct 2026 23:50:21.885 * Synchronization with replica 127.0.0.1:7190 succeeded
+27 Oct 2026 23:50:21.969 * Background RDB transfer terminated with success
+-- primary INFO replication
+# Replication
+role:master
+connected_slaves:1
+slave0:ip=127.0.0.1,port=7190,state=online,offset=0,lag=1,io-thread=0
+master_failover_state:no-failover
+master_replid:7df8a37af29bc5d7a326bc41cc57851cb71dcf91
+master_replid2:0000000000000000000000000000000000000000
+master_repl_offset:0
+second_repl_offset:-1
+repl_backlog_active:1
+repl_backlog_size:1048576
+repl_backlog_first_byte_offset:1
+repl_backlog_histlen:0
+-- replica INFO replication
+# Replication
+role:slave
+master_host:127.0.0.1
+master_port:7109
+master_link_status:up
+master_last_io_seconds_ago:2
+master_sync_in_progress:0
+slave_read_repl_offset:0
+slave_repl_offset:0
+replica_full_sync_buffer_size:0
+replica_full_sync_buffer_peak:0
+master_current_sync_attempts:1
+master_total_sync_attempts:1
+master_link_up_since_seconds:2
+master_client_io_thread:0
+total_disconnect_time_sec:0
+slave_priority:100
+slave_read_only:1
+replica_announced:1
+connected_slaves:0
+master_failover_state:no-failover
+master_replid:7df8a37af29bc5d7a326bc41cc57851cb71dcf91
+master_replid2:0000000000000000000000000000000000000000
+master_repl_offset:0
+second_repl_offset:-1
+replica DBSIZE 1000; replica write attempt:
+READONLY You can't write against a read only replica.
+
+
+################ r2  (script: scripts/r2.*)
+immediate read from replica after write: 2 of 5000 stale (0.0%)
+read from replica 1 ms after write: 0 of 2000 stale
+WAIT 1 100 after each SET: median 0.764 ms, p99 42.994 ms, max 179.442 ms (all returned 1)
+primary master_repl_offset 431817 replica slave_repl_offset 431817
+
+################ r3  (script: scripts/r3.*)
+== R3 replicas and expiry: the primary sends DEL; the replica hides expired keys from reads meanwhile
+replica just after SET: GET=alice PTTL=2660 DBSIZE=1
+-- pause the primary (SIGSTOP) so it cannot expire the key or send DEL
+replica 4 s later, primary paused: GET='' EXISTS=0 TTL=-2 DBSIZE=1 KEYS=[ ] SCAN=[0  ]
+expired_keys:0
+expired_keys_active:0
+-- resume the primary
+replica after the primary resumes: DBSIZE=0
+expired_keys:1
+expired_keys_active:1
+-- promotion: a replica holding a logically expired key expires it itself once it is a primary
+replica, primary paused, key past its TTL: DBSIZE=1
+OK
+after REPLICAOF NO ONE (now a primary): DBSIZE=0
+expired_keys:1
+expired_keys_active:1
+OK
+master_link_status:up
+
+################ r4  (script: scripts/r4.*)
+== R4 reconnecting after a break: partial resync from the backlog, or full resync
+-- 1: 2,000 writes (about 0.25 MB) during the break, default 1 MB backlog
+replica cut off; stream advanced 276790 bytes; backlog 1048576 bytes
+  before: sync_full:2 sync_partial_ok:0 sync_partial_err:1 
+  after:  sync_full:2 sync_partial_ok:1 sync_partial_err:1 
+27 Oct 2026 23:51:25.424 * PSYNC is not possible, initialize RDB channel.
+27 Oct 2026 23:51:47.844 * Trying a partial resynchronization (request 7df8a37af29bc5d7a326bc41cc57851cb71dcf91:432109).
+27 Oct 2026 23:51:47.848 * Successful partial resynchronization with master.
+-- 2: 20,000 writes (about 2.5 MB) during the break, default 1 MB backlog
+replica cut off; stream advanced 2788790 bytes; backlog 1048576 bytes
+  before: sync_full:2 sync_partial_ok:1 sync_partial_err:1 
+  after:  sync_full:3 sync_partial_ok:1 sync_partial_err:2 
+27 Oct 2026 23:51:47.848 * Successful partial resynchronization with master.
+27 Oct 2026 23:52:14.176 * Trying a partial resynchronization (request 7df8a37af29bc5d7a326bc41cc57851cb71dcf91:708913).
+27 Oct 2026 23:52:14.177 * PSYNC is not possible, initialize RDB channel.
+
+################ r5  (script: scripts/r5.*)
+== R5 a frozen replica, seen from the primary, at real time (defaults: repl-timeout 60, min-replicas-max-lag 10)
+min-replicas-max-lag 10 repl-timeout 60 
+t=0 replica frozen (SIGSTOP)
+t=0.1 SET -> OK | connected_slaves:1 min_slaves_good_slaves:1 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=1,io-thread=0 
+t=1.2 SET -> OK | connected_slaves:1 min_slaves_good_slaves:1 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=2,io-thread=0 
+t=5.7 SET -> OK | connected_slaves:1 min_slaves_good_slaves:1 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=6,io-thread=0 
+t=9.1 SET -> OK | connected_slaves:1 min_slaves_good_slaves:1 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=10,io-thread=0 
+t=10.2 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:1 min_slaves_good_slaves:0 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=11,io-thread=0 
+t=11.3 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:1 min_slaves_good_slaves:0 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=12,io-thread=0 
+t=12.4 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:1 min_slaves_good_slaves:0 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=13,io-thread=0 
+t=13.6 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:1 min_slaves_good_slaves:0 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=14,io-thread=0 
+t=14.7 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:1 min_slaves_good_slaves:0 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=15,io-thread=0 
+t=22.5 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:1 min_slaves_good_slaves:0 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=23,io-thread=0 
+t=33.6 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:1 min_slaves_good_slaves:0 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=34,io-thread=0 
+t=50.4 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:1 min_slaves_good_slaves:0 slave0:ip=127.0.0.1,port=7190,state=online,offset=3497730,lag=51,io-thread=0 
+t=61.6 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:0 min_slaves_good_slaves:0 
+t=65.0 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:0 min_slaves_good_slaves:0 
+t=66.1 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:0 min_slaves_good_slaves:0 
+t=67.2 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:0 min_slaves_good_slaves:0 
+t=68.3 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:0 min_slaves_good_slaves:0 
+t=69.5 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:0 min_slaves_good_slaves:0 
+t=70.6 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:0 min_slaves_good_slaves:0 
+t=72.8 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:0 min_slaves_good_slaves:0 
+t=78.4 SET -> NOREPLICAS Not enough good replicas to write. | connected_slaves:0 min_slaves_good_slaves:0 
+27 Oct 2026 23:53:38.014 # Disconnecting timedout replica (streaming sync): 127.0.0.1:7190
+after resuming the replica: min_slaves_good_slaves:1 slave0:ip=127.0.0.1,port=7190,state=online,offset=3498179,lag=0,io-thread=0 
+SET now -> OK
+27 Oct 2026 23:53:56.568 * MASTER <-> REPLICA sync started
+27 Oct 2026 23:53:56.577 * Trying a partial resynchronization (request 7df8a37af29bc5d7a326bc41cc57851cb71dcf91:3498166).
+27 Oct 2026 23:53:56.578 * Successful partial resynchronization with master.
+27 Oct 2026 23:53:56.578 * MASTER <-> REPLICA sync: Master accepted a Partial Resynchronization.
+
+################ r6  (script: scripts/r6.*)
+== R6 an acknowledged delete lost at failover
+replica has: {"name":"Kettle","price":"39.00"}
+-- the replica falls behind (frozen); the primary keeps acknowledging writes
+price cut committed to the database; application deletes the cached copy: DEL -> 1
+primary GET product:42 -> None
+WAIT 1 500 -> 0 (replicas that confirmed the delete)
+primary master_repl_offset 14197306 replica acked offset 3498349
+primary client_recent_max_output_buffer / mem_clients_slaves: 9141912
+-- the primary crashes (kill -9) before the stream reaches the replica
+master_link_status:down
+slave_repl_offset:4050785
+replica DBSIZE 2082
+-- promote the replica
+OK
+new primary GET product:42 -> {"name":"Kettle","price":"39.00"}  TTL 3593
+
+################ r7  (script: scripts/r7.*)
+== R7 a primary without persistence restarts quickly, and its replica copies the empty dataset
+before: primary DBSIZE 5000, replica DBSIZE 5000
+primary killed and restarted in 0.4 s (persistence off), primary DBSIZE 0
+  t~1s replica DBSIZE 5000  link down
+  t~2s replica DBSIZE 5000  link down
+  t~4s replica DBSIZE 5000  link down
+  t~8s replica DBSIZE 0  link up
+27 Oct 2026 23:54:58.587 * MASTER <-> REPLICA sync: Loading DB in memory
+27 Oct 2026 23:54:58.595 * MASTER <-> REPLICA sync: Flushing old data
+27 Oct 2026 23:54:58.597 * Done loading RDB, keys loaded: 0, keys expired: 0.
+27 Oct 2026 23:54:58.598 * MASTER <-> REPLICA sync: Finished with success
+27 Oct 2026 23:54:58.598 * MASTER <-> REPLICA sync: Starting to stream replication buffer into the db (0 bytes).
+27 Oct 2026 23:54:58.598 * MASTER <-> REPLICA sync: Successfully streamed replication buffer into the db (0 bytes in total)
+
+################ s1  (script: scripts/s1.*)
+== Sentinel failover, down-after-milliseconds=default: three Sentinels (quorum 2), a primary and two replicas
+replicas DBSIZE: 5000 5000
+down-after-milliseconds 30000
+num-slaves 2
+num-other-sentinels 2
+quorum 2
+failover-timeout 180000
+parallel-syncs 1
+OK 3 usable Sentinels. Quorum and failover authorization can be reached
+primary killed (kill -9) at epoch 1793141772.977
+-- Sentinel 7192 log (times are wall clock; kill at 23:56:12.977)
+27 Oct 2026 23:56:43.153 # +sdown master cache 127.0.0.1 7109
+27 Oct 2026 23:56:43.268 # +vote-for-leader b00a76753f7c540f6e6a34c634af1d1c941cd37e 1
+27 Oct 2026 23:56:43.269 # +odown master cache 127.0.0.1 7109 #quorum 3/2
+27 Oct 2026 23:56:44.085 # +switch-master cache 127.0.0.1 7109 127.0.0.1 7191
+27 Oct 2026 23:57:14.138 # +sdown slave 127.0.0.1:7109 127.0.0.1 7109 @ cache 127.0.0.1 7191
+-- 7193:
+27 Oct 2026 23:56:43.047 # +sdown master cache 127.0.0.1 7109
+27 Oct 2026 23:56:43.259 # +vote-for-leader b00a76753f7c540f6e6a34c634af1d1c941cd37e 1
+27 Oct 2026 23:56:44.084 # +switch-master cache 127.0.0.1 7109 127.0.0.1 7191
+27 Oct 2026 23:57:14.153 # +sdown slave 127.0.0.1:7109 127.0.0.1 7109 @ cache 127.0.0.1 7191
+-- 7194:
+27 Oct 2026 23:56:43.100 # +sdown master cache 127.0.0.1 7109
+27 Oct 2026 23:56:43.180 # +odown master cache 127.0.0.1 7109 #quorum 2/2
+27 Oct 2026 23:56:43.217 # +vote-for-leader b00a76753f7c540f6e6a34c634af1d1c941cd37e 1
+27 Oct 2026 23:56:43.343 # +elected-leader master cache 127.0.0.1 7109
+27 Oct 2026 23:56:44.405 # -odown master cache 127.0.0.1 7109
+27 Oct 2026 23:56:45.073 # +switch-master cache 127.0.0.1 7109 127.0.0.1 7191
+SENTINEL get-master-addr-by-name -> 127.0.0.1 7191 
+new primary 7191 role: master; GET product:42 -> {"name":"Kettle","price":"39.00"}
+-- restart the old primary (empty, persistence off)
+old primary role now: slave 7191; DBSIZE 0
+client log summary:
+kill at 4.73 s after client start; attempts 691, failed 283
+first failure 0.14 s after kill, last failure 30.96 s after kill
+first success after kill: 0.02 s, on port 7109
+[('ConnectionError:Error 61 connecting to 127.0.0.1:7', 276), ("MasterNotFoundError:No master found for 'cache'", 7)]
+
+################ s2  (script: scripts/s2.*)
+== Sentinel failover, down-after-milliseconds=5000: three Sentinels (quorum 2), a primary and two replicas
+replicas DBSIZE: 5000 5000
+down-after-milliseconds 5000
+num-slaves 2
+num-other-sentinels 2
+quorum 2
+failover-timeout 180000
+parallel-syncs 1
+OK 3 usable Sentinels. Quorum and failover authorization can be reached
+primary killed (kill -9) at epoch 1793141900.111
+-- Sentinel 7192 log (times are wall clock; kill at 23:58:20.111)
+27 Oct 2026 23:58:25.202 # +sdown master cache 127.0.0.1 7109
+27 Oct 2026 23:58:25.260 # +odown master cache 127.0.0.1 7109 #quorum 2/2
+27 Oct 2026 23:58:25.260 # +try-failover master cache 127.0.0.1 7109
+27 Oct 2026 23:58:25.279 # +vote-for-leader ed521202313d678e1386cd7d48674059e8726414 1
+27 Oct 2026 23:58:25.357 # +elected-leader master cache 127.0.0.1 7109
+27 Oct 2026 23:58:25.359 # +failover-state-select-slave master cache 127.0.0.1 7109
+27 Oct 2026 23:58:25.418 # +selected-slave slave 127.0.0.1:7190 127.0.0.1 7190 @ cache 127.0.0.1 7109
+27 Oct 2026 23:58:25.419 * +failover-state-send-slaveof-noone slave 127.0.0.1:7190 127.0.0.1 7190 @ cache 127.0.0.1 7109
+27 Oct 2026 23:58:25.475 * +failover-state-wait-promotion slave 127.0.0.1:7190 127.0.0.1 7190 @ cache 127.0.0.1 7109
+27 Oct 2026 23:58:26.356 # +promoted-slave slave 127.0.0.1:7190 127.0.0.1 7190 @ cache 127.0.0.1 7109
+27 Oct 2026 23:58:26.356 # +failover-state-reconf-slaves master cache 127.0.0.1 7109
+27 Oct 2026 23:58:26.415 * +slave-reconf-sent slave 127.0.0.1:7191 127.0.0.1 7191 @ cache 127.0.0.1 7109
+27 Oct 2026 23:58:27.393 * +slave-reconf-inprog slave 127.0.0.1:7191 127.0.0.1 7191 @ cache 127.0.0.1 7109
+27 Oct 2026 23:58:27.393 * +slave-reconf-done slave 127.0.0.1:7191 127.0.0.1 7191 @ cache 127.0.0.1 7109
+27 Oct 2026 23:58:27.465 # -odown master cache 127.0.0.1 7109
+27 Oct 2026 23:58:27.465 # +failover-end master cache 127.0.0.1 7109
+27 Oct 2026 23:58:27.465 # +switch-master cache 127.0.0.1 7109 127.0.0.1 7190
+27 Oct 2026 23:58:32.532 # +sdown slave 127.0.0.1:7109 127.0.0.1 7109 @ cache 127.0.0.1 7190
+-- 7193:
+27 Oct 2026 23:58:25.184 # +sdown master cache 127.0.0.1 7109
+27 Oct 2026 23:58:25.301 # +vote-for-leader ed521202313d678e1386cd7d48674059e8726414 1
+27 Oct 2026 23:58:26.323 # +odown master cache 127.0.0.1 7109 #quorum 3/2
+27 Oct 2026 23:58:26.416 # +switch-master cache 127.0.0.1 7109 127.0.0.1 7190
+27 Oct 2026 23:58:31.430 # +sdown slave 127.0.0.1:7109 127.0.0.1 7109 @ cache 127.0.0.1 7190
+-- 7194:
+27 Oct 2026 23:58:25.232 # +sdown master cache 127.0.0.1 7109
+27 Oct 2026 23:58:25.306 # +vote-for-leader ed521202313d678e1386cd7d48674059e8726414 1
+27 Oct 2026 23:58:25.318 # +odown master cache 127.0.0.1 7109 #quorum 3/2
+27 Oct 2026 23:58:26.416 # +switch-master cache 127.0.0.1 7109 127.0.0.1 7190
+27 Oct 2026 23:58:31.452 # +sdown slave 127.0.0.1:7109 127.0.0.1 7109 @ cache 127.0.0.1 7190
+SENTINEL get-master-addr-by-name -> 127.0.0.1 7190 
+new primary 7190 role: master; GET product:42 -> {"name":"Kettle","price":"39.00"}
+-- restart the old primary (empty, persistence off)
+old primary role now: slave 7190; DBSIZE 0
+27 Oct 2026 23:59:05.579 * +convert-to-slave slave 127.0.0.1:7109 127.0.0.1 7109 @ cache 127.0.0.1 7190
+client log summary:
+kill at 4.86 s after client start; attempts 375, failed 59
+first failure 0.06 s after kill, last failure 6.21 s after kill
+first success after kill: 6.32 s, on port 7190
+[('ConnectionError:Error 61 connecting to 127.0.0.1:7', 48), ("MasterNotFoundError:No master found for 'cache'", 11)]
+
+################ s3  (script: scripts/s3.*)
+== Sentinel and a fast restart of a primary without persistence (default down-after 30 s)
+replicas DBSIZE: 5000 5000
+down-after-milliseconds 30000
+num-slaves 2
+num-other-sentinels 2
+quorum 2
+failover-timeout 180000
+parallel-syncs 1
+OK 3 usable Sentinels. Quorum and failover authorization can be reached
+primary killed and restarted empty in 0.4 s
+t=2s primary DBSIZE 0  replicas 5000 5000  Sentinel says primary is 7109
+t=5s primary DBSIZE 0  replicas 5000 5000  Sentinel says primary is 7109
+t=10s primary DBSIZE 0  replicas 0 0  Sentinel says primary is 7109
+t=20s primary DBSIZE 0  replicas 0 0  Sentinel says primary is 7109
+t=40s primary DBSIZE 0  replicas 0 0  Sentinel says primary is 7109
+-- Sentinel events after the restart:
+(none above means Sentinel saw no failure)
+
+################ f1  (script: scripts/f1.*)
+== F1 a planned switchover with FAILOVER: writes pause, the replica catches up, roles swap
+FAILOVER -> b'OK'
+switchover finished 881 ms after FAILOVER
+old primary role slave | new primary role master
+writes acknowledged by the old primary: 306; present on the new primary: 306
+acknowledged writes missing on the new primary: 0
+errors seen by the writer (it keeps talking to the old address): [("You can't write against a read only replica.", 158)]
+28 Oct 2026 00:00:42.717 * FAILOVER requested to any replica.
+28 Oct 2026 00:00:43.568 * Failover target 127.0.0.1:7190 is synced, failing over.
+
+################ w1  (script: scripts/w1.*)
+== W1 WAIT and WAITAOF (both servers with appendonly yes, appendfsync everysec)
+OK
+1
+1
+0
+-- replica frozen:
+1
+0
+0
+0
+-- WAITAOF with AOF off on the primary:
+ERR WAITAOF cannot be used when numlocal is set but appendonly is disabled.
+
+== W2 appendfsync policies, redis-benchmark SET, 50 clients, 100k requests (macOS laptop under heavy load: F_FULLFSYNC; not representative of Linux)
+appendfsync no: SET: 47732.70 requests per second, p50=0.343 msec
+appendfsync everysec: SET: 58616.65 requests per second, p50=0.455 msec
+appendfsync always: SET: 4605.54 requests per second, p50=9.783 msec
+appendonly no:     SET: 48899.75 requests per second, p50=0.487 msec
+ 0:01  up 20 days,  2:38, 3 users, load averages: 148.47 210.67 170.93
+
+################ w3  (script: scripts/w3.*)
+== W3 how long WAIT and WAITAOF take (appendfsync everysec on both)
+WAIT 1 2000: last reply 1; median 0.8 ms, min 0.7, max 6.4 ms over 20 writes
+WAITAOF 1 0 2000: last reply [1, 0]; median 875.4 ms, min 326.5, max 895.4 ms over 20 writes
+WAITAOF 1 1 2000: last reply [1, 1]; median 876.5 ms, min 868.0, max 1682.4 ms over 20 writes
+
+################ q1  (script: scripts/q1.*)
+== Q1 what Sentinel can do with Sentinels missing (3 Sentinels, quorum 2)
+3 running: OK 3 usable Sentinels. Quorum and failover authorization can be reached
+2 running: OK 3 usable Sentinels. Quorum and failover authorization can be reached
+1 running: OK 3 usable Sentinels. Quorum and failover authorization can be reached
+primary killed 12 s ago with one Sentinel left (down-after 5 s): Sentinel says primary is 7109
+28 Oct 2026 00:03:19.459 # +sdown sentinel d4a4954de74c52912bfbecaf80b77d2e0cb1169e 127.0.0.1 7194 @ cache 127.0.0.1 7109
+28 Oct 2026 00:03:20.370 # +sdown sentinel 6c288539dfbb49191e5a0384a074fa73c2519a4c 127.0.0.1 7193 @ cache 127.0.0.1 7109
+28 Oct 2026 00:03:21.407 # +sdown master cache 127.0.0.1 7109
+SENTINEL FAILOVER (manual, no agreement needed): OK
+after a manual failover: primary is 7190
+== M1 replicas ignore maxmemory by default
+replica-ignore-maxmemory yes 
+replica maxmemory 5 MB: used_memory used_memory_human:14.87M DBSIZE 50000 evicted_keys evicted_keys:0
+
+################ client log for s1 (default Sentinel settings), lines around the kill and the recovery
+# start 1793141768.245
+4.431 ok 7109
+4.541 ok 7109
+4.645 ok 7109
+4.757 ok 7109
+4.875 err ConnectionError:Error 61 connecting to 127.0.0.1:7109. Connection refused.
+4.988 err ConnectionError:Error 61 connecting to 127.0.0.1:7109. Connection refused.
+5.101 err ConnectionError:Error 61 connecting to 127.0.0.1:7109. Connection refused.
+...
+35.375 err MasterNotFoundError:No master found for 'cache'
+35.491 err MasterNotFoundError:No master found for 'cache'
+35.593 err MasterNotFoundError:No master found for 'cache'
+35.695 err MasterNotFoundError:No master found for 'cache'
+35.808 ok 7191
+35.915 ok 7191
+36.027 ok 7191
+
+################ client log for s2 (down-after-milliseconds 5000), around kill and recovery
+# start 1793141895.251
+4.612 ok 7109
+4.713 ok 7109
+4.813 ok 7109
+4.919 err ConnectionError:Error 61 connecting to 127.0.0.1:7109. Connection refused.
+5.029 err ConnectionError:Error 61 connecting to 127.0.0.1:7109. Connection refused.
+...
+10.862 err MasterNotFoundError:No master found for 'cache'
+10.972 err MasterNotFoundError:No master found for 'cache'
+11.075 err MasterNotFoundError:No master found for 'cache'
+11.183 ok 7190
+11.289 ok 7190
+11.398 ok 7190
+
+################ scripts
+---- scripts/lib.sh
+# Helpers for article 9 experiments. Ports: 7109 primary, 7190-7194 extras.
+BIN=/opt/homebrew/opt/redis/bin
+RUN=/private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/a9/run
+mkdir -p $RUN
+# start PORT [extra args...]  (data dir $RUN/PORT, kept between restarts)
+start() { local p=$1; shift; mkdir -p $RUN/$p; $BIN/redis-server --port $p --bind 127.0.0.1 --dir $RUN/$p --save '' --appendonly no \
+  --daemonize yes --logfile $RUN/$p/redis.log --pidfile $RUN/$p/redis.pid "$@"; for i in $(seq 50); do $BIN/redis-cli -p $p PING >/dev/null 2>&1 && break; sleep 0.1; done; }
+c() { local p=$1; shift; $BIN/redis-cli -p $p "$@"; }
+pidof_port() { cat $RUN/$1/redis.pid 2>/dev/null; }
+crash() { local pid=$(pidof_port $1); [ -n "$pid" ] && kill -9 $pid; sleep 0.3; }
+wipe() { rm -rf $RUN/$1; }
+ts() { python3 -c 'import time;print("%.3f"%time.time())'; }
+---- scripts/sent.sh
+. ./lib.sh
+# usage: setup_cluster DOWN_AFTER_MS
+stop_all() { for p in 7109 7190 7191 7192 7193 7194; do c $p SHUTDOWN NOSAVE >/dev/null 2>&1; done; sleep 1; }
+setup_cluster() {
+  local down=$1
+  stop_all; for p in 7109 7190 7191 7192 7193 7194; do wipe $p; done
+  start 7109; for i in $(seq 5000); do echo "SET product:$i v$i EX 3600"; done | c 7109 >/dev/null
+  c 7109 SET product:42 '{"name":"Kettle","price":"39.00"}' EX 3600 >/dev/null
+  start 7190 --replicaof 127.0.0.1 7109; start 7191 --replicaof 127.0.0.1 7109
+  for s in 7192 7193 7194; do mkdir -p $RUN/$s; cat > $RUN/$s/sentinel.conf <<CONF
+port $s
+bind 127.0.0.1
+daemonize yes
+dir $RUN/$s
+logfile $RUN/$s/sentinel.log
+pidfile $RUN/$s/redis.pid
+sentinel monitor cache 127.0.0.1 7109 2
+CONF
+    [ "$down" != "default" ] && echo "sentinel down-after-milliseconds cache $down" >> $RUN/$s/sentinel.conf
+    $BIN/redis-sentinel $RUN/$s/sentinel.conf; done
+  sleep 9
+  echo "replicas DBSIZE: $(c 7190 DBSIZE) $(c 7191 DBSIZE)"
+  c 7192 SENTINEL MASTER cache | paste - - | grep -E "down-after|failover-timeout|quorum|num-other-sentinels|num-slaves|parallel" | tr '\t' ' '
+  c 7192 SENTINEL CKQUORUM cache
+}
+---- scripts/client.py
+# A cache client that finds the primary through Sentinel and writes then reads every 100 ms.
+# Logs one line per attempt: seconds since start, outcome, primary port. Usage: client.py OUTFILE DURATION
+import sys, time, redis
+from redis.sentinel import Sentinel
+from redis.retry import Retry
+from redis.backoff import NoBackoff
+out, duration = sys.argv[1], float(sys.argv[2])
+s = Sentinel([('127.0.0.1', p) for p in (7192, 7193, 7194)], socket_timeout=0.2, socket_connect_timeout=0.2)
+m = s.master_for('cache', socket_timeout=0.2, socket_connect_timeout=0.2, retry=Retry(NoBackoff(), 0))
+t0 = time.time()
+with open(out, 'w') as f:
+    f.write(f'# start {t0:.3f}\n')
+    i = 0
+    while time.time() - t0 < duration:
+        t = time.time()
+        try:
+            m.set('heartbeat', i); m.get('product:42')
+            port = m.connection_pool.connection_kwargs.get('port')
+            try: port = m.connection_pool.get_master_address()[1]
+            except Exception: pass
+            f.write(f'{t - t0:.3f} ok {port}\n')
+        except Exception as e:
+            f.write(f'{t - t0:.3f} err {type(e).__name__}:{str(e)[:60]}\n')
+        f.flush(); i += 1
+        time.sleep(max(0, 0.1 - (time.time() - t)))
+---- scripts/s1.sh
+. ./sent.sh
+PY=/private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/venv-rp81/bin/python
+DOWN=${1:-default}; TAG=${2:-s1}
+echo "== Sentinel failover, down-after-milliseconds=$DOWN: three Sentinels (quorum 2), a primary and two replicas"
+setup_cluster $DOWN
+$PY client.py ../$TAG-client.log ${3:-75} &
+CP=$!
+sleep 5
+K=$(ts); crash 7109; echo "primary killed (kill -9) at epoch $K"
+wait $CP
+echo "-- Sentinel 7192 log (times are wall clock; kill at $(python3 -c "import time;print(time.strftime('%H:%M:%S',time.localtime($K)))").$(echo $K | cut -d. -f2))"
+grep -E "sdown|odown|try-failover|vote-for-leader|elected-leader|failover-state|selected-slave|promoted-slave|switch-master|slave-reconf|failover-end|convert" $RUN/7192/sentinel.log | sed 's/^[0-9]*:X //' | head -30
+for s in 7193 7194; do echo "-- $s:"; grep -E "sdown|odown|vote-for-leader|elected-leader|switch-master" $RUN/$s/sentinel.log | sed 's/^[0-9]*:X //' | head -6; done
+echo "SENTINEL get-master-addr-by-name -> $(c 7192 SENTINEL get-master-addr-by-name cache | tr '\n' ' ')"
+NEW=$(c 7192 SENTINEL get-master-addr-by-name cache | tail -1)
+echo "new primary $NEW role: $(c $NEW ROLE | head -1); GET product:42 -> $(c $NEW GET product:42 | head -c 40)"
+echo "-- restart the old primary (empty, persistence off)"
+start 7109; sleep 12
+echo "old primary role now: $(c 7109 ROLE | head -1) $(c 7109 ROLE | sed -n 3p); DBSIZE $(c 7109 DBSIZE)"
+grep -E "convert-to-slave" $RUN/7192/sentinel.log | sed 's/^[0-9]*:X //' | tail -2
+echo "client log summary:"; python3 - ../$TAG-client.log $K <<'PYEOF'
+import sys
+lines=[l.split(None,2) for l in open(sys.argv[1]) if not l.startswith('#')]
+start=float(open(sys.argv[1]).readline().split()[2]); kill=float(sys.argv[2])-start
+errs=[float(t) for t,o,*_ in lines if o=='err']
+oks=[(float(t),r[0].strip() if r else '') for t,o,*r in lines if o=='ok']
+print(f'kill at {kill:.2f} s after client start; attempts {len(lines)}, failed {len(errs)}')
+if errs: print(f'first failure {errs[0]-kill:.2f} s after kill, last failure {errs[-1]-kill:.2f} s after kill')
+after=[(t,p) for t,p in oks if t>kill]
+if after: print(f'first success after kill: {after[0][0]-kill:.2f} s, on port {after[0][1]}')
+from collections import Counter; print(Counter(l[2].strip()[:50] for l in lines if l[1]=='err').most_common(4))
+PYEOF
+---- scripts/r6.sh
+. ./lib.sh
+P=7109; R=7190
+PY=/private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/venv-rp81/bin/python
+echo "== R6 an acknowledged delete lost at failover"
+c $P FLUSHALL >/dev/null
+c $P SET product:42 '{"name":"Kettle","price":"39.00"}' EX 3600 >/dev/null; sleep 1
+echo "replica has: $(c $R GET product:42)"
+echo "-- the replica falls behind (frozen); the primary keeps acknowledging writes"
+kill -STOP $(pidof_port $R)
+$PY - <<'PYEOF'
+import redis
+p = redis.Redis(port=7109)
+pipe = p.pipeline(transaction=False)
+for i in range(40000): pipe.set(f'page:{i}', 'x'*200, ex=3600)
+pipe.execute()
+print('price cut committed to the database; application deletes the cached copy: DEL ->', p.delete('product:42'))
+print('primary GET product:42 ->', p.get('product:42'))
+print('WAIT 1 500 ->', p.execute_command('WAIT', 1, 500), '(replicas that confirmed the delete)')
+i = p.info('replication'); print('primary master_repl_offset', i['master_repl_offset'], 'replica acked offset', i['slave0']['offset'])
+print('primary client_recent_max_output_buffer / mem_clients_slaves:', p.info('memory')['mem_clients_slaves'])
+PYEOF
+echo "-- the primary crashes (kill -9) before the stream reaches the replica"
+crash $P
+kill -CONT $(pidof_port $R); sleep 2
+c $R INFO replication | grep -E "master_link_status|slave_repl_offset" | tr -d '\r'
+echo "replica DBSIZE $(c $R DBSIZE)"
+echo "-- promote the replica"
+c $R REPLICAOF NO ONE
+echo "new primary GET product:42 -> $(c $R GET product:42)  TTL $(c $R TTL product:42)"
+---- scripts/r4.sh
+. ./lib.sh
+P=7109; R=7190
+sync_counts() { c $P INFO stats | grep -E "^sync_(full|partial_ok|partial_err)" | tr -d '\r' | tr '\n' ' '; }
+outage() { # $1 = number of 100-byte SETs written while the replica is cut off
+  sleep 2
+  local before=$(c $P INFO replication | grep master_repl_offset | tr -d '\r' | cut -d: -f2)
+  kill -STOP $(pidof_port $R)
+  c $P CLIENT KILL TYPE replica >/dev/null
+  head -c 100 /dev/zero | tr '\0' 'x' > /tmp/a9v 2>/dev/null
+  python3 -c "
+import sys
+v='x'*100
+for i in range($1): sys.stdout.write('SET filler:%d %s\n'%(i,v))" | c $P >/dev/null
+  local after=$(c $P INFO replication | grep master_repl_offset | tr -d '\r' | cut -d: -f2)
+  echo "replica cut off; stream advanced $((after-before)) bytes; backlog $(c $P CONFIG GET repl-backlog-size | tail -1) bytes"
+  echo "  before: $(sync_counts)"
+  kill -CONT $(pidof_port $R); sleep 9
+  echo "  after:  $(sync_counts)"
+  grep -E "partial resynchronization|Partial resynchronization|Full resync|PSYNC|CONTINUE|backlog" $RUN/$R/redis.log | tail -3 | sed 's/^[0-9]*:S //'
+}
+echo "== R4 reconnecting after a break: partial resync from the backlog, or full resync"
+c $P FLUSHALL >/dev/null
+echo "-- 1: 2,000 writes (about 0.25 MB) during the break, default 1 MB backlog"; outage 2000
+echo "-- 2: 20,000 writes (about 2.5 MB) during the break, default 1 MB backlog"; outage 20000
+
+################ repair-1 (2026-10-28): checks made while revising after review round 1
+== RS1 replica reads while the primary is frozen or killed; replica-serve-stale-data yes / no. Ports 7119 (primary), 7185 (replica); --save '' ; data dir deleted afterwards.
+# Script:
+    #!/bin/bash
+    # Replica reads while the primary is frozen or killed: replica-serve-stale-data yes / no.
+    B=/opt/homebrew/opt/redis/bin
+    D=$(mktemp -d "$PWD/data.XXXX"); mkdir -p $D/p $D/r
+    P=7119; R=7185
+    c() { $B/redis-cli -p "$@"; }
+    $B/redis-server --port $P --dir $D/p --save '' --appendonly no --daemonize yes --logfile $D/p/log
+    $B/redis-server --port $R --dir $D/r --save '' --appendonly no --daemonize yes --logfile $D/r/log --replicaof 127.0.0.1 $P
+    sleep 7
+    echo "redis $(c $P INFO server | grep redis_version | tr -d '\r')"
+    echo "defaults on replica: $(c $R CONFIG GET replica-serve-stale-data | tr '\n' ' ') $(c $R CONFIG GET repl-timeout | tr '\n' ' ') $(c $R CONFIG GET repl-ping-replica-period | tr '\n' ' ')"
+    echo "primary: $(c $P CONFIG GET client-output-buffer-limit | tr '\n' ' ')"
+    c $P SET product:42 '{"price":"39.00"}' >/dev/null; sleep 1
+    rinfo() { echo "t=$1s $(c $R INFO replication | grep -E '^(master_link_status|master_last_io_seconds_ago|master_link_down_since_seconds)' | tr -d '\r' | tr '\n' ' ') GET -> $(c $R GET product:42 2>&1)"; }
+    echo "-- A: primary frozen (SIGSTOP), replica-serve-stale-data yes (default)"
+    PID=$(c $P INFO server | grep process_id | tr -d '\r' | cut -d: -f2)
+    kill -STOP $PID; S=$(date +%s)
+    for t in 2 20 40 58 63 70; do while [ $(( $(date +%s) - S )) -lt $t ]; do sleep 0.5; done; rinfo $t; done
+    echo "-- B: still frozen; CONFIG SET replica-serve-stale-data no"
+    c $R CONFIG SET replica-serve-stale-data no >/dev/null; rinfo 71
+    echo "-- C: primary resumed; link back; still 'no'"
+    kill -CONT $PID; sleep 4; rinfo resumed+4
+    echo "-- D: primary frozen again with 'no' already set"
+    kill -STOP $PID; S=$(date +%s)
+    for t in 5 30 63; do while [ $(( $(date +%s) - S )) -lt $t ]; do sleep 0.5; done; rinfo $t; done
+    kill -CONT $PID; sleep 3
+    echo "-- E: primary killed (kill -9) with 'no'; then with 'yes'"
+    kill -9 $PID; sleep 1; rinfo 1
+    c $R CONFIG SET replica-serve-stale-data yes >/dev/null; rinfo 1
+    c $R SHUTDOWN NOSAVE 2>/dev/null; sleep 1
+    grep -E "timeout|Connection with master lost|MASTER <-> REPLICA" $D/r/log | tail -6 | sed 's/^[0-9]*:S //'
+    rm -rf "$D"; echo "cleaned up"
+# Output:
+redis redis_version:8.10.3
+defaults on replica: replica-serve-stale-data yes  repl-timeout 60  repl-ping-replica-period 10 
+primary: client-output-buffer-limit normal 0 0 0 slave 268435456 67108864 60 pubsub 33554432 8388608 60 
+-- A: primary frozen (SIGSTOP), replica-serve-stale-data yes (default)
+t=2s master_link_status:up master_last_io_seconds_ago:3  GET -> {"price":"39.00"}
+t=20s master_link_status:up master_last_io_seconds_ago:21  GET -> {"price":"39.00"}
+t=40s master_link_status:up master_last_io_seconds_ago:41  GET -> {"price":"39.00"}
+t=58s master_link_status:up master_last_io_seconds_ago:59  GET -> {"price":"39.00"}
+t=63s master_link_status:down master_last_io_seconds_ago:-1 master_link_down_since_seconds:3  GET -> {"price":"39.00"}
+t=70s master_link_status:down master_last_io_seconds_ago:-1 master_link_down_since_seconds:10  GET -> {"price":"39.00"}
+-- B: still frozen; CONFIG SET replica-serve-stale-data no
+t=71s master_link_status:down master_last_io_seconds_ago:-1 master_link_down_since_seconds:10  GET -> MASTERDOWN Link with MASTER is down and replica-serve-stale-data is set to 'no'.
+-- C: primary resumed; link back; still 'no'
+t=resumed+4s master_link_status:up master_last_io_seconds_ago:4  GET -> {"price":"39.00"}
+-- D: primary frozen again with 'no' already set
+t=5s master_link_status:up master_last_io_seconds_ago:9  GET -> {"price":"39.00"}
+t=30s master_link_status:up master_last_io_seconds_ago:34  GET -> {"price":"39.00"}
+t=63s master_link_status:down master_last_io_seconds_ago:-1 master_link_down_since_seconds:6  GET -> MASTERDOWN Link with MASTER is down and replica-serve-stale-data is set to 'no'.
+-- E: primary killed (kill -9) with 'no'; then with 'yes'
+t=1s master_link_status:down master_last_io_seconds_ago:-1 master_link_down_since_seconds:1  GET -> MASTERDOWN Link with MASTER is down and replica-serve-stale-data is set to 'no'.
+t=1s master_link_status:down master_last_io_seconds_ago:-1 master_link_down_since_seconds:1  GET -> {"price":"39.00"}
+28 Oct 2026 00:52:44.819 * Connection with master lost.
+28 Oct 2026 00:52:44.819 * MASTER <-> REPLICA sync started
+28 Oct 2026 00:52:50.170 * MASTER <-> REPLICA sync: Master accepted a Partial Resynchronization.
+28 Oct 2026 00:52:53.174 * Connection with master lost.
+28 Oct 2026 00:52:53.174 * MASTER <-> REPLICA sync started
+28 Oct 2026 00:52:54.007 * MASTER <-> REPLICA sync started
+cleaned up
+# Reading: while the primary is frozen (a hung process or a partition looks the same to the replica) the replica keeps master_link_status:up and serves its last data for repl-timeout (60 s), whatever replica-serve-stale-data says; only master_last_io_seconds_ago shows the silence (normally at most ~10 s, the repl-ping-replica-period). Once the link is down: 'yes' (default) keeps serving; 'no' answers MASTERDOWN. A killed primary is seen as down at once (connection closed).
+
+== RS2 source checks at 8.10.3 (raw.githubusercontent.com/redis/redis/8.10.3/...)
+redis.conf:
+    634:replica-serve-stale-data yes
+    732:repl-diskless-load disabled
+    1465:disable-thp yes
+    2475:client-output-buffer-limit replica 256mb 64mb 60
+server.c writeCommandsDeniedByDiskError():
+    int writeCommandsDeniedByDiskError(void) {
+        if (server.stop_writes_on_bgsave_err &&
+            server.saveparamslen > 0 &&
+            server.lastbgsave_status == C_ERR)
+        {
+            return DISK_ERROR_TYPE_RDB;
+        } else if (server.aof_state != AOF_OFF) {
+            if (server.aof_last_write_status == C_ERR) {
+                return DISK_ERROR_TYPE_AOF;
+            }
+            /* AOF fsync error. */
+            int aof_bio_fsync_status;
+            atomicGet(server.aof_bio_fsync_status,aof_bio_fsync_status);
+            if (aof_bio_fsync_status == C_ERR) {
+                atomicGet(server.aof_bio_fsync_errno,server.aof_last_write_errno);
+                return DISK_ERROR_TYPE_AOF;
+            }
+aof.c flushAppendOnlyFile() everysec postponement:
+            sync_in_progress = aofFsyncInProgress();
+    
+        if (server.aof_fsync == AOF_FSYNC_EVERYSEC && !force) {
+            /* With this append fsync policy we do background fsyncing.
+             * If the fsync is still in progress we can try to delay
+             * the write for a couple of seconds. */
+            if (sync_in_progress) {
+                if (server.aof_flush_postponed_start == 0) {
+                    /* No previous write postponing, remember that we are
+                     * postponing the flush and return. */
+                    server.aof_flush_postponed_start = server.mstime;
+                    return;
+                } else if (server.mstime - server.aof_flush_postponed_start < 2000) {
+                    /* We were already waiting for fsync to finish, but for less
+                     * than two seconds this is still ok. Postpone again. */
+                    return;
+                }
+disable-thp first appears in redis.conf at 6.2.0 (absent at 6.0.0 and 6.0.20; present at 6.2.0, 6.2.14, 7.0.0), checked by grep on the tagged files.
+
+################ e1g  (added in polish; measurement from the independent final review, review-final-2.md)
+== E1G RDB load time, 1M keys with 100-byte values (119 MB file), laptop at load average about 9: 0.55 s.
+   Compare E1F above: 2.2 to 2.9 s at load average 126-180, and E1E: 4.9 s for 1M keys under the same heavy load. Hardware and value size also matter.

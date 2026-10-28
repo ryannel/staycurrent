@@ -1,0 +1,67 @@
+---
+// Figure: the replication backlog decides between a partial and a full resynchronisation.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Readout from '../shared/Readout.astro';
+import './repl.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="rp-backlog" title="The replication backlog" controls="none" size="text"
+  legend={[{ kind: 'redis', label: 'Stream the replica already has' }, { kind: 'write', label: 'Stream it missed, still in the backlog' }, { kind: 'error', label: 'Overwritten' }]}
+  caption="Arithmetic, not a simulation: 5,000 writes a second of about 138 bytes each (a SET of a 100-byte value with a TTL, as measured), so 0.66 MB of stream a second. The two outcomes, a partial resynchronisation and a full one, were both observed on Redis 8.10.3 with the default 1 MB backlog.">
+  <Slider slot="params" name="outage" label="The link is down for" value={1} stops={[1, 5, 30, 60, 300]} labels={{ 1: '1 second', 5: '5 seconds', 30: '30 seconds', 60: 'a minute', 300: '5 minutes' }} />
+  <Slider slot="params" name="backlog" label="repl-backlog-size" value={1} stops={[1, 16, 64, 256]} labels={{ 1: '1 MB (default)', 16: '16 MB', 64: '64 MB', 256: '256 MB' }} />
+  <Fragment slot="stats">
+    <Readout name="missed" label="Stream missed" kind="write" />
+    <Readout name="covers" label="Backlog holds" kind="redis" />
+  </Fragment>
+  <svg class="rp-ring" viewBox="0 0 360 300" role="img" aria-label="The backlog drawn as a ring buffer" data-ring></svg>
+  <p slot="after" class="rp-verdict" data-verdict aria-live="polite"></p>
+  <Fragment slot="text">
+    <p>The primary keeps the most recent part of its replication stream in a ring buffer, the backlog, 1 MB by default. At 5,000 writes a second that is about a second and a half of writes. A replica that reconnects within that time asks to continue from its offset, and the primary sends only the bytes it missed. If the outage lasts longer, the bytes the replica needs have been overwritten, and the primary sends the whole dataset again.</p>
+    <p>A 5-second outage needs 3.3 MB; a minute, 39 MB; five minutes, about 200 MB. So the default covers only a blip, and a backlog of 64 MB covers about a minute and a half at this rate.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { bindParams, setReadouts } from '../shared/player.mjs';
+  import { svgEl } from '../shared/scene.mjs';
+  import { reconnect, formatBytes, MB } from './backlog-model.mjs';
+
+  const SEGMENTS = 32;
+  document.querySelectorAll<HTMLElement>('[data-figure-id="rp-backlog"]').forEach(root => {
+    const svg = root.querySelector<SVGSVGElement>('[data-ring]')!;
+    const verdict = root.querySelector<HTMLElement>('[data-verdict]')!;
+    const cx = 180, cy = 150, r0 = 78, r1 = 118;
+    const point = (r: number, a: number) => [cx + r * Math.sin(a), cy - r * Math.cos(a)];
+    const arc = (a0: number, a1: number) => {
+      const [x0, y0] = point(r1, a0), [x1, y1] = point(r1, a1), [x2, y2] = point(r0, a1), [x3, y3] = point(r0, a0);
+      return `M${x0} ${y0}A${r1} ${r1} 0 0 1 ${x1} ${y1}L${x2} ${y2}A${r0} ${r0} 0 0 0 ${x3} ${y3}Z`;
+    };
+    bindParams(root, params => {
+      const r = reconnect({ writesPerSecond: 5000, outage: params.outage, backlogBytes: params.backlog * MB });
+      svg.replaceChildren();
+      const filled = r.partial ? Math.max(1, Math.ceil(SEGMENTS * r.missed / (params.backlog * MB))) : SEGMENTS;
+      for (let i = 0; i < SEGMENTS; i++) {
+        const a0 = (2 * Math.PI * i) / SEGMENTS, a1 = (2 * Math.PI * (i + 1)) / SEGMENTS;
+        const state = !r.partial ? 'lapped' : i < filled ? 'missed' : 'old';
+        svgEl('path', { class: 'rp-seg', 'data-state': state, d: arc(a0, a1) }, svg);
+      }
+      // Pointer: where the replica stopped (top of the ring).
+      const [px, py] = point(r1 + 18, 0), [qx, qy] = point(r1 + 2, 0);
+      svgEl('path', { class: 'rp-pointer', d: `M${px} ${py}L${qx} ${qy}` }, svg);
+      svgEl('path', { class: 'rp-pointer-head', d: `M${qx - 5} ${qy - 8}L${qx + 5} ${qy - 8}L${qx} ${qy}Z` }, svg);
+      const label = svgEl('text', { x: cx, y: 11, 'text-anchor': 'middle' }, svg); // above the pointer, which starts at y = 14
+      label.textContent = r.partial ? 'the replica stopped here' : 'the replica stopped here: overwritten';
+      const mid = svgEl('text', { x: cx, y: cy - 4, 'text-anchor': 'middle' }, svg);
+      mid.textContent = `${params.backlog} MB backlog`;
+      const sub = svgEl('text', { class: 'rp-ring-sub', x: cx, y: cy + 14, 'text-anchor': 'middle' }, svg);
+      sub.textContent = r.partial ? `${Math.round(100 * r.missed / (params.backlog * MB))}% of it missed` : `lapped ${r.laps.toFixed(r.laps < 10 ? 1 : 0)} times`;
+      setReadouts(root, { missed: formatBytes(r.missed), covers: r.covers < 10 ? `${r.covers.toFixed(1)} s of writes` : `${Math.round(r.covers)} s of writes` });
+      verdict.dataset.cacheKind = r.partial ? 'write' : 'error';
+      verdict.innerHTML = r.partial
+        ? `<strong>Partial resynchronisation.</strong> The replica asks to continue from its offset; the primary replies +CONTINUE and sends the ${formatBytes(r.missed)} it missed.`
+        : `<strong>Full resynchronisation.</strong> The replica missed ${formatBytes(r.missed)} but the backlog holds ${params.backlog} MB, so the bytes it needs are gone. The primary forks, sends a snapshot of the whole dataset, and the replica discards its copy and loads the new one. A backlog of at least ${formatBytes(r.needed)} would have avoided it.`;
+    });
+  });
+</script>

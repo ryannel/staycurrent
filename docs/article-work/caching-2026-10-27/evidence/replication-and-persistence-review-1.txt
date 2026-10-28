@@ -1,0 +1,260 @@
+# Technical review round 1: Redis replication, persistence and failover
+# Reviewer's own runs. Redis 8.10.3 (libc malloc) on macOS, ports 7159, 7185-7189, 26185-26189. Data dirs in a scratch directory, deleted afterwards.
+# date: 2026-10-27T23:34:41Z
+
+## E1. Default save points with no config file
+$ redis-server --port 7159 (no config file, no --save); CONFIG GET save; CONFIG GET stop-writes-on-bgsave-error appendfsync repl-backlog-size repl-timeout repl-diskless-sync repl-diskless-sync-delay replica-ignore-maxmemory min-replicas-max-lag disable-thp repl-rdb-channel
+save 3600 1 300 100 60 10000 
+stop-writes-on-bgsave-error yes 
+appendfsync everysec 
+repl-backlog-size 1048576 
+repl-timeout 60 
+repl-diskless-sync yes 
+repl-diskless-sync-delay 5 
+replica-ignore-maxmemory yes 
+min-replicas-max-lag 10 
+disable-thp yes 
+repl-rdb-channel yes 
+
+## E2. A snapshot brings back a deleted key; expired keys stay gone
+$ SET product:kettle 39 EX 3600; SET banner on EX 3; BGSAVE; DEL product:kettle; sleep 4; kill -9; restart on same dir
+OK
+OK
+Background saving started
+rdb_changes_since_last_save:0
+rdb_last_bgsave_status:ok
+DEL product:kettle -> 1
+after restart: GET product:kettle -> 39   TTL -> 3593   EXISTS banner -> 0
+79157:M 28 Oct 2026 00:35:25.166 * Done loading RDB, keys loaded: 1, keys expired: 1.
+
+## E3. Failed BGSAVE with default stop-writes-on-bgsave-error yes (data dir made read-only)
+Background saving started
+rdb_last_bgsave_status:err
+GET -> 39
+SET -> OK
+DEL -> 1
+after CONFIG SET stop-writes-on-bgsave-error no: DEL -> 0
+
+## E3b. Same, but with the default save points (server started with no --save option)
+save 3600 1 300 100 60 10000 
+Background saving started
+rdb_last_bgsave_status:err
+GET -> 39
+SET -> MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk. Commands that may modify the data set are disabled, because this instance is configured to report errors during writes if RDB snapshotting fails (stop-writes-on-bgsave-error option). Please check the Redis logs for details about the RDB error.
+DEL -> MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk. Commands that may modify the data set are disabled, because this instance is configured to report errors during writes if RDB snapshotting fails (stop-writes-on-bgsave-error option). Please check the Redis logs for details about the RDB error.
+after CONFIG SET stop-writes-on-bgsave-error no: DEL -> 1
+
+## E4. AOF everysec, kill -9 straight after writes (process crash, not power loss)
+before kill: counter=300 kettle exists=0
+after restart: counter=300 kettle exists=0
+
+## E5. Failover loses an acknowledged DEL (replica frozen with SIGSTOP, manual promotion)
+replica link: master_link_status:up; replica GET kettle -> 39
+DEL product:kettle -> 1
+WAIT 1 500 -> 1
+primary master_repl_offset: master_repl_offset:428946
+replica slave_repl_offset: slave_repl_offset:428946
+REPLICAOF NO ONE -> OK
+new primary: GET product:kettle ->  TTL -> -2 DBSIZE -> 5000
+
+## E6. Replica hides an expired key while the primary is frozen; promotion expires it
+replica GET banner just after SET -> on
+4 s later, primary frozen: replica GET -> '' EXISTS -> 0 TTL -> -2 DBSIZE -> 1 expired_keys -> expired_keys:0
+expired_keys_active:0
+after promotion: DBSIZE -> 0 expired_keys:1
+expired_keys_active:1
+
+## E5b. Repeat of E5 with enough stream to exceed socket buffers, and DEL + WAIT on ONE connection
+# (E5 above is invalid for WAIT: DEL and WAIT were sent on separate redis-cli connections, and WAIT only covers its own
+#  connection's writes. With 5,000 writes the whole stream also fitted in kernel socket buffers, so the replica got it on SIGCONT.)
+replica GET kettle before freeze -> 39
+DEL then WAIT 1 500 on one connection -> 1
+DEL then WAIT 1 500 on one connection -> 0
+slave0:ip=127.0.0.1,port=7185,state=online,offset=95,lag=9,io-thread=0
+master_repl_offset:5908961
+mem_clients_slaves:4343976
+replica slave_repl_offset after resume: slave_repl_offset:557489
+REPLICAOF NO ONE -> OK
+new primary: GET product:kettle -> 39  TTL -> 3589  DBSIZE -> 3801
+
+## E7. Sentinel failover at the default down-after-milliseconds (30 s): primary 7159, replicas 7185/7186, Sentinels 26185-7, quorum 2.
+# Client: /private/tmp/claude-501/-Users-ryannel--claude-spares-spare-8pwsR4/0c4930a8-9d0f-4cdc-aeae-aee7b6568111/scratchpad/rp/client.py (raw RESP; every 100 ms resolves the primary via Sentinel and sends SET; prints state changes, epoch seconds).
+# Conditions: all processes on one macOS laptop, loopback network, process killed with kill -9 (host stays up, so connections are refused at once).
+setup: down-after=default; sentinel config: down-after-milliseconds=30000 num-slaves=2 num-other-sentinels=2 quorum=2 
+replica keys before: r1=2000 r2=2000
+killed primary at 1793144285.676
+1793144283.647 ok 7159
+1793144285.759 err ConnectionRefusedError
+1793144317.262 ok 7185
+errors=298 first_fail=1793144285.758873 recovered=1793144317.261757 outage=31.502883911132812
+sentinel events (s5):
+  82770:X 28 Oct 2026 00:38:35.786 # +sdown master m 127.0.0.1 7159
+  82770:X 28 Oct 2026 00:38:35.888 # +odown master m 127.0.0.1 7159 #quorum 2/2
+  82770:X 28 Oct 2026 00:38:35.889 # +try-failover master m 127.0.0.1 7159
+  82770:X 28 Oct 2026 00:38:37.195 # +switch-master m 127.0.0.1 7159 127.0.0.1 7185
+s6: 82773:X 28 Oct 2026 00:38:35.810 # +sdown master m 127.0.0.1 7159
+s7: 82776:X 28 Oct 2026 00:38:35.714 # +sdown master m 127.0.0.1 7159
+Could not connect to Redis at 127.0.0.1:7159: Connection refused
+Could not connect to Redis at 127.0.0.1:7159: Connection refused
+port 7159: role= dbsize=
+port 7185: role=master dbsize=2001
+port 7186: role=slave dbsize=2001
+sentinel says primary: 127.0.0.1 7185 
+
+## E8. Same as E7 with down-after-milliseconds 5000
+setup: down-after=5000; sentinel config: down-after-milliseconds=5000 num-slaves=2 num-other-sentinels=2 quorum=2 
+replica keys before: r1=2000 r2=2000
+killed primary at 1793144348.686
+1793144346.670 ok 7159
+1793144348.793 err ConnectionRefusedError
+1793144355.061 ok 7185
+errors=59 first_fail=1793144348.792814 recovered=1793144355.061203 outage=6.268388986587524
+sentinel events (s5):
+  86398:X 28 Oct 2026 00:39:13.734 # +sdown master m 127.0.0.1 7159
+  86398:X 28 Oct 2026 00:39:14.895 # +odown master m 127.0.0.1 7159 #quorum 3/2
+  86398:X 28 Oct 2026 00:39:14.954 # +switch-master m 127.0.0.1 7159 127.0.0.1 7185
+  86398:X 28 Oct 2026 00:39:19.981 # +sdown slave 127.0.0.1:7159 127.0.0.1 7159 @ m 127.0.0.1 7185
+s6: 86414:X 28 Oct 2026 00:39:13.767 # +sdown master m 127.0.0.1 7159
+s7: 86432:X 28 Oct 2026 00:39:13.739 # +sdown master m 127.0.0.1 7159
+Could not connect to Redis at 127.0.0.1:7159: Connection refused
+Could not connect to Redis at 127.0.0.1:7159: Connection refused
+port 7159: role= dbsize=
+port 7185: role=master dbsize=2001
+port 7186: role=slave dbsize=2001
+sentinel says primary: 127.0.0.1 7185 
+
+## E9. Default Sentinels; primary without persistence killed and restarted at once (as a supervisor would)
+setup: down-after=default; sentinel config: down-after-milliseconds=30000 num-slaves=2 num-other-sentinels=2 quorum=2 
+replica keys before: r1=2000 r2=2000
+killed primary at 1793144383.395
+primary restarted empty at 1793144383.458
+1793144381.381 ok 7159
+errors=0 first_fail=None recovered=None outage=None
+sentinel events (s5):
+  87769:X 28 Oct 2026 00:39:49.139 * +reboot master m 127.0.0.1 7159
+s6: 
+s7: 
+port 7159: role=master dbsize=1
+port 7185: role=slave dbsize=1
+port 7186: role=slave dbsize=1
+sentinel says primary: 127.0.0.1 7159 
+
+## E10. Backlog: partial vs full resync (default 1 MB backlog). Link broken by freezing the replica and killing its connection on the primary.
+2000 writes during the break: 338907 bytes of stream; primary sync_full=1 sync_partial_ok=1
+20000 writes during the break: 3408885 bytes of stream; primary sync_full=2 sync_partial_ok=1
+  replica log: 89341:S 28 Oct 2026 00:40:27.622 * MASTER <-> REPLICA sync: Finished with success
+  replica log: 89341:S 28 Oct 2026 00:40:32.294 * Trying a partial resynchronization (request db52d4b15014242f6244d26bb4d78da16f84f32b:1).
+  replica log: 89341:S 28 Oct 2026 00:40:32.296 * Successful partial resynchronization with master.
+  replica log: 89341:S 28 Oct 2026 00:41:13.244 * Trying a partial resynchronization (request db52d4b15014242f6244d26bb4d78da16f84f32b:338908).
+
+## E11. min-replicas-to-write 1 with the only replica frozen
+first refused write after 0 s (1 s resolution): NOREPLICAS Not enough good replicas to write.
+DEL -> NOREPLICAS Not enough good replicas to write.
+# E11 above is invalid: the replica was still in its full resync (5 s diskless delay) when the test began. Re-run:
+## E11b. min-replicas-to-write 1, min-replicas-max-lag 10 (default), healthy replica then frozen
+slave0:ip=127.0.0.1,port=7185,state=online,offset=0,lag=1,io-thread=0
+SET with healthy replica -> OK
+first refused write 10.5 s after freezing the replica:
+  NOREPLICAS Not enough good replicas to write.
+DEL -> NOREPLICAS Not enough good replicas to write.
+
+## M1. restart-model.mjs (Figures 1 and 11) run with node: unit tests, then sensitivity of the Figure 11 verdict
+$ node --test models.test.mjs
+ℹ tests 11
+ℹ pass 11
+ℹ fail 0
+
+$ node rp-sens.mjs   (script below)
+    import { trace, cost, steady, create } from '/Users/ryannel/Workspace/staycurrent/src/components/caching/replication-and-persistence/restart-model.mjs';
+    const log = console.log;
+    for (const ttl of [120,300,600,1800]) {
+      const s = steady({ttl}); const m = create({ttl}); m.sim.advance(60000); m.fail('empty'); m.sim.advance(1000);
+      log(`ttl ${ttl}: normal ${s.reads.toFixed(1)} hit ${(100*s.hitRatio).toFixed(2)}% first-second ${m.reads.toFixed(0)} x${(m.reads/s.reads).toFixed(1)} 1/(1-h)=${(1/(1-s.hitRatio)).toFixed(1)}`);
+    }
+    const t0 = trace('empty',0); const pts = t0.points.filter(p=>p[0]>0);
+    for (const t of [1,2,10,60,120,150,180,600,601,605,610]) { const p = pts.find(q=>Math.abs(q[0]-t)<0.01); log('empty t='+t, p && p[1].toFixed(0)); }
+    log('cap sweep: over/extra for empty@0, replica@6, replica@31, empty@60');
+    for (const cap of [150,200,300,500,800,1000,1300]) {
+      const r = [['empty',0],['replica',6],['replica',31],['snapshot',31],['empty',60]].map(([k,o])=>{const c=cost(trace(k,o),cap);return `${k}@${o}: ${c.over}s ${Math.round(c.extra)}`});
+      log(cap, r.join(' | '));
+    }
+    log('ttl sweep at cap 500:');
+    for (const ttl of [120,300,600,1800]) {
+      const r = [['empty',0],['replica',31]].map(([k,o])=>{const c=cost(trace(k,o,{ttl}),500);return `${k}@${o}: ${c.over}s ${Math.round(c.extra)} peak ${Math.round(c.peak)}`});
+      log(ttl, r.join(' | '));
+    }
+    // net extra (signed) over window
+    for (const [k,o] of [['empty',0],['replica',31]]) { const t=trace(k,o); const net=t.points.filter(p=>p[0]>0).reduce((a,[,r])=>a+r-t.normal,0); log('net signed extra',k,o,Math.round(net)); }
+    // with longer horizon (after=3600)
+    for (const [k,o] of [['empty',0],['replica',31]]) { const t=trace(k,o,{after:3600}); const c=cost(t,500); log('1h horizon',k,o,c.over, Math.round(c.extra)); }
+    // crossover outage at cap 500
+    for (let o=10;o<=40;o+=1){const c=cost(trace('replica',o),500); const b=cost(trace('empty',0),500); if(c.over>b.over||c.extra>b.extra){log('first outage worse at cap500:',o,c.over,Math.round(c.extra),'vs',b.over,Math.round(b.extra));break;}}
+    // skew sensitivity
+    for (const skew of [0.7,0.9,1.1]) { const b=cost(trace('empty',0,{skew}),500), r=cost(trace('replica',31,{skew}),500); log('skew',skew,'normal',steady({skew}).reads.toFixed(0),'empty',b.over,Math.round(b.extra),'replica31',r.over,Math.round(r.extra)); }
+ttl 120: normal 253.0 hit 87.35% first-second 1329 x5.3 1/(1-h)=7.9
+ttl 300: normal 130.4 hit 93.48% first-second 1329 x10.2 1/(1-h)=15.3
+ttl 600: normal 72.9 hit 96.36% first-second 1329 x18.2 1/(1-h)=27.4
+ttl 1800: normal 26.5 hit 98.68% first-second 1329 x50.2 1/(1-h)=75.5
+empty t=1 1329
+empty t=2 1074
+empty t=10 661
+empty t=60 239
+empty t=120 115
+empty t=150 84
+empty t=180 62
+empty t=600 2
+empty t=601 257
+empty t=605 231
+empty t=610 238
+cap sweep: over/extra for empty@0, replica@6, replica@31, empty@60
+150 empty@0: 215s 49444 | replica@6: 6s 11778 | replica@31: 31s 61782 | snapshot@31: 31s 61782 | empty@60: 275s 165060
+200 empty@0: 137s 49444 | replica@6: 6s 11778 | replica@31: 31s 61782 | snapshot@31: 31s 61782 | empty@60: 197s 165060
+300 empty@0: 45s 49444 | replica@6: 6s 11778 | replica@31: 31s 61782 | snapshot@31: 31s 61782 | empty@60: 105s 165060
+500 empty@0: 19s 49444 | replica@6: 6s 11778 | replica@31: 31s 61782 | snapshot@31: 31s 61782 | empty@60: 79s 165060
+800 empty@0: 5s 49444 | replica@6: 6s 11778 | replica@31: 31s 61782 | snapshot@31: 31s 61782 | empty@60: 65s 165060
+1000 empty@0: 2s 49444 | replica@6: 6s 11778 | replica@31: 31s 61782 | snapshot@31: 31s 61782 | empty@60: 62s 165060
+1300 empty@0: 1s 49444 | replica@6: 6s 11778 | replica@31: 31s 61782 | snapshot@31: 31s 61782 | empty@60: 61s 165060
+ttl sweep at cap 500:
+120 empty@0: 19s 21167 peak 1329 | replica@31: 31s 60099 peak 2000
+300 empty@0: 19s 37290 peak 1329 | replica@31: 31s 61781 peak 2000
+600 empty@0: 19s 49444 peak 1329 | replica@31: 31s 61782 peak 2000
+1800 empty@0: 19s 39364 peak 1329 | replica@31: 31s 61839 peak 2000
+net signed extra empty 0 25196
+net signed extra replica 31 60750
+1h horizon empty 0 19 76583
+1h horizon replica 31 31 61824
+first outage worse at cap500: 20 20 39678 vs 19 49444
+skew 0.7 normal 77 empty 30 65268 replica31 31 62227
+skew 0.9 normal 73 empty 19 49444 replica31 31 61782
+skew 1.1 normal 61 empty 3 26518 replica31 31 61432
+
+$ node flip.mjs
+    import { trace, cost } from '/Users/ryannel/Workspace/staycurrent/src/components/caching/replication-and-persistence/restart-model.mjs';
+    const e = trace('empty', 0);
+    for (let cap = 300; cap <= 500; cap += 20) console.log('capacity', cap, 'empty-at-once seconds above', cost(e, cap).over, '(failover at 31 s: 31; at 6 s: 6)');
+    for (const rate of [1000, 4000]) { const t = trace('empty', 0, { rate }); const c = cost(t, 500 * rate / 2000); console.log('rate', rate, 'capacity scaled', 500*rate/2000, 'empty over', c.over); }
+capacity 300 empty-at-once seconds above 45 (failover at 31 s: 31; at 6 s: 6)
+capacity 320 empty-at-once seconds above 41 (failover at 31 s: 31; at 6 s: 6)
+capacity 340 empty-at-once seconds above 37 (failover at 31 s: 31; at 6 s: 6)
+capacity 360 empty-at-once seconds above 34 (failover at 31 s: 31; at 6 s: 6)
+capacity 380 empty-at-once seconds above 31 (failover at 31 s: 31; at 6 s: 6)
+capacity 400 empty-at-once seconds above 29 (failover at 31 s: 31; at 6 s: 6)
+capacity 420 empty-at-once seconds above 26 (failover at 31 s: 31; at 6 s: 6)
+capacity 440 empty-at-once seconds above 24 (failover at 31 s: 31; at 6 s: 6)
+capacity 460 empty-at-once seconds above 22 (failover at 31 s: 31; at 6 s: 6)
+capacity 480 empty-at-once seconds above 20 (failover at 31 s: 31; at 6 s: 6)
+capacity 500 empty-at-once seconds above 19 (failover at 31 s: 31; at 6 s: 6)
+rate 1000 capacity scaled 250 empty over 37
+rate 4000 capacity scaled 1000 empty over 9
+
+## M2. Same model with misses not coalesced: each fill takes loadLatency s and requests for that key meanwhile also read the database (approx. +lambda*L reads per fill)
+loadLatency 0s: empty@0 first-second 1329, over 19s extra 49444 | replica@31 over 31s extra 61782
+loadLatency 0.05s: empty@0 first-second 1371, over 19s extra 49635 | replica@31 over 31s extra 61838
+loadLatency 0.2s: empty@0 first-second 1499, over 19s extra 50208 | replica@31 over 31s extra 62013
+loadLatency 0.5s: empty@0 first-second 1753, over 20s extra 51356 | replica@31 over 31s extra 62462
+
+## S1. Source: src/aof.c flushAppendOnlyFile (8.10.3), everysec postpones write(2) of aof_buf up to 2000 ms while a background fsync runs; src/server.c beforeSleep sends replies (handleClientsWithPendingWrites) whether or not the postponed buffer was written (the ordering comment names only appendfsync=always). So a process crash during a postponement loses acknowledged writes still in Redis's own buffer.
+## S2. Source: src/server.c writeCommandsDeniedByDiskError: stop_writes_on_bgsave_err && saveparamslen > 0 && lastbgsave_status == C_ERR -> MISCONF (RDB); separately, any AOF write error (aof_last_write_status == C_ERR) refuses writes regardless of stop-writes-on-bgsave-error. Confirmed by E3 (save '' -> no MISCONF) and E3b (default save points -> MISCONF).
+## S3. Source: redis.conf 8.10.3 'disable-thp yes' and server.c THPDisable(): prctl(PR_SET_THP_DISABLE) when the kernel THP setting is 'always'.
+
+# Clean-up: all Redis/Sentinel processes on 7159/7185-7186/26185-26187 shut down; scratch data directories deleted; dev server on 4469 stopped.

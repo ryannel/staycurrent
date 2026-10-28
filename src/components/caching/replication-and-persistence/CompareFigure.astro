@@ -1,0 +1,70 @@
+---
+// Figure: what each way of recovering costs the database, against its capacity.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './repl.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="rp-compare" title="What each recovery costs the database" controls="none"
+  caption="The same illustrative model as Figure 1 (2,000 requests a second, copies kept for 10 minutes, normal database load about 73 reads a second). While Redis is unavailable the application sends every request to the database. Coming back with the data assumes the copy is current, as a promoted replica is; a snapshot taken some time before the failure would lack recent fills and hold some deleted values. Seconds above capacity are counted over the 15 minutes after the failure; at these capacities all of them fall in the first three minutes. The model leaves out the database slowing down when overloaded, which in practice makes every second above the line worse.">
+  <Choice slot="params" name="recovery" label="Redis comes back" value="replica" options={[{ value: 'empty', label: 'Empty' }, { value: 'replica', label: 'With its data' }]} />
+  <Slider slot="params" name="outage" label="Redis is unavailable for" value={31} stops={[1, 6, 11, 31, 61, 121]} labels={{ 1: '1 second', 6: '6 seconds', 11: '11 seconds', 31: '31 seconds', 61: 'a minute', 121: '2 minutes' }} />
+  <Slider slot="params" name="capacity" label="The database can take" value={500} stops={[300, 380, 500, 800]} labels={{ 300: '300 reads a second (4× normal)', 380: '380 reads a second (5× normal)', 500: '500 reads a second (7× normal)', 800: '800 reads a second (11× normal)' }} />
+  <Fragment slot="stats">
+    <Readout name="over" label="Seconds above capacity" kind="error" />
+    <Readout name="peak" label="Peak reads a second" kind="database" />
+    <Readout name="base" label="Restart empty at once" />
+  </Fragment>
+  <div data-chart></div>
+  <p slot="after" class="rp-verdict" data-verdict aria-live="polite"></p>
+  <Fragment slot="text">
+    <p>The chart shows database reads a second from 20 seconds before Redis fails to three minutes after. The reference is a process restart that comes back empty at once: its first second sends about 1,330 reads to the database, and the load then falls as the cache refills. How long that stays above the database's capacity depends on the capacity: about 45 seconds at 300 reads a second, 31 at 380, 19 at 500 and 5 at 800.</p>
+    <p>Coming back with the data, by promoting a replica or loading a snapshot, costs nothing once Redis is back, but while it is unavailable every request goes to the database, 2,000 a second, so every second of unavailability is a second above capacity. A 6-second failover has fewer seconds above capacity than an empty restart at every capacity here, or ties with it at 800, though a deeper overload while it lasts: 2,000 reads a second, against the empty restart's peak of about 1,330. A 31-second failover, what I measured with Sentinel's default settings, is worse than an empty restart when the database can take 500 or 800 reads a second, about the same at 380, and better at 300. Coming back empty after a minute, as when a host is lost and a new one has to start, costs between 66 and 106 seconds above capacity.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { bindParams, setReadouts } from '../shared/player.mjs';
+  import { lineChart } from '../shared/chart.mjs';
+  import { trace, cost } from './restart-model.mjs';
+
+  const LABELS: Record<string, string> = { empty: 'empty', replica: 'with its data' };
+  const fmt = (n: number) => Math.round(n).toLocaleString('en-GB');
+  document.querySelectorAll<HTMLElement>('[data-figure-id="rp-compare"]').forEach(root => {
+    const chart = lineChart(root.querySelector<HTMLElement>('[data-chart]')!, {
+      label: 'Database reads a second before and after Redis fails, for the chosen recovery and for an empty restart at once, against the database capacity', height: 240,
+      x: { label: 'Seconds after Redis fails', domain: [-20, 180] },
+      y: { label: 'Reads a second', domain: [0, 2100] },
+      series: [
+        { id: 'base', label: 'Restart empty, at once', kind: 'neutral', dash: '2 3' },
+        { id: 'chosen', label: 'Chosen recovery', kind: 'database', dash: '' },
+        { id: 'cap', label: 'Database capacity (assumed)', kind: 'error', dash: '6 4' },
+      ],
+    });
+    const verdict = root.querySelector<HTMLElement>('[data-verdict]')!;
+    const traces = new Map<string, any>();
+    const get = (recovery: string, outage: number) => {
+      const key = `${recovery}:${outage}`;
+      if (!traces.has(key)) traces.set(key, trace(recovery, outage));
+      return traces.get(key);
+    };
+    const base = get('empty', 0);
+    chart.set('base', base.points);
+    bindParams(root, params => {
+      const t = get(params.recovery, params.outage);
+      const c = cost(t, params.capacity), b = cost(base, params.capacity);
+      chart.set('chosen', t.points);
+      chart.set('cap', [[-20, params.capacity], [180, params.capacity]]);
+      chart.band('down', 0, params.outage, 'Redis unavailable', 'error');
+      chart.render();
+      setReadouts(root, { over: `${c.over} s`, peak: fmt(c.peak), base: `${b.over} s above, peak ${fmt(b.peak)}` });
+      const diff = c.over - b.over;
+      const word = Math.abs(diff) <= 1 ? 'about the same as' : diff > 0 ? 'longer than' : 'shorter than';
+      verdict.dataset.cacheKind = Math.abs(diff) <= 1 ? 'neutral' : diff > 0 ? 'error' : 'hit';
+      const times = (params.capacity / t.normal).toFixed(0);
+      verdict.innerHTML = `<strong>In this model, the time above capacity is ${word} with restarting empty at once.</strong> With a database that can take ${fmt(params.capacity)} reads a second (about ${times} times its normal load), coming back ${LABELS[params.recovery]} after ${params.outage} s keeps it above capacity for ${c.over} s; an empty restart at once keeps it there for ${b.over} s.`;
+    });
+  });
+</script>

@@ -1,0 +1,70 @@
+---
+// Figure: asynchronous replication, lag and stale reads from a replica.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Readout from '../shared/Readout.astro';
+import './repl.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="rp-lag" title="Asynchronous replication" legend={['write', { kind: 'client', label: 'Read' }, 'hit', 'stale']} advance={1000}
+  caption="Illustrative model: a writer changes product:42 about twice a second; readers read it from the replica eight times a second; each change is 60 bytes of stream. Dots are slowed for watching, but the delay is real model time. On one machine I measured far less: 2 of 5,000 reads sent to the replica straight after a write were stale.">
+  <Slider slot="params" name="delay" label="The replica applies each change after" value={250} stops={[1, 50, 250, 1000, 3000]} labels={{ 1: '1 ms', 50: '50 ms', 250: '250 ms', 1000: '1 second', 3000: '3 seconds' }} />
+  <Fragment slot="stats">
+    <Readout name="primary" label="Primary offset" kind="redis" />
+    <Readout name="replica" label="Replica offset" kind="redis" />
+    <Readout name="lag" label="Behind by" kind="write" />
+    <Readout name="stale" label="Stale reads, last 100" kind="stale" />
+  </Fragment>
+  <Fragment slot="text">
+    <p>The writer sends each change to the primary, which applies it and acknowledges it at once, then sends it down the replication stream. The replica applies it after the chosen delay. Both servers count the bytes of stream they have processed: their offsets. The difference is how far the replica is behind.</p>
+    <p>A read from the replica is stale if a change has been acknowledged by the primary but not yet applied by the replica. With changes twice a second, that happens to about 0.2% of reads at 1 ms, 10% at 50 ms, 39% at 250 ms, 86% at 1 second and nearly all at 3 seconds: the share is 1 − e^(−2 × delay in seconds).</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { createScene, spread } from '../shared/scene.mjs';
+  import { create } from './lag-model.mjs';
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="rp-lag"]').forEach(root => {
+    const scene = createScene(root.querySelector<HTMLElement>('[data-scene]')!, {
+      label: 'A writer writes to the primary, the primary streams changes to a replica, readers read from the replica',
+      nodes: [
+        { id: 'writer', kind: 'client', label: 'Writer' },
+        { id: 'primary', kind: 'redis', label: 'Primary' },
+        { id: 'replica', kind: 'redis', label: 'Replica' },
+        { id: 'readers', kind: 'client', label: 'Readers', count: 3 },
+      ],
+      edges: [
+        { id: 'writer-primary', from: 'writer', to: 'primary' },
+        { id: 'primary-replica', from: 'primary', to: 'replica', label: 'stream' },
+        { id: 'reader-replica', from: 'readers', to: 'replica' },
+      ],
+      layout: (width, compact) => {
+        if (compact) {
+          const [a, b] = spread(width, 2, 70);
+          return { height: 290, positions: { writer: [a, 70], primary: [b, 70], replica: [b, 225], readers: [a, 225] } };
+        }
+        const xs = spread(width, 4, 80);
+        return { height: 180, positions: { writer: [xs[0], 90], primary: [xs[1], 90], replica: [xs[2], 90], readers: [xs[3], 90] } };
+      },
+    });
+    mountSim(root, {
+      seed: 5,
+      create: params => create({ delay: params.delay }, 5),
+      update: (model: any, params) => { model.params.delay = params.delay; return true; },
+      render(model: any) {
+        scene.dots(model.movers.active());
+        scene.node('primary').set({ badge: `version ${model.primary}`, badgeKind: 'redis' });
+        scene.node('replica').set({ badge: `version ${model.replica}`, badgeKind: model.replica < model.primary ? 'stale' : 'redis' });
+        const lag = model.primaryOffset - model.replicaOffset;
+        setReadouts(root, {
+          primary: model.primaryOffset.toLocaleString('en-GB'),
+          replica: model.replicaOffset.toLocaleString('en-GB'),
+          lag: `${lag.toLocaleString('en-GB')} bytes`,
+          stale: model.recent.count ? `${Math.round(100 * model.recent.value)}%` : '–',
+        });
+      },
+    });
+  });
+</script>
