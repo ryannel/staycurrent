@@ -78,7 +78,10 @@ may need to bypass the cached value.
 
 Each figure declares any extra workload numbers it needs. Keep rates, latencies,
 byte counts and capacity limits labelled as invented unless a recorded native
-experiment supplies them. Introduce a second application instance as `App B` when
-placement, concurrent fills or local copies require it; the initial instance is
-`App A`.
+experiment supplies them. Label the requesting browser `App` and the backend process `Server`. When
+placement requires two backend processes, use `Server A` and `Server B`. The
+introductory placement comparison adds a load balancer: it routes the first
+request to A and the next to B, with each reply returning to the app. Both request
+the same unchanged product. This routing order is an illustrative scenario,
+not a promise about every load-balancing policy.
 

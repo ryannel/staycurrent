@@ -133,3 +133,34 @@ Coordinator checked desktop and 375px phone layouts in both themes, the final
 copy counts, and keyboard replay/pause/resume. No overlapping labels or crossed
 routes. Restored System theme and the default viewport. Screenshots use
 `placement-app-*`. The collection remains behind its draft preview gate.
+
+## Evolving the first flow: load balancer and source
+
+The next reader correction asks for a visible reason that requests reach different
+servers, a vertical comparison, and continuity with Figure 1. Figure 2 now stacks
+local and shared arrangements at both sizes. Each keeps the same App, load
+balancer, A/B servers and database positions; only cache placement changes.
+The first request goes to A, the next to B, and replies return via the balancer.
+This is an explicit illustrative routing order, not a universal routing policy.
+
+Restored source reads so the local miss has visible work rather than an offstage
+fill. Database internals collapse to a small labelled symbol: the join was
+already taught in Figure 1. Quiet outer routes avoid the cache; they gain colour
+only during reads. The shared second request leaves the database idle. Final
+outcomes remain two copies/two reads versus one copy/one read. No concurrent
+requests or intervening source changes are introduced. Updated the surrounding
+paragraph and the example record to distinguish the App from backend processes.
+
+Primary source for the new routing explanation: AWS, [What is an Application
+Load Balancer?](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html),
+checked 28 October 2026: a single client contact distributing requests to targets.
+The existing sequence reference's distinction between topology and message order
+informed the explicit request, miss, source, fill and return choreography.
+
+Validation: draft build and site checks pass with the existing 36 unrelated
+dense-prose warnings. Sampled 381 responsive frame pairs for finite geometry,
+four visible load-balancer labels across both layouts, and final one/two-read
+outcomes. Browser checks cover desktop and 375px phone, both themes, and keyboard
+replay/pause/resume. Adjusted the lower desktop cache label and phone outcome
+spacing after inspecting the rendered figures. Retained the existing player's
+reduced-motion final still and offscreen pause behaviour. Draft gate unchanged.
