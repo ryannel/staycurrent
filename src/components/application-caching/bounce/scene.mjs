@@ -4,8 +4,6 @@ const ease=p=>p*p*(3-2*p);
 const paper='var(--color-surface)';
 export const starts=[.6,10.4,11.9,13.4,14.9,16.4,17.9,19.4,20.9];
 export const duration=25500;
-// Redis mark from Simple Icons (CC0).
-const redisMark='M22.71 13.145c-1.66 2.092-3.452 4.483-7.038 4.483-3.203 0-4.397-2.825-4.48-5.12.701 1.484 2.073 2.685 4.214 2.63 4.117-.133 6.94-3.852 6.94-7.239 0-4.05-3.022-6.972-8.268-6.972-3.752 0-8.4 1.428-11.455 3.685C2.59 6.937 3.885 9.958 4.35 9.626c2.648-1.904 4.748-3.13 6.784-3.744C8.12 9.244.886 17.05 0 18.425c.1 1.261 1.66 4.648 2.424 4.648.232 0 .431-.133.664-.365a100.49 100.49 0 0 0 5.54-6.765c.222 3.104 1.748 6.898 6.014 6.898 3.819 0 7.604-2.756 9.33-8.965.2-.764-.73-1.361-1.261-.73zm-4.349-5.013c0 1.959-1.926 2.922-3.685 2.922-.941 0-1.664-.247-2.235-.568 1.051-1.592 2.092-3.225 3.21-4.973 1.972.334 2.71 1.43 2.71 2.619z';
 const colours=['--coral','--blue','--teal','--gold','--purple'];
 const text=(x,y,value,size=22,colour='--color-text')=>`<text x="${x}" y="${y}" text-anchor="middle" style="font:400 ${size}px var(--font-sans);fill:var(${colour});paint-order:stroke;stroke:var(--color-surface);stroke-width:5px;stroke-linejoin:round">${value}</text>`;
 const stroke=(d,colour='--color-rule-strong',width=1.6,extra='')=>`<path d="${d}" fill="none" stroke="var(${colour})" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" ${extra}/>`;
@@ -50,13 +48,12 @@ function picture(seconds,compact){
   s+=`<rect x="${B[0]-29}" y="${B[1]-23}" width="58" height="46" rx="7" fill="${paper}" stroke="var(--color-text-secondary)" stroke-width="1.6"/>`;
   s+=stroke(`M${B[0]-29} ${B[1]-10}H${B[0]+29}`,'--color-text-secondary',1);
   s+=`<circle cx="${B[0]-19}" cy="${B[1]-16}" r="1.8" fill="var(--color-text-secondary)"/><circle cx="${B[0]-12}" cy="${B[1]-16}" r="1.8" fill="var(--color-text-secondary)"/>`;
-  s+=text(B[0],B[1]+55,'North',22);
+  s+=text(B[0],B[1]+55,'App',22);
   s+=`<circle cx="${S[0]}" cy="${S[1]}" r="29" fill="${paper}" stroke="var(--color-text-secondary)" stroke-width="1.6"/>`;
   for(let i=0;i<2;i++)s+=`<rect x="${S[0]-14}" y="${S[1]-13+i*15}" width="28" height="11" rx="3" fill="none" stroke="var(--color-text-secondary)"/><circle cx="${S[0]+8}" cy="${S[1]-7.5+i*15}" r="1.4" fill="var(--color-text-secondary)"/>`;
   s+=text(S[0],S[1]+55,'Server',22);
   // The saved join result is a pair; it stays here when later balls pick up a copy.
-  s+=`<g transform="translate(${C[0]-55} ${C[1]-80}) scale(.85)" fill="var(--color-text)"><path d="${redisMark}"/></g>`;
-  s+=text(C[0]+8,C[1]-61,'Redis',24);
+  s+=text(C[0],C[1]-61,'Cache',24);
   s+=`<circle cx="${C[0]}" cy="${C[1]}" r="40" fill="color-mix(in srgb,var(--teal) ${saved?12:4}%,${paper})" stroke="var(${saved?'--teal':'--color-rule-strong'})" stroke-width="1.8"/>`;
   s+=saved?result(...C,1.8):`<circle cx="${C[0]}" cy="${C[1]}" r="10" fill="none" stroke="var(--color-text-secondary)" stroke-dasharray="2 4"/>`;
   s+=text(C[0],C[1]+66,saved?'ready':'empty',18,'--color-text-secondary');
@@ -100,6 +97,6 @@ function picture(seconds,compact){
   return s+'</svg>';
 }
 export const scene={title:'An answer, ready',duration,
- alt:'Nine coloured request balls ask for the same product. The first reaches the server, misses Redis and waits while the database joins matching P7 rows from Products and Prices. The server saves the joined result in Redis and replies. Eight later requests return through Redis while both database tables remain still.',
+ alt:'Nine coloured request balls ask for the same product. The first reaches the server, misses the cache and waits while the database joins matching P7 rows from Products and Prices. The server saves the joined result in the cache and replies. Eight later requests return through the cache while both database tables remain still.',
  render:t=>picture(clamp(t)*duration/1000,false)+picture(clamp(t)*duration/1000,true)
 };
