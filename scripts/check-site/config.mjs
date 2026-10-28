@@ -22,8 +22,8 @@ export default {
     'raw-colour': 'error',
     'viewport-width': 'error',
     'css-balanced': 'error',
-    // Limits calibrated on the reference articles; see the rule's header.
-    'dense-prose': ['warn', { sentence: 50, paragraph: 38 }],
+    // Limits measured on human-written explainers; see the rule's header.
+    'dense-prose': ['warn', { sentence: 45, paragraph: 33, paragraphWords: 90 }],
   },
   // Pages a rule deliberately doesn't apply to, with the reason.
   exceptions: {

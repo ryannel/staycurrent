@@ -131,6 +131,8 @@ test('dense-prose: caveat-stacked sentences, not plain ones or code', () => {
   const found = run('dense-prose', article({ body: dense }));
   assert.ok(found.some((i) => i.message.startsWith('sentence') && i.message.includes('For a product cache')));
   assert.ok(found.some((i) => i.message.startsWith('paragraph')));
+  const long = `<p>${'A gear turns the next one along the shaft. '.repeat(10)}</p>`;
+  assert.ok(run('dense-prose', article({ body: long })).some((i) => i.message.startsWith('paragraph of 90 words')));
   // Figures and sources are not running prose.
   assert.deepEqual(run('dense-prose', article({ body: `<figure>${dense}</figure><section class="essay-sources">${dense}</section>` })), []);
 });
