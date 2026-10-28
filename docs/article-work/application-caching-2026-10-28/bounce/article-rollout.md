@@ -238,3 +238,20 @@ the cache, rather than every key landing on the middle dot. A player harness
 using the actual model also confirms replay reset and the reduced-motion static
 summary. Screenshots use `keys-*`. Restored System theme/default viewport and
 left the preview at the first diagram. Publication gate is unchanged.
+
+## First figure reduced to one request
+
+At the reader's request, Figure 1 now runs one P7 request through the miss,
+database join, fill and reply, then stops at ten seconds. Only P7 appears in its
+cache and table labels; the three-product legend and later requests are removed.
+Figure 2 still owns the mixed-key workload and local/shared miss comparison.
+Moved the introduction of P8/P9 and colour identity into its lead-in. Updated
+the first caption, text alternative, hit/miss explanation, concurrency transition
+and example record. The existing focused test now asserts one request, a reply
+before playback ends, one miss, and no P8/P9 labels in Figure 1's final frame.
+
+Confirmed the browser reaches progress 1 and removes Pause, leaving the saved
+P7 and optional Replay. Desktop and phone checked in both themes; screenshots
+use `single-request-*`. All five focused tests and the draft build pass. The
+article's dense-prose check is clear; the 36 unrelated warnings remain. Restored
+System theme and default viewport. No publication-state change.

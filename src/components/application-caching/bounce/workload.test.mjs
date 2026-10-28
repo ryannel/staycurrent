@@ -35,14 +35,12 @@ test('a shared lookup before its fill still misses; requests are not silently co
   assert(state.panels[1].caches[0].has(1));
 });
 
-test('first diagram only hits keys whose first fill has finished', () => {
-  const filledAt = new Map();
-  for (const request of readRequests) {
-    if (request.miss) filledAt.set(request.key, request.at + 7.2 / request.speed);
-    else assert(filledAt.get(request.key) < request.at + 1.65 / request.speed);
-  }
-  assert.equal(readRequests.filter(r => r.miss).length, 3);
-  for (let i = 0; i <= 375; i++) assert.doesNotMatch(scene.render(i / 375), /NaN|Infinity/);
-  assert.match(scene.render(1), /3 cache misses/);
+test('first diagram ends after one P7 miss, fill and reply', () => {
+  assert.deepEqual(readRequests, [{ at: .6, key: 0, miss: true, speed: 1 }]);
+  assert.equal(scene.duration, 10000);
+  assert(readRequests[0].at + 8.8 < scene.duration / 1000);
+  for (let i = 0; i <= 100; i++) assert.doesNotMatch(scene.render(i / 100), /NaN|Infinity/);
+  assert.match(scene.render(1), /1 cache miss/);
+  assert.doesNotMatch(scene.render(1), /P8|P9/);
   assert.deepEqual(finalWorkload().panels.map(p => p.misses.reduce((a,b) => a+b)), [6,3]);
 });

@@ -85,9 +85,10 @@ request to A and the next to B, with each reply returning to the app. Both reque
 the same unchanged product. This routing order is an illustrative scenario,
 not a promise about every load-balancing policy.
 
-Figures 1–2 also request north's products P8 and P9; no extra prices or product
-attributes are needed there. P7 is coral, P8 purple, and P9 teal, with the key
-printed on each request. Figure 1 makes nine requests with three cold misses.
+Figure 1 follows one P7 request through a miss, source read, fill and reply,
+then stops. Figure 2 introduces north's products P8 and P9; no extra prices or
+product attributes are needed there. P7 is coral, P8 purple, and P9 teal, with
+the key printed on each request.
 Figure 2 sends the same key-and-server trace through local and shared arrangements.
 Each completed fill precedes that key's next request. Each local process learns
 all three keys (six total misses); the shared cache learns them once (three).

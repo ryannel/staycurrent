@@ -4,8 +4,8 @@ const clamp=x=>Math.max(0,Math.min(1,x));
 const phase=(t,a,b)=>clamp((t-a)/(b-a));
 const ease=p=>p*p*(3-2*p);
 const paper='var(--color-surface)';
-export const starts=[.6,10.4,11.9,13.4,14.9,16.4,17.9,19.4,20.9];
-export const duration=37500;
+export const starts=[.6];
+export const duration=10000;
 const colours=['--coral','--blue','--teal','--gold','--purple'];
 const text=(x,y,value,size=22,colour='--color-text')=>`<text x="${x}" y="${y}" text-anchor="middle" style="font:400 ${size}px var(--font-sans);fill:var(${colour});paint-order:stroke;stroke:var(--color-surface);stroke-width:5px;stroke-linejoin:round">${value}</text>`;
 const stroke=(d,colour='--color-rule-strong',width=1.6,extra='')=>`<path d="${d}" fill="none" stroke="var(${colour})" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" ${extra}/>`;
@@ -13,10 +13,10 @@ const qpath=(a,c,b)=>`M${a}Q${c} ${b}`;
 const at=(a,c,b,p)=>[(1-p)**2*a[0]+2*(1-p)*p*c[0]+p*p*b[0],(1-p)**2*a[1]+2*(1-p)*p*c[1]+p*p*b[1]];
 function result(x,y,scale=1){return `<g transform="translate(${x} ${y}) scale(${scale})"><circle cx="-4" cy="0" r="5" fill="var(--blue)"/><circle cx="4" cy="0" r="5" fill="var(--gold)"/>${stroke('M-2-4Q0-6 2-4M-2 4Q0 6 2 4','--color-text',1)}</g>`;}
 const keyLabel=(x,y,key)=>`<text x="${x}" y="${y+3.5}" text-anchor="middle" style="font:600 12px var(--font-sans);fill:var(--color-text);paint-order:stroke;stroke:var(--color-surface);stroke-width:2px">${key}</text>`;
-export function keyCache(x,y,keys,r=40){
+export function keyCache(x,y,keys,r=40,shownProducts=products){
   let s=`<circle cx="${x}" cy="${y}" r="${r}" fill="${paper}" stroke="var(${keys.size?'--teal':'--color-text-secondary'})" stroke-width="1.8"/>`;
-  products.forEach((product,i)=>{
-    const xx=x+(i-1)*24,filled=keys.has(i);
+  shownProducts.forEach((product,i)=>{
+    const xx=x+(i-(shownProducts.length-1)/2)*24,filled=keys.has(i);
     s+=`<circle cx="${xx}" cy="${y}" r="11" fill="${filled?'var('+product.colour+')':paper}" stroke="var(${filled?product.colour:'--color-text-secondary'})" ${filled?'':'stroke-dasharray="2 3"'}/>`+keyLabel(xx,y,product.key);
   });
   return s;
@@ -38,7 +38,7 @@ function table(x,y,title,colour,active,key='P7'){
   products.forEach((product,i)=>{
     const yy=y+6+i*21,selected=active&&product.key===key;
     if(selected)s+=`<rect x="${x-41}" y="${yy-6}" width="82" height="20" rx="4" fill="var(${colour})" opacity=".28"/>`;
-    s+=text(x-18,yy+9,product.key,15);
+    s+=i===0?text(x-18,yy+9,key,15):stroke(`M${x-31} ${yy+3}H${x-9}`,'--color-text-secondary',2,'opacity=".4"');
     s+=stroke(`M${x+9} ${yy+3}H${x+29}`,selected?colour:'--color-text-secondary',3,`opacity="${selected?1:.35}"`);
   });
   return s;
@@ -56,10 +56,7 @@ function picture(seconds,compact){
   const currentKey=products[cold?.key??0].key;
   P[1]+=21*(cold?.key??0); R[1]+=21*(cold?.key??0);
   let s=`<svg class="${compact?'bounce-portrait':'bounce-landscape'}" viewBox="0 0 ${W} ${H}" aria-hidden="true">`;
-  products.forEach((product,i)=>{
-    const x=W/2+(i-1)*85;
-    s+=`<circle cx="${x-22}" cy="21" r="7" fill="var(${product.colour})"/>`+text(x+5,27,product.key,18);
-  });
+
   // Quiet permanent geography. Colour belongs to the moving requests and matching data.
   s+=stroke(qpath(B,bc,S));
   s+=stroke(qpath(S,sc,C),saved?'--teal':'--color-rule-strong',saved?2:1.6);
@@ -74,7 +71,7 @@ function picture(seconds,compact){
   s+=text(S[0],S[1]+55,'Server',22);
   // The saved join result is a pair; it stays here when later balls pick up a copy.
   s+=text(C[0],C[1]-61,'Cache',24);
-  s+=keyCache(...C,filled);
+  s+=keyCache(...C,filled,40,[products[0]]);
   s+=text(C[0],C[1]+66,`${misses} cache ${misses===1?'miss':'misses'}`,18,'--color-text-secondary');
   // An opened database: the two matching rows feed one joined answer.
   s+=`<rect x="${J[0]-121}" y="${TY-44}" width="242" height="${J[1]-TY+66}" rx="20" fill="${paper}" stroke="var(--color-rule-strong)"/>`;
@@ -94,7 +91,7 @@ function picture(seconds,compact){
   if(age>=5.15&&age<5.5)s+=result(...J,.9);
   for(const request of readRequests){
     const a=(seconds-request.at)*request.speed,product=products[request.key],c=product.colour,k=product.key;
-    const saved=[C[0]+(request.key-1)*24,C[1]];
+    const saved=C;
     const move=(start,end,from,control,to,answered=false)=>moving(a,start,end,from,control,to,c,answered,k);
     s+=move(0,.8,B,bc,S)+move(.8,1.65,S,sc,saved);
     if(request.miss){
@@ -112,7 +109,7 @@ function picture(seconds,compact){
 }
 export { clamp, phase, ease, paper, colours, text, stroke, qpath, at, result, ball, moving, pulse };
 export const scene={title:'An answer, ready',duration,
- alt:'P7, P8 and P9 have distinct, labelled colours. Each product’s first request misses, reads matching rows from Products and Prices, and saves its own answer. Repeated requests for that same product hit. The cache gains three separate entries and counts three misses across nine requests.',
- caption:'Figure 1. In Figures 1–2, each labelled colour identifies a product. P7’s saved answer cannot answer P8. Filled dots are saved entries. Each new key misses once; later requests for that key reuse its entry. Nine requests, three cache misses. Motion and timing are illustrative.',
+ alt:'One request for P7 reaches the server and misses the empty cache. The database joins matching P7 rows from Products and Prices. The server saves the answer in the cache and replies to the app. The animation then stops with P7 cached.',
+ caption:'Figure 1. One request misses, reads the database, saves P7’s answer and returns it to the app. The copy stays in the cache, ready for reuse. Motion and timing are illustrative.',
  render:t=>picture(clamp(t)*duration/1000,false)+picture(clamp(t)*duration/1000,true)
 };

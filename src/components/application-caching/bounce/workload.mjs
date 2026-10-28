@@ -5,17 +5,7 @@ export const products = [
   { key: 'P9', colour: '--teal' },
 ];
 
-export const readRequests = [
-  { at: .6, key: 0, miss: true, speed: 1 },
-  { at: 10, key: 0, miss: false, speed: 1 },
-  { at: 13, key: 1, miss: true, speed: 1.8 },
-  { at: 19, key: 1, miss: false, speed: 1 },
-  { at: 22, key: 2, miss: true, speed: 1.8 },
-  { at: 28, key: 2, miss: false, speed: 1 },
-  { at: 30, key: 0, miss: false, speed: 1 },
-  { at: 31.5, key: 1, miss: false, speed: 1 },
-  { at: 33, key: 2, miss: false, speed: 1 },
-];
+export const readRequests = [{ at: .6, key: 0, miss: true, speed: 1 }];
 
 const panel = () => ({ caches: [new Set(), new Set()], misses: [0, 0], lookups: 0, reads: 0 });
 export function createWorkload() {
