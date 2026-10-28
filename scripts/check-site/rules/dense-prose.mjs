@@ -72,7 +72,7 @@ export default {
   check(page, site, { sentence = 45, paragraph = 33, paragraphWords = 90 } = {}) {
     const issues = [];
     for (const p of page.article.querySelectorAll('p')) {
-      if (insideFigure(p) || p.closest('aside, figcaption, .essay-sources')) continue;
+      if (insideFigure(p) || p.closest('aside, figcaption, .essay-sources, [role="img"]')) continue;
       const codes = [];
       const asWritten = (s) => s.replace(CODE, (_, i) => codes[i]);
       const loads = sentences(decode(prose(p, codes)).replace(/\s+/g, ' ').trim()).map((s) => ({ s, ...load(s) }));
