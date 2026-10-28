@@ -1,0 +1,160 @@
+---
+// Figure: the whole design under failure, with the decisions that protect it as switches.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import ActionButton from '../shared/ActionButton.astro';
+import './designing.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="dc-playground" title="The design under failure" advance={5000} legend={['client', 'hit', 'miss', 'error']}
+  caption="Illustrative model of the shop at 1/100 of its catalogue: 20,000 products with skewed popularity (exponent 0.9) and 1,000 product reads and 20 checkouts a second at peak. Redis is an LRU cache of 14,000 products, warmed by earlier traffic, answering about 92% of reads; nothing expires while the figure runs. A cache refills in proportion to the keys it must fill, so this one refills in seconds where the shop's 2,000,000 products take an hour or more: read the times as the model's, and the article gives the shop's. The database does 300 units of work a second in arrival order: a product query is one unit, a checkout three. It finishes every query it accepts, even after the request has given up. A request waits 1 second at most, and a late product answer is not cached. A failover takes 6 seconds and keeps the data; a single server is back after 10 seconds, empty. The limit refuses a query at once when the database holds 60 units of work; with checkout first, product queries are refused at 45. A page reads one key, not two. One request in 60 is drawn as a moving dot, on wider screens. Left out: retries, writes to products, the trending panel and its lock, any limit on Redis itself.">
+  <Slider slot="params" name="traffic" label="Traffic" value={1} stops={[0.5, 1, 1.5, 2]} labels={{ 0.5: 'half of peak', 1: 'peak', 1.5: '1.5 × peak', 2: '2 × peak' }} />
+  <Choice slot="params" name="topology" label="Redis" value="replica"
+    options={[{ value: 'replica', label: 'primary, replica, Sentinel' }, { value: 'single', label: 'one server' }]} />
+  <Choice slot="params" name="limit" label="Database limit" value="checkout"
+    options={[{ value: 'none', label: 'none' }, { value: 'shared', label: 'one limit for all' }, { value: 'checkout', label: 'checkout first' }]} />
+  <Choice slot="params" name="rollout" label="After a new key version, a miss reads" value="all"
+    options={[{ value: 'all', label: 'the database' }, { value: 'convert', label: 'the old key first' }]} />
+  <div slot="params" class="dc-incidents" role="group" aria-label="Incidents">
+    <span class="cache-param-label">Incidents</span>
+    <ActionButton name="fail">Lose the primary</ActionButton>
+    <ActionButton name="deploy">Deploy a new key version</ActionButton>
+    <ActionButton advance={30000}>Skip ahead 30 s</ActionButton>
+  </div>
+  <Fragment slot="stats">
+    <Readout name="hit" label="Product reads that hit, last 5 s" kind="hit" />
+    <Readout name="pages" label="Product pages failed, last 5 s" kind="error" />
+    <Readout name="checkouts" label="Checkouts failed, last 5 s" kind="error" />
+    <Readout name="wait" label="Wait for the database" kind="database" />
+  </Fragment>
+  <div slot="after" class="dc-charts">
+    <p class="dc-chart-title">Work the database is asked for, each second</p>
+    <div data-chart="demand"></div>
+    <p class="dc-chart-title">Requests that failed, each second</p>
+    <div data-chart="failed"></div>
+  </div>
+  <Fragment slot="text">
+    <p>Shoppers send requests to the application, which reads Redis and, on a miss, the database; checkouts always go to the database. Two charts show the work the database is asked for each second against its capacity of 300, and the share of product pages and of checkouts that fail each second; a dashed mark shows each change of switch. Results from the model at 1/100 of the shop's catalogue, with an incident 30 seconds in, at peak traffic:</p>
+    <ul>
+      <li>The design (replica, checkout first), primary lost: product pages fail for the 6 seconds of the failover, about 15% over the half minute; no checkout fails; everything is back about 7 seconds after the failure.</li>
+      <li>No limit, primary lost: the 6 seconds leave a backlog, so pages keep failing until 34 seconds after the failure and about 98% of checkouts fail over the half minute.</li>
+      <li>One server with checkout first: 10 seconds down, then an empty cache: pages fail for about 35 seconds in all; no checkout fails.</li>
+      <li>One server with one limit for all: about 81% of checkouts fail while the cache refills.</li>
+      <li>One server and no limit: the database is never answered in time, nothing is cached, and the shop never recovers. Turning the limit on after a minute stuck, it recovers about three minutes later, once the database has finished the queries it already accepted.</li>
+      <li>A new key version, misses reading the database: like the empty restart without the 10 seconds of downtime, pages refused for about 30 seconds; without a limit it never recovers. Misses reading the old key first: nothing fails, with or without the limit.</li>
+    </ul>
+    <p>At the shop's full size, from a separate model: an empty restart refuses product pages for about 2.3 hours and a new key version read straight from the database for about an hour; a failover costs the same 6 seconds as here.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { createScene, spread } from '../shared/scene.mjs';
+  import { lineChart } from '../shared/chart.mjs';
+  import { create, PLAY } from './playground-model.mjs';
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="dc-playground"]').forEach(root => {
+    const scene = createScene(root.querySelector<HTMLElement>('[data-scene]')!, {
+      label: 'Shoppers send requests to the application, which reads Redis and, on a miss, the database; checkouts go to the database',
+      nodes: [
+        { id: 'shoppers', kind: 'client', label: 'Shoppers', count: 3 },
+        { id: 'app', kind: 'app', label: 'Application' },
+        { id: 'redis', kind: 'redis', label: 'Redis' },
+        { id: 'database', kind: 'database', label: 'Database' },
+      ],
+      edges: [
+        { id: 'shoppers-app', from: 'shoppers', to: 'app' },
+        { id: 'app-redis', from: 'app', to: 'redis' },
+        { id: 'app-database', from: 'app', to: 'database' },
+      ],
+      layout: (width, compact) => {
+        const [a, b, c] = compact ? [44, (width - 40) / 2, width - 84] : spread(width, 3, 110);
+        return { height: compact ? 230 : 200, positions: { shoppers: [a, compact ? 115 : 100], app: [b, compact ? 115 : 100], redis: [c, compact ? 50 : 45], database: [c, compact ? 172 : 152] } };
+      },
+    });
+    const demand = lineChart(root.querySelector<HTMLElement>('[data-chart="demand"]')!, {
+      label: 'Work the database is asked for each second, against its capacity',
+      height: 180,
+      x: { label: 'Simulated time (s)', window: 150 },
+      y: { label: 'Units of work a second', domain: [0, 'auto'] },
+      series: [{ id: 'demand', label: 'Asked for', kind: 'database' }],
+      rules: [{ y: PLAY.dbRate, label: 'Capacity', kind: 'error' }],
+    });
+    const failed = lineChart(root.querySelector<HTMLElement>('[data-chart="failed"]')!, {
+      label: 'Share of product pages and of checkouts that failed each second',
+      height: 170,
+      x: { label: 'Simulated time (s)', window: 150 },
+      y: { label: 'Failed (%)', domain: [0, 100] },
+      series: [{ id: 'pages', label: 'Product pages (solid)', kind: 'error' }, { id: 'checkouts', label: 'Checkouts (dashed)', kind: 'error' }],
+    });
+    let shown: any = null, drawn = 0, marks = 0;
+    const pct = (v: number) => `${Math.round(v * 100)}%`;
+    const last = (model: any, field: string) => {
+      const list = model.samples.slice(-5);
+      return list.length ? list.reduce((a: number, s: any) => a + s[field], 0) / list.length : 0;
+    };
+    const seconds = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+    const charts = [demand, failed];
+    const SWITCH_TEXT: Record<string, (v: any) => string> = {
+      traffic: v => `traffic ${v}×`,
+      topology: v => (v === 'replica' ? 'replica' : 'one server'),
+      limit: v => (v === 'none' ? 'no limit' : v === 'shared' ? 'one limit' : 'checkout first'),
+      rollout: v => (v === 'all' ? 'misses read database' : 'misses read old key'),
+    };
+    mountSim(root, {
+      seed: 1,
+      timeScale: 3,
+      create: (params, seed) => create({ ...params, traffic: Number(params.traffic), sample: 60 }, seed),
+      update(model: any, params) {
+        const next = { traffic: Number(params.traffic), topology: params.topology, limit: params.limit, rollout: params.rollout };
+        const changed = (Object.keys(next) as (keyof typeof next)[]).find(k => model.params[k] !== next[k]);
+        if (changed && model.sim.now > 0) model.events.push({ t: model.sim.now, kind: 'switch', label: SWITCH_TEXT[changed](next[changed]) });
+        Object.assign(model.params, next);
+        return true;
+      },
+      actions: {
+        fail: (model: any) => model.failPrimary(),
+        deploy: (model: any) => model.deploy(),
+      },
+      render(model: any) {
+        if (model !== shown) {
+          shown = model; drawn = 0; marks = 0;
+          charts.forEach(c => c.clear());
+          for (const c of charts) { for (let i = 0; i < 20; i++) { c.band(`down${i}`, null); c.mark(`event${i}`, null); } }
+        }
+        for (; drawn < model.samples.length; drawn++) {
+          const s = model.samples[drawn];
+          demand.push('demand', s.t, s.demand);
+          failed.push('pages', s.t, s.readFail * 100);
+          failed.push('checkouts', s.t, s.checkoutFail * 100);
+        }
+        for (; marks < model.events.length; marks++) {
+          const e = model.events[marks];
+          const i = marks % 20;
+          for (const c of charts) {
+            if (e.kind === 'fail') c.band(`down${i}`, e.t / 1000, e.until / 1000, 'Redis unavailable', 'error');
+            else if (e.kind === 'switch') c.mark(`event${i}`, e.t / 1000, e.label, 'neutral');
+            else c.mark(`event${i}`, e.t / 1000, 'New key version', 'write');
+          }
+        }
+        demand.render(); failed.render();
+        // On a phone the scene is too narrow for moving dots not to cover its labels; the charts carry the result.
+        scene.dots(root.clientWidth < 480 ? [] : model.movers.active());
+        const p = model.params;
+        const up = model.redis === 'up';
+        scene.node('redis').set({ label: p.topology === 'replica' ? 'Redis + replica' : 'Redis', sublabel: model.redisNote, highlight: !up });
+        const work = model.db.work();
+        scene.node('database').set({ meter: Math.min(1, work / PLAY.maxWork), meterKind: work > PLAY.maxWork ? 'error' : 'database', sublabel: `${seconds(model.db.wait())} queued` });
+        scene.node('app').set({ sublabel: p.limit === 'none' ? 'no limit' : p.limit === 'shared' ? 'one limit' : 'checkout first' });
+        setReadouts(root, {
+          hit: pct(last(model, 'hit')),
+          pages: pct(last(model, 'readFail')),
+          checkouts: pct(last(model, 'checkoutFail')),
+          wait: seconds(model.db.wait()),
+        });
+      },
+    });
+  });
+</script>

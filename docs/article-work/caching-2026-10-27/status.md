@@ -52,7 +52,7 @@ Redis: 7100 + article number for writers, 7150 + article number for reviewers.
 | 8 | clients-and-pipelining | D | done | final: fixed | 410cc517 |
 | 9 | replication-and-persistence | E | done | final: publish | 992d8a44 |
 | 10 | cluster-and-hot-keys | E | done | final: publish | e370291f |
-| 11 | operating-a-cache | | | | |
+| 11 | operating-a-cache | F | done | final: fixed, verified | 1d99a215 |
 | 12 | designing-a-cache | | | | |
 
 Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not committed yet; commit with the first published article.
@@ -275,3 +275,7 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
   Waiting for its technical review.
 - 2026-10-28: article 12 technical review: 8 required/14 suggested (Figure 2 at 1/100 scale quoted as the shop's; ACL users not replicated; fork claim; retries; basket durability). Repair 1 started (dev 4422, Redis 7112–7113). Article 11 repair told ACL users are not replicated.
 - 2026-10-28: article 11 repair 2 done (Figure 5 subtracts a 2% buffer slice; ACL file on every node with admin, replica, Sentinel, shop and metrics users, tested through a Sentinel failover and restart) and marked published.
+- 2026-10-28: article 11 live (1d99a215, 5 figures, no errors).
+- 2026-10-28: article 12 repair 1 done (new popularity/TTL figure; 'what if' switches; stock evictable, 3.5 GB; scaled model labelled; 'read the old key first' replaces the ramp); prose grew to about 8,500 words. Final review started (dev 4482, Redis 7182–7183), asked for concrete cuts toward 6,500 words and to settle 3.5 vs 4 GB.
+- 2026-10-28: article 12 final review: 2 blocking (Figure 2 required hit ratio fixed at 92.5%; paced deletes break the one-minute price target and checkout should confirm price), 13 minor, 4 GB recommended, about 1,750 words of cuts. Repair 2 started (dev 4422, Redis 7112–7113).
+- 2026-10-28: article 12 repair 2 done (required hit ratio computed from budget, 97.8% at twice the peak; 7-minute paced-delete staleness stated, checkout confirms price; maxmemory 4gb; 6,579 prose words); orchestrator checked both blocking fixes in the text and marked it published.

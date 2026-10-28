@@ -41,7 +41,7 @@ export const cachingCollection: CachingEntry[] = [
     description: 'How Redis Cluster spreads keys across shards, and how to find and relieve keys that concentrate load.' },
   { slug: 'operating-a-cache', title: 'Operating a cache: monitoring, capacity and failure', type: 'Deep dive', status: 'published',
     description: 'Running a cache as a load-bearing dependency: what to measure, how to size it, and how to survive its failure.' },
-  { slug: 'designing-a-cache', title: 'Designing a cache: a worked example', type: 'Worked example', status: 'planned',
+  { slug: 'designing-a-cache', title: 'Designing a cache: a worked example', type: 'Worked example', status: 'published',
     description: 'One application taken from requirements to a complete cache design, applying every earlier decision.' },
 ];
 
