@@ -11,6 +11,8 @@ Let the illustrations carry the article's central explanation; develop and quali
 
 Check consequential claims against primary sources; list them under Sources and further reading. Keep qualifications that prevent a mistaken reader inference or action, including whether results are illustrative or observed. Keep production bookkeeping and verification evidence with the work.
 
+When an implementation illustrates a broader subject, present it as one of several choices and distinguish general principles from its specific behaviour and guarantees.
+
 Reread the finished piece against the references, including captions and controls, and run the continuity pass.
 
 Then run `pnpm check -- --rule=dense-prose --page=<article path>` on a build that includes the article. It points at sentences and paragraphs that carry more at once than good human-written explainers do. Reread each one in place and rewrite it if a reader would have to read it twice, keeping what they need. The counts show where to look; they don't decide when the writing is done.

@@ -11,6 +11,8 @@ Start with practitioners' decisions, failure cases and practical judgement, chec
 
 Keep briefs short: state the reader's intended understanding or judgement and any essential example facts or scope boundary. Put supporting research and secondary cases in context notes. Leave paragraph development and visual design to the reference-led writer; identify only what needs making visible.
 
+For a general subject taught through one implementation, plan around the subject's decisions; include alternatives where they change the reader's choice.
+
 Make the parent useful without reading its children. For a distinct deeper outcome, give the child ownership of the full formal analysis, detailed comparisons or working procedures. The parent develops the concept through a sufficient example and explains when that deeper work is needed. State the boundary in both briefs; do not require the child's treatment in the parent.
 
 Return `topic`, `title`, `brief` and a recursive singular `heading` list. Under the heading introducing a child, place `nested_article` with only its `topic`, `title` and `brief`; commission that child's headings separately. Titles/headings are reader-facing. Prefer established, searchable industry terms where they fit naturally. Use the collection's [example record](../staycurrent-continuity/SKILL.md), proposing missing extensions; the root proposes the record. The writer polishes final wording.
