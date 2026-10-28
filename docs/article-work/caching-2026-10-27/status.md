@@ -45,7 +45,7 @@ Redis: 7100 + article number for writers, 7150 + article number for reviewers.
 | 1 | (introduction) | A | done | final: publish | 3e3c4eca |
 | 2 | caching-patterns | A | done | final: publish | 3e3c4eca |
 | 3 | keys-and-values | A | done | final: publish | 3e3c4eca |
-| 4 | expiration-and-eviction | | | | |
+| 4 | expiration-and-eviction | B | done | final: fixed, verified | 7e348bea |
 | 5 | invalidation | C | done | final: fixed, verified | c3b6a969 |
 | 6 | stampedes | C | done | final: publish | c07149d8 |
 | 7 | how-redis-works | D | done | final: publish | a09369a4 |
@@ -231,3 +231,7 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
   statically. Article 10 drafted (6,860 words, 9 figures; toolkit gaps: text
   input, column chart, Choice-driven sequence, grid legend); round-1 teaching
   (dev 4460) and technical (dev 4470, Redis 7160–7166) reviews started.
+- 2026-10-28: article 4 published (7e348bea), Figure 1 checked on the static
+  build (30 s: 97%/97%, 19%/37%), live with 9 figures, no errors. Article 8
+  repair 2 done (redis-py WATCH timeout reported as conflict reproduced 5/5;
+  request-id marker remedy measured); marked published.

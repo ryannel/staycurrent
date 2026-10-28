@@ -1,0 +1,330 @@
+---
+import Term from '../../components/caching/shared/Term.astro';
+import ArticleRef from '../../components/caching/shared/ArticleRef.astro';
+import ReadsFigure from '../../components/caching/clients-and-pipelining/ReadsFigure.astro';
+import MethodsFigure from '../../components/caching/clients-and-pipelining/MethodsFigure.astro';
+import TailFigure from '../../components/caching/clients-and-pipelining/TailFigure.astro';
+import ConnectFigure from '../../components/caching/clients-and-pipelining/ConnectFigure.astro';
+import TimeoutFigure from '../../components/caching/clients-and-pipelining/TimeoutFigure.astro';
+import RetryFigure from '../../components/caching/clients-and-pipelining/RetryFigure.astro';
+import CounterFigure from '../../components/caching/clients-and-pipelining/CounterFigure.astro';
+import WatchFigure from '../../components/caching/clients-and-pipelining/WatchFigure.astro';
+import '../../components/caching/clients-and-pipelining/clients.css';
+---
+<p>A shop's product listing page shows 24 products. Every product is cached in <Term kind="redis">Redis</Term>, the hit ratio is 99%, and Redis reports that each <code>GET</code> takes well under a microsecond to execute. Yet a trace of the page shows it spending 12 ms waiting for Redis, longer than it spends rendering. The code is a loop: for each product id on the page, read the product from the cache.</p>
+
+<p>Nothing is wrong with Redis. The page asks it 24 questions one after another, and each question has to cross the network and come back before the next one leaves. That journey, the <strong>round trip</strong>, costs hundreds of times more than the command. How the application talks to Redis, which is the job of its <strong>client library</strong>, decides how many round trips it pays, how long it waits when Redis is slow, what happens when it gives up, and whether two parts of the application changing the same value can lose one of the changes.</p>
+
+<p>This article goes through those decisions in order. By the end you will be able to cut a page's round trips with pipelining and multi-key commands, choose a batch size, and explain why fewer round trips also mean fewer slow pages. You will be able to size a connection pool and choose timeouts and retries that do not make an outage worse. And you will be able to change shared values without losing updates, choosing between single commands, transactions, <code>WATCH</code>, scripts and the compare-and-set commands added in Redis 8.4. I measured the behaviour on a Redis 8.10.3 server on my laptop; each figure says which of its numbers are measured and which come from a model.</p>
+
+<h2 id="request-cost">What one request costs</h2>
+
+<p>An application talks to Redis over a TCP connection, in a simple text-like format called <strong>RESP</strong>, the Redis serialisation protocol. A command is an array of strings, each preceded by its length; a reply is a single typed value. These are the exact bytes a client sent to set one product and read it back, and then read a product that is not cached:</p>
+
+<pre><code>{`sent:      *3\\r\\n$3\\r\\nSET\\r\\n$10\\r\\nproduct:42\\r\\n$30\\r\\n{"name":"Kettle","price":3500}\\r\\n
+           *2\\r\\n$3\\r\\nGET\\r\\n$10\\r\\nproduct:42\\r\\n
+           *2\\r\\n$3\\r\\nGET\\r\\n$10\\r\\nproduct:43\\r\\n
+received:  +OK\\r\\n
+           $30\\r\\n{"name":"Kettle","price":3500}\\r\\n
+           $-1\\r\\n`}</code></pre>
+
+<p>Each <code>\r\n</code> ends a line. <code>*3</code> announces an array of three items, <code>$10</code> a string of ten bytes, <code>+OK</code> a short status, and <code>$-1</code> "nothing here", which is how a miss looks on the wire. Clients that send <code>HELLO 3</code> switch the connection to RESP3, a newer version (Redis 6.0 and later) with richer reply types such as maps; the cost of a request is the same in either.</p>
+
+<p>That cost has two parts. The first is the server's work: reading the request from the socket, executing it and writing the reply. <ArticleRef slug="how-redis-works">How Redis works</ArticleRef> measured that at about 7.5 µs of the main thread's time per <code>GET</code>, of which executing the command was about 0.2 µs. The second is the round trip: the time for the request to reach the server and the reply to come back, including the operating system's network stacks on both ends. On my laptop, with client and server on the same machine, a <code>PING</code> took a median of 0.091 ms, about 90 µs. Even there, the round trip was hundreds of times the command.</p>
+
+<p>Across a real network it is longer: Redis's documentation gives about 200 µs as typical for a 1 Gbit/s network, more with virtual machines. The figures here assume an illustrative 0.5 ms; measure yours with <code>redis-cli --latency</code> from an application host.</p>
+
+<p>The client has work of its own, chiefly serialising values. In Python 3.14 on my laptop, a 214-byte JSON product took about 1.7 µs to encode and 1.6 µs to decode, and a 9-kilobyte one 35 µs and 28 µs: small against half a millisecond, until values reach tens of kilobytes or a page decodes hundreds of them. <ArticleRef slug="keys-and-values">Cache keys and cached values</ArticleRef> covers choosing the format.</p>
+
+<h2 id="one-at-a-time">Twenty-four round trips</h2>
+
+<p>Figure 1 shows the product page reading its values one at a time. It is a <strong>ladder diagram</strong>: time runs from left to right, the application is the upper lane and Redis the lower one. Each <Term kind="client" mark>request</Term> is a line slanting down to Redis, and each <Term kind="hit" mark>reply</Term> a line slanting back up.</p>
+
+<ReadsFigure number={1} />
+
+<p>Press play and watch the ladder climb across the page. The next <code>GET</code> leaves only when the previous reply has arrived, so the requests take turns with the network. With 24 values the page waits about 12.3 ms, and Redis's own work in that time is about 0.17 ms: the thin block at the bottom of each rung. Drag the slider and the total moves in equal steps of about 0.51 ms per value, almost all of it the round trip.</p>
+
+<p>The arithmetic is simple. For n values read one at a time, with a round-trip time of RTT and a cost per request at the two ends of e (Redis's work plus the client's few microseconds), the page waits</p>
+
+<p class="clients-formula">T ≈ n × (RTT + e) ≈ n × RTT, because e is tiny<br />24 × 0.51 ms ≈ 12.3 ms</p>
+
+<p>Faster Redis would not help: the page is waiting for the network, not the server. The only way to make it faster is to pay fewer round trips.</p>
+
+<h2 id="pipelining">Pipelining and multi-key commands</h2>
+
+<p>There are two ways to read 24 values in one round trip. The first is <strong>pipelining</strong>: the client writes all 24 <code>GET</code> commands to the connection without waiting, then reads the 24 replies. Nothing about the protocol changes. Redis reads the commands as they arrive, executes each in turn and writes each reply, and since TCP delivers bytes in order, the replies come back in the order the commands were sent. The second is a <strong>multi-key command</strong>: <code>MGET</code> takes many keys and returns all their values in one reply, and <code>MSET</code> writes many keys at once. Figure 2 shows the three ways side by side.</p>
+
+<MethodsFigure number={2} />
+
+<p>Choose "pipelined GETs" and play. The application writes all 24 commands in a burst before the first reply comes back, and the replies return in a burst one round trip later. With "one MGET", one heavier line goes down carrying 24 keys and one comes back carrying 24 values. Both finish in about 0.56 ms against 12.3 ms one at a time, and the bars below the diagram compare all three on one scale.</p>
+
+<p>I measured the same comparison, with 24 values of 300 bytes each, on my laptop's loopback and through a small proxy I wrote that holds every message for 0.5 ms in each direction:</p>
+
+<div class="table-scroll" role="region" tabindex="0" aria-label="Measured time to read 24 values">
+<table class="clients-table">
+  <thead><tr><th scope="col">24 values read as</th><th scope="col">Loopback (round trip 0.09 ms)</th><th scope="col">Through a 1.6 ms round trip</th></tr></thead>
+  <tbody>
+    <tr><td>24 <code>GET</code>s, one at a time</td><td>2.13 ms</td><td>39.3 ms</td></tr>
+    <tr><td>24 <code>GET</code>s in one pipeline</td><td>0.13 ms</td><td>1.62 ms</td></tr>
+    <tr><td>One <code>MGET</code> of 24 keys</td><td>0.11 ms</td><td>1.62 ms</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>The loopback times are medians of 300 runs and the others of 100. One at a time, the reads cost 24 round trips; batched, they cost one round trip plus a little, so the saving grows with the round trip. The Redis documentation gives the extreme case: with a 250 ms round trip, a client that waits for each reply can make at most four requests a second, however fast the server is. Pipelining also saves the server work, as <ArticleRef slug="how-redis-works">How Redis works</ArticleRef> measured, and it beats sending the reads at once on 24 pooled connections, which would do the socket work 24 times.</p>
+
+<p>Which to use? <code>MGET</code> is one command, so it is slightly cheaper for Redis to parse and for the client to read. A pipeline can mix any commands: a <code>GET</code> and an <code>HGETALL</code>, or writes with different expiries. <code>MSET</code> cannot give its keys an expiry, which used to rule it out for most caches; Redis 8.4 added <code>MSETEX</code>, which sets many keys with one expiry. On Redis 8.10, <code>MSETEX 3 product:1 a product:2 b product:3 c EX 300</code> gave all three keys a TTL of 300 seconds.</p>
+
+<h3 id="pipeline-limits">What a pipeline does not do</h3>
+
+<p>A pipeline saves round trips. It does not make its commands a unit, and three consequences catch people out. (redis-py is the exception by default: its <code>pipeline()</code> wraps the commands in a <code>MULTI</code> … <code>EXEC</code> transaction unless you pass <code>transaction=False</code>.)</p>
+
+<p>First, other clients' commands run between a pipeline's commands. Redis executes what it has read from each connection in turn, so a long pipeline is interleaved with everyone else's traffic. A client reading a counter while another pipelined 200,000 <code>INCR</code>s on it saw dozens of values in between. That matters only for writes that must be seen together, the subject of the later sections on transactions and scripts.</p>
+
+<p>Second, each command succeeds or fails on its own. In a pipeline of <code>SET a 1</code>, <code>INCR a b</code> (one argument too many), <code>LPUSH a x</code> (a list command on a string) and <code>INCR a</code>, the second and third replies were errors and the fourth was 2. A client that reads only the last reply will miss the errors.</p>
+
+<p>Third, a command in a pipeline cannot use an earlier command's reply, because the client sent it before that reply existed. "Read the product's category, then read the category's other products" is two round trips however you send it, unless Redis does the second step itself, which is what scripts are for.</p>
+
+<h3 id="batch-size">How big a batch</h3>
+
+<p>If a pipeline of 24 is good, is a pipeline of 10,000 better? Mostly not, and it can be worse. Reading n values in batches of b costs ⌈n ÷ b⌉ round trips plus a cost per value at both ends, for sending, parsing and copying:</p>
+
+<p class="clients-formula">T ≈ ⌈n ÷ b⌉ × RTT + n × (cost per value)</p>
+
+<p>The first term shrinks as batches grow; the second does not. I read 1,000 values of 300 bytes in batches of different sizes:</p>
+
+<div class="table-scroll" role="region" tabindex="0" aria-label="Measured time to read 1,000 values in batches">
+<table class="clients-table">
+  <thead><tr><th scope="col">1,000 values, in batches of</th><th scope="col">Round trips</th><th scope="col">Loopback, pipeline / <code>MGET</code></th><th scope="col">1.6 ms round trip, pipeline / <code>MGET</code></th></tr></thead>
+  <tbody>
+    <tr><td>1 (one at a time)</td><td>1,000</td><td>91.8 ms</td><td>1,632 ms</td></tr>
+    <tr><td>10</td><td>100</td><td>10.4 / 9.8 ms</td><td>152 / 149 ms</td></tr>
+    <tr><td>100</td><td>10</td><td>2.2 / 1.8 ms</td><td>16.5 / 15.9 ms</td></tr>
+    <tr><td>1,000</td><td>1</td><td>1.3 / 0.8 ms</td><td>2.8 / 2.2 ms</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Going from batches of 10 to batches of 100 cut the time almost tenfold, because the round trips dominated. Going from 100 to 1,000 saved much less, because by then most of the time was the per-value cost. Past a few hundred values per batch, bigger batches buy little.</p>
+
+<p>They also cost memory on the server. Redis builds the replies to a pipeline in a buffer for that connection, the <strong>output buffer</strong>, and holds them until the client reads them. A client that sent 20,000 <code>GET</code>s of a 10,000-byte value and read nothing back held 200 MB of Redis's memory until it read the replies. By default Redis puts no limit on ordinary clients' output buffers (<code>client-output-buffer-limit normal 0 0 0</code>), so a client that sends huge pipelines, or reads slowly, can push Redis into eviction or out of memory. For cache reads, where a page needs tens or hundreds of values, this rarely bites.</p>
+
+<p>One limit comes from Redis Cluster, which splits keys between servers. A multi-key command there must name keys in the same hash slot, or it fails with a <code>CROSSSLOT</code> error, and a cluster-aware client splits a pipeline into one per server. <ArticleRef slug="cluster-and-hot-keys">Redis Cluster, sharding and hot keys</ArticleRef> covers how to keep related keys together.</p>
+
+<h2 id="tail">Many round trips make a slow tail</h2>
+
+<p>Most round trips are fast, but a few are slow: a packet is lost and resent, a garbage collector pauses the client, or the server is busy with someone else's slow command. A page that waits for many round trips is slow whenever any one of them is.</p>
+
+<p>Suppose 1 round trip in 100 is slow, independently of the others. A page making k round trips avoids all of them with probability 0.99<sup>k</sup>, so it meets at least one with probability</p>
+
+<p class="clients-formula">P(page is slow) = 1 − 0.99<sup>k</sup><br />k = 1: 1%   k = 24: 21%   k = 100: 63%</p>
+
+<p><ArticleRef slug="">Application caching with Redis</ArticleRef> made the same argument about misses. Here it applies to time. Figure 3 draws it: 100 page views, each a row of round trips, with the slow ones marked.</p>
+
+<TailFigure number={3} />
+
+<p>Start at 24 round trips per page. About a fifth of the rows are tinted and marked as slow pages in the right-hand column, although only about 1% of the cells are slow. Drag to 100 and nearly two pages in three are slow. Jeffrey Dean and Luiz André Barroso made this argument for servers at Google: if a single server is slow one time in a hundred, a request that waits for 100 servers is slow 63% of the time. Their remedy is to design for the tail, and the simplest version of that here is to cut k. A page that reads its 24 values in one <code>MGET</code> is slow 1% of the time instead of 21%, often a bigger benefit of batching than the saving in average time.</p>
+
+<p>Real slowness does not arrive independently, though. Choose "in bursts" and the same 1% of slow round trips comes eight at a time: fewer pages are hit, a few in 100 at 24 round trips, but each meets several slow round trips. I measured this on my laptop: of 96,000 <code>GET</code>s made as pages of 24, the slowest 1% took more than 0.46 ms, and 8% of pages included one of them, between the two models' 4% and 21%, because a stall that slowed one request usually slowed its neighbours too. The formula is a ceiling for independent slowness. When slow round trips come together, fewer pages are slow, but each of them is slower.</p>
+
+<h2 id="connections">Connections and pools</h2>
+
+<p>Every round trip so far assumed an open connection. Opening one costs round trips of its own, before the first command can go. Figure 4 steps through them.</p>
+
+<ConnectFigure number={4} />
+
+<p>Step through "opens a new connection". TCP's handshake takes one round trip before any data can be sent. If the connection is encrypted, TLS 1.3 takes another (TLS 1.2 takes two). Then the client authenticates and chooses its protocol version, which Redis 6.0 and later let it do in one command, <code>HELLO 3 AUTH user password</code>. Only then does the <code>GET</code> go out: one useful round trip out of four. Switch to "reuses a pooled one" and the <code>GET</code> is the first and only round trip.</p>
+
+<p>On my laptop, without TLS or a password, a <code>GET</code> on an open connection took a median of 0.10 ms, opening a new connection for each <code>GET</code> took 0.25 ms, and adding <code>HELLO</code> made it 0.35 ms. Across a real network each extra round trip costs the full RTT, and TLS costs CPU too, so an application that connects per request can spend most of its time connecting.</p>
+
+<p>Client libraries avoid this in one of two ways. A <strong>connection pool</strong> keeps a set of open connections; a request borrows one, uses it and returns it, so only one request uses a connection at a time. redis-py, Jedis and go-redis work this way. A <strong>multiplexed</strong> client shares one connection between all the application's concurrent requests and matches replies to requests by their order; StackExchange.Redis for .NET works this way, and Lettuce for Java can do either. Multiplexing pipelines naturally, but a command that blocks, such as <code>BLPOP</code>, which waits for an item to appear in a list, would block everyone on the connection, and needs a connection of its own.</p>
+
+<p>How large should a pool be? By Little's law, the number of connections in use at once is about the request rate times the time each request holds one. An application instance making 2,000 Redis requests a second at 0.6 ms each needs 2,000 × 0.0006 ≈ 1.2 connections on average, so a pool of 10 is plenty for normal times. go-redis (v9.23) defaults to 10 connections per CPU the Go runtime can use, and redis-py (8.1) to at most 100 per pool.</p>
+
+<p>The average is not the dangerous case. When Redis stalls, every request holds its connection until its timeout fires, so the same instance with a 100 ms timeout needs 2,000 × 0.1 = 200 connections. A smaller pool runs out, and what happens then is a setting. go-redis waits up to <code>PoolTimeout</code> for a free connection, by default the read timeout plus one second, 6 seconds, and treats running out as a reason to retry. redis-py's default pool fails at once with <code>MaxConnectionsError</code>, while its <code>BlockingConnectionPool</code> waits up to 20 seconds. For a cache, set that wait to a few milliseconds, remembering that go-redis's retries can repeat it up to four times, and treat running out as a miss.</p>
+
+<p>The limit to watch is on the other side. Redis accepts at most <code>maxclients</code> connections, 10,000 by default, and refuses the rest. When I lowered it to 3, the next connections got <code>ERR max number of clients reached</code>. Pools multiply: 200 application instances, each with a pool of 50, can open 10,000 connections between them, most of them idle. Size pools from the arithmetic above rather than generously, and count the instances.</p>
+
+<h2 id="timeouts">Timeouts</h2>
+
+<p><ArticleRef slug="caching-patterns">Caching patterns</ArticleRef> showed what happens without timeouts: a Redis host that has gone silent leaves the application waiting for as long as the operating system's TCP connection attempt lasts, over 30 seconds there. It recommended two timeouts. A <strong>connect timeout</strong> bounds how long opening a connection may take. A <strong>command timeout</strong> (also called a socket or read timeout) bounds how long the client waits for a reply once a command is sent. When either fires, the client reports an error and, for a cache, the application treats the read as a miss.</p>
+
+<p>Library defaults are no guide, because they differ by a factor of thirty: go-redis (v9.23) and redis-py (8.1) wait 5 seconds for a reply, Jedis (8.0) 2 seconds, and Lettuce (7.9) 60 seconds. All are far too long for a cache read. Marc Brooker, writing about Amazon's practice, suggests starting from the latency distribution: choose the rate of false timeouts you can accept, such as one request in a thousand, and set the timeout at that percentile of normal latency, the 99.9th here. For a cache read that normally takes about a millisecond, that gives a few to tens of milliseconds, and a connect timeout can be a little longer. The upper bound is the page: a cache that takes longer to answer than the database it protects is not worth waiting for.</p>
+
+<p>The important thing about a timeout is what it does not do: it does not cancel the command. The client stops waiting; the server knows nothing of that. Figure 5 shows the consequence.</p>
+
+<TimeoutFigure number={5} />
+
+<p>Step through with <code>INCR views</code>. Another client's slow command holds Redis's main thread, and the application's <code>INCR</code> waits, unread, in the connection's socket buffer on Redis's machine when its 100 ms timeout fires. The application gives up and closes the connection, as it must: the late reply is still on its way, and a connection reused at once would hand it to the next request. When the slow command finishes, Redis reads and executes the <code>INCR</code> anyway. The application retries, and the counter goes from 100 to 102: one page view counted twice. Switch to <code>SET price 35</code> and the same sequence is harmless, because setting a price to 35 twice leaves it at 35.</p>
+
+<p>I ran both, with <code>DEBUG SLEEP 0.5</code> holding Redis: <code>views</code> ended at 102 and <code>price</code> at 35. Closing the connection did not stop the first attempt either; only an abrupt reset, which throws away unread bytes, stopped most of them. As Brooker puts it, a timeout or failure does not mean that side effects have not happened.</p>
+
+<p>The property that made <code>SET</code> harmless is <strong>idempotence</strong>: running a command twice has the same effect as running it once. <code>GET</code>, <code>SET</code> with a value, <code>DEL</code>, <code>EXPIRE</code> and <code>HSET</code> of fixed values are idempotent (though <code>DEL</code>'s reply changes from 1 to 0, and a repeated <code>EXPIRE</code> restarts the clock). <code>INCR</code>, <code>LPUSH</code> and <code>APPEND</code> are not. Nor is <code>SET … NX</code> used as a lock: if the first attempt took the lock, the retry is refused, so the client believes someone else holds it and waits until its own lock expires.</p>
+
+<p>Idempotence is not enough, though: it makes a repeat safe only if nobody else writes the key in between. Choose "SET price 35, while B writes" in Figure 5. Writer B's newer price queues behind the application's command, Redis runs both in the right order, and then the retry arrives and puts the older price back. With redis-py's default retries, the price ended at 35 in every run; with retries off, at 36. The stall that causes a timeout is also when other writers' commands queue up, so this is a likely interleaving, and in a cache it leaves a stale value that outlives the invalidation meant to remove it. A fill guarded by a lease or a version, as in <ArticleRef slug="invalidation">Cache invalidation and consistency</ArticleRef> and at the end of this article, fails harmlessly when it arrives late or twice.</p>
+
+<h2 id="retries">Retries</h2>
+
+<p>A retry is always safe after a failure that happened before the command left the client, such as a connection that could not be opened, because the command cannot have run. It does not suit an overloaded server, which each retry gives more work, and after a timeout it can repeat work that was done. A connection reset after the command was sent is as uncertain as a timeout. Yet redis-py 8 and go-redis v9, two of the most widely used libraries, retry by default after timeouts as well as connection errors. I ran Figure 5's stall against redis-py 8.1 and go-redis v9.23 with their default retry settings, a 100 ms timeout and several connections already open in the pool, as in a busy application:</p>
+
+<div class="table-scroll" role="region" tabindex="0" aria-label="What library default retries re-sent after a timeout">
+<table class="clients-table">
+  <thead><tr><th scope="col">Sent once by the application</th><th scope="col">redis-py 8.1</th><th scope="col">go-redis v9.23</th></tr></thead>
+  <tbody>
+    <tr><td><code>INCR a</code></td><td>Ran twice; reported success</td><td>Ran 4 times; reported success or a timeout</td></tr>
+    <tr><td>A pipeline of two <code>INCR</code>s</td><td>Ran twice; reported success</td><td>Ran 2 or 3 times; reported success</td></tr>
+    <tr><td><code>MULTI</code>, two <code>INCR</code>s, <code>EXEC</code></td><td>Ran twice; reported success</td><td>Ran once; reported a timeout</td></tr>
+    <tr><td>A Lua script that adds 1</td><td>Ran twice; reported success</td><td>Ran 4 times; reported success</td></tr>
+    <tr><td>A <code>WATCH</code> transaction that adds 1 (explained below), with a 0.15 s stall</td><td>Ran twice; reported success, with retries on or off</td><td>Ran once; reported a timeout</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Where a repeated change reported success, the reply carried the doubled count, so even the reply was wrong. With retries off, every row but the last ran once and reported a timeout within about 200 ms: the honest answer, that it may or may not have happened. The last row is the exception, because redis-py reports that timeout as a conflict and the usual <code>WATCH</code> loop answers a conflict by running again, as the section on <a href="#watch"><code>WATCH</code></a> explains. So the library, and how it treats each kind of call, decides what is repeated, and making a change atomic with a transaction or a script does not make it safe to repeat. To decide for yourself, turn the library's retries off (<code>retry=Retry(NoBackoff(), 0)</code> in redis-py; <code>MaxRetries: -1</code> in go-redis, where 0 means the default of 3) and retry in the application where a repeat is harmless, or keep a second client without retries for writes that must not repeat; in redis-py, neither protects a <code>WATCH</code> loop. Otherwise, make the write safe to repeat, with a version check that refuses a late or repeated write, or a request id stored with the change.</p>
+
+<p>Retries also stretch a call to roughly the timeout times the number of attempts, plus the waits between. redis-py 8.1 retries up to 10 times, with random waits that double from up to 20 ms to a cap of 1 second: against a port with no Redis behind it, a <code>GET</code> with 50 ms timeouts took a median of 3.6 seconds to fail, and 3 ms with retries off. go-redis, which retries 3 times and dials each connection up to 5 times, took 1.7 seconds. For a cache read that is worse than a miss, so set the retry count and the timeout together.</p>
+
+<p>Retries multiply, too: three tries at each of five layers is 3<sup>5</sup> = 243 attempts at the bottom, which is Brooker's example. Two standard defences belong in every client. <strong>Backoff</strong> makes each retry wait longer than the last, and <strong>jitter</strong> randomises the waits, so clients that failed together do not all retry together. A <strong>retry budget</strong> limits retries to a share of the client's traffic: the Google SRE book describes clients that retry only while retries are under 10% of their requests.</p>
+
+<p>Figure 6 shows why the budget matters. In the model's units, Redis normally serves 100 requests a second and the application sends 60. Between 10 and 15 seconds, Redis slows to a fifth of its speed. Requests that wait longer than 1 second time out, but they stay in Redis's queue and Redis still serves them, since it cannot know nobody is waiting.</p>
+
+<RetryFigure number={6} />
+
+<p>Play it with "does not retry" first. During the slowdown requests time out, and the shaded area, Redis's work on <Term kind="error" mark>replies nobody waited for</Term>, grows to more than half of what it does; a few seconds after the slowdown the queue has drained. Now choose "retries up to 3 times". Normal times look better, since the 2% of transient failures are retried away. But once requests time out, each is sent up to four times, the <Term kind="client">attempts</Term> rise to about four times the demand, and the shaded area fills everything up to the capacity line: every reply is wasted, and the queue keeps growing after the slowdown has ended. With "retries, within a budget", attempts rise only about a tenth and the system recovers as quickly as without retries.</p>
+
+<p>The model is simple, and real users give up and shed some load, but the shape is real. A system that stays overloaded after the cause has gone, because every request times out and is retried so the queue never shrinks, is in what Bronson and colleagues call a <strong>metastable failure</strong>. Getting out needs circuit breakers, fallbacks and load shedding, which <ArticleRef slug="operating-a-cache">Operating a cache: monitoring, capacity and failure</ArticleRef> covers; the client's part is to retry only what is safe to repeat, with backoff, jitter and a budget.</p>
+
+<h2 id="lost-updates">Lost updates</h2>
+
+<p>Figure 5's double count came from two attempts at one change adding up with nobody noticing. The same thing happens without any timeout when several clients change one value. Suppose every product page view adds 1 to a counter. The obvious code reads the counter, adds 1 and writes it back: <code>GET page:views</code>, then <code>SET page:views 42</code>. Figure 7 runs it with four clients.</p>
+
+<CounterFigure number={7} />
+
+<p>Watch two clients read the same value, say 41, and both <Term kind="write" mark>write</Term> 42: two increments, and the counter rose by one. After a minute in the model, Redis has executed about 125 increments, the counter shows about 48, and no client saw an error. This is a <strong>lost update</strong>, and it happens whenever a read and the write based on it are separate commands, because another client's write can land between them.</p>
+
+<p>The same happened on Redis 8.10. Eight clients each added 1 to a counter 500 times: of 4,000 increments, the counter showed 861, 872 and 885 in three runs. The JSON product of <ArticleRef slug="keys-and-values">Cache keys and cached values</ArticleRef> fared no better: eight clients each recording 250 sales by reading the JSON, adding 1 to its <code>sold</code> field and writing it back recorded about 430 of 2,000.</p>
+
+<p>The first and best remedy is a single command that does the whole change inside Redis. Because Redis executes one command at a time, a single command is <strong>atomic</strong>: no other client can see it half done or act between its parts. Choose "INCR" in Figure 7: each client sends one command, Redis adds 1 itself, nothing is lost, and each increment costs one round trip instead of two. On Redis 8.10, 4,000 <code>INCR</code>s from eight clients left the counter at exactly 4,000, in 0.09 seconds.</p>
+
+<p>Redis has many such commands, worth knowing before reaching for anything heavier. <code>INCR</code>, <code>INCRBY</code> and <code>INCRBYFLOAT</code> change counters, and <code>HINCRBY</code> changes one held in a field of a hash, which is why <ArticleRef slug="keys-and-values">Cache keys and cached values</ArticleRef> recommended hashes for values with counters in them: the product's sale count becomes one <code>HINCRBY</code>. <code>SET … NX</code> creates a key only if it does not exist (a lock, a lease, first writer wins), and <code>SET … XX</code> updates it only if it does. <code>SET … GET</code> writes a value and returns the old one, and <code>GETDEL</code> and <code>GETEX</code> (Redis 6.2 and later) read a value and delete it, or change its expiry, in one step.</p>
+
+<h2 id="transactions">Transactions: MULTI and EXEC</h2>
+
+<p>Sometimes the change is several commands: write a product and add it to a category set, or write a value and its version. <code>MULTI</code> starts a <strong>transaction</strong>: the commands that follow are queued, each answered with <code>QUEUED</code>, and <code>EXEC</code> executes them all, one after another, with no other client's command in between. Sent as one pipeline, the whole transaction costs one round trip.</p>
+
+<p>A Redis transaction is not a database transaction. A command that cannot even be queued, such as a misspelt one, discards the whole transaction: on Redis 8.10, <code>MULTI</code>, <code>INCR x</code>, <code>INCRR x</code>, <code>EXEC</code> returned <code>EXECABORT</code> and <code>x</code> was unchanged. But a command that fails when it runs does not undo the others: <code>MULTI</code>, <code>INCR x</code>, <code>LPUSH s v</code> on a string, <code>INCR x</code>, <code>EXEC</code> returned 1, a <code>WRONGTYPE</code> error and 2, and both increments stayed. There is no rollback. What <code>MULTI</code> gives you is isolation: no other client's command runs in the middle, so others see the state before <code>EXEC</code> or after it, never between.</p>
+
+<p>Nor can a transaction make decisions. A <code>GET</code> inside it returns only <code>QUEUED</code>; its value arrives with <code>EXEC</code>, after every queued command has run. So <code>MULTI</code> alone cannot fix the counter: the read still happens before the transaction, and another client can still write in between. For read, decide, write, you need one of the next two tools.</p>
+
+<h2 id="watch">WATCH: write only if nobody else has</h2>
+
+<p><code>WATCH key</code>, sent before <code>MULTI</code>, makes the transaction conditional: if any client changes a watched key between the <code>WATCH</code> and the <code>EXEC</code>, <code>EXEC</code> returns nil and none of the queued commands run. The client then reads again and decides again. This is <strong>optimistic concurrency control</strong>, or <strong>check-and-set</strong>: proceed as if nobody else will interfere, and check at the end. Figure 8 uses it for a value that should only ever move to a newer version, the problem <ArticleRef slug="invalidation">Cache invalidation and consistency</ArticleRef> solved with a script, and with that article's layout: a hash with a <code>version</code> field and a <code>value</code> field.</p>
+
+<WatchFigure number={8} />
+
+<p>Step through. Writer A, holding version 9 from the database, watches the key and reads the cached version, 8, in one round trip, so it decides to write. Before its transaction arrives, writer B stores version 10. A's <code>EXEC</code> returns nil and nothing it queued runs. A starts again, reads version 10, which is newer than its own, and stops without writing. Uncontested, the write takes 2 round trips; this contested one took 4 on Redis 8.10, ending with version 10 in place.</p>
+
+<p>Three details matter, each confirmed on Redis 8.10. A write of the same value still aborts the transaction, because Redis tracks writes, not values. So does expiry or eviction of the watched key (expiry only since Redis 6.0.9), but not a write to another key. And the watch belongs to the connection until <code>EXEC</code>, <code>DISCARD</code> or <code>UNWATCH</code>, so a pooled client must send all of it on one connection, and a client that decides not to write sends <code>UNWATCH</code>, as A does at the end of Figure 8.</p>
+
+<p>A fourth detail belongs to the client library. In redis-py 8.1, if a watched transaction times out, the library closes the connection and raises <code>WatchError</code>, the same error as a real conflict, whatever its retry setting. A loop that answers <code>WatchError</code> by reading and deciding again, including redis-py's own <code>Redis.transaction()</code> helper, then runs the change a second time, and the first <code>EXEC</code>, still waiting in Redis's socket buffer, runs too. On Redis 8.10, with a 0.15 s stall and retries off, a transaction meant to add 1 added 2 in every run and reported success. (With a 0.5 s stall the second attempt timed out as well, and the application saw a timeout.) go-redis's <code>Watch</code> reported the timeout.</p>
+
+<p>Figure 8's decision survives this, because the second attempt reads the version the first one stored and declines to write. A relative change, such as adding 1 to a product's <code>sold</code> field or appending to a list, does not. Give the second attempt a way to see the first: write a marker with a request id, such as <code>SET applied:&lt;id&gt; 1 EX 600</code>, in the same transaction, and stop without writing if the marker is already there. On Redis 8.10 that left the count at 1 in every run. For a plain counter, a single <code>HINCRBY</code> with retries off is simpler.</p>
+
+<p><code>WATCH</code>'s main weakness is contention. Choose "WATCH, then a transaction" in Figure 7: nothing is lost, but with four clients competing for one counter about three transactions in four are refused, and each increment costs about 8 round trips. On Redis 8.10 with eight clients, the <code>WATCH</code> loop counted all 4,000 increments, but needed 19,506 refused transactions to do it and took 1.81 seconds against 0.09 for <code>INCR</code>. <code>WATCH</code> suits values that are rarely contended: a product updated by an occasional writer, not a counter on every page view.</p>
+
+<h2 id="scripts">Lua scripts</h2>
+
+<p>When no single command does what you need and contention makes <code>WATCH</code> expensive, Redis can run the read, the decision and the write itself. <code>EVAL</code> sends a short program in the Lua language, with the keys it touches and its other arguments; Redis runs it on the main thread like any other command, so the script is atomic and costs one round trip. Choose "a Lua script" in Figure 7: as with <code>INCR</code>, nothing is lost and nothing is refused, but a script can make any decision between its read and its write. Here is Figure 8's decision as a script, for the same hash layout:</p>
+
+<pre><code>{`-- Set only if newer. KEYS[1]: the cache key. ARGV: version, value, TTL in seconds.
+-- Returns 1 if it stored the value, 0 if the cache holds this version or a newer one.
+local cur = tonumber(redis.call('HGET', KEYS[1], 'version') or '-1')
+if tonumber(ARGV[1]) <= cur then return 0 end
+redis.call('HSET', KEYS[1], 'version', ARGV[1], 'value', ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 1`}</code></pre>
+
+<p>On Redis 8.10 it refused a late version 8 after version 9, refused a duplicate 9 and accepted 10, and eight clients writing versions 1 to 2,000 through it in random order always left version 2,000 in place. Lua numbers are floating point, so keep versions below 2<sup>53</sup>. <ArticleRef slug="invalidation">Cache invalidation and consistency</ArticleRef> extends this script with tombstones, so that a deleted entry still remembers its version.</p>
+
+<p>Scripts have costs of their own. Clients usually send a script once with <code>SCRIPT LOAD</code> and then call it by its SHA-1 hash with <code>EVALSHA</code>, but the server's script cache is not durable: a restart, a failover or <code>SCRIPT FLUSH</code> empties it, and <code>EVALSHA</code> then fails with <code>NOSCRIPT</code>, as it did on Redis 8.10 after a restart. Good client libraries fall back to <code>EVAL</code>, though not inside a pipeline or a transaction, where the error arrives too late to handle. A script is atomic but not transactional: if it fails part way, its earlier writes stay, so check what you can before the first write. A script that edits JSON with Redis's built-in <code>cjson</code> library can change the data: on Redis 8.10 an empty array came back as an empty object, and a 17-digit id was rounded. And library retries re-send scripts like anything else, so a script that adds can run twice, while the version script refuses its own repeat.</p>
+
+<p>A slow script stops everyone, exactly like the slow commands in <ArticleRef slug="how-redis-works">How Redis works</ArticleRef>. Once it has run longer than <code>busy-reply-threshold</code> (5 seconds by default; called <code>lua-time-limit</code> before Redis 7.0), Redis answers every other client with a <code>BUSY</code> error. A script that has only read can be stopped with <code>SCRIPT KILL</code>; one that has written cannot, because stopping it would leave half its writes, and Redis answers <code>UNKILLABLE</code>. With the threshold lowered to 200 ms I confirmed both: only <code>SHUTDOWN NOSAVE</code>, which stops the server, ended the writing script. Keep scripts short and their loops bounded, and name every key in <code>KEYS</code> rather than building key names inside the script, so that Redis Cluster can tell which server should run it.</p>
+
+<h3 id="functions">Functions</h3>
+
+<p>Redis 7.0 added <strong>functions</strong>, a more managed form of script. You load a library of named functions once with <code>FUNCTION LOAD</code> and call them by name with <code>FCALL</code>; a function marked as read-only can be called with <code>FCALL_RO</code>, which may run on a replica. Unlike the script cache, functions are part of the dataset: they are replicated, and saved in snapshots and the append-only file. But a cache often runs without persistence, and on a Redis 8.10 server with neither, a restart left <code>FUNCTION LIST</code> empty and <code>FCALL</code> returning <code>Function not found</code>. A cache that uses functions must load them again after every restart, for example with <code>FUNCTION LOAD REPLACE</code> when the application starts and whenever <code>FCALL</code> reports the function missing.</p>
+
+<h2 id="compare-and-set">Compare-and-set commands in Redis 8.4</h2>
+
+<p>The most common reason for a <code>WATCH</code> loop or a script in a cache is "write this only if the value is still what I last saw". Redis 8.4 added that as options to existing commands, for string values. <code>SET key value IFEQ old</code> writes only if the key holds exactly <code>old</code>, and <code>IFNE old</code> only if it does not; <code>IFEQ</code> never creates a missing key, while <code>IFNE</code> does. On Redis 8.10, <code>SET price:42 3500 IFEQ 3900</code> succeeded when the price was 3900, and a second writer's <code>IFEQ 3900</code> then returned nil. <code>DIGEST key</code> returns a 16-character hash of the value, and <code>IFDEQ</code> and <code>IFDNE</code> compare against that, so a client need not send a large value back. <code>DELEX key IFEQ value</code> deletes a key only if it holds that value.</p>
+
+<p><ArticleRef slug="invalidation">Cache invalidation and consistency</ArticleRef> uses <code>SET … IFEQ</code> to fill a key only if the reader's lease is still there, and showed that it replaces the key's expiry like any <code>SET</code>, so pass <code>EX</code> or <code>KEEPTTL</code>. <ArticleRef slug="stampedes">Cache stampedes and the thundering herd</ArticleRef> uses <code>DELEX … IFEQ</code> to release a rebuild lock only if it still holds its own token. Before 8.4, both needed a script.</p>
+
+<p>These options compare for equality only, and only on strings: <code>IFEQ</code> on a hash returned <code>WRONGTYPE</code>. "Write only if my version is newer" is not an equality test, but a short loop turns it into one: read the value, compare versions in the application, then write with <code>IFEQ</code> and the value you read, so that the write fails if anyone changed the key in between. That needs the version inside the string, so here the entry is stored as <code>version|json</code> rather than as Figure 8's hash:</p>
+
+<pre><code>{`def set_if_newer(r, key, version, value, ttl=300):
+    new = f"{version}|{value}"
+    while True:
+        cur = r.get(key)
+        if cur is None:                          # IFEQ never creates a key
+            if r.set(key, new, nx=True, ex=ttl):
+                return True
+        elif int(cur.split(b"|", 1)[0]) >= version:
+            return False                         # the cache is as new or newer
+        elif r.set(key, new, ifeq=cur, ex=ttl):
+            return True
+        # Someone wrote in between: read again and decide again.`}</code></pre>
+
+<p>This is redis-py 8.1, which marks <code>ifeq</code> as experimental and warns. On Redis 8.10, eight clients writing versions 1 to 2,000 through it in random order always left version 2,000. It costs one round trip to refuse a late write and two to make a new one, no more than <code>WATCH</code>, but it holds no state on the connection, so it works on a multiplexed client. It is also safe to repeat, because a late or repeated <code>SET … IFEQ</code> finds the value changed and fails. (If a retry repeats a write that succeeded, the loop finds its own version and returns False, although its value is in place.)</p>
+
+<p>Which to choose? On Redis 8.4 or later, the loop suits values stored as strings, and the script suits hashes, or entries that need tombstones. Elsewhere, check the server before relying on the new options. Valkey has had <code>SET … IFEQ</code> since 8.1, but added <code>IFNE</code>, <code>MSETEX</code> and <code>DELEX</code> only in 9.1 and 9.2 (with its own <code>DELIFEQ</code> from 9.0) and has no <code>DIGEST</code>, and managed services often run older versions. The script works on any Redis with scripting, which makes it the fallback.</p>
+
+<h2 id="choosing">Choosing the tool</h2>
+
+<p>Each row below is a job you will meet, roughly in order of preference: reach for the first row that fits.</p>
+
+<div class="table-scroll" role="region" tabindex="0" aria-label="Which tool for which job">
+<table class="clients-table">
+  <thead><tr><th scope="col">You need</th><th scope="col">Use</th><th scope="col">Round trips</th><th scope="col">Watch out for</th></tr></thead>
+  <tbody>
+    <tr><td>Many independent reads or writes</td><td><code>MGET</code>, <code>MSETEX</code> (8.4+) or a pipeline</td><td>1 per batch</td><td>A pipeline is not atomic and its errors are per command; huge batches hold memory in Redis; a library retry may re-send the batch</td></tr>
+    <tr><td>One change Redis can make itself</td><td>A single command: <code>INCR</code>, <code>HINCRBY</code>, <code>SET … NX</code>, <code>GETDEL</code></td><td>1</td><td>A library retry after a timeout may apply it twice</td></tr>
+    <tr><td>Several writes seen together</td><td><code>MULTI</code> … <code>EXEC</code></td><td>1, pipelined</td><td>No rollback; cannot use a value it reads; a library retry may run it twice</td></tr>
+    <tr><td>Write only if a string is unchanged, or is older</td><td><code>SET … IFEQ</code>, <code>IFDEQ</code>, <code>DELEX … IFEQ</code> (8.4+), in a loop for "newer"</td><td>1, or 2 with a read</td><td>Equality only; strings only; pass an expiry; check the server version</td></tr>
+    <tr><td>Read, decide and write, rarely contended</td><td><code>WATCH</code> with <code>MULTI</code> … <code>EXEC</code></td><td>2, more under contention</td><td>Refusals pile up on hot keys; needs one connection; <code>UNWATCH</code> if you stop; in redis-py a timeout looks like a conflict, so the loop can apply a relative change twice</td></tr>
+    <tr><td>Read, decide and write, any contention</td><td>A Lua script, or a function (7.0+)</td><td>1</td><td><code>NOSCRIPT</code> after a restart; no rollback; a slow script blocks everyone; a library retry may run it twice</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="decisions">What you can now decide</h2>
+
+<p>The product page from the opening made 24 round trips of about 0.5 ms each, one after another, and Redis's work was about 1% of the wait. One <code>MGET</code> or pipeline makes it one round trip, and cuts the share of slow page views from about one in five to about one in a hundred.</p>
+
+<p>More generally, you can now:</p>
+
+<ul>
+  <li>Batch a page's reads with <code>MGET</code>, <code>MSETEX</code> or a pipeline, tens to a few hundred at a time, knowing that a pipeline is not atomic and its replies wait in Redis's memory.</li>
+  <li>Explain why more round trips make the slow tail worse, and why, when slow round trips come together, fewer pages are slow but each is slower.</li>
+  <li>Size a pool from the request rate and the round trip, set how long a request may wait for a free connection, and count every instance's connections against <code>maxclients</code>.</li>
+  <li>Set connect and command timeouts from the latency distribution, not the library's default, knowing that a timeout does not cancel the command.</li>
+  <li>Check what your library re-sends after a timeout, which may include pipelines, scripts and transactions, and, in redis-py, what it reports as a <code>WATCH</code> conflict; remember that even a repeated <code>SET</code> can overwrite a newer value. Turn those retries off or make writes safe to repeat, and retry with backoff, jitter and a budget.</li>
+  <li>Change shared values without lost updates: a single command first, then the 8.4 compare-and-set options where your server has them, then a script, and <code>WATCH</code> only where contention is rare.</li>
+</ul>
+
+<p>Everything here assumed that Redis itself is one server that keeps its data. A real deployment has replicas, may persist its data, and fails over when the primary dies, and each of those changes what a client sees: a replica that lags, a failover that loses recent writes, a script cache that vanishes. <ArticleRef slug="replication-and-persistence">Redis replication, persistence and failover</ArticleRef> covers them.</p>
+
+<h2 id="sources">Sources and further reading</h2>
+
+<ul>
+  <li>Measurements for this article: Redis 8.10.3 on macOS, client and server on one laptop, redis-py 8.1.0 and go-redis v9.23.0; commands and output in <code>docs/article-work/caching-2026-10-27/evidence/clients-and-pipelining.txt</code> in this site's repository.</li>
+  <li>Redis documentation: <a href="https://redis.io/docs/latest/develop/reference/protocol-spec/">Redis serialisation protocol specification</a>, <a href="https://redis.io/docs/latest/develop/using-commands/pipelining/">Redis pipelining</a> (round trips, batch sizes and the 250 ms example), <a href="https://redis.io/docs/latest/develop/clients/pools-and-muxing/">Connection pools and multiplexing</a>, <a href="https://redis.io/docs/latest/develop/reference/clients/">Redis client handling</a> (<code>maxclients</code> and output buffer limits), <a href="https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/latency/">Diagnosing latency issues</a> (typical network latency).</li>
+  <li>Redis documentation: <a href="https://redis.io/docs/latest/develop/using-commands/transactions/">Transactions</a> (<code>MULTI</code>, <code>EXEC</code>, <code>WATCH</code>, and the behaviour of errors), <a href="https://redis.io/docs/latest/develop/programmability/eval-intro/">Scripting with Lua</a> (the script cache, <code>EVALSHA</code> and <code>NOSCRIPT</code> in pipelines), <a href="https://redis.io/docs/latest/develop/programmability/functions-intro/">Redis functions</a>.</li>
+  <li>Valkey command reference, for the versions that added the comparable commands: <a href="https://valkey.io/commands/set/">SET</a> (<code>IFEQ</code> 8.1, <code>IFNE</code> 9.2), <a href="https://valkey.io/commands/delifeq/">DELIFEQ</a> (9.0), <a href="https://valkey.io/commands/msetex/">MSETEX</a> (9.1), <a href="https://valkey.io/commands/delex/">DELEX</a> (9.2).</li>
+  <li>Redis command reference: <a href="https://redis.io/docs/latest/commands/set/">SET</a> (<code>IFEQ</code>, <code>IFNE</code>, <code>IFDEQ</code>, <code>IFDNE</code> since 8.4), <a href="https://redis.io/docs/latest/commands/delex/">DELEX</a>, <a href="https://redis.io/docs/latest/commands/digest/">DIGEST</a>, <a href="https://redis.io/docs/latest/commands/msetex/">MSETEX</a>, <a href="https://redis.io/docs/latest/commands/mget/">MGET</a>, <a href="https://redis.io/docs/latest/commands/hello/">HELLO</a>, <a href="https://redis.io/docs/latest/commands/script-kill/">SCRIPT KILL</a>.</li>
+  <li>Client library source at the versions named: <a href="https://github.com/redis/redis-py/tree/v8.1.0">redis-py v8.1.0</a> (<code>redis/client.py</code>, <code>redis/retry.py</code>, <code>redis/backoff.py</code>, <code>redis/connection.py</code> for the pools), <a href="https://github.com/redis/go-redis/blob/v9.23.0/options.go">go-redis v9.23.0 options.go</a> and <a href="https://github.com/redis/go-redis/blob/v9.23.0/error.go">error.go</a> (which errors are retried), <a href="https://github.com/redis/jedis/blob/v8.0.2/src/main/java/redis/clients/jedis/Protocol.java">Jedis 8.0.2 Protocol.java</a>, <a href="https://github.com/redis/lettuce/blob/7.9.0.RELEASE/src/main/java/io/lettuce/core/RedisURI.java">Lettuce 7.9.0 RedisURI.java</a>.</li>
+  <li>Jeffrey Dean and Luiz André Barroso, <a href="https://research.google/pubs/the-tail-at-scale/">The Tail at Scale</a>, Communications of the ACM, 2013.</li>
+  <li>Marc Brooker, <a href="https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/">Timeouts, retries, and backoff with jitter</a>, Amazon Builders' Library.</li>
+  <li>Nathan Bronson, Abutalib Aghayev, Aleksey Charapko and Timothy Zhu, <a href="https://sigops.org/s/conferences/hotos/2021/papers/hotos21-s11-bronson.pdf">Metastable Failures in Distributed Systems</a>, HotOS 2021 (the term, and how retries keep a system overloaded after the trigger has gone).</li>
+  <li>Google, <a href="https://sre.google/sre-book/handling-overload/">Handling Overload</a> and <a href="https://sre.google/sre-book/addressing-cascading-failures/">Addressing Cascading Failures</a>, in Site Reliability Engineering (retry budgets).</li>
+</ul>

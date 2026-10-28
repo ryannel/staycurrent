@@ -1,0 +1,1526 @@
+Evidence for "Redis clients: round trips, pipelining and atomic operations" (article 8)
+Gathered 2026-10-27.
+
+Environment
+  Redis 8.10.3 (Homebrew build, macOS, libc malloc, kqueue), Apple M3 Max laptop.
+  Server started for these experiments only:
+    /opt/homebrew/opt/redis/bin/redis-server --port 7108 --dir <temporary directory> --save '' --appendonly no
+  It was restarted once on purpose (E12 ends with SHUTDOWN NOSAVE; E13 restarts it to show that
+  functions and the script cache do not survive a restart without persistence), and shut down
+  with SHUTDOWN NOSAVE when the experiments were finished.
+  Clients: Python 3.14 with a minimal RESP2 client (r8.py, standard library only), on the same
+  machine over loopback with TCP_NODELAY; E18 uses redis-py 8.1.0 from PyPI with its defaults.
+  E2-proxy runs through delayproxy.py, which holds every chunk of bytes for 0.5 ms in each
+  direction (a measured round trip of about 1.56 ms).
+  The machine was shared with other agents during the runs: load averages between about 18 and
+  34 on 16 cores. Absolute timings are therefore noisy; the comparisons were run back to back.
+
+Measured versus illustrative in the article
+  Measured here: every number attributed to "my laptop" or "Redis 8.10" in the prose, the two
+  tables of read times, and the redis-py 8.1.0 timings.
+  Illustrative (models with stated parameters, src/components/caching/clients-and-pipelining/):
+  every number shown by Figures 1, 2, 3, 6 and 7. Figures 4, 5 and 8 are sequences of steps;
+  5 and 8 follow sequences run here (E7, E15).
+
+Each section below gives the script that produced it (sources in the appendix) and its output.
+
+
+==== E1 wire bytes (RESP2 and RESP3)
+$ python3 e1_wire.py
+
+## SET product:42 + GET product:42 + GET product:43 (missing), RESP2
+sent:     b'*3\r\n$3\r\nSET\r\n$10\r\nproduct:42\r\n$30\r\n{"name":"Kettle","price":3500}\r\n*2\r\n$3\r\nGET\r\n$10\r\nproduct:42\r\n*2\r\n$3\r\nGET\r\n$10\r\nproduct:43\r\n'
+received: b'+OK\r\n$30\r\n{"name":"Kettle","price":3500}\r\n$-1\r\n'
+
+## MGET product:42 product:43 product:44
+sent:     b'*3\r\n$3\r\nSET\r\n$10\r\nproduct:44\r\n$7\r\nToaster\r\n*4\r\n$4\r\nMGET\r\n$10\r\nproduct:42\r\n$10\r\nproduct:43\r\n$10\r\nproduct:44\r\n'
+received: b'+OK\r\n*3\r\n$30\r\n{"name":"Kettle","price":3500}\r\n$-1\r\n$7\r\nToaster\r\n'
+
+## Inline command (telnet style)
+sent:     b'PING\r\n'
+received: b'+PONG\r\n'
+
+## HELLO 3 then GET of a missing key (RESP3)
+received (first 120 bytes of HELLO map): b'%7\r\n$6\r\nserver\r\n$5\r\nredis\r\n$7\r\nversion\r\n$6\r\n8.10.3\r\n$5\r\nproto\r\n:3\r\n$2\r\nid\r\n:9\r\n$4\r\nmode\r\n$10\r\nstandalone\r\n$4\r\nrole\r\n$6\r\n'
+received tail: b'rgs\r\n*0\r\n_\r\n'
+
+
+==== E2 round trips, sequential vs pipeline vs MGET, batch sizes, loopback
+$ python3 e2_rtt.py
+
+# loopback: 1,000 keys product:0..999, 300-byte values
+PING round trip: median 0.091 ms, p90 0.115 ms, p99 0.149 ms, min 0.072 ms, max 0.457 ms (n=2000)
+single GET round trip: median 0.090 ms, p90 0.112 ms, p99 0.208 ms, min 0.074 ms, max 15.098 ms (n=2000)
+
+24 values:
+  24 GETs one at a time:   median 2.134 ms, p90 2.517 ms, p99 2.877 ms, min 1.945 ms, max 21.382 ms (n=300)
+  24 GETs in one pipeline: median 0.131 ms, p90 0.149 ms, p99 0.178 ms, min 0.104 ms, max 0.186 ms (n=300)
+  one MGET of 24 keys:     median 0.112 ms, p90 0.127 ms, p99 0.161 ms, min 0.100 ms, max 0.168 ms (n=300)
+
+1,000 values (median of 30 runs each):
+  1,000 GETs one at a time: median 91.78 ms
+  pipeline batches of   10 (100 round trips): median 10.44 ms
+  mget     batches of   10 (100 round trips): median 9.83 ms
+  pipeline batches of  100 ( 10 round trips): median 2.22 ms
+  mget     batches of  100 ( 10 round trips): median 1.76 ms
+  pipeline batches of 1000 (  1 round trips): median 1.28 ms
+  mget     batches of 1000 (  1 round trips): median 0.81 ms
+
+
+==== E2-proxy the same through the delaying proxy
+$ python3 delayproxy.py <proxy port> 7108 0.5 &   then   python3 e2_rtt.py <proxy port> proxy 100
+
+# through a proxy adding 0.5 ms each way: 1,000 keys product:0..999, 300-byte values
+PING round trip: median 1.561 ms, p90 1.658 ms, p99 2.776 ms, min 1.343 ms, max 15.281 ms (n=2000)
+single GET round trip: median 1.561 ms, p90 1.661 ms, p99 2.398 ms, min 1.298 ms, max 16.592 ms (n=2000)
+
+24 values:
+  24 GETs one at a time:   median 39.292 ms, p90 61.772 ms, p99 131.189 ms, min 36.395 ms, max 131.189 ms (n=100)
+  24 GETs in one pipeline: median 1.622 ms, p90 1.904 ms, p99 2.160 ms, min 1.397 ms, max 2.160 ms (n=100)
+  one MGET of 24 keys:     median 1.620 ms, p90 2.451 ms, p99 4.366 ms, min 1.426 ms, max 4.366 ms (n=100)
+
+1,000 values (median of 20 runs each):
+  1,000 GETs one at a time: median 1632.37 ms
+  pipeline batches of   10 (100 round trips): median 152.17 ms
+  mget     batches of   10 (100 round trips): median 149.28 ms
+  pipeline batches of  100 ( 10 round trips): median 16.45 ms
+  mget     batches of  100 ( 10 round trips): median 15.86 ms
+  pipeline batches of 1000 (  1 round trips): median 2.76 ms
+  mget     batches of 1000 (  1 round trips): median 2.23 ms
+
+
+==== E3 tail: share of pages of 24 sequential GETs that include a GET slower than the p99
+$ python3 e3_tail.py
+
+GETs timed: 96000; median 0.106 ms; 99th percentile 0.456 ms
+share of GETs slower than that: 0.0100
+pages of 24 sequential GETs: 4000
+share of pages with at least one slow GET: 0.080   (1 - (1 - p)^24 = 0.214)
+page time: median 2.612 ms, p99 12.380 ms
+
+
+==== E4 connection per request
+$ python3 e4_conn.py
+
+persistent connection, GET:               median 0.099 ms, p90 0.150 ms, p99 0.274 ms, min 0.077 ms, max 0.687 ms (n=2000)
+new connection per GET (connect+GET+close): median 0.245 ms, p90 0.297 ms, p99 0.375 ms, min 0.216 ms, max 2.997 ms (n=2000)
+new connection + HELLO 3 + GET:             median 0.351 ms, p90 0.430 ms, p99 1.082 ms, min 0.281 ms, max 17.367 ms (n=2000)
+total_connections_received so far: 4013
+
+
+==== E5 pipelines: interleaving, per-command errors, output buffer memory
+$ python3 e5_pipe.py
+
+## Other clients' commands run between a pipeline's commands
+client A pipelined 200,000 INCR ctr; last reply 200000
+client B's GETs during it saw 82 values strictly between 0 and 200,000, e.g. [2670, 4450, 6230, 8010, 9790, 11570]
+
+## An error affects only its own command
+  SET a 1          -> 'OK'
+  INCR a b         -> Err("ERR wrong number of arguments for 'incr' command")
+  LPUSH a x        -> Err('WRONGTYPE Operation against a key holding the wrong kind of value')
+  INCR a           -> 2
+  GET a            -> b'2'
+
+## Replies wait in server memory until the client reads them
+client sent 20,000 GETs of a 10,000-byte value and read nothing
+  largest omem in CLIENT LIST: 200139544 bytes
+  used_memory before 1517008, after 201783744 (+200266736)
+  mem_clients_normal after: 200189464
+  client-output-buffer-limit: normal 0 0 0 slave 268435456 67108864 60 pubsub 33554432 8388608 60
+  after the client read 200200000 bytes, used_memory 1590816
+
+## INFO stats pipelining fields
+  ['avg_pipeline_length_sum:703206', 'avg_pipeline_length_cnt:257491', 'avg_pipeline_length:2.73']
+
+
+==== E7 a timeout does not cancel the command; INCR after the client closes
+$ python3 e7_timeout.py
+
+INCR views       first attempt (100 ms timeout): timed out after 101 ms; retry: reply 102 after a further 345 ms; value now b'102'
+SET price 35     first attempt (100 ms timeout): timed out after 103 ms; retry: reply 'OK' after a further 339 ms; value now b'35'
+(views started at 100, price at 39; Redis was stalled for 500 ms by DEBUG SLEEP 0.5 on another connection)
+
+## Send INCR and hang up at once, 200 times
+normal close (FIN): counter n = b'200'
+abortive close (RST): counter n = b'16'
+
+
+==== E9 lost updates: 8 clients x 500 increments, four ways
+$ python3 e9_race.py
+
+GET then SET (run 1)   final   861 of 4000  lost  3139  retries      0  round trips per increment 2.00  time 0.17 s
+GET then SET (run 2)   final   872 of 4000  lost  3128  retries      0  round trips per increment 2.00  time 0.18 s
+GET then SET (run 3)   final   885 of 4000  lost  3115  retries      0  round trips per increment 2.00  time 0.20 s
+INCR                   final  4000 of 4000  lost     0  retries      0  round trips per increment 1.00  time 0.09 s
+WATCH/MULTI/EXEC loop  final  4000 of 4000  lost     0  retries  19506  round trips per increment 17.63  time 1.81 s
+Lua script (EVAL)      final  4000 of 4000  lost     0  retries      0  round trips per increment 1.00  time 0.10 s
+
+
+==== E10 MULTI/EXEC errors, WATCH semantics, Redis 8.4 compare-and-set commands, COMMAND DOCS versions
+$ python3 e10_multi.py
+
+## MULTI/EXEC: a command that cannot be queued discards the whole transaction
+  SET x 0                                  -> 'OK'
+  MULTI                                    -> 'OK'
+  INCR x                                   -> 'QUEUED'
+  INCRR x                                  -> Err("ERR unknown command 'INCRR', with args beginning with: 'x' ")
+  EXEC                                     -> Err('EXECABORT Transaction discarded because of previous errors.')
+  GET x                                    -> b'0'
+## MULTI/EXEC: a command that fails when run does not undo the others
+  SET s text                               -> 'OK'
+  MULTI                                    -> 'OK'
+  INCR x                                   -> 'QUEUED'
+  LPUSH s v                                -> 'QUEUED'
+  INCR x                                   -> 'QUEUED'
+  EXEC                                     -> [1, Err('WRONGTYPE Operation against a key holding the wrong kind of value'), 2]
+  GET x                                    -> b'2'
+## MULTI: a read inside the transaction only returns QUEUED
+  MULTI                                    -> 'OK'
+  GET x                                    -> 'QUEUED'
+  EXEC                                     -> [b'2']
+
+## WATCH: another client's write between WATCH and EXEC aborts the transaction
+  SET product:42 v7                        -> 'OK'
+  WATCH product:42                         -> 'OK'
+  GET product:42                           -> b'v7'
+  (client B)
+  SET product:42 v8                        -> 'OK'
+  MULTI                                    -> 'OK'
+  SET product:42 v7-edited                 -> 'QUEUED'
+  EXEC                                     -> None
+  GET product:42                           -> b'v8'
+## WATCH: a write of the same value still counts as a change
+  WATCH product:42                         -> 'OK'
+  (client B)
+  SET product:42 v8                        -> 'OK'
+  MULTI                                    -> 'OK'
+  SET product:42 v9                        -> 'QUEUED'
+  EXEC                                     -> None
+## WATCH: expiry counts as a change
+  SET lease token PX 50                    -> 'OK'
+  WATCH lease                              -> 'OK'
+  MULTI                                    -> 'OK'
+  SET other 1                              -> 'QUEUED'
+  EXEC                                     -> None
+## WATCH: a write to a different key does not abort
+  WATCH product:42                         -> 'OK'
+  (client B)
+  SET product:43 x                         -> 'OK'
+  MULTI                                    -> 'OK'
+  SET product:42 v9                        -> 'QUEUED'
+  EXEC                                     -> ['OK']
+
+## Redis 8.4+: SET ... IFEQ, IFNE, DIGEST + IFDEQ, DELEX, MSETEX
+  SET price:42 3900                        -> 'OK'
+  SET price:42 3500 IFEQ 3900              -> 'OK'
+  SET price:42 3700 IFEQ 3900              -> None
+  GET price:42                             -> b'3500'
+  SET missing 1 IFEQ x                     -> None
+  EXISTS missing                           -> 0
+  SET missing 1 IFNE x                     -> 'OK'
+  EXISTS missing                           -> 1
+  DIGEST price:42                          -> b'dad768104da273b1'
+  SET price:42 3400 IFDEQ dad768104da273b1 -> 'OK'
+  GET price:42                             -> b'3400'
+  SET price:42 3300 IFDEQ dad768104da273b1 -> None
+  SET lock:product:42 token-a81f NX PX 10000 -> 'OK'
+  DELEX lock:product:42 IFEQ token-b77c    -> 0
+  EXISTS lock:product:42                   -> 1
+  DELEX lock:product:42 IFEQ token-a81f    -> 1
+  EXISTS lock:product:42                   -> 0
+  HSET h f 1                               -> 1
+  SET h x IFEQ 1                           -> Err('WRONGTYPE Operation against a key holding the wrong kind of value')
+  DELEX h IFEQ 1                           -> Err('ERR Key should be of string type if conditions are specified')
+  MSETEX 3 product:1 a product:2 b product:3 c EX 300 -> 1
+  TTL product:2                            -> 300
+  MSETEX 2 product:3 c2 product:4 d NX EX 300 -> 0
+  EXISTS product:4                         -> 0
+
+## Introduction versions (COMMAND DOCS)
+  MULTI    since 1.2.0, complexity: O(1)
+  WATCH    since 2.2.0, complexity: O(1) for every key.
+  EVAL     since 2.6.0, complexity: Depends on the script that is executed.
+  EVALSHA  since 2.6.0, complexity: Depends on the script that is executed.
+  FCALL    since 7.0.0, complexity: Depends on the function that is executed.
+  GETDEL   since 6.2.0, complexity: O(1)
+  GETEX    since 6.2.0, complexity: O(1)
+  DELEX    since 8.4.0, complexity: O(1) for IFEQ/IFNE, O(N) for IFDEQ/IFDNE where N is the length of the string value.
+  DIGEST   since 8.4.0, complexity: O(N) where N is the length of the string value.
+  MSETEX   since 8.4.0, complexity: O(N) where N is the number of keys to set.
+  SET      since 1.0.0, complexity: O(1)
+
+
+==== E12 scripts: EVALSHA/NOSCRIPT, error without rollback, BUSY and UNKILLABLE
+$ python3 e12_scripts.py
+
+## The script, set only if newer (KEYS[1] = cache key, ARGV = version, value, ttl):
+local cur = redis.call('HGET', KEYS[1], 'v')
+if cur and tonumber(cur) >= tonumber(ARGV[1]) then return 0 end
+redis.call('HSET', KEYS[1], 'v', ARGV[1], 'data', ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 1
+## EVALSHA before the script is loaded
+  EVALSHA <sha> 1 product:42 8 {price:3500} 3600               -> Err('NOSCRIPT No matching script. Please use EVAL.')
+  SCRIPT LOAD <script>                                         -> b'efa5574cf5b3057e9fe89d5587f3814941754220'
+  EVALSHA <sha> 1 product:42 8 {price:3500} 3600               -> 1
+  EVALSHA <sha> 1 product:42 7 {price:3700} 3600  (late, older) -> 0
+  HGETALL product:42                                           -> [b'v', b'8', b'data', b'{"price":3500}']
+  TTL product:42                                               -> 3600
+  EVALSHA <sha> 1 product:42 9 {price:3300} 3600               -> 1
+  HGETALL product:42                                           -> [b'v', b'9', b'data', b'{"price":3300}']
+
+## A script error does not undo the writes made before it
+  EVAL: SET before; LPUSH on a hash (error); SET after         -> Err('WRONGTYPE Operation against a key holding the wrong kind of value script: 122c4f91b92ee808ffd4ebffffbdada327ffe4b5, on @user_script:1.')
+  MGET before after                                            -> [b'1', None]
+
+## A slow script blocks every client (busy-reply-threshold lowered to 200 ms)
+  CONFIG SET busy-reply-threshold 200                          -> 'OK'
+  another client's GET -> Err('BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.') after 0.5 ms
+  SCRIPT KILL                                                  -> 'OK'
+  [script client] got: Err('ERR Script killed by user with SCRIPT KILL... script: 3fcf51a9b854b8f66cb8685600b0d7df968f4398, on @user_script:1.')
+  GET after the kill -> b'1' after 0.19 ms
+## A script that has written cannot be killed
+  GET product:42                                               -> Err('BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.')
+  SCRIPT KILL                                                  -> Err('UNKILLABLE Sorry the script already executed write commands against the dataset. You can either wait the script termination or kill the server in a hard way using the SHUTDOWN NOSAVE command.')
+  only SHUTDOWN NOSAVE ends it:
+  [script client] connection ended: closed
+  SHUTDOWN NOSAVE: connection closed (closed)
+
+
+==== E13 functions lost on restart without persistence; maxclients
+$ python3 e13_fn.py
+
+#!lua name=cachelib
+redis.register_function('set_if_newer', function(keys, args)
+  local cur = redis.call('HGET', keys[1], 'v')
+  if cur and tonumber(cur) >= tonumber(args[1]) then return 0 end
+  redis.call('HSET', keys[1], 'v', args[1], 'data', args[2])
+  redis.call('EXPIRE', keys[1], args[3])
+  return 1
+end)
+  FUNCTION LOAD <library cachelib>                             -> b'cachelib'
+  FUNCTION LOAD <library cachelib> again                       -> Err("ERR Library 'cachelib' already exists")
+  FCALL set_if_newer 1 product:42 8 {"price":3500} 3600        -> 1
+  FCALL set_if_newer 1 product:42 7 {"price":3700} 3600        -> 0
+  FCALL_RO set_if_newer 1 product:42 9 {"price":3300} 3600     -> Err('ERR Can not execute a script with write flag using *_ro command.')
+  SCRIPT LOAD "return 'cached script'"                         -> b'f5af26a72fa1fa19abfa68a0515df1c8d40bcbb2'
+  CONFIG GET save                                              -> [b'save', b'']
+  CONFIG GET appendonly                                        -> [b'appendonly', b'no']
+## after restarting the server (no RDB, no AOF)
+  FUNCTION LIST                                                -> []
+  FCALL set_if_newer 1 product:42 8 {"price":3500} 3600        -> Err('ERR Function not found')
+  EVALSHA <sha of 'return cached script'> 0                    -> Err('NOSCRIPT No matching script. Please use EVAL.')
+  DBSIZE                                                       -> 0
+
+## maxclients
+  CONFIG GET maxclients                                        -> [b'maxclients', b'10000']
+  CONFIG GET timeout                                           -> [b'timeout', b'0']
+  CONFIG GET tcp-keepalive                                     -> [b'tcp-keepalive', b'300']
+  CONFIG SET maxclients 3                                      -> 'OK'
+  new connection 1: PING -> 'PONG'
+  new connection 2: PING -> 'PONG'
+  new connection 3: PING -> Err('ERR max number of clients reached')
+  new connection 4: PING -> Err('ERR max number of clients reached')
+  rejected_connections:2
+  CONFIG SET maxclients 10000                                  -> 'OK'
+
+
+==== E15 set only if newer with WATCH and with SET IFEQ; E17 JSON serialisation timings
+$ python3 e15_cas.py
+
+## set only if newer with WATCH (MULTI ... EXEC sent as one pipelined round trip)
+  version 8 into an empty key -> (1, 1) round trips 3
+  late version 7 -> (0, 1) round trips 3
+  version 9 while another writer stores version 10 between WATCH and EXEC -> (0, 2) round trips 6 ; now [b'v', b'10', b'data', b'{"price":3200}']
+
+## set only if newer with SET ... IFEQ (8.4+): version kept in the string, compared in the application
+  late version 7 -> (0, 1) round trips 1 ; now b'v8|3500'
+  version 9 -> (1, 1) round trips 2 ; now b'v9|3300'
+
+## E17: serialising a cached product in the client (Python 3.14 json, median of 2,000)
+     214 bytes: json.dumps 1.7 us, json.loads 1.6 us
+    1072 bytes: json.dumps 5.3 us, json.loads 4.3 us
+    8992 bytes: json.dumps 34.8 us, json.loads 27.5 us
+
+
+==== E16 recording sales on a JSON string: GET then SET vs a cjson script
+$ python3 e16_json.py
+
+redis_version [b'redis_version:8.10.3']
+getset: 8 clients x 250 sales -> sold=429 of 2000, ttl=300, 0.34 s, value={"id": 42, "name": "Walnut desk", "price": 39, "sold": 429}
+getset: 8 clients x 250 sales -> sold=430 of 2000, ttl=299, 0.55 s, value={"id": 42, "name": "Walnut desk", "price": 39, "sold": 430}
+getset: 8 clients x 250 sales -> sold=432 of 2000, ttl=299, 0.54 s, value={"id": 42, "name": "Walnut desk", "price": 39, "sold": 432}
+script: 8 clients x 250 sales -> sold=2000 of 2000, ttl=300, 0.21 s, value={"price": 39, "id": 42, "name": "Walnut desk", "sold": 2000}
+script on missing key -> None
+
+
+==== E18 redis-py 8.1.0 defaults: retries on timeout and against a down Redis
+$ venv/bin/python pyexp/e18_redispy.py
+
+redis-py 8.1.0
+defaults: socket_timeout 5 connect_timeout 5 retries 10 backoff ExponentialWithJitterBackoff errors ['ConnectionError', 'TimeoutError', 'TimeoutError']
+INCR views with socket_timeout=0.1 and default retries during a 0.5 s stall: 640 ms -> 102; views now b'102'
+same with retries=0: 101 ms -> TimeoutError: Timeout reading from socket; views now b'101'
+GET, nothing listening on the port, defaults: median 3781 ms (min 3638, max 4514) -> ConnectionError: Error 61 connecting to localhost:7199. Connection refused.
+GET, nothing listening on the port, socket timeouts 50 ms: median 3591 ms (min 3345, max 3980) -> ConnectionError: Error 61 connecting to localhost:7199. Connection refused.
+GET, nothing listening on the port, 50 ms, retries=0: median 3 ms (min 2, max 4) -> ConnectionError: Error 61 connecting to localhost:7199. Connection refused.
+GET, host not answering, 50 ms timeouts, default retries: median 4160 ms (min 2900, max 5014) -> TimeoutError: Timeout connecting to server
+GET, host not answering, 50 ms timeouts, retries=0: median 53 ms (min 53, max 53) -> TimeoutError: Timeout connecting to server
+
+
+==== Client library defaults read from source at release tags
+redis-py v8.1.0: redis/_defaults: DEFAULT_SOCKET_TIMEOUT = 5, connect timeout defaults to the socket timeout,
+  DEFAULT_RETRY_COUNT = 10, DEFAULT_RETRY_BASE = 0.01, DEFAULT_RETRY_CAP = 1;
+  redis/retry.py: Retry supported_errors = (ConnectionError, TimeoutError, socket.timeout);
+  redis/backoff.py: ExponentialWithJitterBackoff.compute(failures) = min(cap, random() * base * 2**failures),
+  with failures counted from 1 (so the first wait is up to 20 ms).
+go-redis v9.23.0 options.go: DialTimeout 5 s, ReadTimeout 5 s, MaxRetries 3, MinRetryBackoff 10 ms,
+  MaxRetryBackoff 1 s, PoolSize 10 * GOMAXPROCS.
+Jedis v8.0.2 Protocol.java: DEFAULT_TIMEOUT = 2000 (ms).
+Lettuce 7.9.0.RELEASE RedisURI.java: DEFAULT_TIMEOUT = 60 (s).
+redis.conf (8.10.3): busy-reply-threshold 5000 (the commented default).
+Redis docs, Diagnosing latency issues: "The typical latency of a 1 Gbit/s network is about 200 us".
+
+==== Appendix: script sources
+
+---- r8.py
+# Minimal RESP2 client for the article 8 experiments (standard library only).
+import socket, time, statistics
+
+PORT = 7108
+HOST = "127.0.0.1"
+
+
+def enc(*args):
+    out = [b"*%d\r\n" % len(args)]
+    for a in args:
+        a = a if isinstance(a, bytes) else str(a).encode()
+        out.append(b"$%d\r\n%s\r\n" % (len(a), a))
+    return b"".join(out)
+
+
+class Conn:
+    def __init__(self, port=PORT, host=HOST, timeout=None):
+        self.s = socket.create_connection((host, port))
+        self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        if timeout is not None:
+            self.s.settimeout(timeout)
+        self.buf = b""
+        self.pos = 0
+
+    def close(self):
+        self.s.close()
+
+    def send(self, data):
+        self.s.sendall(data)
+
+    def _fill(self):
+        d = self.s.recv(1 << 20)
+        if not d:
+            raise ConnectionError("closed")
+        if self.pos:
+            self.buf = self.buf[self.pos:]
+            self.pos = 0
+        self.buf += d
+
+    def _line(self):
+        i = self.buf.find(b"\r\n", self.pos)
+        while i < 0:
+            self._fill()
+            i = self.buf.find(b"\r\n", self.pos)
+        line = self.buf[self.pos:i]
+        self.pos = i + 2
+        return line
+
+    def read(self):
+        line = self._line()
+        t, rest = line[:1], line[1:]
+        if t == b"+":
+            return rest.decode()
+        if t == b"-":
+            return Err(rest.decode())
+        if t == b":":
+            return int(rest)
+        if t == b"$":
+            n = int(rest)
+            if n < 0:
+                return None
+            while len(self.buf) - self.pos < n + 2:
+                self._fill()
+            v = self.buf[self.pos:self.pos + n]
+            self.pos += n + 2
+            return v
+        if t == b"*":
+            n = int(rest)
+            if n < 0:
+                return None
+            return [self.read() for _ in range(n)]
+        if t == b"_":
+            return None
+        if t == b"%":
+            n = int(rest)
+            return {self.read(): self.read() for _ in range(n)}
+        return ("?", line)
+
+    def cmd(self, *args):
+        self.send(enc(*args))
+        return self.read()
+
+    def pipeline(self, cmds):
+        self.send(b"".join(enc(*c) for c in cmds))
+        return [self.read() for _ in cmds]
+
+
+class Err(str):
+    def __repr__(self):
+        return "Err(%s)" % str.__repr__(self)
+
+
+def ms(x):
+    return "%.3f ms" % (x * 1000)
+
+
+def summary(xs):
+    xs = sorted(xs)
+    q = lambda p: xs[min(len(xs) - 1, int(p * len(xs)))]
+    return "median %.3f ms, p90 %.3f ms, p99 %.3f ms, min %.3f ms, max %.3f ms (n=%d)" % (
+        statistics.median(xs) * 1000, q(0.9) * 1000, q(0.99) * 1000, xs[0] * 1000, xs[-1] * 1000, len(xs))
+
+---- delayproxy.py
+# A TCP proxy that holds every chunk of bytes for a fixed delay in each direction,
+# to imitate a network round trip on one machine. usage: delayproxy.py listen_port target_port one_way_ms
+import asyncio, sys
+LISTEN, TARGET, DELAY = int(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3]) / 1000
+async def pump(reader, writer):
+    loop = asyncio.get_running_loop()
+    try:
+        while True:
+            data = await reader.read(1 << 20)
+            if not data: break
+            loop.call_later(DELAY, writer.write, data)   # constant delay keeps order
+    finally:
+        await asyncio.sleep(DELAY + 0.01)
+        writer.close()
+async def handle(cr, cw):
+    sr, sw = await asyncio.open_connection("127.0.0.1", TARGET)
+    for w in (cw, sw):
+        sock = w.get_extra_info("socket"); import socket; sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    await asyncio.gather(pump(cr, sw), pump(sr, cw))
+async def main():
+    srv = await asyncio.start_server(handle, "127.0.0.1", LISTEN)
+    async with srv: await srv.serve_forever()
+asyncio.run(main())
+
+---- e1_wire.py
+# E1: the bytes on the wire for a few commands, read raw from the socket.
+import socket, time
+from r8 import enc, PORT
+def raw(payload, wait=0.05):
+    s = socket.create_connection(("127.0.0.1", PORT)); s.sendall(payload); time.sleep(wait)
+    s.settimeout(0.2); out=b""
+    try:
+        while True:
+            d=s.recv(65536)
+            if not d: break
+            out+=d
+    except socket.timeout: pass
+    s.close(); return out
+for label, cmds in [
+    ("SET product:42 + GET product:42 + GET product:43 (missing), RESP2", [("SET","product:42",'{"name":"Kettle","price":3500}'),("GET","product:42"),("GET","product:43")]),
+    ("MGET product:42 product:43 product:44", [("SET","product:44","Toaster"),("MGET","product:42","product:43","product:44")]),
+]:
+    payload=b"".join(enc(*c) for c in cmds)
+    print("## "+label); print("sent:    ", repr(payload)); print("received:", repr(raw(payload))); print()
+print("## Inline command (telnet style)"); print("sent:     b'PING\\r\\n'"); print("received:", repr(raw(b"PING\r\n")))
+print()
+print("## HELLO 3 then GET of a missing key (RESP3)")
+r=raw(enc("HELLO","3")+enc("GET","product:43"))
+print("received (first 120 bytes of HELLO map):", repr(r[:120])); print("received tail:", repr(r[-12:]))
+
+---- e2_rtt.py
+# E2: round trip versus execution; 24 values read three ways; 1,000 values in batches.
+# usage: e2_rtt.py [port] [label]
+import sys, time, statistics, math
+import r8
+from r8 import Conn, summary
+port = int(sys.argv[1]) if len(sys.argv) > 1 else r8.PORT
+label = sys.argv[2] if len(sys.argv) > 2 else "loopback"
+REPS = int(sys.argv[3]) if len(sys.argv) > 3 else 300
+c = Conn(port)
+val = ('{"id":%d,"name":"Stainless steel kettle 1.7 l","price_pence":3500,"currency":"GBP","stock":12,'
+       '"rating":4.6,"reviews":182,"image":"/img/products/%d.webp","category":"kitchen","updated":"2026-10-27T09:00:00Z"}')
+c.pipeline([("SET", "product:%d" % i, (val % (i, i)).ljust(300)) for i in range(1000)])
+print("# %s: 1,000 keys product:0..999, 300-byte values" % label)
+# warm up
+for _ in range(200): c.cmd("PING")
+pings = []
+for _ in range(2000):
+    t = time.perf_counter(); c.cmd("PING"); pings.append(time.perf_counter() - t)
+print("PING round trip:", summary(pings))
+gets = []
+for i in range(2000):
+    t = time.perf_counter(); c.cmd("GET", "product:%d" % (i % 1000)); gets.append(time.perf_counter() - t)
+print("single GET round trip:", summary(gets))
+def timeit(fn, reps=REPS):
+    xs = []
+    for _ in range(reps):
+        t = time.perf_counter(); fn(); xs.append(time.perf_counter() - t)
+    return xs
+keys24 = ["product:%d" % (i * 37 % 1000) for i in range(24)]
+seq = timeit(lambda: [c.cmd("GET", k) for k in keys24])
+pipe = timeit(lambda: c.pipeline([("GET", k) for k in keys24]))
+mget = timeit(lambda: c.cmd("MGET", *keys24))
+print("\n24 values:")
+print("  24 GETs one at a time:  ", summary(seq))
+print("  24 GETs in one pipeline:", summary(pipe))
+print("  one MGET of 24 keys:    ", summary(mget))
+keys = ["product:%d" % i for i in range(1000)]
+print("\n1,000 values (median of %d runs each):" % max(20, REPS // 10))
+def batches(size, mode):
+    def run():
+        for j in range(0, 1000, size):
+            part = keys[j:j + size]
+            if mode == "mget": c.cmd("MGET", *part)
+            else: c.pipeline([("GET", k) for k in part])
+    return run
+reps = max(20, REPS // 10)
+r = timeit(lambda: [c.cmd("GET", k) for k in keys], reps)
+print("  1,000 GETs one at a time: median %.2f ms" % (statistics.median(r) * 1000))
+for size in (10, 100, 1000):
+    for mode in ("pipeline", "mget"):
+        r = timeit(batches(size, mode), reps)
+        print("  %-8s batches of %4d (%3d round trips): median %.2f ms" % (mode, size, math.ceil(1000 / size), statistics.median(r) * 1000))
+
+---- e3_tail.py
+# E3: does a page that waits for k round trips see the tail more often? Loopback.
+# Each "page" reads 24 keys one at a time; every GET is timed. A GET is "slow" if it
+# takes longer than the 99th percentile of all GETs. Compare the share of pages with
+# at least one slow GET against 1 - (1 - p)^24.
+import time, statistics
+from r8 import Conn
+c = Conn()
+keys = ["product:%d" % (i * 37 % 1000) for i in range(24)]
+pages = []
+for _ in range(4000):
+    row = []
+    for k in keys:
+        t = time.perf_counter(); c.cmd("GET", k); row.append(time.perf_counter() - t)
+    pages.append(row)
+allg = sorted(x for r in pages for x in r)
+thr = allg[int(0.99 * len(allg))]
+p = sum(x > thr for x in allg) / len(allg)
+slow_pages = sum(any(x > thr for x in r) for r in pages) / len(pages)
+tot = sorted(sum(r) for r in pages)
+print("GETs timed: %d; median %.3f ms; 99th percentile %.3f ms" % (len(allg), statistics.median(allg) * 1000, thr * 1000))
+print("share of GETs slower than that: %.4f" % p)
+print("pages of 24 sequential GETs: %d" % len(pages))
+print("share of pages with at least one slow GET: %.3f   (1 - (1 - p)^24 = %.3f)" % (slow_pages, 1 - (1 - p) ** 24))
+print("page time: median %.3f ms, p99 %.3f ms" % (statistics.median(tot) * 1000, tot[int(0.99 * len(tot))] * 1000))
+
+---- e4_conn.py
+# E4: what a new connection per request costs, on loopback (no TLS, no AUTH).
+import time, statistics
+from r8 import Conn, summary
+N = 2000
+c = Conn()
+xs = []
+for i in range(N):
+    t = time.perf_counter(); c.cmd("GET", "product:%d" % (i % 1000)); xs.append(time.perf_counter() - t)
+print("persistent connection, GET:              ", summary(xs))
+xs = []
+for i in range(N):
+    t = time.perf_counter(); d = Conn(); d.cmd("GET", "product:%d" % (i % 1000)); d.close(); xs.append(time.perf_counter() - t)
+print("new connection per GET (connect+GET+close):", summary(xs))
+xs = []
+for i in range(N):
+    t = time.perf_counter(); d = Conn(); d.cmd("HELLO", "3", "SETNAME", "shop-web"); d.cmd("GET", "product:%d" % (i % 1000)); d.close(); xs.append(time.perf_counter() - t)
+print("new connection + HELLO 3 + GET:            ", summary(xs))
+time.sleep(0.5)
+print("total_connections_received so far:", Conn().cmd("INFO", "stats").decode().split("total_connections_received:")[1].split()[0])
+
+---- e5_pipe.py
+# E5: a pipeline is not a transaction; errors are per command; replies queue in server memory.
+import time, threading, re
+from r8 import Conn, enc
+c = Conn(); c.cmd("DEL", "ctr")
+print("## Other clients' commands run between a pipeline's commands")
+seen = []
+def watcher():
+    b = Conn()
+    for _ in range(400):
+        v = b.cmd("GET", "ctr"); seen.append(int(v) if v else 0)
+a = Conn()
+th = threading.Thread(target=watcher); th.start(); time.sleep(0.002)
+replies = a.pipeline([("INCR", "ctr")] * 200000)
+th.join()
+mid = [v for v in seen if 0 < v < 200000]
+print("client A pipelined 200,000 INCR ctr; last reply", replies[-1])
+print("client B's GETs during it saw %d values strictly between 0 and 200,000, e.g. %s" % (len(mid), mid[:6]))
+print()
+print("## An error affects only its own command")
+c.cmd("DEL", "a")
+for cmd, r in zip([("SET", "a", "1"), ("INCR", "a", "b"), ("LPUSH", "a", "x"), ("INCR", "a"), ("GET", "a")],
+                  c.pipeline([("SET", "a", "1"), ("INCR", "a", "b"), ("LPUSH", "a", "x"), ("INCR", "a"), ("GET", "a")])):
+    print("  %-16s -> %r" % (" ".join(cmd), r))
+print()
+print("## Replies wait in server memory until the client reads them")
+big = "x" * 10000
+c.cmd("SET", "big", big)
+before = c.cmd("INFO", "memory").decode()
+um = lambda s: int(re.search(r"used_memory:(\d+)", s).group(1))
+mc = lambda s: int(re.search(r"mem_clients_normal:(\d+)", s).group(1))
+slow = Conn(); slow.send(b"".join(enc("GET", "big") for _ in range(20000)))
+time.sleep(1.5)
+lst = c.cmd("CLIENT", "LIST").decode()
+omem = max(int(m) for m in re.findall(r"omem=(\d+)", lst))
+after = c.cmd("INFO", "memory").decode()
+print("client sent 20,000 GETs of a 10,000-byte value and read nothing")
+print("  largest omem in CLIENT LIST: %d bytes" % omem)
+print("  used_memory before %d, after %d (+%d)" % (um(before), um(after), um(after) - um(before)))
+print("  mem_clients_normal after: %d" % mc(after))
+print("  client-output-buffer-limit:", c.cmd("CONFIG", "GET", "client-output-buffer-limit")[1].decode())
+got = 0
+slow.s.settimeout(2)
+try:
+    while got < 20000 * 10007:
+        d = slow.s.recv(1 << 20)
+        if not d: break
+        got += len(d)
+except Exception as e: print("  read stopped:", e)
+time.sleep(0.5)
+print("  after the client read %d bytes, used_memory %d" % (got, um(c.cmd("INFO", "memory").decode())))
+print()
+print("## INFO stats pipelining fields")
+print(" ", [l for l in c.cmd("INFO", "stats").decode().splitlines() if "pipeline" in l])
+
+---- e7_timeout.py
+# E7: a client-side timeout does not cancel the command on the server.
+import time, threading, socket
+from r8 import Conn, enc
+c = Conn(); c.cmd("SET", "views", "100"); c.cmd("SET", "price", "39")
+def stall(seconds):
+    Conn().cmd("DEBUG", "SLEEP", str(seconds))   # holds the main thread, like a slow command
+def attempt(args, timeout):
+    d = Conn(timeout=timeout)
+    try:
+        r = d.cmd(*args); return ("reply", r)
+    except socket.timeout:
+        return ("timed out", None)
+    finally:
+        d.close()
+for args in [("INCR", "views"), ("SET", "price", "35")]:
+    th = threading.Thread(target=stall, args=(0.5,)); th.start(); time.sleep(0.05)
+    t0 = time.perf_counter()
+    first = attempt(args, 0.1)
+    t1 = time.perf_counter()
+    second = attempt(args, 2.0)   # the retry, sent on a new connection after the timeout
+    t2 = time.perf_counter()
+    th.join(); time.sleep(0.05)
+    print("%-16s first attempt (100 ms timeout): %s after %.0f ms; retry: %s %r after a further %.0f ms; value now %r" % (
+        " ".join(args), first[0], (t1 - t0) * 1000, second[0], second[1], (t2 - t1) * 1000, c.cmd("GET", args[1])))
+print("(views started at 100, price at 39; Redis was stalled for 500 ms by DEBUG SLEEP 0.5 on another connection)")
+print()
+print("## Send INCR and hang up at once, 200 times")
+c.cmd("SET", "n", "0")
+for _ in range(200):
+    s = socket.create_connection(("127.0.0.1", 7108)); s.sendall(enc("INCR", "n")); s.close()
+time.sleep(0.3)
+print("normal close (FIN): counter n =", c.cmd("GET", "n"))
+c.cmd("SET", "n", "0")
+import struct
+for _ in range(200):
+    s = socket.create_connection(("127.0.0.1", 7108)); s.sendall(enc("INCR", "n"))
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)); s.close()
+time.sleep(0.3)
+print("abortive close (RST): counter n =", c.cmd("GET", "n"))
+
+---- e9_race.py
+# E9: eight clients each add 1 to one counter 500 times (expected 4,000), four ways.
+import threading, time
+from r8 import Conn
+CLIENTS, EACH = 8, 500
+def run(name, body):
+    Conn().cmd("SET", "stock", "0")
+    stats = {"retries": 0, "trips": 0}
+    lock = threading.Lock()
+    def worker():
+        c = Conn(); r = t = 0
+        for _ in range(EACH):
+            rr, tt = body(c); r += rr; t += tt
+        with lock: stats["retries"] += r; stats["trips"] += t
+    ths = [threading.Thread(target=worker) for _ in range(CLIENTS)]
+    t0 = time.perf_counter(); [x.start() for x in ths]; [x.join() for x in ths]
+    el = time.perf_counter() - t0
+    v = int(Conn().cmd("GET", "stock"))
+    print("%-22s final %5d of %d  lost %5d  retries %6d  round trips per increment %.2f  time %.2f s" % (
+        name, v, CLIENTS * EACH, CLIENTS * EACH - v, stats["retries"], stats["trips"] / (CLIENTS * EACH), el))
+def get_set(c):
+    v = int(c.cmd("GET", "stock")); c.cmd("SET", "stock", v + 1); return 0, 2
+def incr(c):
+    c.cmd("INCR", "stock"); return 0, 1
+def watch(c):
+    retries = trips = 0
+    while True:
+        c.cmd("WATCH", "stock"); v = int(c.cmd("GET", "stock"))
+        r = c.pipeline([("MULTI",), ("SET", "stock", v + 1), ("EXEC",)])
+        trips += 3
+        if r[-1] is not None: return retries, trips
+        retries += 1
+SCRIPT = "local v = tonumber(redis.call('GET', KEYS[1]) or '0'); redis.call('SET', KEYS[1], v + 1); return v + 1"
+def script(c):
+    c.cmd("EVAL", SCRIPT, 1, "stock"); return 0, 1
+for i in range(3): run("GET then SET (run %d)" % (i + 1), get_set)
+run("INCR", incr)
+run("WATCH/MULTI/EXEC loop", watch)
+run("Lua script (EVAL)", script)
+
+---- e10_multi.py
+# E10/E11: MULTI/EXEC errors and WATCH behaviour. E14: SET IFEQ, DELEX, DIGEST, MSETEX.
+import time
+from r8 import Conn
+a, b = Conn(), Conn()
+def show(conn, *args):
+    r = conn.cmd(*args); print("  %-40s -> %r" % (" ".join(map(str, args)), r)); return r
+a.cmd("FLUSHALL")
+print("## MULTI/EXEC: a command that cannot be queued discards the whole transaction")
+show(a, "SET", "x", "0"); show(a, "MULTI"); show(a, "INCR", "x"); show(a, "INCRR", "x"); show(a, "EXEC"); show(a, "GET", "x")
+print("## MULTI/EXEC: a command that fails when run does not undo the others")
+show(a, "SET", "s", "text"); show(a, "MULTI"); show(a, "INCR", "x"); show(a, "LPUSH", "s", "v"); show(a, "INCR", "x"); show(a, "EXEC"); show(a, "GET", "x")
+print("## MULTI: a read inside the transaction only returns QUEUED")
+show(a, "MULTI"); show(a, "GET", "x"); show(a, "EXEC")
+print()
+print("## WATCH: another client's write between WATCH and EXEC aborts the transaction")
+show(a, "SET", "product:42", "v7"); show(a, "WATCH", "product:42"); show(a, "GET", "product:42")
+print("  (client B)"); show(b, "SET", "product:42", "v8")
+show(a, "MULTI"); show(a, "SET", "product:42", "v7-edited"); show(a, "EXEC"); show(a, "GET", "product:42")
+print("## WATCH: a write of the same value still counts as a change")
+show(a, "WATCH", "product:42"); print("  (client B)"); show(b, "SET", "product:42", "v8")
+show(a, "MULTI"); show(a, "SET", "product:42", "v9"); show(a, "EXEC")
+print("## WATCH: expiry counts as a change")
+show(a, "SET", "lease", "token", "PX", "50"); show(a, "WATCH", "lease"); time.sleep(0.1)
+show(a, "MULTI"); show(a, "SET", "other", "1"); show(a, "EXEC")
+print("## WATCH: a write to a different key does not abort")
+show(a, "WATCH", "product:42"); print("  (client B)"); show(b, "SET", "product:43", "x")
+show(a, "MULTI"); show(a, "SET", "product:42", "v9"); show(a, "EXEC")
+print()
+print("## Redis 8.4+: SET ... IFEQ, IFNE, DIGEST + IFDEQ, DELEX, MSETEX")
+show(a, "SET", "price:42", "3900")
+show(a, "SET", "price:42", "3500", "IFEQ", "3900"); show(a, "SET", "price:42", "3700", "IFEQ", "3900"); show(a, "GET", "price:42")
+show(a, "SET", "missing", "1", "IFEQ", "x"); show(a, "EXISTS", "missing")
+show(a, "SET", "missing", "1", "IFNE", "x"); show(a, "EXISTS", "missing")
+d = show(a, "DIGEST", "price:42")
+show(a, "SET", "price:42", "3400", "IFDEQ", d.decode()); show(a, "GET", "price:42")
+show(a, "SET", "price:42", "3300", "IFDEQ", d.decode())
+show(a, "SET", "lock:product:42", "token-a81f", "NX", "PX", "10000")
+show(a, "DELEX", "lock:product:42", "IFEQ", "token-b77c"); show(a, "EXISTS", "lock:product:42")
+show(a, "DELEX", "lock:product:42", "IFEQ", "token-a81f"); show(a, "EXISTS", "lock:product:42")
+show(a, "HSET", "h", "f", "1"); show(a, "SET", "h", "x", "IFEQ", "1"); show(a, "DELEX", "h", "IFEQ", "1")
+show(a, "MSETEX", 3, "product:1", "a", "product:2", "b", "product:3", "c", "EX", 300)
+show(a, "TTL", "product:2")
+show(a, "MSETEX", 2, "product:3", "c2", "product:4", "d", "NX", "EX", 300); show(a, "EXISTS", "product:4")
+print()
+print("## Introduction versions (COMMAND DOCS)")
+for name in ["MULTI", "WATCH", "EVAL", "EVALSHA", "FCALL", "GETDEL", "GETEX", "DELEX", "DIGEST", "MSETEX", "SET"]:
+    docs = a.cmd("COMMAND", "DOCS", name)
+    m = dict(zip(docs[1][0::2], docs[1][1::2]))
+    print("  %-8s since %s, complexity: %s" % (name, m[b"since"].decode(), m.get(b"complexity", b"").decode()[:90]))
+
+---- e12_scripts.py
+# E12: scripts. E15: the versioned "set only if newer" as a script, a function and a WATCH loop.
+import time, threading
+from r8 import Conn
+a, b = Conn(), Conn()
+def show(conn, *args, label=None):
+    r = conn.cmd(*args); print("  %-60s -> %r" % (label or " ".join(map(str, args))[:60], r)); return r
+NEWER = """local cur = redis.call('HGET', KEYS[1], 'v')
+if cur and tonumber(cur) >= tonumber(ARGV[1]) then return 0 end
+redis.call('HSET', KEYS[1], 'v', ARGV[1], 'data', ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 1"""
+print("## The script, set only if newer (KEYS[1] = cache key, ARGV = version, value, ttl):")
+print(NEWER)
+a.cmd("SCRIPT", "FLUSH"); a.cmd("DEL", "product:42")
+import hashlib
+sha = hashlib.sha1(NEWER.encode()).hexdigest()
+print("## EVALSHA before the script is loaded")
+show(a, "EVALSHA", sha, 1, "product:42", 8, '{"price":3500}', 3600, label="EVALSHA <sha> 1 product:42 8 {price:3500} 3600")
+show(a, "SCRIPT", "LOAD", NEWER, label="SCRIPT LOAD <script>")
+show(a, "EVALSHA", sha, 1, "product:42", 8, '{"price":3500}', 3600, label="EVALSHA <sha> 1 product:42 8 {price:3500} 3600")
+show(a, "EVALSHA", sha, 1, "product:42", 7, '{"price":3700}', 3600, label="EVALSHA <sha> 1 product:42 7 {price:3700} 3600  (late, older)")
+show(a, "HGETALL", "product:42"); show(a, "TTL", "product:42")
+show(a, "EVALSHA", sha, 1, "product:42", 9, '{"price":3300}', 3600, label="EVALSHA <sha> 1 product:42 9 {price:3300} 3600")
+show(a, "HGETALL", "product:42")
+print()
+print("## A script error does not undo the writes made before it")
+a.cmd("DEL", "before", "after")
+show(a, "EVAL", "redis.call('SET','before','1'); redis.call('LPUSH', KEYS[1], 'x'); redis.call('SET','after','1')", 1, "product:42", label="EVAL: SET before; LPUSH on a hash (error); SET after")
+show(a, "MGET", "before", "after")
+print()
+print("## A slow script blocks every client (busy-reply-threshold lowered to 200 ms)")
+show(a, "CONFIG", "SET", "busy-reply-threshold", "200")
+def loop_ro(): 
+    c = Conn(); print("  [script client] got:", repr(c.cmd("EVAL", "local i = 0 while true do i = i + 1 end", 0)))
+th = threading.Thread(target=loop_ro); th.start(); time.sleep(0.4)
+t = time.perf_counter(); r = b.cmd("GET", "product:42"); print("  another client's GET -> %r after %.1f ms" % (r, (time.perf_counter() - t) * 1000))
+show(b, "SCRIPT", "KILL"); th.join()
+t = time.perf_counter(); r = b.cmd("GET", "before"); print("  GET after the kill -> %r after %.2f ms" % (r, (time.perf_counter() - t) * 1000))
+print("## A script that has written cannot be killed")
+def loop_rw():
+    c = Conn()
+    try: print("  [script client] got:", repr(c.cmd("EVAL", "redis.call('SET','w','1') local i = 0 while true do i = i + 1 end", 0)))
+    except Exception as e: print("  [script client] connection ended:", e)
+th = threading.Thread(target=loop_rw, daemon=True); th.start(); time.sleep(0.4)
+show(b, "GET", "product:42"); show(b, "SCRIPT", "KILL")
+print("  only SHUTDOWN NOSAVE ends it:"); 
+try: show(b, "SHUTDOWN", "NOSAVE")
+except Exception as e: print("  SHUTDOWN NOSAVE: connection closed (%s)" % e)
+
+---- e13_fn.py
+# E13: functions; what survives a restart of a cache with no persistence. E16: maxclients.
+import sys, time, hashlib
+from r8 import Conn
+a = Conn()
+def show(conn, *args, label=None):
+    r = conn.cmd(*args); print("  %-60s -> %r" % (label or " ".join(map(str, args))[:60], r)); return r
+LIB = """#!lua name=cachelib
+redis.register_function('set_if_newer', function(keys, args)
+  local cur = redis.call('HGET', keys[1], 'v')
+  if cur and tonumber(cur) >= tonumber(args[1]) then return 0 end
+  redis.call('HSET', keys[1], 'v', args[1], 'data', args[2])
+  redis.call('EXPIRE', keys[1], args[3])
+  return 1
+end)"""
+NEWER = "return 1"
+if sys.argv[1] == "before":
+    print(LIB)
+    show(a, "FUNCTION", "LOAD", LIB, label="FUNCTION LOAD <library cachelib>")
+    show(a, "FUNCTION", "LOAD", LIB, label="FUNCTION LOAD <library cachelib> again")
+    show(a, "FCALL", "set_if_newer", 1, "product:42", 8, '{"price":3500}', 3600)
+    show(a, "FCALL", "set_if_newer", 1, "product:42", 7, '{"price":3700}', 3600)
+    show(a, "FCALL_RO", "set_if_newer", 1, "product:42", 9, '{"price":3300}', 3600)
+    show(a, "SCRIPT", "LOAD", "return 'cached script'", label="SCRIPT LOAD \"return 'cached script'\"")
+    show(a, "CONFIG", "GET", "save"); show(a, "CONFIG", "GET", "appendonly")
+else:
+    print("## after restarting the server (no RDB, no AOF)")
+    show(a, "FUNCTION", "LIST")
+    show(a, "FCALL", "set_if_newer", 1, "product:42", 8, '{"price":3500}', 3600)
+    sha = hashlib.sha1(b"return 'cached script'").hexdigest()
+    show(a, "EVALSHA", sha, 0, label="EVALSHA <sha of 'return cached script'> 0")
+    show(a, "DBSIZE")
+    print()
+    print("## maxclients")
+    show(a, "CONFIG", "GET", "maxclients"); show(a, "CONFIG", "GET", "timeout"); show(a, "CONFIG", "GET", "tcp-keepalive")
+    show(a, "CONFIG", "SET", "maxclients", "3")
+    cs = []
+    for i in range(4):
+        c = Conn(); r = c.cmd("PING"); print("  new connection %d: PING -> %r" % (i + 1, r)); cs.append(c)
+    print("  " + [l for l in a.cmd("INFO", "stats").decode().splitlines() if l.startswith("rejected_connections")][0])
+    show(a, "CONFIG", "SET", "maxclients", "10000")
+
+---- e15_cas.py
+# E15: set-only-if-newer three ways, counting round trips; E17: client serialisation cost.
+import json, time, statistics, zlib
+from r8 import Conn
+a, b = Conn(), Conn()
+trips = 0
+def cmd(c, *args):
+    global trips; trips += 1; return c.cmd(*args)
+def watch_newer(c, key, ver, data, ttl, interfere=None):
+    attempts = 0
+    while True:
+        attempts += 1
+        cmd(c, "WATCH", key)
+        cur = cmd(c, "HGET", key, "v")
+        if cur is not None and int(cur) >= ver:
+            cmd(c, "UNWATCH"); return 0, attempts
+        if interfere and attempts == 1: interfere()
+        global trips; trips += 1
+        r = c.pipeline([("MULTI",), ("HSET", key, "v", ver, "data", data), ("EXPIRE", key, ttl), ("EXEC",)])
+        if r[-1] is not None: return 1, attempts
+a.cmd("DEL", "product:42")
+print("## set only if newer with WATCH (MULTI ... EXEC sent as one pipelined round trip)")
+trips = 0; print("  version 8 into an empty key ->", watch_newer(a, "product:42", 8, '{"price":3500}', 3600), "round trips", trips)
+trips = 0; print("  late version 7 ->", watch_newer(a, "product:42", 7, '{"price":3700}', 3600), "round trips", trips)
+trips = 0
+r = watch_newer(a, "product:42", 9, '{"price":3300}', 3600, interfere=lambda: b.cmd("HSET", "product:42", "v", "10", "data", '{"price":3200}'))
+print("  version 9 while another writer stores version 10 between WATCH and EXEC ->", r, "round trips", trips, "; now", a.cmd("HGETALL", "product:42"))
+print()
+print("## set only if newer with SET ... IFEQ (8.4+): version kept in the string, compared in the application")
+a.cmd("SET", "price:42", "v8|3500")
+def ifeq_newer(c, key, ver, payload):
+    attempts = 0
+    while True:
+        attempts += 1
+        cur = cmd(c, "GET", key)
+        if cur is not None and int(cur.split(b"|")[0][1:]) >= ver: return 0, attempts
+        new = "v%d|%s" % (ver, payload)
+        r = cmd(c, "SET", key, new, "IFEQ", cur) if cur is not None else cmd(c, "SET", key, new, "NX")
+        if r == "OK": return 1, attempts
+trips = 0; print("  late version 7 ->", ifeq_newer(a, "price:42", 7, "3700"), "round trips", trips, "; now", a.cmd("GET", "price:42"))
+trips = 0; print("  version 9 ->", ifeq_newer(a, "price:42", 9, "3300"), "round trips", trips, "; now", a.cmd("GET", "price:42"))
+print()
+print("## E17: serialising a cached product in the client (Python 3.14 json, median of 2,000)")
+base = {"id": 42, "name": "Stainless steel kettle 1.7 l", "price_pence": 3500, "currency": "GBP", "stock": 12,
+        "rating": 4.6, "categories": ["kitchen", "small appliances"], "image": "/img/products/42.webp"}
+for n_reviews in (0, 10, 100):
+    obj = dict(base, reviews=[{"user": "user%d" % i, "stars": (i % 5) + 1, "text": "Boils quickly and quietly; review number %d." % i} for i in range(n_reviews)])
+    s = json.dumps(obj); bs = s.encode()
+    def t(fn, n=2000):
+        xs = []
+        for _ in range(n):
+            t0 = time.perf_counter(); fn(); xs.append(time.perf_counter() - t0)
+        return statistics.median(xs) * 1e6
+    print("  %6d bytes: json.dumps %.1f us, json.loads %.1f us" % (len(bs), t(lambda: json.dumps(obj)), t(lambda: json.loads(bs))))
+
+---- e16_json.py
+# E16: recording a sale on a product stored as a JSON string.
+# GET-modify-SET from 8 clients loses sales; a Lua script using cjson does not.
+import json, threading, time
+from r8 import Conn
+
+c = Conn()
+c.cmd("FLUSHALL")
+base = {"id": 42, "name": "Walnut desk", "price": 39, "sold": 0}
+
+def reset():
+    c.cmd("SET", "product:42", json.dumps(base), "EX", 300)
+
+SCRIPT = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then return nil end
+local p = cjson.decode(raw)
+p.sold = p.sold + tonumber(ARGV[1])
+redis.call('SET', KEYS[1], cjson.encode(p), 'KEEPTTL')
+return p.sold
+"""
+
+N, PER = 8, 250
+
+def run(kind):
+    reset()
+    def worker():
+        k = Conn()
+        for _ in range(PER):
+            if kind == "getset":
+                p = json.loads(k.cmd("GET", "product:42"))
+                p["sold"] += 1
+                k.cmd("SET", "product:42", json.dumps(p), "KEEPTTL")
+            else:
+                k.cmd("EVAL", SCRIPT, 1, "product:42", 1)
+        k.close()
+    ts = [threading.Thread(target=worker) for _ in range(N)]
+    t0 = time.perf_counter()
+    for t in ts: t.start()
+    for t in ts: t.join()
+    dt = time.perf_counter() - t0
+    final = json.loads(c.cmd("GET", "product:42"))
+    print(f"{kind}: {N} clients x {PER} sales -> sold={final['sold']} of {N*PER}, ttl={c.cmd('TTL','product:42')}, {dt:.2f} s, value={json.dumps(final)}")
+
+print("redis_version", [l for l in c.cmd("INFO", "server").split(b"\r\n") if l.startswith(b"redis_version")])
+for i in range(3):
+    run("getset")
+run("script")
+print("script on missing key ->", c.cmd("EVAL", SCRIPT, 1, "product:missing", 1))
+
+---- e18_redispy.py
+# E18: redis-py 8.1.0 defaults: what a timeout and a down Redis do to one call.
+import time, threading, statistics, redis
+print("redis-py", redis.__version__)
+
+def timed(fn):
+    t0 = time.perf_counter()
+    try:
+        r = fn(); out = repr(r)
+    except Exception as e:
+        out = f"{type(e).__name__}: {str(e)[:90]}"
+    return time.perf_counter() - t0, out
+
+# 1. Defaults of a plain client
+r = redis.Redis(port=7108)
+k = r.connection_pool.connection_kwargs
+print("defaults: socket_timeout", k.get("socket_timeout"), "connect_timeout", k.get("socket_connect_timeout"),
+      "retries", k["retry"].get_retries(), "backoff", type(k["retry"]._backoff).__name__,
+      "errors", [e.__name__ for e in k["retry"]._supported_errors])
+
+# 2. INCR timing out while another client stalls Redis, default retry policy
+admin = redis.Redis(port=7108)
+admin.set("views", 100)
+c = redis.Redis(port=7108, socket_timeout=0.1)
+c.ping()
+threading.Thread(target=lambda: redis.Redis(port=7108).execute_command("DEBUG", "SLEEP", "0.5")).start()
+time.sleep(0.02)
+dt, out = timed(lambda: c.incr("views"))
+time.sleep(0.6)
+print(f"INCR views with socket_timeout=0.1 and default retries during a 0.5 s stall: {dt*1000:.0f} ms -> {out}; views now {admin.get('views')}")
+
+# 3. Same, with retries off
+admin.set("views", 100)
+from redis.retry import Retry
+from redis.backoff import NoBackoff
+c0 = redis.Redis(port=7108, socket_timeout=0.1, retry=Retry(NoBackoff(), 0))
+c0.ping()
+threading.Thread(target=lambda: redis.Redis(port=7108).execute_command("DEBUG", "SLEEP", "0.5")).start()
+time.sleep(0.02)
+dt, out = timed(lambda: c0.incr("views"))
+time.sleep(0.6)
+print(f"same with retries=0: {dt*1000:.0f} ms -> {out}; views now {admin.get('views')}")
+
+# 4. A Redis that is down: nothing listening (connection refused)
+for label, kw in [("defaults", {}), ("socket timeouts 50 ms", dict(socket_timeout=0.05, socket_connect_timeout=0.05)),
+                  ("50 ms, retries=0", dict(socket_timeout=0.05, socket_connect_timeout=0.05, retry=Retry(NoBackoff(), 0)))]:
+    times = []
+    for _ in range(5):
+        dt, out = timed(lambda: redis.Redis(port=7199, **kw).get("product:42"))
+        times.append(dt)
+    print(f"GET, nothing listening on the port, {label}: median {statistics.median(times)*1000:.0f} ms (min {min(times)*1000:.0f}, max {max(times)*1000:.0f}) -> {out}")
+
+# 5. A Redis host that does not answer (unroutable address): connect timeouts
+for label, kw in [("50 ms timeouts, default retries", dict(socket_timeout=0.05, socket_connect_timeout=0.05)),
+                  ("50 ms timeouts, retries=0", dict(socket_timeout=0.05, socket_connect_timeout=0.05, retry=Retry(NoBackoff(), 0)))]:
+    times = []
+    for _ in range(3):
+        dt, out = timed(lambda: redis.Redis(host="10.255.255.1", port=6379, **kw).get("product:42"))
+        times.append(dt)
+    print(f"GET, host not answering, {label}: median {statistics.median(times)*1000:.0f} ms (min {min(times)*1000:.0f}, max {max(times)*1000:.0f}) -> {out}")
+
+
+==== Repair round 1 (2026-10-28)
+Redis 8.10.3 on port 7118 only, temporary directory, --save '' --appendonly no --enable-debug-command local; shut down afterwards.
+Clients: redis-py 8.1.0 (venv), go-redis v9.23.0 (go run), Python 3.14. The machine was shared with other agents.
+Also relied on: the technical reviewer's evidence, clients-and-pipelining-review-1.txt (E8 failure times, E11 pool
+exhaustion, E12 go-redis dial retries), and source read at the tags named below.
+
+## R1 What library default retries re-send after a timeout (rp_retries.py; gotest/main.go)
+Set-up: 100 ms command timeout, DEBUG SLEEP 0.5 on another connection 20 ms before the call, a = b = 0.
+--- redis-py 8.1.0 (default Retry, then retry=Retry(NoBackoff(), 0)) ---
+INCR a                             retries default: result=2 err=None 491 ms; a=2 b=0
+INCR a                             retries default: result=2 err=None 591 ms; a=2 b=0
+pipeline(transaction=False) 2 INCR retries default: result=[2, 2] err=None 479 ms; a=2 b=2
+pipeline(transaction=False) 2 INCR retries default: result=[2, 2] err=None 488 ms; a=2 b=2
+pipeline() default: MULTI 2 INCR EXEC retries default: result=[2, 2] err=None 481 ms; a=2 b=2
+pipeline() default: MULTI 2 INCR EXEC retries default: result=[2, 2] err=None 482 ms; a=2 b=2
+EVALSHA script INCRBY a 1          retries default: result=2 err=None 485 ms; a=2 b=0
+EVALSHA script INCRBY a 1          retries default: result=2 err=None 481 ms; a=2 b=0
+WATCH a, MULTI INCR a EXEC         retries default: result=[1] err=None 477 ms; a=1 b=0
+WATCH a, MULTI INCR a EXEC         retries default: result=[1] err=None 478 ms; a=1 b=0
+INCR a                             retries off: result=None err=TimeoutError 102 ms; a=1 b=0
+INCR a                             retries off: result=None err=TimeoutError 101 ms; a=1 b=0
+pipeline(transaction=False) 2 INCR retries off: result=None err=TimeoutError 102 ms; a=1 b=1
+pipeline(transaction=False) 2 INCR retries off: result=None err=TimeoutError 102 ms; a=1 b=1
+pipeline() default: MULTI 2 INCR EXEC retries off: result=None err=TimeoutError 102 ms; a=1 b=1
+pipeline() default: MULTI 2 INCR EXEC retries off: result=None err=TimeoutError 101 ms; a=1 b=1
+EVALSHA script INCRBY a 1          retries off: result=None err=TimeoutError 101 ms; a=1 b=0
+EVALSHA script INCRBY a 1          retries off: result=None err=TimeoutError 102 ms; a=1 b=0
+WATCH a, MULTI INCR a EXEC         retries off: result=None err=TimeoutError 102 ms; a=0 b=0
+WATCH a, MULTI INCR a EXEC         retries off: result=None err=TimeoutError 103 ms; a=0 b=0
+A SET price 35 retries default: returned True err=None; B SET price 36 sent 50 ms later; final price = 35
+A SET price 35 retries default: returned True err=None; B SET price 36 sent 50 ms later; final price = 35
+A SET price 35 retries off: returned None err=TimeoutError; B SET price 36 sent 50 ms later; final price = 36
+A SET price 35 retries off: returned None err=TimeoutError; B SET price 36 sent 50 ms later; final price = 36
+--- go-redis v9.23.0, warm pool of 6 connections, ReadTimeout 100 ms (MaxRetries 0 = default 3; -1 = off) ---
+INCR a                                   MaxRetries= 0: result=4 err=<nil> after 481ms; a=4 b=0
+INCR a                                   MaxRetries= 0: result=4 err=<nil> after 482ms; a=4 b=0
+Pipeline INCR a, INCR b                  MaxRetries= 0: result=2 err=<nil> after 507ms; a=3 b=3
+Pipeline INCR a, INCR b                  MaxRetries= 0: result=2 err=<nil> after 482ms; a=2 b=2
+TxPipeline MULTI INCR a INCR b EXEC      MaxRetries= 0: result=2 err=read tcp 127.0.0.1:50935->127.0.0.1:7118: i/o timeout after 235ms; a=1 b=1
+TxPipeline MULTI INCR a INCR b EXEC      MaxRetries= 0: result=2 err=read tcp 127.0.0.1:51436->127.0.0.1:7118: i/o timeout after 218ms; a=1 b=1
+EVALSHA script INCRBY a 1                MaxRetries= 0: result=4 err=<nil> after 482ms; a=4 b=0
+EVALSHA script INCRBY a 1                MaxRetries= 0: result=4 err=<nil> after 482ms; a=4 b=0
+INCR a                                   MaxRetries=-1: result=0 err=read tcp 127.0.0.1:52765->127.0.0.1:7118: i/o timeout after 102ms; a=1 b=0
+INCR a                                   MaxRetries=-1: result=0 err=read tcp 127.0.0.1:52932->127.0.0.1:7118: i/o timeout after 100ms; a=1 b=0
+Pipeline INCR a, INCR b                  MaxRetries=-1: result=2 err=read tcp 127.0.0.1:52966->127.0.0.1:7118: i/o timeout after 205ms; a=1 b=1
+Pipeline INCR a, INCR b                  MaxRetries=-1: result=2 err=read tcp 127.0.0.1:52976->127.0.0.1:7118: i/o timeout after 205ms; a=1 b=1
+TxPipeline MULTI INCR a INCR b EXEC      MaxRetries=-1: result=2 err=read tcp 127.0.0.1:52996->127.0.0.1:7118: i/o timeout after 202ms; a=1 b=1
+TxPipeline MULTI INCR a INCR b EXEC      MaxRetries=-1: result=2 err=read tcp 127.0.0.1:53017->127.0.0.1:7118: i/o timeout after 209ms; a=1 b=1
+EVALSHA script INCRBY a 1                MaxRetries=-1: result=<nil> err=read tcp 127.0.0.1:53043->127.0.0.1:7118: i/o timeout after 102ms; a=1 b=0
+EVALSHA script INCRBY a 1                MaxRetries=-1: result=<nil> err=read tcp 127.0.0.1:53050->127.0.0.1:7118: i/o timeout after 102ms; a=1 b=0
+Earlier run of the same program: INCR with default retries returned an i/o timeout after ~480 ms with a = 4, so the
+caller can see either success or an error; the reviewer's E12 saw success (104). TxPipelined was never re-sent.
+Source: go-redis v9.23.0 options.go: 'MaxRetries ... -1 (not 0) disables retries'; PoolTimeout default ReadTimeout + 1 s;
+  error.go shouldRetry: dial errors, EOF, pool.ErrPoolTimeout, MAXCLIENTS and timeouts when retryTimeout is set;
+  redis.go _process sets retryTimeout for commands without their own read timeout; pipelines call shouldRetry(err, true).
+  redis-py 8.1.0 client.py: default retry = Retry(ExponentialWithJitterBackoff(base 0.01, cap 1), retries 10).
+
+## The article's two set-if-newer listings, and Figure 8's round trips (cas.py, watchseq.py)
+script v9 on empty -> 1
+script v8 (late)   -> 0
+script v9 (dup)    -> 0
+script v10         -> 1
+  HGETALL {b'version': b'10', b'value': b'{"price":3600}'} TTL 300
+loop v9 on empty -> True
+loop v8 (late)   -> False
+loop v10         -> True b'10|{"price":3600}' TTL 300
+script: 8 clients, 2000 versions in random order -> final b'2000' in 0.15 s
+script: 8 clients, 2000 versions in random order -> final b'2000' in 0.22 s
+script: 8 clients, 2000 versions in random order -> final b'2000' in 0.26 s
+IFEQ loop: 8 clients, 2000 versions in random order -> final b'2000|v2000' in 0.21 s
+IFEQ loop: 8 clients, 2000 versions in random order -> final b'2000|v2000' in 0.30 s
+IFEQ loop: 8 clients, 2000 versions in random order -> final b'2000|v2000' in 0.30 s
+round trip 1: b'+OK\r\n$1\r\n8\r\n'
+round trip 2: b'+OK\r\n+QUEUED\r\n+QUEUED\r\n*2\r\n:0\r\n:1\r\n'
+--- Figure 8 contested sequence on two raw connections ---
+A trip 1 b'+OK\r\n$1\r\n8\r\n'
+B b':0\r\n'
+A trip 2 b'+OK\r\n+QUEUED\r\n+QUEUED\r\n*-1\r\n'
+A trip 3 b'+OK\r\n$2\r\n10\r\n'
+A trip 4 b'+OK\r\n'
+final b'$2\r\n10\r\n'
+redis-py 8.1.0 set(..., ifeq=...) warns: UserWarning: Call to 'set' method with experimental usage of input argument/s 'ifeq'.
+
+## cjson round trip (R4)
+$ redis-cli -p 7118 EVAL "return cjson.encode(cjson.decode(ARGV[1]))" 0 '{"name":"Kettle","tags":[],"id":12345678901234567,"price":3500,"sold":10}'
+{"name":"Kettle","tags":{},"price":3500,"id":1.2345678901235e+16,"sold":10}
+
+## Valkey command pages (valkey.io, read 2026-10-28)
+SET: IFEQ added 8.1.0; IFNE added 9.2.0; no IFDEQ/IFDNE. DELIFEQ since 9.0.0. MSETEX since 9.1.0. DELEX since 9.2.0. No DIGEST page.
+
+## Figure 3 seed
+tail-model wall({k:24, seed:8}) -> 21 slow pages; bursts -> 4; k=1 -> 1; k=100 -> 61 (seed chosen to match the expectation).
+
+## Appendix: repair scripts
+--- rp_retries.py
+# redis-py 8.1.0: what the default retry policy re-sends after a timeout, and the same with retries off.
+import redis, time, threading
+from redis.retry import Retry
+from redis.backoff import NoBackoff
+P=7118
+admin=redis.Redis(port=P)
+def stall(): 
+    th=threading.Thread(target=lambda: redis.Redis(port=P, socket_timeout=10).execute_command('DEBUG','SLEEP','0.5')); th.start(); time.sleep(0.02); return th
+SCRIPT="return redis.call('INCRBY', KEYS[1], 1)"
+def client(off):
+    kw=dict(port=P, socket_timeout=0.1)
+    if off: kw['retry']=Retry(NoBackoff(),0)
+    c=redis.Redis(**kw); c.ping(); return c
+def case(name, f, off):
+    for i in range(2):
+        admin.set('a',0); admin.set('b',0)
+        c=client(off); s=c.register_script(SCRIPT); s(keys=['x'])  # load the script
+        th=stall(); t=time.time()
+        try: r=f(c,s); e=None
+        except Exception as ex: r=None; e=type(ex).__name__
+        el=(time.time()-t)*1000; th.join(); time.sleep(0.3)
+        print(f"{name:34s} retries {'off' if off else 'default'}: result={r} err={e} {el:.0f} ms; a={admin.get('a').decode()} b={admin.get('b').decode()}")
+def watch(c,s):
+    with c.pipeline() as p:
+        p.watch('a'); p.multi(); p.incr('a'); return p.execute()
+cases=[
+ ('INCR a', lambda c,s: c.incr('a')),
+ ('pipeline(transaction=False) 2 INCR', lambda c,s: (lambda p:(p.incr('a'),p.incr('b'),p.execute())[2])(c.pipeline(transaction=False))),
+ ('pipeline() default: MULTI 2 INCR EXEC', lambda c,s: (lambda p:(p.incr('a'),p.incr('b'),p.execute())[2])(c.pipeline())),
+ ('EVALSHA script INCRBY a 1', lambda c,s: s(keys=['a'])),
+ ('WATCH a, MULTI INCR a EXEC', watch),
+]
+for off in (False, True):
+    for n,f in cases: case(n,f,off)
+# A retried SET overwrites a newer write from another client.
+for off in (False, True):
+  for i in range(2):
+    admin.set('price',30)
+    a=client(off); b=redis.Redis(port=P, socket_timeout=5, retry=Retry(NoBackoff(),0)); b.ping()
+    th=stall()
+    tb=threading.Thread(target=lambda: (time.sleep(0.05), b.set('price',36))); tb.start()
+    try: ra=a.set('price',35); e=None
+    except Exception as ex: ra=None; e=type(ex).__name__
+    th.join(); tb.join(); time.sleep(0.3)
+    print(f"A SET price 35 retries {'off' if off else 'default'}: returned {ra} err={e}; B SET price 36 sent 50 ms later; final price = {admin.get('price').decode()}")
+--- cas.py
+# The article's two "set only if newer" listings, run against Redis 8.10.3.
+import redis, threading, random, socket, time
+from redis.retry import Retry
+from redis.backoff import NoBackoff
+P=7118
+r=redis.Redis(port=P, retry=Retry(NoBackoff(),0))
+
+# --- Listing 1: Lua script, entry is a hash with fields version and value ---
+SET_IF_NEWER = """
+local cur = tonumber(redis.call('HGET', KEYS[1], 'version') or '-1')
+if tonumber(ARGV[1]) <= cur then return 0 end
+redis.call('HSET', KEYS[1], 'version', ARGV[1], 'value', ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 1
+"""
+set_if_newer_script = r.register_script(SET_IF_NEWER)
+r.delete('product:42')
+print("script v9 on empty ->", set_if_newer_script(keys=['product:42'], args=[9, '{"price":3500}', 300]))
+print("script v8 (late)   ->", set_if_newer_script(keys=['product:42'], args=[8, '{"price":3900}', 300]))
+print("script v9 (dup)    ->", set_if_newer_script(keys=['product:42'], args=[9, '{"price":3500}', 300]))
+print("script v10         ->", set_if_newer_script(keys=['product:42'], args=[10, '{"price":3600}', 300]))
+print("  HGETALL", r.hgetall('product:42'), "TTL", r.ttl('product:42'))
+
+# --- Listing 2: SET ... IFEQ loop, entry is a string "version|value" ---
+def set_if_newer(r, key, version, value, ttl=300):
+    new = f"{version}|{value}"
+    while True:
+        cur = r.get(key)
+        if cur is None:                                  # IFEQ never creates a key
+            if r.set(key, new, nx=True, ex=ttl):
+                return True
+        elif int(cur.split(b"|", 1)[0]) >= version:
+            return False                                 # cache already as new or newer
+        elif r.set(key, new, ifeq=cur, ex=ttl):
+            return True
+        # Another writer got in between: read again and decide again.
+
+r.delete('p:42')
+print("loop v9 on empty ->", set_if_newer(r,'p:42',9,'{"price":3500}'))
+print("loop v8 (late)   ->", set_if_newer(r,'p:42',8,'{"price":3900}'))
+print("loop v10         ->", set_if_newer(r,'p:42',10,'{"price":3600}'), r.get('p:42'), "TTL", r.ttl('p:42'))
+
+# Contention: 8 threads write random versions 1..2000 in random order, each once; the final must be 2000.
+for name, fn in (("script", lambda c,k,v: set_if_newer_script(keys=[k], args=[v, f'v{v}', 300], client=c)),
+                 ("IFEQ loop", lambda c,k,v: set_if_newer(c,k,v,f'v{v}'))):
+    for run in range(3):
+        k='race:'+name; r.delete(k)
+        versions=list(range(1,2001)); random.shuffle(versions)
+        chunks=[versions[i::8] for i in range(8)]
+        def work(ch):
+            c=redis.Redis(port=P, retry=Retry(NoBackoff(),0))
+            for v in ch: fn(c,k,v)
+        ths=[threading.Thread(target=work,args=(ch,)) for ch in chunks]
+        t=time.time(); [x.start() for x in ths]; [x.join() for x in ths]
+        final = r.hget(k,'version') if name=="script" else r.get(k)
+        print(f"{name}: 8 clients, 2000 versions in random order -> final {final} in {time.time()-t:.2f} s")
+
+# WATCH round trips: WATCH and the read can share one round trip (raw socket, one write)
+s=socket.create_connection(('127.0.0.1',P)); r.hset('w:1', mapping={'version':8,'value':'x'})
+s.sendall(b"WATCH w:1\r\nHGET w:1 version\r\n"); time.sleep(0.05); print("round trip 1:", s.recv(1000))
+s.sendall(b"MULTI\r\nHSET w:1 version 9 value y\r\nEXPIRE w:1 300\r\nEXEC\r\n"); time.sleep(0.05); print("round trip 2:", s.recv(1000))
+--- watchseq.py
+# Figure 8's sequence on two raw connections, counting A's round trips (one write, then read every reply).
+import socket, time
+P=7118
+def conn(): s=socket.create_connection(('127.0.0.1',P)); return s
+def trip(s, cmds, n):
+    s.sendall(''.join(c+'\r\n' for c in cmds).encode()); time.sleep(0.05); return s.recv(4096)
+a=conn(); b=conn(); trips=0
+trip(b,['DEL product:42','HSET product:42 version 8 value old','EXPIRE product:42 300'],3)
+r=trip(a,['WATCH product:42','HGET product:42 version'],2); trips+=1; print('A trip',trips,r)
+print('B', trip(b,['HSET product:42 version 10 value v10'],1))
+r=trip(a,['MULTI','HSET product:42 version 9 value v9','EXPIRE product:42 300','EXEC'],4); trips+=1; print('A trip',trips,r)
+r=trip(a,['WATCH product:42','HGET product:42 version'],2); trips+=1; print('A trip',trips,r)
+r=trip(a,['UNWATCH'],1); trips+=1; print('A trip',trips,r)
+print('final', trip(b,['HGET product:42 version'],1))
+--- gotest/main.go
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+const addr = "127.0.0.1:7118"
+
+var ctx = context.Background()
+var admin = redis.NewClient(&redis.Options{Addr: addr})
+
+func warm(c *redis.Client) {
+	var wg sync.WaitGroup
+	for j := 0; j < 6; j++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); c.Do(ctx, "DEBUG", "SLEEP", "0.01") }()
+	}
+	wg.Wait()
+}
+func stall() {
+	go func() {
+		s := redis.NewClient(&redis.Options{Addr: addr, ReadTimeout: 10 * time.Second})
+		s.Do(ctx, "DEBUG", "SLEEP", "0.5")
+		s.Close()
+	}()
+	time.Sleep(20 * time.Millisecond)
+}
+
+var script = redis.NewScript(`return redis.call('INCRBY', KEYS[1], 1)`)
+
+func run(name string, maxRetries int, f func(c *redis.Client) (string, error)) {
+	for i := 0; i < 2; i++ {
+		admin.Set(ctx, "a", 0, 0)
+		admin.Set(ctx, "b", 0, 0)
+		c := redis.NewClient(&redis.Options{Addr: addr, ReadTimeout: 100 * time.Millisecond, MaxRetries: maxRetries})
+		warm(c)
+		script.Load(ctx, c)
+		stall()
+		t := time.Now()
+		res, err := f(c)
+		el := time.Since(t).Round(time.Millisecond)
+		time.Sleep(800 * time.Millisecond)
+		fmt.Printf("%-40s MaxRetries=%2d: result=%s err=%v after %v; a=%s b=%s\n", name, maxRetries, res, err, el, admin.Get(ctx, "a").Val(), admin.Get(ctx, "b").Val())
+		c.Close()
+	}
+}
+
+func main() {
+	for _, mr := range []int{0, -1} {
+		run("INCR a", mr, func(c *redis.Client) (string, error) {
+			v, err := c.Incr(ctx, "a").Result()
+			return fmt.Sprint(v), err
+		})
+		run("Pipeline INCR a, INCR b", mr, func(c *redis.Client) (string, error) {
+			cmds, err := c.Pipelined(ctx, func(p redis.Pipeliner) error { p.Incr(ctx, "a"); p.Incr(ctx, "b"); return nil })
+			return fmt.Sprint(len(cmds)), err
+		})
+		run("TxPipeline MULTI INCR a INCR b EXEC", mr, func(c *redis.Client) (string, error) {
+			cmds, err := c.TxPipelined(ctx, func(p redis.Pipeliner) error { p.Incr(ctx, "a"); p.Incr(ctx, "b"); return nil })
+			return fmt.Sprint(len(cmds)), err
+		})
+		run("EVALSHA script INCRBY a 1", mr, func(c *redis.Client) (string, error) {
+			v, err := script.Run(ctx, c, []string{"a"}).Result()
+			return fmt.Sprint(v), err
+		})
+	}
+}
+
+
+==== Repair round 2 (2026-10-28): a timeout during a WATCH transaction
+Redis 8.10.3 on port 7118, temporary directory, --save '' --appendonly no --enable-debug-command local; shut down afterwards.
+Set-up: 100 ms command timeout. The transaction WATCHes k and reads it; then another connection sends DEBUG SLEEP <stall>,
+and 20 ms later the client sends MULTI ... EXEC. Each line is one of 5 runs; all 5 runs of each case gave the same result.
+redis-py 8.1.0 uses its own Redis.transaction() helper, which re-runs the function on WatchError.
+  'add 1' = HINCRBY k n 1. 'marker' = the same, plus SET applied:req1 1 EX 600 in the transaction, and the function
+  stops without writing if applied:req1 exists. 'if newer' = Figure 8's decision: write version 9 only if the cached version < 9.
+$ venv/bin/python r2_watch.py 7118 0.15 ; venv/bin/python r2_watch.py 7118 0.5   (one line per case shown)
+Redis.transaction, add 1, default retries          stall 0.15s: attempts=2 raised=ok           n=2 (one +1 intended)
+Redis.transaction, add 1 + applied marker, default stall 0.15s: attempts=2 raised=ok           n=1 (one +1 intended)
+Redis.transaction, set version 9 if newer, default stall 0.15s: attempts=2 raised=ok           version=9 writes=1 (one intended)
+Redis.transaction, add 1, retries off              stall 0.15s: attempts=2 raised=ok           n=2 (one +1 intended)
+Redis.transaction, add 1 + applied marker, off     stall 0.15s: attempts=2 raised=ok           n=1 (one +1 intended)
+Redis.transaction, set version 9 if newer, off     stall 0.15s: attempts=2 raised=ok           version=9 writes=1 (one intended)
+Redis.transaction, every case, both retry settings stall 0.5s:  attempts=1 raised=TimeoutError n=1 / version=9 writes=1
+Reading: with a 0.15 s stall the EXEC timed out, redis-py raised WatchError ('A TimeoutError occurred while watching one or
+more keys', Pipeline._disconnect_raise_on_watching in client.py, raised whatever the retry count), the helper re-ran the
+function, and the first EXEC also ran when the stall ended: the relative change was applied twice, with retries on or off,
+and no error reached the caller. The marker and the version check made the re-run find the first write and stop.
+With a 0.5 s stall the re-run's own WATCH also timed out, so the caller saw TimeoutError and the change ran once.
+
+$ go run . 7118 0.15 [noretry]   go-redis v9.23.0, Watch + TxPipelined SET k v+1, loop re-runs only on TxFailedErr
+go-redis Watch loop, add 1, default retries, stall 0.15s: attempts=1 k=1 err=read tcp [::1]:62928->[::1]:7118: i/o timeout   (5 of 5)
+go-redis Watch loop, add 1, retries off, stall 0.15s:     attempts=1 k=1 err=read tcp [::1]:62945->[::1]:7118: i/o timeout   (5 of 5)
+Agrees with the final reviewer's runs (clients-and-pipelining-final-2.txt), including a cold pool and a 0.5 s stall.
+
+---- r2_watch.py
+# Repair round 2: what a redis-py 8.1 WATCH transaction does when its EXEC times out.
+# Another connection holds Redis with DEBUG SLEEP <stall> after WATCH and GET, before MULTI ... EXEC.
+# usage: r2_watch.py port stall_seconds
+import sys, threading, time, uuid, redis
+from redis.retry import Retry
+from redis.backoff import NoBackoff
+from redis.exceptions import WatchError
+
+port = int(sys.argv[1]); stall = sys.argv[2]
+admin = redis.Redis(port=port)
+
+def client(noretry):
+    kw = dict(port=port, socket_timeout=0.1)
+    if noretry:
+        kw["retry"] = Retry(NoBackoff(), 0)
+    return redis.Redis(**kw)
+
+def start_stall():
+    t = threading.Thread(target=lambda: admin.execute_command("DEBUG", "SLEEP", stall))
+    t.start(); time.sleep(0.02); return t
+
+def run(label, r, body, check):
+    for _ in range(5):
+        admin.delete("k", "applied:req1"); admin.hset("k", mapping={"version": 8, "n": 0})
+        r.ping()
+        st = {"attempts": 0, "t": None}
+        def func(p):
+            st["attempts"] += 1
+            stop = body(p)            # reads, then decides; returns True to stop without writing
+            if st["attempts"] == 1:
+                st["t"] = start_stall()
+            if stop:
+                p.unwatch(); return
+            p.multi(); write(p)
+        global write
+        out = "ok"
+        try:
+            r.transaction(func, "k")
+        except Exception as e:
+            out = type(e).__name__
+        if st["t"]: st["t"].join()
+        time.sleep(0.3)
+        print(f"{label:58s} stall {stall}s: attempts={st['attempts']} raised={out:12s} {check()}")
+
+# 1. a relative change: add 1 to field n
+def body_add(p):
+    p.hget("k", "n"); return False
+def write_add(p): p.hincrby("k", "n", 1)
+# 2. the same change, guarded by a marker written in the same transaction
+def body_marker(p):
+    return p.exists("applied:req1") == 1
+def write_marker(p):
+    p.hincrby("k", "n", 1); p.set("applied:req1", 1, ex=600)
+# 3. Figure 8's decision: store version 9 only if newer
+def body_newer(p):
+    return int(p.hget("k", "version")) >= 9
+def write_newer(p): p.hset("k", mapping={"version": 9}); p.hincrby("k", "n", 1)
+
+check_n = lambda: f"n={admin.hget('k', 'n').decode()} (one +1 intended)"
+check_v = lambda: f"version={admin.hget('k', 'version').decode()} writes={admin.hget('k', 'n').decode()} (one intended)"
+
+for noretry in (False, True):
+    r = client(noretry); tag = "retries off" if noretry else "default retries"
+    write = write_add;    run(f"Redis.transaction, add 1, {tag}", r, body_add, check_n)
+    write = write_marker; run(f"Redis.transaction, add 1 + applied marker, {tag}", r, body_marker, check_n)
+    write = write_newer;  run(f"Redis.transaction, set version 9 if newer, {tag}", r, body_newer, check_v)
+---- r2go/main.go
+// Repair round 2: go-redis v9.23 Watch + TxPipelined, EXEC times out (100 ms) during a DEBUG SLEEP stall.
+// usage: go run . port stall [noretry]
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+func main() {
+	ctx := context.Background()
+	opt := &redis.Options{Addr: "localhost:" + os.Args[1], ReadTimeout: 100 * time.Millisecond}
+	tag := "default retries"
+	if len(os.Args) > 3 {
+		opt.MaxRetries = -1
+		tag = "retries off"
+	}
+	r := redis.NewClient(opt)
+	admin := redis.NewClient(&redis.Options{Addr: opt.Addr, ReadTimeout: -1})
+	for i := 0; i < 5; i++ {
+		admin.Set(ctx, "k", 0, 0)
+		r.Ping(ctx)
+		attempts := 0
+		var err error
+		for {
+			attempts++
+			err = r.Watch(ctx, func(tx *redis.Tx) error {
+				v, err := tx.Get(ctx, "k").Int()
+				if err != nil {
+					return err
+				}
+				if attempts == 1 {
+					go admin.Do(ctx, "DEBUG", "SLEEP", os.Args[2])
+					time.Sleep(20 * time.Millisecond)
+				}
+				_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error { p.Set(ctx, "k", v+1, 0); return nil })
+				return err
+			}, "k")
+			if errors.Is(err, redis.TxFailedErr) {
+				continue
+			}
+			break
+		}
+		time.Sleep(700 * time.Millisecond)
+		v, _ := admin.Get(ctx, "k").Int()
+		fmt.Printf("go-redis Watch loop, add 1, %s, stall %ss: attempts=%d k=%d err=%v\n", tag, os.Args[2], attempts, v, err)
+	}
+}

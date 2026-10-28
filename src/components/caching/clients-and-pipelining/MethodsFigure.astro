@@ -1,0 +1,83 @@
+---
+// Figure: the same page's reads one at a time, pipelined, and as one MGET.
+import SimFigure from '../shared/SimFigure.astro';
+import Slider from '../shared/Slider.astro';
+import Choice from '../shared/Choice.astro';
+import Readout from '../shared/Readout.astro';
+import './clients.css';
+interface Props { number: number }
+const { number } = Astro.props;
+---
+<SimFigure number={number} id="clients-methods" title="Three ways to read a page's values" advance={500} clock={false}
+  legend={[{ kind: 'client', label: 'Request' }, { kind: 'hit', label: 'Reply' }, { kind: 'redis', label: 'Redis working' }, { kind: 'app', label: 'Application writing or reading' }]}
+  caption="Illustrative model with the same assumed costs as Figure 1, slowed down 2,000 times: one second on screen is 0.5 ms of real time. The diagram's time axis fits the method chosen; the bars below compare all three on one scale. Left out: network jitter, bandwidth (24 values of 300 bytes take under 6 µs to send at 10 Gbit/s), and packet sizes.">
+  <Fragment slot="params">
+    <Choice name="method" label="The page reads its values" value="pipeline"
+      options={[{ value: 'sequential', label: 'one GET at a time' }, { value: 'pipeline', label: 'pipelined GETs' }, { value: 'mget', label: 'one MGET' }]} />
+    <Slider name="n" label="Values" min={1} max={48} value={24} />
+  </Fragment>
+  <Fragment slot="stats">
+    <Readout name="trips" label="Round trips" kind="client" />
+    <Readout name="total" label="Page waits for Redis" />
+  </Fragment>
+  <div data-ladder></div>
+  <div slot="after" data-bars></div>
+  <Fragment slot="text">
+    <p>One GET at a time: each request waits for the previous reply, so 24 values take 24 round trips, about 12.3 ms.</p>
+    <p>Pipelined GETs: the application writes all 24 GETs without waiting; they cross the network together, Redis answers each in turn, and the replies come back together. One round trip, about 0.56 ms.</p>
+    <p>One MGET: a single command naming 24 keys, and a single reply holding 24 values. Also one round trip, about 0.56 ms. At 48 values the batched methods take about 0.6 ms against 24.5 ms one at a time.</p>
+  </Fragment>
+</SimFigure>
+<script>
+  import { mountSim, setReadouts } from '../shared/player.mjs';
+  import { Simulation } from '../shared/sim.mjs';
+  import { barChart } from '../shared/chart.mjs';
+  import { schedule, totals } from './ladder-model.mjs';
+  import { ladder, fmtMs } from './ladder.mjs';
+
+  const SLOW = 0.5; // µs of real time per millisecond on screen
+  const HOLD = 1800;
+  const NAMES: Record<string, string> = { sequential: 'one GET at a time', pipeline: 'pipelined GETs', mget: 'one MGET' };
+
+  document.querySelectorAll<HTMLElement>('[data-figure-id="clients-methods"]').forEach(root => {
+    const step = root.querySelector<HTMLElement>('[data-advance]');
+    if (step) { step.querySelector('span')!.textContent = 'Step 0.25 ms'; step.setAttribute('aria-label', 'Step forward 0.25 milliseconds of real time'); }
+    const view = ladder(root.querySelector<HTMLElement>('[data-ladder]')!, { label: 'Ladder diagram of one page reading its values from Redis' });
+    const bars = barChart(root.querySelector<HTMLElement>('[data-bars]')!, {
+      label: 'Time the page waits for Redis, by method',
+      bars: [
+        { id: 'sequential', label: 'One GET at a time', kind: 'client' },
+        { id: 'pipeline', label: 'Pipelined GETs', kind: 'hit' },
+        { id: 'mget', label: 'One MGET', kind: 'hit' },
+      ],
+      x: { label: 'Time the page waits for Redis (ms)', format: (v: number) => `${v < 10 ? v.toFixed(2) : v.toFixed(1)} ms` },
+    });
+    let shown = '';
+    mountSim(root, {
+      seed: 1,
+      create: (params: any) => {
+        const sched = schedule({ n: params.n, method: params.method });
+        // The axis fits the slowest of the batched methods, or the chosen method if it is slower.
+        const span = Math.max(sched.total, schedule({ n: params.n, method: 'mget' }).total, schedule({ n: params.n, method: 'pipeline' }).total) * 1.04;
+        return { sim: new Simulation({ seed: 1 }), sched, span, params };
+      },
+      render(model: any) {
+        const key = `${model.params.method}:${model.params.n}`;
+        if (key !== shown) {
+          shown = key;
+          const t = totals(model.params.n);
+          bars.set({ sequential: t.sequential / 1000, pipeline: t.pipeline / 1000, mget: t.mget / 1000 });
+        }
+        const cycle = model.sched.total + HOLD * SLOW;
+        const now = (model.sim.now * SLOW) % cycle;
+        view.render({ sched: model.sched, span: model.span, now });
+        const done = now >= model.sched.total;
+        setReadouts(root, {
+          trips: String(model.sched.trips),
+          total: done ? fmtMs(model.sched.total) : fmtMs(now),
+        });
+        root.dataset.method = NAMES[model.params.method];
+      },
+    });
+  });
+</script>
