@@ -53,7 +53,7 @@ Redis: 7100 + article number for writers, 7150 + article number for reviewers.
 | 9 | replication-and-persistence | E | done | final: publish | 992d8a44 |
 | 10 | cluster-and-hot-keys | E | done | final: publish | e370291f |
 | 11 | operating-a-cache | F | done | final: fixed, verified | 1d99a215 |
-| 12 | designing-a-cache | | | | |
+| 12 | designing-a-cache | F | done | final: fixed, verified | 680e27f0 |
 
 Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not committed yet; commit with the first published article.
 
@@ -279,3 +279,10 @@ Scaffold and shared figure toolkit: built 2026-10-27, see toolkit-report.md. Not
 - 2026-10-28: article 12 repair 1 done (new popularity/TTL figure; 'what if' switches; stock evictable, 3.5 GB; scaled model labelled; 'read the old key first' replaces the ramp); prose grew to about 8,500 words. Final review started (dev 4482, Redis 7182–7183), asked for concrete cuts toward 6,500 words and to settle 3.5 vs 4 GB.
 - 2026-10-28: article 12 final review: 2 blocking (Figure 2 required hit ratio fixed at 92.5%; paced deletes break the one-minute price target and checkout should confirm price), 13 minor, 4 GB recommended, about 1,750 words of cuts. Repair 2 started (dev 4422, Redis 7112–7113).
 - 2026-10-28: article 12 repair 2 done (required hit ratio computed from budget, 97.8% at twice the peak; 7-minute paced-delete staleness stated, checkout confirms price; maxmemory 4gb; 6,579 prose words); orchestrator checked both blocking fixes in the text and marked it published.
+- 2026-10-28: article 12 live (680e27f0). All 12 articles published; production
+  check of every page: 98 figures, no console errors. Not yet done: a
+  collection-wide audit (cross-article consistency, links, terms, repetition)
+  and any human read. Seven of twelve final reviews found blocking problems
+  after a full round; fixes after final review were verified by the
+  orchestrator, not re-reviewed. Lessons: review the shared toolkit before
+  articles use it; budget two review rounds; give writers a hard length budget.
