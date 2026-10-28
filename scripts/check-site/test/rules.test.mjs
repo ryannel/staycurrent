@@ -122,3 +122,15 @@ test('figure-labels: long captions count beside short figure labels', () => {
   assert.deepEqual(run('figure-labels', article({ body })), []);
   assert.equal(run('figure-labels', article({ body: body.replace('Figure 3.', 'Figure 4.') })).length, 1);
 });
+
+test('dense-prose: caveat-stacked sentences, not plain ones or code', () => {
+  const dense = '<p>The first is easy to measure and easy to guess wrongly, since every key carries overhead beyond its value (How Redis works). For a product cache, I wrote 20,000 keys with 2,000-byte values and a TTL and watched <code>used_memory</code> grow: 2,130 bytes a key, about 6% above the key and value, with my laptop’s libc allocator. For small values the overhead is a much larger share, and jemalloc on Linux rounds sizes differently, so measure a sample of your real values on your production build.</p>';
+  const plain = '<p>Don’t guess the first number; measure it. Every key costs more than its value, because Redis also stores the key and some bookkeeping of its own. When I did this with 20,000 products of 2,000 bytes each, every key took about 2,130 bytes, 6% more than the key and value alone. Small values carry a much bigger share of overhead.</p>';
+  const code = '<p>Run <code>SET product:42 "{\\"name\\": \\"mug\\", \\"price\\": 20, \\"stock\\": 3, \\"tags\\": [1, 2, 3]}" EX 300</code> to store it.</p>';
+  assert.deepEqual(run('dense-prose', article({ body: plain + code })), []);
+  const found = run('dense-prose', article({ body: dense }));
+  assert.ok(found.some((i) => i.message.startsWith('sentence') && i.message.includes('For a product cache')));
+  assert.ok(found.some((i) => i.message.startsWith('paragraph')));
+  // Figures and sources are not running prose.
+  assert.deepEqual(run('dense-prose', article({ body: `<figure>${dense}</figure><section class="essay-sources">${dense}</section>` })), []);
+});

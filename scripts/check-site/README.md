@@ -3,8 +3,11 @@
 `pnpm build` builds the site, then runs these rules against the built pages in
 `dist/` and the CSS in `src/`. They cover the structure every page shares: the
 title line, where the contents list goes, the sources section, figure labels,
-links and anchors, and theme-safe CSS. Prose stays with the style and review
-skills; nothing here scores writing.
+links and anchors, and theme-safe CSS. One rule, `dense-prose`, warns about
+sentences and paragraphs that stack too many clauses, numbers and brackets,
+with limits set so the reference articles in `src/reference-articles/` almost
+never trip them. It catches density, not unclear writing; prose quality stays
+with the style and review skills.
 
 ```bash
 pnpm check                                    # every issue, grouped by rule
