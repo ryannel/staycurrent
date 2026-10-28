@@ -255,3 +255,14 @@ P7 and optional Replay. Desktop and phone checked in both themes; screenshots
 use `single-request-*`. All five focused tests and the draft build pass. The
 article's dense-prose check is clear; the 36 unrelated warnings remain. Restored
 System theme and default viewport. No publication-state change.
+
+## Separate the stacked arrangements
+
+Added a dedicated gap and a thin horizontal divider between the local and shared
+cache drawings, keeping each result with its own drawing. The gap is 80 viewBox
+units on desktop and 64 on phone. Internal geometry, traffic and counters stay
+unchanged; the figure height expands to retain its existing scale.
+
+Checked the rendered boundary on desktop and 375px phone in both themes.
+Draft build passes with the existing unrelated warnings. Saved
+`placement-separated-*` screenshots and restored System theme/default viewport.

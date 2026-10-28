@@ -23,10 +23,11 @@ const answerDot=(x,y,label,colour='--teal',r=23)=>`<circle cx="${x}" cy="${y}" r
 
 function placement(t,small,traffic){
   const state=traffic??finalWorkload();
-  const W=small?440:760, rowHeight=small?610:420;
-  let s='';
+  const W=small?440:760, rowHeight=small?610:420, gap=small?64:80;
+  const dividerY=rowHeight+gap/2;
+  let s=stroke(`M24 ${dividerY}H${W-24}`,'--color-text-secondary',1,'opacity=".55"');
   for(let panel=0;panel<2;panel++){
-    const shared=panel===1, oy=panel*rowHeight;
+    const shared=panel===1, oy=panel*(rowHeight+gap);
     const pt=(x,y)=>[x,y+oy];
     const client=small?pt(65,90):pt(60,195);
     const L=small?pt(220,90):pt(205,195);
@@ -81,7 +82,7 @@ function placement(t,small,traffic){
       s+=text(B[0],B[1]+49,`${stats.misses[1]} ${stats.misses[1]===1?'miss':'misses'}`,17,'--color-text-secondary');
     }
   }
-  return svg(s,small,rowHeight*2);
+  return svg(s,small,rowHeight*2+gap);
 }
 
 function identity(t,small){
