@@ -164,3 +164,33 @@ outcomes. Browser checks cover desktop and 375px phone, both themes, and keyboar
 replay/pause/resume. Adjusted the lower desktop cache label and phone outcome
 spacing after inspecting the rendered figures. Retained the existing player's
 reduced-motion final still and offscreen pause behaviour. Draft gate unchanged.
+
+## Traffic trial
+
+Figure 2 retains its two slow requests, then automatically introduces a continuing
+stream of warm-cache hits. An optional Quiet / Steady / Busy slider changes the
+arrival interval, not ball speed; requests already in flight finish normally.
+Both arrangements receive identical traffic, alternating A and B. Completed
+answers climb while database reads stay at two (local) and one (shared).
+The caption explicitly holds the product unchanged and excludes expiry from
+this placement illustration, so the continuing stream does not contradict the
+later TTL discussion. This trial is confined to the placement comparison.
+
+The shared player enables continuous traffic only for scenes declaring it.
+Pause and offscreen/background suspension remain available; replay resets the
+introduction, request queue and counts while keeping the chosen traffic level.
+Reduced motion shows the completed static comparison and hides traffic controls.
+Only in-flight requests are retained, so the stream does not grow a history.
+
+Checks: all three traffic levels rendered finite geometry with fixed source-read
+counts. A one-off scheduler harness confirmed bounded in-flight queues, density
+changes, pause/resume, offscreen pause, replay reset, reduced motion, and normal
+finite completion for scenes without traffic. Draft build passes with the same
+36 unrelated dense-prose warnings. Browser checks and screenshots follow below.
+
+Browser confirmation: watched the two-request introduction transition into Busy
+traffic, observed matching answer counts rising with source reads fixed at two
+and one, exercised all three slider levels by keyboard and pause/resume. Checked
+desktop and 375px phone in light and dark. Phone controls use a full traffic row
+above Pause/Replay to avoid splitting the two buttons across lines. Screenshots
+use `traffic-*`; restored System theme and the normal viewport after checking.

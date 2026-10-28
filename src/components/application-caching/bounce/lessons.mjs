@@ -20,7 +20,7 @@ function database(x,y,active=false,value='') {
 }
 const answerDot=(x,y,label,colour='--teal',r=23)=>`<circle cx="${x}" cy="${y}" r="${r}" fill="${paper}" stroke="var(${colour})" stroke-width="1.8"/>`+result(x,y-3,1)+text(x,y+43,label,18);
 
-function placement(t,small){
+function placement(t,small,traffic){
   const W=small?440:760, rowHeight=small?610:420;
   let s='';
   for(let panel=0;panel<2;panel++){
@@ -77,7 +77,20 @@ function placement(t,small){
       s+=travel(t,14.9,15.6,B,L,'--blue',true)+travel(t,15.6,16.3,L,client,'--blue',true);
       s+=pulse(t,16.3,...client,'--blue',25);
     }
-    const note=t<9?'First request → A':t<16.5?
+    // Once both cold requests finish, all further requests reuse a warm copy.
+    // Both arrangements receive the same arrivals; only the cold work differs.
+    for(const request of traffic?.requests ?? []){
+      const age=(traffic.now-request.at)/1000;
+      const target=request.index%2?B:A, saved=request.index%2?CB:CA;
+      const colour=colours[(request.index+2)%colours.length];
+      s+=travel(age,0,.4,client,L,colour)+travel(age,.4,.8,L,target,colour);
+      s+=travel(age,.8,1.2,target,saved,colour)+pulse(age,1.2,...saved,colour,33);
+      s+=travel(age,1.2,1.6,saved,target,colour,true);
+      s+=travel(age,1.6,2,target,L,colour,true)+travel(age,2,2.4,L,client,colour,true);
+    }
+    const busy=traffic && traffic.now>=19000;
+    if(busy)s+=text(small?W/2:client[0],small?oy+55:client[1]+77,`${traffic.completed+2} answers`,17,'--color-text-secondary');
+    const note=busy?'Warm caches. The database rests.':t<9?'First request → A':t<16.5?
       (shared?'B reuses A’s copy':'B reads the database again'):
       (shared?'One copy. One database read.':'Two copies. Two database reads.');
     s+=text(W/2,oy+rowHeight-24,note,20);
@@ -217,7 +230,7 @@ function memory(t,small){
 }
 
 export const lessons={
-  placement:{title:'Where the copy lives',duration:19000,render:t=>both(placement,clamp(t)*19),alt:'Two stacked arrangements have the same app, load balancer, servers A and B, and database. The load balancer sends the first request to A and the next to B. With local caches, both servers miss and read the database: two reads and two copies. With a shared cache, B reuses A’s copy: one database read. Answers return through the load balancer to the app.',caption:'Figure 2. Same app, same product, two successive requests. Here the load balancer sends the first to A and the next to B. Local caches need two fills; the shared cache needs one. Database internals are collapsed; the read is the same work shown in Figure 1. Motion and timing are illustrative.'},
+  placement:{title:'Where the copy lives',duration:19000,traffic:{startAt:19000,tripDuration:2400,defaultLevel:2,intervals:[1600,800,320],labels:['Quiet','Steady','Busy']},render:(t,variant,traffic)=>both((time,small)=>placement(time,small,traffic),clamp(t)*19),alt:'Two stacked arrangements have the same app, load balancer, servers A and B, and database. The load balancer sends the first request to A and the next to B. With local caches, both servers miss and read the database: two reads and two copies. With a shared cache, B reuses A’s copy: one database read. Answers return through the load balancer to the app. After those two requests, a continuing stream hits the warm caches in both arrangements. The optional traffic slider changes the arrival rate; database reads stay at two and one.',caption:'Figure 2. The load balancer sends the first request to A, the next to B. Local caches need two database reads; the shared cache needs one. Later traffic hits warm copies in both. The product stays unchanged and nothing expires here. Motion and timing are illustrative.'},
   identity:{title:'Two questions need two keys',duration:9000,render:t=>both(identity,clamp(t)*9),alt:'North’s P7 costs £20; south’s P7 costs £18. With only P7 as the cache key, south receives north’s £20 answer. Including the shop gives each answer its own entry, and south receives £18.',caption:'Figure 3. Both lookups hit. Only the key that includes the shop finds the right answer. Keys are shortened here; language, currency and format stay fixed.'},
   change:{title:'A copy can fall behind',duration:18000,render:t=>both(change,clamp(t)*18),alt:'The database and cache begin at £20. The database commits £22 while the cache still holds £20. The server then deletes the cached copy. A later request misses, reads £22 from the database and saves a new copy. No reads overlap the update in this example.',caption:'Figure 4. Commit £22, delete the old copy, then refill on the next miss. The purple pulse is the deletion; the coral ball is a later read. These are separate operations, with no overlapping read in this example.'},
   burst:{title:'Four requests, one piece of work',duration:13000,render:t=>both(burst,clamp(t)*13),alt:'Four coloured requests travel from the app to the server and miss an empty cache. Without coalescing, all four read the database. With coalescing inside one server process, one reads while three wait. Four answers travel back to the app in both cases.',caption:'Figure 5. Four requests leave the app; four answers return. Sharing the fill inside one server process avoids three database reads. Waiting must be bounded in a real service.'},
