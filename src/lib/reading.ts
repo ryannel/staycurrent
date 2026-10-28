@@ -1,7 +1,6 @@
 import { relationalCollection, relationalArticleHref, relationalIntroduction } from './relational-collection';
 import { objectArticles, objectHome } from './object-storage-collection';
 import { drawingCollection, drawingHref } from './drawing-collection';
-import { cachingHome, cachingHref, cachingListTitle, cachingTitle, publishedCaching } from './caching-collection';
 
 export const databaseGuide = '/learn/databases/choosing/';
 export const relationalHome = '/learn/databases/relational/';
@@ -26,8 +25,6 @@ export const reading: ReadingEntry[] = [
   ...objectArticles.map(article => ({ href: `${objectHome}${article.slug}/`, title: article.title, description: article.description, group: `Object storage · ${article.group}`, keywords: 'Amazon S3 objects bucket' })),
   { href: `${objectHome}sandbox/`, title: 'Object-storage sandbox', description: 'Guided local models for requests, uploads, versions and application protocols.', group: 'Practice', keywords: 'S3 objects bucket playground' },
   { href: `${objectHome}practice/`, title: 'Try the requests against S3', description: 'A real-service worksheet for conditional writes and version recovery.', group: 'Practice', keywords: 'Amazon AWS CLI' },
-  // Only published caching articles; planned and draft entries stay out of reading and search.
-  ...publishedCaching().map(entry => ({ href: cachingHref(entry.slug), title: cachingListTitle(entry), description: entry.description, group: cachingTitle, keywords: 'Redis cache caching Valkey cache-aside TTL eviction invalidation' })),
   ...drawingCollection.map(article => ({ href: drawingHref(article.slug), title: article.slug ? article.title : 'Drawing systems and processes: an introduction', description: article.description, group: 'Drawing systems and processes', keywords: 'diagrams whiteboard C4 UML BPMN' })),
   { href: '/assessments/postgres-vectors/', title: 'Can Postgres handle vector search for my application?', description: 'A dated assessment of pgvector, retrieval quality and operating costs.', group: 'Assessments', keywords: 'PostgreSQL embeddings' },
 ];
@@ -45,10 +42,6 @@ export function breadcrumbs(path: string, title: string) {
     if (path.startsWith(objectHome)) {
       trail.push({ href: objectHome, title: 'Object storage' });
       if (path === objectHome) return trail;
-    }
-    if (path.startsWith(cachingHome)) {
-      trail.push({ href: cachingHome, title: cachingTitle });
-      if (path === cachingHome) return trail;
     }
     if (path.startsWith(relationalHome)) {
       trail.push({ href: relationalHome, title: 'Relational databases' });

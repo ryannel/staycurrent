@@ -7,17 +7,15 @@ overview and the database guide's linked reading, while removing obsolete conten
 and unused infrastructure. The [earlier direction](history/site-direction-2026-10-02.md)
 records the wider coverage discussion.
 
-## Application caching publication, from 27 October 2026
+## Application caching experiment, 27–28 October 2026
 
-The user commissioned a collection on application caching with Redis, judged
-against Ciechanowski's Gears and Sam Rose's Load Balancing, and authorised
-publishing each article once it is complete. The collection lives at
-`/learn/databases/caching/` beside the other database and storage reading; the
-field guide's caches section and the homepage link to it. Twelve articles are
-planned; only published ones enter reading, search and navigation, and planned
-titles appear as plain text. See the
-[commission](article-work/caching-2026-10-27/commission.md) and
-[plan](article-work/caching-2026-10-27/plan.md).
+A twelve-article collection on application caching with Redis was written from a
+single commission prompt, without the Stay Current skills, and published. Its prose
+proved much denser than the relational collection's (the site check's
+`dense-prose` rule found about 20 times as many problems per 1,000 words), so the
+user judged it a failed experiment. It was removed on 28 October 2026 with its
+work records, and the seven skills were restored with the `dense-prose` check in
+their writing and repair steps. Both versions remain in Git history.
 
 ## Relational collection publication, 26 October 2026
 
