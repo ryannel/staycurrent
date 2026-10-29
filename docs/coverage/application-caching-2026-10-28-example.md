@@ -95,11 +95,11 @@ all three keys (six total misses); the shared cache learns them once (three).
 No updates, expiry, eviction or concurrent same-key cold fills occur in this
 placement scenario. After warming, all subsequent requests hit in both layouts.
 
-Figure 6 compares differently sized product cards in an illustrative 8 KiB cache:
-P7 uses 1 KiB, P8 2 KiB, P9 3 KiB and P10 2 KiB. P11 uses 6 KiB. Sizes include
-keys and bookkeeping; widths represent memory use. Saving P11 evicts P7–P9 in
-this scenario (their combined 6 KiB), retaining P10. The alternative returns P11
-without caching it. The next requests ask for P7–P9, producing three misses versus
-three hits. The animation stops at source reads, before any miss refills. This
-does not prescribe an eviction policy or imply that larger cards are never useful.
+Figure 6 shows one illustrative 8 KiB cache filling from empty. P7 (5 KiB), P8
+(1 KiB) and P9 (2 KiB) arrive in that order, with no intervening reads. P10 then
+arrives needing 3 KiB. The illustrated least-recently-used policy removes P7,
+freeing 5 KiB, and saves P10: 6 KiB used and 2 KiB free. P7 is chosen for recency,
+not size. Widths represent invented total entry costs, including keys and
+bookkeeping, not allocator layout. No expiry occurs. This is a generic policy
+illustration, not an execution trace of Redis’s approximate LRU implementation.
 

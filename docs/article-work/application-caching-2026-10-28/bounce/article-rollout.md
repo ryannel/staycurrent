@@ -303,3 +303,23 @@ desktop and 375px phone in both themes; all animation frames render with finite
 geometry and the final outcomes remain three misses/reads versus three hits.
 The draft build passes with the existing 36 unrelated warnings. Saved the
 `memory-product-sizes-*` previews and restored the normal viewport/System theme.
+
+## Show eviction itself
+
+The reader rejected the admission comparison as the wrong explanation here.
+Replaced it with one close-up cache that fills from empty: P7/P8/P9 occupy 5/1/2
+KiB, then P10 arrives needing 3 KiB. P10 waits outside the full cache; P7 leaves,
+then P10 enters. The final cache uses 6 of 8 KiB. P7 is explicitly least recently
+used (saved first, with no intervening reads), rather than selected for its size.
+The prose, caption, alternative text and example record now describe this same
+sequence. Admission is a brief subsequent distinction, not the figure’s subject.
+
+Checked the policy distinction against Redis’s official key-eviction reference:
+https://redis.io/docs/latest/develop/reference/eviction/ . The drawing is a generic
+illustration, not a claim about Redis’s approximate LRU victim selection.
+
+Checked the filling, waiting, eviction and final states in the browser, desktop
+and 375px phone, light and dark; replay and keyboard pause/resume work. A render
+sweep confirms finite geometry and occupancy of 0 → 5 → 6 → 8 → 3 → 6 KiB.
+Draft build passes with the existing 36 unrelated dense-prose warnings. Saved
+`eviction-*` screenshots; restored System theme and default viewport.

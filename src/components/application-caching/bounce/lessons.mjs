@@ -183,56 +183,36 @@ function burst(t,small){
 }
 
 function memory(t,small){
-  const W=small?440:760, rowHeight=small?490:455, gap=small?64:80;
-  let s=stroke(`M24 ${rowHeight+gap/2}H${W-24}`,'--color-text-secondary',1,'opacity=".55"');
-  for(let row=0;row<2;row++){
-    const keep=row===1, oy=row*(rowHeight+gap), saved=t>=4;
-    const A=[small?50:100,oy+250], S=[small?180:300,oy+250];
-    const C=[small?220:540,oy+145], D=[small?335:C[0],oy+345];
-    const sizes=[1,2,3,2], unit=small?48:44, left=C[0]-unit*4;
-    const slot=i=>left+unit*(sizes.slice(0,i).reduce((sum,size)=>sum+size,0)+sizes[i]/2);
-    const sourceActive=!keep&&t>=7.1&&t<9.5;
-    s+=text(W/2,oy+28,keep?'Keep P7–P10':'Save P11',small?23:24);
-    s+=stroke(qpath(A,route(A,S,-10),S));
-    s+=stroke(qpath(S,route(S,C,-18),C));
-    s+=stroke(qpath(S,route(S,D,18),D),sourceActive?'--gold':'--color-rule-strong');
-    s+=app(...A)+server(...S)+database(...D,sourceActive);
-    s+=text(C[0],C[1]-51,'Cache · 8 KiB',22);
-    s+=`<rect x="${left-6}" y="${C[1]-32}" width="${unit*8+12}" height="64" rx="18" fill="${paper}" stroke="var(--teal)" stroke-width="1.6"/>`;
-    // Width is proportional to memory: 1, 2, 3 and 2 KiB; P11 uses 6 KiB.
-    for(let i=0;i<4;i++){
-      const leaving=!keep&&i<3&&t>=2.8;
-      const opacity=leaving?1-phase(t,2.8,4):1;
-      if(opacity>0){
-        s+=`<g opacity="${opacity}" transform="translate(0 ${leaving?-phase(t,2.8,4)*18:0})">`;
-        s+=`<rect x="${slot(i)-unit*sizes[i]/2+3}" y="${C[1]-25}" width="${unit*sizes[i]-6}" height="50" rx="12" fill="${paper}" stroke="var(--teal)" stroke-width="1.4"/>`;
-        s+=text(slot(i),C[1]-2,`P${7+i}`,18)+text(slot(i),C[1]+17,`${sizes[i]} KiB`,13,'--color-text-secondary')+'</g>';
-      }
-    }
-    if(!keep&&t>=4){
-      const p=ease(phase(t,4,4.8));
-      s+=`<g opacity="${p}" transform="translate(0 ${-12*(1-p)})"><rect x="${left+3}" y="${C[1]-25}" width="${unit*6-6}" height="50" rx="12" fill="${paper}" stroke="var(--purple)" stroke-width="1.8"/>`;
-      s+=text(left+unit*3,C[1]-2,'P11',19)+text(left+unit*3,C[1]+18,'6 KiB',15,'--color-text-secondary')+'</g>';
-    }
-    s+=text(C[0],C[1]-80,t<2.8?'Full · four product cards':keep?'P11 not saved':saved?'P7, P8 and P9 evicted':'Making room for P11',small?16:18,'--color-text-secondary');
-    let misses=0,hits=0;
-    for(let i=0;i<3;i++){
-      const age=t-(5.4+i*.35), key=`P${7+i}`, colour=products[i].colour;
-      const lookup=keep?[slot(i),C[1]]:C;
-      const move=(a,b,from,to,answer=false,bend=0)=>moving(age,a,b,from,route(from,to,bend),to,colour,answer,key);
-      s+=move(0,.6,A,S,false,-10)+move(.6,1.2,S,lookup,false,-18);
-      if(age>=1.2){if(keep)hits++;else misses++;}
-      s+=move(1.2,1.7,lookup,S,keep,-18);
-      if(keep){
-        s+=pulse(age,1.2,...lookup,colour,22)+move(1.7,2.4,S,A,true,-10);
-      }else{
-        s+=move(1.7,2.5,S,D,false,18)+pulse(age,2.5,...D,colour,32);
-      }
-    }
-    const note=t<5.4?'P11’s card needs 6 KiB':keep?`${hits} cache hits · 0 database reads`:`${misses} cache misses · ${Math.max(0,Math.min(3,Math.floor((t-7.9)/.35)+1))} database reads`;
-    s+=text(W/2,oy+rowHeight-18,note,small?20:23);
+  const W=small?440:760, unit=small?46:76, left=(W-unit*8)/2, y=200;
+  const centre=(start,size)=>left+unit*(start+size/2);
+  const entries=[
+    {key:'P7',size:5,start:0,at:1,colour:'--coral'},
+    {key:'P8',size:1,start:5,at:2.8,colour:'--purple'},
+    {key:'P9',size:2,start:6,at:4.6,colour:'--teal'},
+  ];
+  const card=(key,size,x,cy,colour,opacity=1)=>`<g opacity="${opacity}"><rect x="${x-unit*size/2+3}" y="${cy-29}" width="${unit*size-6}" height="58" rx="15" fill="${paper}" stroke="var(${colour})" stroke-width="2"/>${text(x,cy-2,key,22)}${text(x,cy+20,`${size} KiB`,small?15:17,'--color-text-secondary')}</g>`;
+  const used=t>=11?6:t>=9.7?3:t>=5.6?8:t>=3.8?6:t>=2?5:0;
+  let s=text(W/2,36,'Cache · 8 KiB',26)+text(W/2,74,`${used} of 8 KiB used`,20,'--color-text-secondary');
+  s+=`<rect x="${left-6}" y="${y-39}" width="${unit*8+12}" height="78" rx="24" fill="none" stroke="var(${t>=5.6&&t<9.7?'--gold':'--color-text-secondary'})" stroke-width="1.8"/>`;
+  for(const entry of entries){
+    if(t<entry.at||(entry.key==='P7'&&t>=9.7))continue;
+    const p=ease(phase(t,entry.at,entry.at+1)), leaving=entry.key==='P7'?phase(t,8.4,9.7):0;
+    const cy=y+(1-p)*125-ease(leaving)*85;
+    s+=card(entry.key,entry.size,centre(entry.start,entry.size),cy,entry.colour,1-leaving);
   }
-  return svg(s,small,rowHeight*2+gap);
+  if(t>=5.6&&t<9.7)s+=text(centre(0,5),y+73,'Least recently used',small?18:20,'--color-text-secondary');
+  // A new card waits outside the full cache; it enters only after P7 leaves.
+  if(t>=6.2){
+    const arrival=ease(phase(t,6.2,7.2)), insertion=ease(phase(t,10,11));
+    const bounce=t>=7.2&&t<8.4?Math.sin(phase(t,7.2,8.4)*Math.PI*2)*5:0;
+    const cy=325+(1-arrival)*60-insertion*125-bounce;
+    s+=card('P10',3,centre(0,3),cy,'--gold',arrival);
+    if(t<10)s+=text(centre(0,3),cy+57,'New card',19,'--color-text-secondary');
+  }
+  if(t>=11)s+=text(centre(3,2),y+7,'2 KiB free',small?16:19,'--color-text-secondary');
+  const note=t<1?'An empty cache':t<5.6?'Product cards arrive':t<6.2?'The cache is full':t<8.4?'P10 needs 3 KiB of space':t<10?'P7 leaves to make room':'P10 is cached. P7 has been evicted.';
+  s+=text(W/2,430,note,small?21:24);
+  return svg(s,small,475);
 }
 
 export const lessons={
@@ -240,5 +220,5 @@ export const lessons={
   identity:{title:'Two questions need two keys',duration:9000,render:t=>both(identity,clamp(t)*9),alt:'North’s P7 costs £20; south’s P7 costs £18. With only P7 as the cache key, south receives north’s £20 answer. Including the shop gives each answer its own entry, and south receives £18.',caption:'Figure 3. Both lookups hit. Only the key that includes the shop finds the right answer. Keys are shortened here; language, currency and format stay fixed.'},
   change:{title:'A copy can fall behind',duration:18000,render:t=>both(change,clamp(t)*18),alt:'The database and cache begin at £20. The database commits £22 while the cache still holds £20. The server then deletes the cached copy. A later request misses, reads £22 from the database and saves a new copy. No reads overlap the update in this example.',caption:'Figure 4. Commit £22, delete the old copy, then refill on the next miss. The purple pulse is the deletion; the coral ball is a later read. These are separate operations, with no overlapping read in this example.'},
   burst:{title:'Four requests, one piece of work',duration:13000,render:t=>both(burst,clamp(t)*13),alt:'Four coloured requests travel from the app to the server and miss an empty cache. Without coalescing, all four read the database. With coalescing inside one server process, one reads while three wait. Four answers travel back to the app in both cases.',caption:'Figure 5. Four requests leave the app; four answers return. Sharing the fill inside one server process avoids three database reads. Waiting must be bounded in a real service.'},
-  memory:{title:'An answer has to earn its space',duration:11000,render:t=>both(memory,clamp(t)*11),alt:'An eight KiB cache holds product cards P7, P8, P9 and P10 using one, two, three and two KiB respectively. Their widths show their different sizes. P11 uses six KiB, as much as P7, P8 and P9 combined. Saving P11 evicts those three cards. Their next requests miss and go to the database. Skipping that admission retains all four products, so the same three requests hit.',caption:'Figure 6. Card widths show memory use: P7 uses 1 KiB, P8 2 KiB, P9 3 KiB and P10 2 KiB. Together they fill the 8 KiB cache. P11 needs 6 KiB, so saving it evicts P7, P8 and P9 here. The same three requests then leave the app: three misses above, three hits below. The comparison stops at the extra database reads, before refilling. The original caller receives P11 in both versions; only saving it differs. Sizes include keys and bookkeeping; no entries expire.'},
+  memory:{title:'Making room in a full cache',duration:13500,render:t=>both(memory,clamp(t)*13.5),alt:'An empty eight KiB cache fills with P7 at five KiB, P8 at one KiB and P9 at two KiB. P10 arrives needing three KiB and waits outside. P7 is least recently used, so it is evicted. P10 enters, leaving six KiB used and two KiB free.',caption:'Figure 6. The cache fills before P10 arrives. This illustration evicts the least recently used card, P7, freeing 5 KiB for the new 3 KiB card. P7 leaves because of recency, not because it is largest. Widths show invented memory costs, including keys and bookkeeping; they do not depict a memory allocator. No entries expire.'},
 };
