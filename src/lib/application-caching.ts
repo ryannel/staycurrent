@@ -1,6 +1,6 @@
 import { articleTypes, type ArticleType } from './article-types';
 
-export const applicationCachingHome = '/review/application-caching/';
+export const applicationCachingHome = '/learn/databases/application-caching/';
 
 export interface ApplicationCachingMetadata {
   title: string;
@@ -8,7 +8,7 @@ export interface ApplicationCachingMetadata {
   parent: string | null;
   order: number;
   type: ArticleType;
-  status: 'draft' | 'reviewed';
+  status: 'draft' | 'reviewed' | 'published';
 }
 
 export interface ApplicationCachingEntry extends ApplicationCachingMetadata {
@@ -35,7 +35,7 @@ export function applicationCachingEntries(keys: string[], metadata: Record<strin
       || !(meta.parent === null || typeof meta.parent === 'string')
       || !Number.isFinite(meta.order)
       || !articleTypes.includes(meta.type)
-      || !['draft', 'reviewed'].includes(meta.status)) {
+      || !['draft', 'reviewed', 'published'].includes(meta.status)) {
       throw new Error(`Invalid application caching article metadata: ${key}`);
     }
     return { ...meta, key, href: applicationCachingHref(key) };

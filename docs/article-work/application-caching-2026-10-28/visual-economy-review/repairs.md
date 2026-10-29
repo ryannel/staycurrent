@@ -1,0 +1,11 @@
+# Publication repairs
+
+29 October 2026. Addresses the three Medium findings in `review.md`, against `604e8c87`. Changed only `src/components/application-caching/stories/capacity.mjs`.
+
+- **Memory Figure 1:** replaced repeated network routing with the six-request strip, a larger catalogue and the two resident favourites. Only the first two copies cross into the cache; subsequent requests highlight the resident they reuse. The catalogue remains intact. Product colours and ordinary names retain the collection's visual meaning. The accessible description now describes this view.
+- **Memory Figure 4:** moved the desktop resident strip and its budget heading down, leaving a separate baseline for current-request status. Small-screen and expanded-legend positions remain consistent with their existing spacing. No retention choices or results changed.
+- **Misses Figure 5:** replaced generic network actors with two execution lanes and the bounded queue on one time scale. The shared 150 ms boundary stays visible. Fast reads finish at 100 ms; the queued read is outlined as unstarted and its required 100 ms is compared with 50 ms left. Slow reads cross the caller deadline and retain their slots until 200 ms. The separate work/useful-answer counts and two initial refusals remain.
+
+Read both complete affected articles. The existing prose still explains the same cases, including catalogue versus working/resident sets, admission to memory versus source admission, fixed-duration illustration limits, and accounting for work after callers time out. No example facts, arithmetic, implementation claims or downstream meanings changed. No body prose was edited, so no new dense-prose issue was introduced.
+
+Checks: 303 changed-scene renderer frames and 4,848 replay configuration/frames produced finite SVG; explicit fast/slow outcome checks passed; all five existing misses-model tests passed; `git diff --check` passed. Live initial desktop renderings were inspected at port 4328 in article context. Hidden playback remained at its opening state, so this does not certify transitions. Build owner to confirm changed intermediate/settled states at desktop and 375 px in both themes, plus affected controls, before publication. No build or commit performed by the repair worker.

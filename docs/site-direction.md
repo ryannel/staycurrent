@@ -7,6 +7,17 @@ overview and the database guide's linked reading, while removing obsolete conten
 and unused infrastructure. The [earlier direction](history/site-direction-2026-10-02.md)
 records the wider coverage discussion.
 
+## Application caching publication, 29 October 2026
+
+The user authorised publication of the replacement nine-article application caching
+collection. It joins the database guide, reading directory and search at
+`/learn/databases/application-caching/`, including the native practice downloads.
+Three substantive visual-review findings were repaired and confirmed before
+publication; four optional simplifications remain recorded. Redis supplies the
+worked shared cache, rather than defining the subject's scope. The preceding
+experiment below remains a historical record. See the
+[publication record](article-work/application-caching-2026-10-28/publication.md).
+
 ## Application caching experiment, 27–28 October 2026
 
 A twelve-article collection on application caching with Redis was written from a

@@ -1,6 +1,10 @@
 import { relationalCollection, relationalArticleHref, relationalIntroduction } from './relational-collection';
 import { objectArticles, objectHome } from './object-storage-collection';
 import { drawingCollection, drawingHref } from './drawing-collection';
+import { applicationCachingEntries, applicationCachingFileKey } from './application-caching';
+
+const cachingMetadata = Object.fromEntries(Object.entries(import.meta.glob('../articles/application-caching/*.meta.json', { eager: true, import: 'default' })).map(([file, meta]) => [applicationCachingFileKey(file), meta]));
+const cachingReading = applicationCachingEntries(Object.keys(cachingMetadata), cachingMetadata).filter(entry => entry.status === 'published');
 
 export const databaseGuide = '/learn/databases/choosing/';
 export const relationalHome = '/learn/databases/relational/';
@@ -21,6 +25,7 @@ export const reading: ReadingEntry[] = [
   { href: '/learn/databases/distributed-sql/', title: 'Keeping a transaction together across machines', description: 'Partitions, replicas and coordination in a distributed SQL database.', group: 'Other database and storage approaches' },
   { href: '/learn/databases/search/', title: 'Finding the blue mug', description: 'Search indexes, tokenisation, ranking and vector filtering.', group: 'Other database and storage approaches' },
   { href: '/learn/databases/graphs/', title: 'How a graph database follows relationships', description: 'Traversing connections, handling cycles and updating a graph.', group: 'Other database and storage approaches' },
+  ...cachingReading.map(entry => ({ href: entry.href, title: entry.title, description: entry.description, group: 'Application caching', keywords: 'cache Redis freshness eviction memory' })),
   { href: objectHome, title: 'Object storage: an introduction', description: 'Objects, keys and requests, with a complete Amazon S3 learning collection.', group: 'Object storage' },
   ...objectArticles.map(article => ({ href: `${objectHome}${article.slug}/`, title: article.title, description: article.description, group: `Object storage · ${article.group}`, keywords: 'Amazon S3 objects bucket' })),
   { href: `${objectHome}sandbox/`, title: 'Object-storage sandbox', description: 'Guided local models for requests, uploads, versions and application protocols.', group: 'Practice', keywords: 'S3 objects bucket playground' },

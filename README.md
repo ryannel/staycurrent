@@ -33,6 +33,7 @@ Every push to `main` builds and deploys to GitHub Pages through
 | `/learn/databases/relational/sandbox/` | Browser PostgreSQL sandbox with free exploration and linked tutorials |
 | `/learn/databases/relational/*/` | Published relational articles, practical guides and preserved route aliases |
 | `/learn/databases/column-stores/` | Illustrated column-store essay with four experiments |
+| `/learn/databases/application-caching/` | Application caching introduction and eight focused articles, with Redis practice downloads |
 | `/learn/databases/object-storage/` | Published introduction and thirteen focused articles, using Amazon S3 |
 | `/learn/databases/object-storage/sandbox/` | Fourteen local model lessons, with 78 editable request steps |
 | `/learn/databases/object-storage/practice/` | Real-S3 CLI worksheet with exact-version cleanup |
@@ -50,6 +51,12 @@ reading entries. The header opens search in a dialog, with Cmd/Ctrl+K access, ar
 recent searches stored in the reader's browser, and article, guide and playground
 filters. `/search/` provides the same interface with shareable query URLs. Search
 loads index fragments and eight result excerpts at a time. No search service is needed.
+
+The 29 October commission publishes the nine-article application caching collection
+from `src/articles/application-caching/`. Its routes, reading directory, search,
+collection navigation and downloads use `/learn/databases/application-caching/`.
+Redis is the worked implementation, while the collection teaches caching decisions
+that apply to other stores. See the [publication record](docs/article-work/application-caching-2026-10-28/publication.md).
 
 Run `pnpm build` before trying search in `pnpm dev`: development serves the last
 built index, so rebuild after content changes. `pnpm preview` serves the complete

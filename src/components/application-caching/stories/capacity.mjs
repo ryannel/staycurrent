@@ -105,44 +105,76 @@ function refresh(t,small,variant='failure'){
   return svg(s,small,H);
 }
 function admission(t,small,variant='fast'){
-  const W=small?440:760,H=small?570:480,slow=variant==='slow',end=slow?200:100,now=t*230;
-  const A=[small?55:80,135],S=[small?188:280,135],D=[small?345:650,135];
-  const slotX=small?275:485,slotY=small?250:245;
-  let s=text(W/2,30,'Different answers share one source budget',small?20:25);
-  s+=path(A,S)+path(S,D)+app(...A)+server(...S)+database(...D);
-  s+=text(slotX,slotY-30,'Source slots',20);
+  const W=small?440:760,H=570,slow=variant==='slow',end=slow?200:100,now=t*230;
+  const left=small?40:70,right=W-left,x=ms=>left+ms/200*(right-left),deadline=x(150);
+  const label=(px,py,value,size=20,colour='--color-text')=>text(px,py,value,size,colour).replace('text-anchor="middle"','text-anchor="start"');
+  let s=text(W/2,28,'Two source slots. One caller deadline.',small?21:26);
+  s+=text(deadline,71,'150 ms deadline',small?17:20,'--coral');
+  s+=`<path d="M${deadline} 88V450" fill="none" stroke="var(--coral)" stroke-width="1.5" stroke-dasharray="5 6"/>`;
+  [0,100,200].forEach(ms=>s+=text(x(ms),107,`${ms} ms`,17,'--color-text-secondary'));
   for(let i=0;i<2;i++){
-    const xx=slotX+(i-.5)*48;s+=rect(xx-20,slotY-17,40,40,'--color-text-secondary',12);
-    if(now>=15&&now<end)s+=ball(xx,slotY+2-Math.abs(Math.sin(t*24+i))*4,palette[i]);
+    const y=174+i*86,progress=Math.min(now,end),colour=palette[i];
+    s+=label(left,y-24,`Source slot ${i+1}`,small?19:21)+stroke(`M${left} ${y}H${right}`,'--color-rule-strong',2);
+    s+=stroke(`M${left} ${y}H${x(progress)}`,colour,7);
+    s+=ball(x(progress),y,colour,false,now<end?Math.sin(t*30+i)*.22:0);
+    if(now>=end){
+      const outcome=text(x(end),y+33,slow?'Finished too late':'Answer returned',small?16:18,'--color-text-secondary');
+      s+=slow?outcome.replace('text-anchor="middle"','text-anchor="end"'):outcome;
+    }
   }
-  const qx=small?97:210,qy=slotY;
-  s+=text(qx,qy-30,'Queue',20);
-  for(let i=0;i<2;i++){const xx=qx+(i-.5)*48;s+=rect(xx-20,qy-17,40,40,'--color-rule-strong',12);if(now>=15&&now<Math.min(end,150))s+=ball(xx,qy+2,palette[i+2]);}
-  for(let i=0;i<6;i++)s+=flight(now,i*2,15+i*2,A,S,[(A[0]+S[0])/2,100-i*5],i);
-  if(now>=24){s+=text(W/2,small?350:340,'2 requests turned away',20,'--color-text-secondary');}
-  const outcome=now<Math.min(end,150)?'Two reads run. Two callers wait.':slow&&now<end?'Callers timed out; slots stay occupied.':slow?'Work finished too late for its callers.':'Two answers; queued work cannot finish in time.';
-  const y=small?405:395;
-  if(small){const lines=now<Math.min(end,150)?['Two reads run.','Two callers wait.']:slow&&now<end?['Callers timed out.','Slots stay occupied.']:slow?['Work finished too late','for its callers.']:['Two answers.','Queued work has no time left.'];lines.forEach((line,i)=>s+=note(W,y+i*30,line,true));}else s+=note(W,y,outcome,small);
-  s+=text(W/2,H-25,`${now<15?0:2} source reads · ${!slow&&now>=end?2:0} on-time answers`,19,'--color-text-secondary');
+  const qy=361,waitingUntil=Math.min(end,150),waiting=now<waitingUntil;
+  s+=label(left,qy-30,'Queue · two places',small?19:21);
+  s+=stroke(`M${left} ${qy}H${x(waitingUntil)}`,'--color-rule-strong',2);
+  s+=stroke(`M${left} ${qy}H${x(Math.min(now,waitingUntil))}`,'--color-text-secondary',4);
+  if(waiting){
+    s+=ball(x(now),qy-12,palette[2])+ball(x(now),qy+15,palette[3]);
+  }else if(!slow){
+    s+=`<path d="M${x(100)} ${qy}H${x(200)}" fill="none" stroke="var(--color-text-secondary)" stroke-width="3" stroke-dasharray="5 6"/>`;
+    s+=text((x(100)+x(200))/2,qy+34,'Would need 100 ms',small?17:20);
+    s+=stroke(`M${x(100)} 416V425H${deadline}V416`,'--gold',2);
+    s+=text((x(100)+deadline)/2,451,'50 ms left',small?17:20,'--gold');
+    s+=label(left,493,'Queued reads not started.',small?20:23);
+  }else{
+    s+=text((left+deadline)/2,qy+40,'Callers timed out at 150 ms',small?18:21);
+    s+=label(left,493,now<end?'Slots stay occupied until 200 ms.':'Slots released at 200 ms.',small?20:23);
+  }
+  s+=text(W/2,H-42,'Two other requests refused at arrival',small?17:19,'--color-text-secondary');
+  s+=text(W/2,H-12,`2 source reads · ${!slow&&now>=end?2:0} on-time answers`,small?19:21);
   return svg(s,small,H);
 }
 
 function workingSet(t,small){
-  const W=small?440:760,H=small?430:350,A=[small?58:80,150],S=[small?190:270,150],C=[small?335:490,105],D=[small?335:660,small?280:215];
-  const k=Math.min(6,Math.floor(t*7)),local=t*7-k,ids=['P7','P3','P7','P3','P7','P3'];
-  const held=k===0?[]:k===1?['P7']:['P7','P3'];
-  let s=text(W/2,28,'A small working set',25)+path(A,S)+path(S,C,-15)+path(S,D,20)+app(...A)+server(...S)+database(...D);
-  s+=text(C[0],C[1]-52,'Cache',21)+rect(C[0]-53,C[1]-30,106,65,'--teal',22);
-  held.forEach((id,i)=>s+=text(C[0],C[1]-7+i*25,names[id],18));
-  if(k<6){
-    const id=ids[k],c=productColours[id],hit=k>=2;
-    const AS=[(A[0]+S[0])/2,A[1]],SC=[(S[0]+C[0])/2,(S[1]+C[1])/2-15],SD=[(S[0]+D[0])/2,(S[1]+D[1])/2+20];
-    s+=text(W/2,small?370:300,`${names[id]} · ${hit?'hit':'miss'}`,22);
-    s+=moving(local,0,.16,A,AS,S,c)+moving(local,.16,.3,S,SC,C,c);
-    if(hit)s+=moving(local,.3,.62,C,SC,S,c,true)+moving(local,.62,.9,S,AS,A,c,true);
-    else s+=moving(local,.3,.39,C,SC,S,c)+moving(local,.39,.53,S,SD,D,c)+moving(local,.53,.67,D,SD,S,c,true)+moving(local,.67,.77,S,SC,C,c,true)+moving(local,.77,.85,C,SC,S,c,true)+moving(local,.85,1,S,AS,A,c,true);
+  const W=small?440:760,H=small?620:420,ids=['P7','P3','P7','P3','P7','P3'];
+  const k=Math.min(6,Math.floor(t*7)),local=t*7-k;
+  const catalogue={x:40,y:small?180:175,w:small?360:320,h:175};
+  const resident={x:small?90:470,y:small?430:220,w:small?260:240,h:85};
+  const origin=i=>[catalogue.x+45+(i%6)*(catalogue.w-90)/5,catalogue.y+36+Math.floor(i/6)*49];
+  const target=i=>[resident.x+resident.w*(i?0.73:0.27),resident.y+32];
+  let s=text(W/2,28,'Many products. A few favourites.',small?23:27);
+  s+=text(W/2,67,'Requests',18,'--color-text-secondary');
+  ids.forEach((id,i)=>{
+    const x=small?65+i*62:180+i*80,current=i===k;
+    s+=ball(x,103-(current?Math.sin(Math.PI*local)*7:0),productColours[id],false,0,i<=k?1:.35);
+    if(current)s+=pulse(local,.08,x,103,productColours[id],19);
+  });
+  s+=text(catalogue.x+catalogue.w/2,catalogue.y-18,'Catalogue',22)+rect(catalogue.x,catalogue.y,catalogue.w,catalogue.h);
+  for(let i=0;i<18;i++){
+    const [x,y]=origin(i);
+    s+=ball(x,y,i<2?productColours[ids[i]]:'--color-text-secondary',false,0,i<2?1:.35);
   }
-  s+=text(W/2,H-14,`${Math.min(k,2)} cache misses · ${Math.max(0,k-2)} hits`,19,'--color-text-secondary');
+  s+=text(resident.x+resident.w/2,resident.y-18,'Cache',22)+rect(resident.x,resident.y,resident.w,resident.h,'--teal',22);
+  for(let i=0;i<2;i++){
+    const [x,y]=target(i),ready=k>i||(k===i&&local>=.78);
+    if(ready)s+=ball(x,y,productColours[ids[i]])+text(x,y+34,names[ids[i]],18);
+    else s+=`<circle cx="${x}" cy="${y}" r="14" fill="none" stroke="var(--color-rule-strong)" stroke-width="1.5"/>`;
+    if(k<6&&k%2===i&&k>=2)s+=pulse(local,.12,x,y,productColours[ids[i]],20);
+  }
+  if(k<2){
+    const from=origin(k),to=target(k),control=small?[W-25,(from[1]+to[1])/2]:[(from[0]+to[0])/2,125];
+    s+=moving(local,.15,.78,from,control,to,productColours[ids[k]]);
+  }
+  const caption=k===6?'Only these two cards need room.':k<2?'Keep the first answer for each.':'The same two cards are used again.';
+  s+=text(W/2,H-25,caption,small?21:23);
   return svg(s,small,H);
 }
 function bytes(t,small){
@@ -169,7 +201,7 @@ export function renderReplay(t,options={}){
   const config={capacity:3,policy:'lru',maxEntry:3,...options},run=replay(config);
   return both((fraction,small)=>{
     const W=small?440:760,legend=small&&config.capacity>5,H=legend?590:small?480:450,n=Math.min(trace.length,Math.floor(fraction*(trace.length+1))),step=run[n],next=run[Math.min(n+1,trace.length)],p=phase(fraction*(trace.length+1)-n,0,.8);
-    const width=W-60,left=30,unit=width/config.capacity,y=legend?280:small?240:210;
+    const width=W-60,left=30,unit=width/config.capacity,y=legend?280:240;
     let s=text(W/2,30,n===trace.length?'The request sequence is complete':n<6?'Repeated favourites':n<8?'A brief browse':n<10?'Back to the favourites':'Popularity changes',small?22:27);
     const rowY=80;
     trace.forEach((request,i)=>{const x=30+i*(W-60)/(trace.length-1),current=i===n;s+=`<circle cx="${x}" cy="${rowY}" r="${current?7:4}" fill="${i<n?'var('+productColours[request.id]+')':paper}" stroke="var(${productColours[request.id]})" stroke-width="1.5"/>`;});
@@ -214,7 +246,7 @@ export const scenes={
   lease:{title:'The lease ends before the read',duration:13000,alt:'Server A owns a lease until 80 milliseconds but its source read runs until 120. Server B gets a new lease at 90 and reads until 140. Both reads run between 90 and 120. An atomic owner-token check rejects A’s old fill; B may publish while its token is valid.',caption:'A lease limits permission, not the duration of source work. This single-store illustration assumes unique tokens and atomic ownership checks.',render:t=>both(lease,t)},
   refresh:{title:'An early refresh leaves the old deadline unchanged',duration:11000,defaultVariant:'failure',actions:[{value:'failure',label:'Refresh fails'},{value:'success',label:'Refresh succeeds'}],alt:'A request at 24 seconds starts a refresh while receiving the old permitted card. Another request at 25 seconds reuses that card. If the refresh fails at 26 seconds, the old card still becomes unusable at 30. A successful refresh supplies a validated replacement.',caption:'The old answer’s serving boundary is fixed at 30 seconds by this example’s freshness rule. A failed refresh does not move it.',render:(t,v)=>both(refresh,t,v)},
   admission:{title:'Bound source work across keys',duration:13000,defaultVariant:'fast',actions:[{value:'fast',label:'100 ms source'},{value:'slow',label:'200 ms source'}],alt:'Six distinct requests share two source slots and two queue places, with a 150 millisecond caller deadline. Two reads start, two requests queue and two are rejected. At 100 milliseconds two answers arrive, but the queued requests have too little time left. With 200 millisecond reads, callers time out while both source slots remain occupied until completion.',caption:'Two execution slots and two queue places. Every caller has 150 ms; the model knows each read’s fixed duration. Real admission uses measured durations and remaining time.',render:(t,v)=>both(admission,t,v)},
-  working:{title:'The working set fits',duration:18000,alt:'Six requests alternate between the mug and jug. The first request for each misses and reads the database. The remaining four hit. Only those two product cards need to be resident for this trace.',caption:'Two initial misses, then reuse. The catalogue can be much larger than the answers requested during this interval.',render:t=>both(workingSet,t)},
+  working:{title:'The working set fits',duration:18000,alt:'Six requests alternate between the mug and jug. The catalogue holds many more products, but only copies of these two enter the cache. The next four requests reuse them. The working set is much smaller than the catalogue.',caption:'Two initial misses, then reuse. The catalogue can be much larger than the answers requested during this interval.',render:t=>both(workingSet,t)},
   bytes:{title:'What one cache entry costs',duration:5500,alt:'An illustrative one KiB entry contains 900 bytes of encoded value, a 29-byte key, 71 bytes of bookkeeping and 24 unused allocation bytes. The total is 1,024 bytes. The key length is exact; other costs are invented.',caption:'Width shows charged bytes. Only the key’s length is taken from the example; this is not a Redis memory measurement.',render:t=>both(bytes,t)},
   expiry:{title:'Expiry and eviction end reuse differently',duration:10000,alt:'Two cached copies start with a 30-second TTL. The first is evicted for space after ten seconds, before its TTL ends. The second remains until expiry at thirty seconds. A later lookup misses in either case.',caption:'Eviction can remove a still-usable copy. Expiry sets its last usable time, not a minimum stay in memory.',render:t=>both(expiry,t)},
 };
