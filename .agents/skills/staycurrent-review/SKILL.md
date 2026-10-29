@@ -7,7 +7,7 @@ Judge the reader's understanding and practical judgement against the commission.
 
 ## Review once
 
-Review each complete article for technical accuracy, teaching and writing, and rendered behaviour. Cover the relevant checks in [practitioner](perspectives/practitioner.md), [teaching](perspectives/teaching.md), [editorial](perspectives/editorial.md) and [visual](perspectives/visual.md). Teaching and editorial may share a reader. Technical and reader reviews may run in parallel; use the finished rendering for visual judgement and controls. Do not add an automatic final reading after this coverage.
+Review each complete article for technical accuracy, teaching and writing, and rendered behaviour. Cover the relevant checks in [practitioner](perspectives/practitioner.md), [teaching](perspectives/teaching.md), [editorial](perspectives/editorial.md) and [visual](perspectives/visual.md). Teaching and editorial may share a reader. Technical and reader reviews may run in parallel; use the finished rendering for visual judgement and controls. Judge what the visual form contributes to understanding before checking its implementation. Do not add an automatic final reading after this coverage.
 
 Review an assembled collection once for gaps, ownership, duplication, prerequisite order and actual reading routes, using the [value](perspectives/value.md), practitioner and teaching checks. Reuse article reviews instead of reviewing every article again from every perspective. For a planned tree, review the same learning journey before writing; do not separately repeat every node's review. Plans need no prose or rendered-media review.
 
