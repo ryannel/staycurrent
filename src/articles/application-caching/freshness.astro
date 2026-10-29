@@ -1,9 +1,5 @@
 ---
-import Age from '../../components/application-caching/freshness/Age.astro';
-import Race from '../../components/application-caching/freshness/Race.astro';
-import Dependencies from '../../components/application-caching/freshness/Dependencies.astro';
-import Repair from '../../components/application-caching/freshness/Repair.astro';
-import Revisions from '../../components/application-caching/freshness/Revisions.astro';
+import StoryFigure from '../../components/application-caching/stories/StoryFigure.astro';
 const { hrefFor } = Astro.props;
 const revisionRead = `revision = source.read_current_revision(context)
 if revision is absent:
@@ -25,16 +21,15 @@ card = build_card(product)
 cache.set(key, card, cleanup_ttl)
 return card`;
 ---
-<p>A cached answer can be correct when it is saved and wrong when it is read. The shop’s product P7, a blue mug, costs GBP 20.00 when the application builds its card. A merchant changes the source price to GBP 22.00. The cached card still says GBP 20.00, and a successful cache lookup has no way to discover that change by itself.</p>
-<p>Freshness is the rule that decides whether the application may still use that answer. Expiry ends reuse after a time limit. Invalidation ends it because something changed. Both need a little more care than setting a thirty-second timer or deleting a key: a read that began earlier can arrive afterwards and put the old answer back.</p>
-<p>We will follow the same price change through those orders, then build a versioned lookup that avoids the old copy. The examples use shop north, en-GB and GBP throughout. Their timings are invented; a small Redis experiment near the end supplies separate evidence for the delayed-fill sequence.</p>
+<p>The shop raises the blue mug’s price from £20 to £22. Its cached product card still says £20. Nothing is broken in the lookup: the cache returns exactly what it was given. The answer has become <em>stale</em> because the source changed.</p>
+<p>A freshness rule decides whether the application may still use that answer. Expiry ends reuse after a time limit; invalidation ends it because something changed. Neither stops a read already in flight from bringing the old price back. We need to follow both the age of the answer and the order in which work completes.</p>
 
 <section aria-labelledby="freshness-needs">
 <h2 id="freshness-needs">What does fresh mean here?</h2>
-<p>The public product card, the merchant’s edit page and checkout all read P7, but they need different promises. A catalogue may allow a short delay before a price change appears. A merchant who has just saved GBP 22.00 expects to read back that change. Checkout needs the authoritative price when it decides what to charge.</p>
+<p>The public product card, the merchant’s edit page and checkout all read the same product, but need different promises. A catalogue may allow a short delay before a price change appears. A merchant who has just saved £22 expects to read back that change. Checkout needs the authoritative price when it decides what to charge.</p>
 <div class="cache-table-scroll"><table>
 <caption>Three uses of the same product</caption>
-<thead><tr><th scope="col">Reader</th><th scope="col">Required promise</th><th scope="col">What GBP 20.00 would mean after the change</th></tr></thead>
+<thead><tr><th scope="col">Reader</th><th scope="col">Required promise</th><th scope="col">What £20 would mean after the change</th></tr></thead>
 <tbody>
 <tr><th scope="row">Public product card</th><td>Reuse an observation for at most thirty seconds, in this example.</td><td>Permitted briefly, if its observation is young enough.</td></tr>
 <tr><th scope="row">Merchant after saving</th><td>See the completed write, or a later revision.</td><td>Too old, even one second after saving.</td></tr>
@@ -47,16 +42,14 @@ return card`;
 <section aria-labelledby="expiry-and-age">
 <h2 id="expiry-and-age">Expiry measures time in the cache</h2>
 <p>A time to live, or TTL, says how long an entry may remain available after it is stored. It knows when the cache received the copy. It does not know when the source produced it.</p>
-<p>Suppose App A reads the current P7 card at time zero, then pauses for twenty seconds before saving it. A thirty-second insertion TTL expires at time fifty. Just before that expiry, the cache can return an observation almost fifty seconds old.</p>
-<p>Figure 1 puts those two intervals on the same scale. Increase the delay to forty seconds, then change the source to a replica whose snapshot is fifteen seconds behind.</p>
-<Age />
-<p>The TTL stays at thirty seconds in every case. The observation age grows with the work before insertion. With a fifteen-second-old snapshot and a twenty-second delay, the copy is already thirty-five seconds old when the cache receives it.</p>
-<p>A second cache layer can add another interval. In the default drawing, a local cache could copy the shared entry at time forty and give it thirty more seconds. It would then serve the time-zero observation until time seventy. Moving the answer did not observe the source again. Carry the original age information through every layer instead of starting a new allowance.</p>
+<StoryFigure group="freshness" kind="age" number={1} />
+<p>The answer is already ageing while the server waits to save it. A longer delay leaves a younger-looking cache entry holding an older observation. Reading a lagging replica can make the observation older still.</p>
+<p>A second cache layer can extend reuse again if it starts a fresh TTL for a copied answer. Moving the answer did not observe the source again. Carry the original age information through every layer instead of starting a new allowance.</p>
 <p>Redis illustrates the distinction directly. <a href="https://redis.io/docs/latest/commands/set/"><code>SET key value EX 30</code></a> stores a value and its expiry together. Calling <a href="https://redis.io/docs/latest/commands/expire/"><code>EXPIRE key 30</code></a> later renews that lifetime without reading the source. Neither operation establishes how current the value is.</p>
 
 <h3 id="enforcing-age">Enforcing an age limit</h3>
 <p>To enforce the catalogue’s thirty-second rule, keep the time of the source observation with the answer. At insertion, subtract the time already spent from the allowance. At return, check the age again: time may have passed in a queue or while decoding the value. Reject an answer whose allowance has run out, even if the cache still holds it.</p>
-<p>For the default drawing, the deadline is time thirty. Inserting at time twenty leaves ten seconds. Inserting at time forty leaves none, so the application must make a new source read or fail the request if that work cannot be completed. A refresh failure does not extend the deadline. <a href={hrefFor('cache-misses')}>Handling cache misses</a> develops the waiting and source-capacity decisions.</p>
+<p>If the allowance has already run out before insertion, the application needs a new source read. It must fail the request if it cannot obtain a suitable answer in time. A refresh failure does not extend the deadline. <a href={hrefFor('cache-misses')}>Handling cache misses</a> develops the waiting and source-capacity decisions.</p>
 <p>The timestamp must describe a meaningful observation. A source read that takes a new, current snapshot gives a useful starting point. Recording time just before that read is conservative: it counts the read’s own duration too. Stamping the answer when it arrives would hide that duration.</p>
 <p>A lagging replica needs more information. Reading it now does not mean its state is current now. Either include a trustworthy bound on its snapshot age or use a source read with the required freshness. An old transaction snapshot has the same problem. For example, <a href="https://www.postgresql.org/docs/18/transaction-iso.html">PostgreSQL’s Repeatable Read transactions</a> keep their earlier snapshot across later queries.</p>
 <p>Elapsed time is simplest inside one process, using a monotonic clock that does not jump with wall-clock adjustments. Its readings cannot simply be compared with another machine’s monotonic clock. A shared cache needs an agreed time basis and a bound on clock error; subtract that uncertainty from the allowance. If those assumptions are unavailable, the application cannot claim a strict age limit from a timestamp alone.</p>
@@ -65,35 +58,34 @@ return card`;
 
 <section aria-labelledby="commit-then-invalidate">
 <h2 id="commit-then-invalidate">Invalidate after the source commits</h2>
-<p>Waiting for expiry may be unnecessary when the application already knows the source changed. After the merchant’s update commits, delete the cached card. The next miss reads the source and builds the GBP 22.00 card. This is invalidation: remove the permission to reuse an answer because its dependency changed.</p>
-<p>The order matters. Delete first, and a reader can miss while the source still says GBP 20.00. That reader refills the old card; the writer then commits GBP 22.00 and leaves the refill behind. Committing first avoids this particular gap.</p>
-<p>But the commit and the deletion are still separate operations. The source can accept the write and the application can stop before sending the delete. The delete can fail, or its reply can be lost. The source price remains GBP 22.00 in all those cases. Treat the invalidation as unfinished work to retry, rather than pretending the source write was undone.</p>
+<p>Waiting for expiry may be unnecessary when the application already knows the source changed. After the merchant’s update commits, delete the cached card. The next miss reads the source and builds the £22 card. This is invalidation: remove the permission to reuse an answer because its dependency changed.</p>
+<p>The order matters. Delete first, and a reader can miss while the source still says £20. That reader refills the old card; the writer then commits £22 and leaves the refill behind. Committing first avoids this particular gap.</p>
+<p>But the commit and the deletion are still separate operations. The source can accept the write and the application can stop before sending the delete. The delete can fail, or its reply can be lost. The source price remains £22 in all those cases. Treat the invalidation as unfinished work to retry, rather than pretending the source write was undone.</p>
 <p>An age limit gives the old copy an eventual stopping point while invalidation is delayed. That limit must be the observation-age rule established above if the promise concerns source age. A new insertion TTL on an old fill would start another interval.</p>
 <p>Updating the cached card after committing is another choice. It avoids a subsequent miss when it works. A design often called <em>write-through</em> organises source and cache updates together on the write path, but the name does not make two stores one transaction. The next drawing shows the ordering problem that both deletion and replacement leave open.</p>
 </section>
 
 <section aria-labelledby="late-fill">
 <h2 id="late-fill">A fill can arrive after the deletion</h2>
-<p>App A begins a read while P7 is still GBP 20.00, revision 1. It gets the source answer and pauses before filling the cache. App B then commits GBP 22.00, revision 2, and successfully deletes the key. Now App A resumes.</p>
-<p>Step through Figure 2 and watch the source and cached revisions. Then switch the writer’s action from deletion to updating the cache.</p>
-<Race />
-<p>After the last step, the source holds revision 2 and the cache holds revision 1 with a new thirty-second TTL. Nothing failed. App A’s source read was valid when it happened, App B’s deletion succeeded, and App A’s later write succeeded too. Their order created the stale copy.</p>
-<p>Replacing the cache with revision 2 has the same weakness: App A’s delayed fill overwrites it. Atomic cache commands ensure that each individual operation happens as a unit. They do not join the earlier source read, the source commit and the later cache write into one operation.</p>
+<p>A reader and the merchant’s edit can overlap. Deletion removes the cached card, but it cannot remove an answer already held by another server.</p>
+<StoryFigure group="freshness" kind="race" number={2} />
+<p>Every operation succeeded. The reader obtained the price before the edit, then saved it after the deletion. A new insertion TTL now grants the old answer another lifetime. Successful individual operations have produced the wrong combined result.</p>
+<p>Replacing the cache with the new price has the same weakness: the delayed fill overwrites it. Atomic cache commands ensure that each individual operation happens as a unit. They do not join the earlier source read, the source commit and the later cache write into one operation.</p>
 <p>The race is not specific to Redis. <a href="https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf">Scaling Memcache at Facebook</a> describes old fills arriving after invalidation and a token mechanism for refusing them. The optional <a href={hrefFor('versioned-fills')}>Versioned cache fills</a> article builds that kind of conditional publication step by step.</p>
-<p>An age check and an ordering check answer different questions. App A’s observation can still be young enough under the catalogue’s age rule while being older than App B’s write. Rejecting publication also does not decide whether App A’s waiting caller may receive its saved result. Apply the caller’s freshness promise separately.</p>
+<p>An age check and an ordering check answer different questions. The delayed observation can still be young enough under the catalogue’s age rule while predating the merchant’s write. Rejecting publication also does not decide whether the reader’s waiting caller may receive its saved result. Apply the caller’s freshness promise separately.</p>
 </section>
 
 <section aria-labelledby="affected-answers">
 <h2 id="affected-answers">Find every answer that changed</h2>
-<p>So far, one product has meant one cached card. Real pages often cache answers assembled from several records. The shop also keeps a list of products below GBP 21.00. P7 appears in that list at GBP 20.00 and must leave it at GBP 22.00.</p>
-<Dependencies />
-<p>Deleting P7’s card repairs only the next card lookup. Even if the list stores product IDs and reads current cards separately, it still includes a product that no longer meets its filter. A price change affects both the displayed value and the list’s membership.</p>
+<p>A product can affect more than its own card. The shop also caches a list of products under £21. Raising the mug’s price changes whether it belongs in that list.</p>
+<StoryFigure group="freshness" kind="dependencies" number={3} />
+<p>Deleting the product card repairs only the next card lookup. Even if the list stores product IDs and reads current cards separately, it still includes a product that no longer meets its filter. A price change affects both the displayed value and the list’s membership.</p>
 <p>Find these dependencies from the questions the cache answers. When the affected keys are known, delete them directly. If tracking every filtered list is too difficult, invalidate a broader group, such as north’s product-list results. That is easier to get right, but it discards unchanged answers too.</p>
 <p>A broader invalidation means more misses and more work at the source. It needs the same capacity controls as a cold cache, developed in <a href={hrefFor('cache-misses')}>Handling cache misses</a>. Where the product allows a delay, expiry can be the simpler choice for derived answers. Make that a declared allowance rather than an accidental omission from the invalidation code.</p>
 
 <h3 id="missed-changes">Recovering missed changes</h3>
 <p>Retrying a delete helps only if something remembers that it is due. One design writes a change record alongside the product update in the same source transaction. A background consumer reads committed records and invalidates the affected answers. This record is an outbox: work saved durably before the request can disappear.</p>
-<Repair />
+<StoryFigure group="freshness" kind="outbox" number={4} />
 <p>The transaction makes the update and its change record succeed or fail together. After a crash, a consumer can find pending records and continue. A source change stream can provide another route, with its own retention and resume rules. Both require a way to recover if consumption falls behind what the retained history can cover.</p>
 <p>Notifications can be late, repeated or reordered. A repeated deletion cannot restore an old value, although it can remove a newer fill and cause another miss. A consumer that installs values from notifications needs a revision check so an older event cannot overwrite a newer one. The outbox closes the lost-notification gap; it does not stop Figure 2’s delayed fill. These delivery concerns also appear in <a href="https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html">AWS’s outbox guidance</a>.</p>
 <p>Every source writer must reach the repair path. A bulk import or an administrator’s update can bypass application code that deletes keys. Either include those changes in the same mechanism or choose an age policy that explicitly tolerates them. Measure pending work and failures; a consumer that has stopped is not an invalidation guarantee.</p>
@@ -102,29 +94,29 @@ return card`;
 
 <section aria-labelledby="absence-and-access">
 <h2 id="absence-and-access">Absence, deletion and access changes</h2>
-<p>An answer can become stale without a field changing. P99 initially does not exist. The application saves a <code>not-found</code> answer to avoid repeated source lookups. When P99 is created, that negative result is now out of date. Invalidate it after the creation commits, or allow its stated negative-cache lifetime to run out.</p>
-<p>Deletion runs the other way. The source no longer contains P7, but a cached product card still does. Removing a record therefore needs the same dependency work as changing its price, including lists that contain it. A late fill can restore a deleted product’s card just as it restored the old price.</p>
+<p>A cached <code>not-found</code> answer becomes stale when the missing product is created. Invalidate it after the creation commits, or allow its stated negative-cache lifetime to run out. Creation changes the answer just as surely as a price edit does.</p>
+<p>Deletion runs the other way. The source no longer contains the mug, but its cached card still exists. Removing a record therefore needs the same dependency work as changing its price, including lists that contain it. A late fill can restore a deleted product’s card just as it restored the old price.</p>
 <p>A timeout is different from either result. It says that the application did not get an answer, not that the product is absent. <a href={hrefFor('cache-keys')}>Cache keys</a> gives absence its own representation so a failed source call cannot quietly become a cached “not found”.</p>
 <p>The catalogue here is public. Now consider a restricted product view whose policy requires current access on each request. Revoking a reader’s permission changes whether the answer may be returned even when the product bytes are unchanged. Check that permission through the required authoritative path before returning the cached content. A content TTL, or a user ID in the cache key, cannot replace that check.</p>
 </section>
 
 <section aria-labelledby="revision-identity">
 <h2 id="revision-identity">Put the revision in the identity</h2>
-<p>A versioned key separates answers from different source revisions. Revision 1’s card goes under a key ending in <code>:r1</code>; revision 2’s goes under <code>:r2</code>. App A’s late revision 1 fill can no longer overwrite revision 2’s card.</p>
+<p>A versioned key separates answers from different source revisions. Revision 1’s card goes under a key ending in <code>:r1</code>; revision 2’s goes under <code>:r2</code>. A late revision 1 fill can no longer overwrite revision 2’s card.</p>
 <p>The remaining question is how a reader chooses which key to use. A cached “current revision” pointer can itself be stale. One straightforward design reads the revision from the authoritative source on every request, then looks for that exact card.</p>
-<Revisions />
+<StoryFigure group="freshness" kind="revisions" number={5} />
 <p>This design still performs a source read on a hit. It pays when reading a small revision is cheaper than rebuilding the complete representation. It is less useful when the supposedly small lookup does almost all the work that caching was meant to save.</p>
-<p>On a miss, the payload and the revision must come from the same source snapshot. Suppose the first lookup chose revision 2, but P7 changes again before the application fetches the product. The second read must return the product with its own revision. Store it under that revision’s key, rather than labelling new data with the earlier number.</p>
+<p>On a miss, the payload and the revision must come from the same source snapshot. Suppose the first lookup chose revision 2, but the product changes again before the application fetches it. The second read must return the product with its own revision. Store it under that revision’s key, rather than labelling new data with the earlier number.</p>
 <pre><code>{revisionRead}</code></pre>
 <p>This is pseudocode for the selection rule; <a href={hrefFor('redis')}>Caching with Redis</a> covers bounded calls, decoding and cache errors. An unusable cache result follows the miss path. Failure to save a correctly built card need not prevent returning it. Failure to read the authoritative revision cannot be replaced with an arbitrary old key while preserving the same promise.</p>
-<p>The source must advance the revision for every change that affects the card. Revisions cannot be reused for different data, including a deleted and recreated product. If the card combines several records, its revision must cover those dependencies too. A revision for P7 alone cannot validate a separately changing discount table.</p>
+<p>The source must advance the revision for every change that affects the card. Revisions cannot be reused for different data, including a deleted and recreated product. If the card combines several records, its revision must cover those dependencies too. A product revision alone cannot validate a separately changing discount table.</p>
 <p>A hit reflects the revision current at the authoritative lookup. The source may change again before the response arrives; no cached key freezes it. This is still useful: a request made after an acknowledged write can select that write or a later revision, provided its source read has that guarantee.</p>
 <p>The old <code>:r1</code> key needs expiry or eviction for memory cleanup, even after nobody selects it. That expiry controls storage use rather than establishing which revision is current. If the revision lookup is too expensive, <a href={hrefFor('versioned-fills')}>Versioned cache fills</a> explores protocols that retain ordering information at the cache. They must also account for losing that information.</p>
 </section>
 
 <section aria-labelledby="read-after-write">
 <h2 id="read-after-write">Reading after a write</h2>
-<p>Return to the merchant who saved GBP 22.00. The simplest read-back path bypasses the cached card and makes a fresh authoritative read after the acknowledged commit. It must use a read path that includes that commit: a lagging replica or an older transaction snapshot may still return GBP 20.00.</p>
+<p>Return to the merchant who saved £22. The simplest read-back path bypasses the cached card and makes a fresh authoritative read after the acknowledged commit. It must use a read path that includes that commit: a lagging replica or an older transaction snapshot may still return £20.</p>
 <p>The write response can also return revision 2. A later request can then say “revision 2 or newer”. That number is useful only if the application can honour it. It must reject a revision 1 hit and obtain a suitable source result, wait within the request’s deadline, or report that it cannot satisfy the read. Carrying a revision number without enforcing it changes nothing.</p>
 <p>Checkout keeps its authoritative read within its normal transaction and stock checks. A current product read alone does not reserve stock or make the rest of checkout atomic. The cache saves catalogue work; it does not decide that a sale can proceed.</p>
 <div class="cache-table-scroll"><table>
@@ -141,7 +133,7 @@ return card`;
 
 <section aria-labelledby="sources">
 <h2 id="sources">Sources and further reading</h2>
-<p>The figures model the stated shop scenarios. The collection’s native experiment ran on Redis 8.10.3 with an in-process Python source model. It reproduced source revision 2 beside cached revision 1 with a new thirty-second TTL after the late fill. A separate one-second age check rejected a delayed observation aged 1.108 seconds. That check used one process’s monotonic clock; it establishes no cross-machine clock or replica guarantee.</p>
+<p>The figures model shop north’s mug, in GBP, with invented timings. The collection’s native experiment ran on Redis 8.10.3 with an in-process Python source model. It reproduced source revision 2 beside cached revision 1 with a new thirty-second TTL after the late fill. A separate one-second age check rejected a delayed observation aged 1.108 seconds. That check used one process’s monotonic clock; it establishes no cross-machine clock or replica guarantee.</p>
 <ul>
 <li>Redis, <a href="https://redis.io/docs/latest/commands/set/">SET</a> and <a href="https://redis.io/docs/latest/commands/expire/">EXPIRE</a>: setting and renewing entry lifetimes.</li>
 <li>Redis, <a href="https://redis.io/docs/latest/develop/pubsub/keyspace-notifications/">Keyspace notifications</a>: which changes they describe and what a disconnection loses.</li>

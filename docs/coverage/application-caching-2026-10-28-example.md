@@ -107,3 +107,9 @@ plate (P10). Use those names when a product needs identifying; let the drawing
 show the sizes and sequence without repeating them in prose. The identifiers
 remain useful where a different figure is teaching cache-key identity.
 
+The deeper memory replay keeps its existing workload identifiers internally,
+with reader-facing names jug (P3), mug (P7), spoon (P8), bowl (P9), vase (P40)
+and catalogue (Q). The vase is not the introductory plate (P10). These names
+identify requests where reuse matters; they do not add product facts or change
+the replay’s byte costs, request order or policy assumptions.
+

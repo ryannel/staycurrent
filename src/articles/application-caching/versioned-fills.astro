@@ -1,5 +1,5 @@
 ---
-import Fill from '../../components/application-caching/versioned/Fill.astro';
+import StoryFigure from '../../components/application-caching/stories/StoryFigure.astro';
 const { hrefFor } = Astro.props;
 const reserve = `# Before reading the source; token is new for this attempt.
 SET product:v1:north:P7:en-GB:GBP loading:<token> NX PX 5000
@@ -15,29 +15,27 @@ end
 redis.call('SET', KEYS[1], 'ready:' .. ARGV[2], 'PX', ARGV[3])
 return 1`;
 ---
-<p>A versioned cache fill checks whether an answer still has permission to enter the cache. That matters when a source read pauses before saving its result. Another request can change the source and invalidate the cached copy while the first read is still in flight. An unconditional fill then puts the old answer back.</p>
-<p><a href={hrefFor('freshness')}>Freshness and invalidation</a> followed that race and introduced an authoritative revision lookup on each request. Here we keep the ordinary cache-aside read path and make publication conditional instead. First we will try remembering the newest source revision. Then we will give each fill a permission that deletion can revoke.</p>
-<p>The goal is precise: an old fill must not undo an invalidation that the cache has already processed after the fill reserved permission. This is useful protection, but it cannot reveal a source change whose invalidation has not arrived. The distinction will matter both to the code and to the caller waiting for its answer.</p>
+<p>A server can read the right answer and save it too late. While it waits, another request changes the source and deletes the cached copy. The delayed fill then puts the old answer back. A conditional fill checks whether that result still has permission to enter the cache.</p>
+<p><a href={hrefFor('freshness')}>Freshness and invalidation</a> avoided the old copy by asking the source which revision to use on every request. Here we keep the ordinary cache-aside path. The extra check happens when the server saves an answer for reuse, a step we will call <em>publication</em>.</p>
+<p>We want to stop an old fill undoing an invalidation the cache has already processed. The cache cannot detect a change it has not heard about. That boundary separates a useful ordering guarantee from a promise to return the latest value.</p>
 
 <section aria-labelledby="old-fill"><h2 id="old-fill">The old fill arrives last</h2>
-<p>Our shop’s P7 is still the blue mug. App A reads GBP 20.00, revision 1, then pauses. App B commits GBP 22.00, revision 2, and deletes the cached card. App A resumes and writes revision 1 into the now-empty key.</p>
-<p>Every operation succeeded. Deletion removed what the cache held at that moment; it did not remove the card in App A’s memory. Nor did it stop App A from saving that card later. Making each command atomic does not make this whole sequence one operation.</p>
-<p>Play Figure 1 with the unconditional rule. Watch the card wait at App A while App B changes the source. Then choose “Remember revision 2” and replay it.</p>
-<Fill />
-<p>The unconditional write restores the GBP 20.00 card. With revision 2 still recorded, the cache can recognise revision 1 as older and refuse it. The source read itself has not changed; only the decision to publish it has.</p>
+<p>Keep the parent’s price change: the mug goes from £20 at revision 1 to £22 at revision 2. A server that read before the edit still holds revision 1 after invalidation. Deletion removed the cache’s copy, not the server’s private result.</p>
+<p>Making each command atomic does not join the source read and the later cache write into one operation. Publication needs a condition that can change while the source read is in flight.</p>
 </section>
 
 <section aria-labelledby="remember-revision"><h2 id="remember-revision">Remembering a newer revision</h2>
 <p>A source revision identifies a particular state of the product. Suppose invalidation carries revision 2 and leaves that number in the cache, even after removing the card. A later fill carries revision 1. Comparing the two tells the cache something useful: it has already heard about a newer product.</p>
 <p>The comparison and replacement must happen atomically. If the application reads the remembered number and writes the card in separate calls, an invalidation can arrive between them. The earlier check then says nothing about the state being overwritten.</p>
 <p>Reordered notifications need the same care. Once the cache remembers revision 2, a late notification for revision 1 must not lower the number. Retain the maximum known revision. That maximum prevents a known regression; it does not prove that the source has made no further change.</p>
-<p>Now enable “Lose retained revision knowledge” in Figure 1. The remembered 2 disappears before App A’s fill arrives. If the implementation treats missing as zero, it accepts revision 1 again. <a href="https://engineering.fb.com/2022/06/08/core-infra/cache-made-consistent/">Meta’s account of cache consistency</a> describes this loss of version knowledge through eviction.</p>
+<StoryFigure group="freshness" kind="knowledge" number={1} />
+<p>Losing the remembered revision removes the evidence that a newer answer existed. Treating missing as zero would accept the old fill again. <a href="https://engineering.fb.com/2022/06/08/core-infra/cache-made-consistent/">Meta’s account of cache consistency</a> describes this failure when version knowledge is evicted.</p>
 <p>Missing must mean unknown. A design that needs the remembered revision must restore trustworthy knowledge or bypass that fill path. It cannot bootstrap its knowledge from the delayed candidate whose age it is trying to judge. Keeping the number in a separate key only moves the lifetime problem to that key.</p>
-<p>The source’s numbering must survive deletion and recreation too. If a recreated P7 starts at revision 1 while old P7 had reached revision 20, ordinary numeric comparison no longer identifies newer data. Use an identity and revision scheme that orders those changes correctly. This is the same dependency requirement as the parent’s versioned keys.</p>
+<p>The source’s numbering must survive deletion and recreation too. Restarting a recreated product at revision 1 can make new data look older than the deleted product. Use an identity and revision scheme that orders those changes correctly, as the parent’s versioned keys require.</p>
 </section>
 
 <section aria-labelledby="reserve"><h2 id="reserve">Reserve permission before reading</h2>
-<p>We can avoid retaining a source revision by retaining permission for one attempt instead. On a miss, App A first reserves a fresh token in the cache. Only then does it read the source. To publish, it must present that token while the cache still holds the matching reservation.</p>
+<p>Instead of remembering the newest source revision, remember permission for one attempt. On a miss, the server first reserves a fresh token in the cache, then reads the source. Publication succeeds only while the cache still holds that matching reservation.</p>
 <p>The key has three possible states. It is absent; it is loading, with a token; or it is ready, with the product and its source revision. Invalidation deletes either a loading or a ready record. Successful publication replaces the loading record with the ready one, consuming the token.</p>
 <div class="cache-table-scroll"><table>
 <caption>One record, three states</caption>
@@ -48,15 +46,16 @@ return 1`;
 <tr><th scope="row">Loading A or ready card</th><td>Invalidate</td><td>Absent</td></tr>
 <tr><th scope="row">Absent, loading B or ready card</th><td>Publish with A</td><td>Rejected; record unchanged</td></tr>
 </tbody></table></div>
-<p>Switch Figure 1 to the token rule. App A reserves token A, then reads revision 1. App B’s deletion removes token A. When the old card finally arrives, there is no matching reservation, so the cache refuses it. Missing state now works in our favour: absence cannot authorise publication.</p>
+<StoryFigure group="freshness" kind="token" number={2} />
+<p>Deletion revokes the permission as well as removing any saved answer. Missing state now works in our favour: absence cannot authorise publication.</p>
 <p>There are only two orders at the publication boundary. If publication happens first, deletion removes the ready card. If deletion happens first, publication finds no matching reservation and fails. Neither order leaves that attempt’s card in the cache after both operations finish.</p>
 <p>The reservation must precede the source read. Read revision 1 first, then let revision 2 commit and its deletion finish. A reservation made now would grant fresh permission to publish an old result. Starting a new attempt therefore means both a new token and a new source read.</p>
 
 <h3 id="redis-implementation">One implementation in Redis</h3>
-<p>Redis can reserve the missing key with <code>SET NX</code>, which writes only when no value exists. The token is a fresh identifier, never reused for another attempt. A securely generated random identifier is a practical choice, with uniqueness assumed. The labels A and B in the drawing are shortened names, not a two-token pool.</p>
+<p>Redis can reserve the missing key with <code>SET NX</code>, which writes only when no value exists. The token is a fresh identifier, never reused for another attempt. A securely generated random identifier is a practical choice, with uniqueness assumed. The labels A and B in these examples are shortened names, not a two-token pool.</p>
 <pre><code>{reserve}</code></pre>
 <p>The five-second reservation lifetime is an illustrative cleanup setting for a stuck attempt. It is not the card’s freshness allowance. A request that finds an existing loading record needs a bounded waiting or fallback policy; <a href={hrefFor('cache-misses')}>Handling cache misses</a> owns that decision. Permission to publish does not prove that only one process is still doing source work.</p>
-<p>After reading, App A runs this short Lua script with the same key and token. The raw product JSON includes its source revision. The <code>loading:</code> and <code>ready:</code> prefixes distinguish record states; a reader must only decode a ready record as a card.</p>
+<p>After reading, the server runs this short Lua script with the same key and token. The raw product JSON includes its source revision. The <code>loading:</code> and <code>ready:</code> prefixes distinguish record states; a reader must only decode a ready record as a card.</p>
 <pre><code>{publish}</code></pre>
 <p><a href="https://redis.io/docs/latest/develop/programmability/eval-intro/">Redis executes a script atomically</a>, so deletion cannot occur between this comparison and replacement. Return value 1 means publication succeeded; 0 means permission was absent or no longer matched. The source read remains outside the script and outside its guarantee.</p>
 <p>Use the same conditional operation on every completion path. An error, a timeout or an uncertain result must never trigger an unconditional <code>SET</code>. If publication succeeded but its reply was lost, repeating the script finds a ready record and returns 0. That is safe for the cache, but the second reply does not tell the client whether the first publication succeeded.</p>
@@ -64,19 +63,20 @@ return 1`;
 </section>
 
 <section aria-labelledby="permission-loss"><h2 id="permission-loss">When the permission disappears</h2>
-<p>Expiry, eviction and an empty restart can all remove the loading record. App A’s old token then fails because absent is not a match. If App B reserves a new token, A still fails because the tokens differ. Once B publishes, A fails because ready is not loading.</p>
-<p>Suppose the reservation expires while App A is still reading. App B reserves token B and reads the source again. Both processes may now be running, but only B has permission to fill. This is why the token protects publication without being a complete source-load control.</p>
-<p>A counter reset to a familiar number would break that reasoning. An old attempt carrying generation 1 could match a newly created generation 1. A generation counts cache state changes; a source revision identifies product state; a token identifies one attempt. The <code>v1</code> in our key identifies the representation format. These values name different things.</p>
-<p>Losing all cache state is also different from restoring earlier cache state. An old snapshot or a lagging promoted replica could bring token A back after its deletion. App A could then match it. Our reasoning assumes one cache history that never restores a revoked reservation.</p>
+<p>Expiry, eviction and an empty restart can all remove the loading record. The old token then fails because absent is not a match. A new attempt reserves a different token, so the old token still fails. Once the new attempt publishes, the record is ready rather than loading and cannot match either token.</p>
+<p>A reservation can expire while its server is still reading. Another server may reserve a new token and start its own read. Both can now be doing source work, though only the new attempt can publish. The token protects the cache; it does not by itself protect the source from duplicate work.</p>
+<p>A counter reset to a familiar number would break that reasoning. An old attempt could match a newly created record with the same generation. A generation counts cache state changes; a source revision identifies product state; a token identifies one attempt. The <code>v1</code> in our key identifies the representation format. These values name different things.</p>
+<p>Losing all cache state is also different from restoring earlier cache state. An old snapshot or a lagging promoted replica could bring token A back after its deletion. The old attempt could then match it. Our reasoning assumes one cache history that never restores a revoked reservation.</p>
 <p><a href="https://redis.io/docs/latest/operate/oss_and_stack/management/replication/">Redis replication is asynchronous by default</a>, and its documentation warns that even acknowledged writes can be lost during failover. <code>WAIT</code> does not establish the recovery boundary this protocol needs. A deployment must make attempts from before recovery unusable, or bypass the cache for the required source validation. A longer reservation lifetime does neither.</p>
 </section>
 
 <section aria-labelledby="unheard-change"><h2 id="unheard-change">What the cache has not heard</h2>
-<p>Now delay App B’s invalidation. App A reserves token A and reads revision 1. App B commits revision 2, but the delete has not reached the cache. App A publishes successfully because token A still matches. Until deletion arrives, the cache can serve GBP 20.00 beside an authoritative price of GBP 22.00.</p>
+<p>Now delay the invalidation. The source has changed, but the cache still holds the reservation.</p>
+<StoryFigure group="freshness" kind="unheard" number={3} />
 <p>The token did exactly what we asked. No processed invalidation was undone. It could not tell the cache about an unseen commit. The parent’s delivery mechanism and observation-age rule still decide how long the old card may be used.</p>
-<p>A lagging source replica creates another path to the same result. App A reserves a fresh token after revision 2 committed, then reads revision 1 from that replica. Publication can succeed. Reserve-before-read orders the attempt; it does not make the chosen source current.</p>
+<p>A lagging source replica creates another path to the same result. A server reserves a fresh token after revision 2 committed, then reads revision 1 from that replica. Publication can succeed. Reserve-before-read orders the attempt; it does not make the chosen source current.</p>
 <p>Late and repeated deletes have a different cost. They can remove a newer revision 2 card, causing another miss, but a delete cannot restore revision 1. Call this extra work, rather than treating every removal of a newer card as a stale result.</p>
-<p>Finally, a rejected cache fill does not settle the waiting caller’s request. App A still holds revision 1 in memory. The public card may be allowed to use it within its observation-age allowance; a merchant requiring revision 2 or newer may not. Apply that requirement separately. A strict request may need another authoritative read, or fail if its deadline leaves no time. Checkout continues to use authoritative price and stock checks within its transaction.</p>
+<p>Finally, a rejected cache fill does not settle the waiting caller’s request. The reader server still holds revision 1 in memory. The public card may be allowed to use it within its observation-age allowance; a merchant requiring revision 2 or newer may not. Apply that requirement separately. A strict request may need another authoritative read, or fail if its deadline leaves no time. Checkout continues to use authoritative price and stock checks within its transaction.</p>
 </section>
 
 <section aria-labelledby="choose"><h2 id="choose">Choose where to establish the revision</h2>
@@ -108,7 +108,7 @@ return 1`;
 <tr><th scope="row">Repeat B’s successful completion</th><td>Rejected</td><td>Revision 2 unchanged</td></tr>
 <tr><th scope="row">Reserve A → read 1 → commit 2 → publish A; delete still pending</th><td>Accepted</td><td>Revision 1 until deletion</td></tr>
 </tbody></table></div>
-<p>The source is revision 2 at the end of every schedule in the table. The candidate held by App A is still revision 1. Only the cache outcome is decided by the publication check; the caller’s result needs its own freshness decision.</p>
+<p>The source is revision 2 at the end of every schedule in the table. The reader’s candidate is still revision 1. Only the cache outcome is decided by the publication check; the caller’s result needs its own freshness decision.</p>
 <p>The experiment also rejected an old token on a fresh, empty Redis instance. It reproduced the unsafe alternatives: reserving after the read, splitting comparison from publication, and treating a lost revision as zero. Metadata loss was induced with deletion; a lagging source was modelled by returning revision 1. Neither a real eviction workload nor replication failover was measured.</p>
 <p>When testing an implementation, keep those counterexamples. A test that only publishes a current card cannot distinguish a conditional fill from an unconditional write. Force the old answer to arrive last, lose the metadata, repeat a completion, and delay the invalidation. Check source, cache and caller separately.</p>
 </section>

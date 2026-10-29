@@ -1,80 +1,76 @@
 ---
-import Burst from '../../components/application-caching/misses/Burst.astro';
-import Waiting from '../../components/application-caching/misses/Waiting.astro';
-import Lease from '../../components/application-caching/misses/Lease.astro';
-import Refresh from '../../components/application-caching/misses/Refresh.astro';
-import Admission from '../../components/application-caching/misses/Admission.astro';
+import StoryFigure from '../../components/application-caching/stories/StoryFigure.astro';
 const { hrefFor } = Astro.props;
 ---
 <p>A cache miss sends a request back to the work the cache was meant to save. One missing product card might cost one database read. A hundred callers arriving before that read finishes can start a hundred copies of it. When the whole cache disappears, the same thing happens across many products at once.</p>
 <p>Handling misses means deciding who starts that work, who waits for it and what happens when there is no room for another read. Sharing a fill helps callers asking for the same answer. A separate source limit is needed when their answers differ. Both must keep working when the cache itself fails.</p>
-<p>We will follow the shop’s P7 card through those cases. Its complete key is <code>product:v1:north:P7:en-GB:GBP</code>, and its unchanged price is GBP 20.00. All timings, arrival patterns and limits below are invented to make the work visible. They describe small traces, not measured capacity or a recommended production configuration.</p>
+<p>We will follow requests for the shop’s mug, then consider what happens when customers ask for different products. The figures use invented timings and limits to expose the decisions; they are not production capacity recommendations.</p>
 
 <section aria-labelledby="one-expiry">
 <h2 id="one-expiry">One expiry can start many reads</h2>
-<p>Suppose P7 has just expired. Caller A misses, starts a source read and waits. Before its fill is ready, caller B misses too. The cache contains no sign that A is already doing the work, so B starts another read. C and D can do the same.</p>
-<p>This is a <strong>cache stampede</strong>: several callers try to rebuild a missing answer at once. Figure 1 sends four callers to App A, twenty milliseconds apart. Start with each caller loading independently. Then shorten the source read from 100 ms to 40 ms and watch which callers still miss.</p>
-<Burst />
-<p>With a 100 ms source read, all four callers miss before the first fill completes. Four reads start, although one result would answer everyone. Making the read 40 ms reduces that to two reads. C and D arrive after the first fill and find hits. The arrivals did not change; a slower fill gave more requests time to join the burst.</p>
-<p>The first completed fill does not undo reads already in progress. In the slow run, B, C and D are still consuming source capacity after A has saved P7. If extra concurrent work also slows the source, the miss window can grow further.</p>
+<p>Suppose the mug’s cached card has just expired. Caller A misses, starts a source read and waits. Before its fill is ready, caller B misses too. The cache contains no sign that A is already doing the work, so B starts another read. C and D can do the same.</p>
+<p>This is a <strong>cache stampede</strong>: several callers try to rebuild a missing answer at once. The slower the first fill, the longer that opportunity stays open.</p>
+<StoryFigure group="capacity" kind="burst" number={1} />
+<p>Making the source faster reduces duplicate reads in Figure 1 without changing any arrivals. Later callers find the answer already cached. This is one reason that source latency matters even when most requests hit the cache.</p>
+<p>The first completed fill does not undo reads already in progress. In the slow run, B, C and D are still consuming source capacity after the first caller has filled the cache. If extra concurrent work also slows the source, the miss window can grow further.</p>
 <p>A daily hit ratio can hide this moment. Suppose the preceding 996 requests were hits and these four were misses. The combined hit ratio is 99.6%, yet all four new source reads overlap. The source needs room for that overlap when it happens, not merely for the average miss count across the day.</p>
 </section>
 
 <section aria-labelledby="share-work">
 <h2 id="share-work">Share the work for one key</h2>
-<p>App A can keep a small map of fills already in progress. The first caller registers a loader under P7’s complete key. Later callers finding that entry wait for the same result. This is <strong>request coalescing</strong>, often called singleflight. Switch Figure 1 to <em>Share one loader</em> with the 100 ms read.</p>
-<p>Only L1 starts. B, C and D join it, and its completion answers all four callers. The source-read count falls from four to one. The waiting-caller count still reaches four. Sharing saved work; it did not make the result arrive sooner for A.</p>
-<p>The map key must identify the same answer as the cache key. Coalescing on <code>P7</code> alone would merge different shops or currencies even if the stored cache keys were correct. <a href={hrefFor('cache-keys')}>Cache keys</a> establishes those distinctions.</p>
+<p>The server can keep a small map of fills already in progress. The first caller registers a loader under the card’s complete key. Later callers finding that entry wait for the same result. This is <strong>request coalescing</strong>, often called singleflight. The <em>Share one fill</em> case in Figure 1 applies it to the same arrivals.</p>
+<p>Sharing removes duplicate source work, but it does not remove the wait for the answer. A popular missing key can still have many callers waiting behind one read.</p>
+<p>The map key must identify the same answer as the cache key. Coalescing on a product ID alone would merge different shops or currencies even if the stored cache keys were correct. <a href={hrefFor('cache-keys')}>Cache keys</a> establishes those distinctions.</p>
 <p>Registering a loader and deciding who owns it must be one indivisible operation within the process. Once it owns the fill, the loader checks the cache again. Another loader or application instance may have filled the entry since the caller’s first lookup. A usable result from that second check avoids another source read.</p>
 <p>When loading ends, pass its result or error to the waiting callers and remove the in-flight entry. Remove only the entry that still belongs to this loader, so old cleanup cannot erase a replacement. A source failure remains a failure; it must not turn into a cached claim that the product is absent. A successful source result can still be returned if the optional cache fill fails.</p>
 <p>Go’s <code>singleflight.Group</code> provides this per-key suppression and result sharing within one group. It does not choose the application’s caller deadlines, waiter limits or source budget. The same separation is useful in other languages: a shared future represents the result, while the surrounding request code decides how long each caller can wait.</p>
 
 <h3 id="bound-wait">Bound the wait as well as the work</h3>
-<p>Give A a shorter deadline than B. If A started the shared loader, tying that loader to A’s request cancellation would make B lose work it still needs. Figure 2 gives the loader its own lifetime and shows A leaving first.</p>
-<Waiting />
-<p>At 50 ms, A’s request ends and its waiter is removed. B keeps waiting, and L1 keeps its source slot until 100 ms. A does not escape the timeout by starting another read. There is no permitted old copy in this trace, so A receives a failure.</p>
+<p>Callers need separate waiting budgets. If the first caller starts a shared loader, tying that loader to its request cancellation can make later callers lose work they still need.</p>
+<StoryFigure group="capacity" kind="waiting" number={2} />
+<p>The caller that times out leaves the waiting group. It cannot escape its deadline by starting another read. Without a permitted old copy or another supported fallback, it receives a failure while the shared read continues for the remaining callers.</p>
 <p>Bound the number of waiters as well as their waiting time. One popular key can otherwise hold thousands of request objects behind one slow loader. Bound the total number of in-flight keys too. A request that cannot join uses whatever fallback its contract permits, or fails promptly. It does not enter an unbounded second queue.</p>
 <p>The loader also needs a work deadline. If its 120 ms budget expires, request cancellation from the source and end its callers’ waits. Cancellation being requested is different from the source confirming it has stopped. Until the operation settles, retain its resource accounting and prevent unrestricted replacement work.</p>
 <p>A source-side execution timeout can help bound that remaining work. A client timer or a closed connection alone may not do so. Where completion cannot be confirmed, the dependency’s own admission limit must remain the final protection. Otherwise repeated client timeouts can release local slots while abandoned queries accumulate at the source.</p>
 <p>If every waiter leaves, the application may cancel the loader or let it finish as a useful fill. Either choice must retain a finite work budget. After a shared failure, immediate retries from every former waiter would recreate the burst; later attempts still need coalescing and admission.</p>
 
 <h3 id="instances">Across application instances</h3>
-<p>Now add App B. Each process has its own in-flight map, so one missing key can have one loader in App A and another in App B. Two reads may be an acceptable cost for avoiding coordination. With many instances or an expensive fill, sharing ownership across processes may save enough work to justify it.</p>
+<p>Now add a second server behind the shop’s load balancer. Each process has its own in-flight map, so one missing key can have one loader in each server. Two reads may be an acceptable cost for avoiding coordination. With many instances or an expensive fill, sharing ownership across processes may save enough work to justify it.</p>
 <p>A <strong>lease</strong> grants that ownership for a limited time. One process obtains the lease and refreshes; the others wait within their budgets or use a still-permitted copy. Expiry lets another process take over after an owner crashes. It also lets another process take over while a slow owner is still alive.</p>
-<Lease />
+<StoryFigure group="capacity" kind="lease" number={3} />
 <p>Between 90 and 120 ms, both source reads run. A lease can reduce duplicate work, but it cannot promise that old work has stopped. Its lifetime is a permission recorded in the coordinating store, not a timer inside the database query.</p>
-<p>Use a unique owner token, and check it atomically when publishing a fill or releasing ownership. In the drawn case, A’s old token cannot overwrite B’s work or delete B’s lease. A separate check followed by an unconditional write leaves a gap in which ownership can change.</p>
+<p>Use a unique owner token, and check it atomically when publishing a fill or releasing ownership. In Figure 3, Server A’s old token cannot overwrite Server B’s work or delete its lease. A separate check followed by an unconditional write leaves a gap in which ownership can change.</p>
 <p>That guard protects these cache operations only under the chosen store’s guarantees. It does not make the source and cache one transaction, and possession of the lease does not establish that a value is current. <a href={hrefFor('versioned-fills')}>Versioned fills</a> develops conditional publication and its remaining limits. If the lease service is unavailable, fallback work must still pass the source limit developed below.</p>
 </section>
 
 <section aria-labelledby="early-refresh">
 <h2 id="early-refresh">Refresh while an answer is still usable</h2>
 <p>So far every caller has arrived after expiry. A popular key can avoid that wait by starting its replacement earlier, while the current answer is still allowed. One request triggers the refresh; other requests keep receiving the permitted copy.</p>
-<p>That needs two separate decisions: when to try refreshing, and when the old answer must stop being served. Figure 4 puts both on the same clock. Follow the failure case: refreshing does not buy the old answer more time.</p>
-<Refresh />
-<p>The refresh point at 24 seconds leaves six seconds before the old card’s serving boundary. Requests at 24 and 25 seconds receive the old card without waiting. A failed refresh at 26 seconds leaves that card usable only for its remaining allowance. At 30 seconds, the next request must follow the miss path.</p>
+<p>That needs two separate decisions: when to try refreshing, and when the old answer must stop being served. Refreshing does not buy the old answer more time.</p>
+<StoryFigure group="capacity" kind="refresh" number={4} />
+<p>If replacement fails, the current copy can be served only for its remaining allowance. After that, requests must take the miss path. A successful refresh replaces it with an answer whose validity has been established afresh.</p>
 <p><a href={hrefFor('freshness')}>Freshness and invalidation</a> owns that allowance, including any permission to serve stale data during a failure. Early refresh spends some of the available time on replacement work. It cannot invent a stale-serving exception, restart the age of an old observation or ignore an invalidation.</p>
-<p>A request-triggered refresh also avoids refreshing keys nobody reads. A timer that refreshes P7 every twenty-four seconds keeps working even after P7 becomes unpopular. A request-triggered design does no work when the key is unused, but the first request after a long gap may still have to wait.</p>
+<p>A request-triggered refresh also avoids refreshing keys nobody reads. A timer that refreshes the mug’s card every twenty-four seconds keeps working even after customers stop looking at mugs. A request-triggered design does no work when the key is unused, but the first request after a long gap may still have to wait.</p>
 <p>Memcached’s meta protocol offers a concrete version of this pattern: early recache can select one requester to refresh an item nearing expiry. Redis applications can build their own refresh ownership. In either case, the application still decides which answer is permissible and how much refresh work can run.</p>
 
 <h3 id="jitter">Spread refreshes across keys</h3>
 <p>Suppose a warm-up loads many cards together. Giving each one the same refresh time moves the original burst into a scheduled refresh burst. <strong>Jitter</strong> varies the chosen time so they do not all ask for source work together.</p>
 <p>For entries with the same 30-second serving boundary, a design might choose refresh points between 22 and 26 seconds. Those invented points spread the attempts while preserving the boundary. Varying expiry instead can shorten some lifetimes; adding random time beyond the allowed age would break the freshness promise.</p>
-<p>Jitter separates keys. It does not stop four callers for P7 from arriving at the same instant, so P7 still needs coalescing. It also cannot spread an event that removes the whole cache at once. For those misses, we need to limit all the work heading towards the source.</p>
+<p>Jitter separates keys. It does not stop four callers for the mug from arriving at the same instant, so that key still needs coalescing. It also cannot spread an event that removes the whole cache at once. For those misses, we need to limit all the work heading towards the source.</p>
 </section>
 
 <section aria-labelledby="source-budget">
 <h2 id="source-budget">Limit source work across all keys</h2>
-<p>Replace the four P7 requests with requests for P7, P8, P9, P10, P11 and P12. Each needs a different card. A per-key loader map can combine none of them.</p>
-<p>Give the card service two source execution slots and two queue places. These are illustrative limits, separate from the database’s capacity for checkout and other work. Figure 5 keeps the callers visible as they take a slot, queue or leave. Play the 100 ms read, then slow it to 200 ms.</p>
-<Admission />
-<p>In the 100 ms run, P7 and P8 receive answers. P11 and P12 are rejected immediately because both the slots and the queue are full. At 100 ms, P9 and P10 have fifty milliseconds left. The model knows another read takes a hundred, so starting one cannot help these callers. It rejects them before doing that work.</p>
+<p>Now suppose each customer asks for a different product. A per-key loader map can combine none of those reads.</p>
+<p>The service needs a budget for all source work, across keys. Figure 5 gives it two execution slots and a small bounded queue. Slowing the source shows why limiting concurrent reads and getting useful answers to callers are separate concerns.</p>
+<StoryFigure group="capacity" kind="admission" number={5} />
+<p>A queue is useful only while a request has a chance to finish. In the faster case, queued callers have fifty milliseconds left when a slot becomes free, but a read takes a hundred. Starting work would consume capacity without helping them. The model rejects those attempts.</p>
 <p>Real read durations vary. Use measured latency and the remaining request budget to decide whether a queued request has a useful chance of finishing. Remove cancelled and expired requests before execution, and place a bound on queue time. A long queue can make a busy service look accepting while every caller’s deadline runs out inside it.</p>
 <p>In the 200 ms run, even the first two callers time out. Their reads continue to occupy the slots until they finish. The result is two source reads and no on-time product answers. The same concurrency limit protects the source, but it does not guarantee useful responses when the source slows.</p>
 <p><strong>Admission control</strong> is this decision about whether to start work. A concurrency limit bounds how much admitted work is running at once. A rate limit bounds starts over time, allowing whatever burst its policy specifies. They answer different questions: fast reads can produce many starts through two slots, while slow reads can accumulate behind a modest start rate.</p>
 <p>A connection pool bounds connections. It may still allow an unbounded queue of callers waiting to acquire them. It can also cover only one application process. Give the request path explicit limits on pending work, execution and time instead of assuming the pool supplies all three.</p>
 <p>Choose the source allowance from measurements of the source under representative load, keeping room for uncached work such as checkout. Refreshes, demand fills, warm-up reads and retries all consume that allowance. Prefer foreground work when background warming would otherwise occupy its last useful slots.</p>
-<p>The allowance must also survive scaling. Two slots in App A plus two in App B permit four reads, not two. Ten such processes permit twenty. A fleet can divide a fixed allowance among instances, use a shared admission service, or rely on a source-side limit with local protection. Each design needs a defined behaviour when coordination fails; “allow everything” would discard the protection at the moment it is needed.</p>
+<p>The allowance must also survive scaling. Two slots in Server A plus two in Server B permit four reads, not two. Ten such processes permit twenty. A fleet can divide a fixed allowance among instances, use a shared admission service, or rely on a source-side limit with local protection. Each design needs a defined behaviour when coordination fails; “allow everything” would discard the protection at the moment it is needed.</p>
 <p>Source-work admission differs from deciding whether a completed result deserves cache space. The read may be worth answering even when its result is too large or rarely reused to retain. <a href={hrefFor('cache-memory')}>Cache memory</a> owns that second decision.</p>
 </section>
 
@@ -91,7 +87,7 @@ const { hrefFor } = Astro.props;
 <tr><th scope="row">No useful source attempt can be admitted</th><td>An explicitly supported reduced result, or a timely failure.</td><td>No new read.</td></tr>
 </tbody>
 </table></div>
-<p>For the shop, a reduced catalogue view might omit a price and say that it is temporarily unavailable. That is an application feature with its own meaning. Returning GBP 0.00 or claiming P7 does not exist would invent a different answer. Checkout still uses its authoritative transaction and stock checks.</p>
+<p>For the shop, a reduced catalogue view might omit a price and say that it is temporarily unavailable. That is an application feature with its own meaning. Returning GBP 0.00 or claiming the mug does not exist would invent a different answer. Checkout still uses its authoritative transaction and stock checks.</p>
 <p>Bound cache-call time and pending cache requests so a stalled cache cannot hold the entire application waiting. If repeated failures trigger a temporary bypass, let a small number of probes check for recovery. The bypass avoids repeated cache waits; every resulting source request still uses the normal source allowance.</p>
 <p>Retries are additional attempts. A cache retry consumes remaining time, and a source retry consumes more source work. Keep attempts within the overall deadline and the same admission rules. Backoff and jitter can spread permitted retries, but cannot create capacity. Retrying at several layers can multiply attempts before the application sees a final failure.</p>
 <p>The concrete client configuration, connection lifetime and optional-fill behaviour belong to <a href={hrefFor('redis')}>Caching with Redis</a>. The design requirement here survives any choice of client: losing the cache must not remove the limit on work sent to the source.</p>

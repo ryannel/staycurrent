@@ -1,7 +1,6 @@
 ---
 import { Code } from 'astro:components';
-import RequestFigure from '../../components/application-caching/redis/RequestFigure.astro';
-import DeadlineFigure from '../../components/application-caching/redis/DeadlineFigure.astro';
+import StoryFigure from '../../components/application-caching/stories/StoryFigure.astro';
 const { hrefFor } = Astro.props;
 const download = (file: string) => `/review/application-caching/downloads/${file}`;
 const calls = `raw = await redis.get(context.key)
@@ -65,14 +64,13 @@ const run = `python3 -m venv .venv
 .venv/bin/python adapter_demo.py --initial-price-pence 1800`;
 ---
 <p>Redis can hold the product card, but the application still decides how to obtain it, whether to use it and what to do when a command fails. A cache client turns <code>GET</code> and <code>SET</code> into ordinary function calls. The useful integration is the control flow around those calls.</p>
-<p>This article builds that flow for the public catalogue from <a href={hrefFor('index')}>Application caching</a>. P7 is the north shop’s blue mug, initially GBP 20.00 at revision 1. Its complete key is <code>product:v1:north:P7:en-GB:GBP</code>. Checkout uses the authoritative source’s transaction and stock checks; a cached display card does not reserve stock or authorise a sale.</p>
+<p>We will add Redis to the shop’s public catalogue. The server still owns the request: it validates a saved card or reads the source when no usable copy exists. Checkout continues to use the source’s transaction and stock checks. Redis is the implementation used here; the same boundaries matter with other shared caches.</p>
 <p>The downloadable adapter uses Python’s asynchronous redis-py client, version 8.1.0. It was exercised against Redis 8.10.3 with Python 3.14.5. The source is an explicitly labelled dictionary model. The Redis commands are real; the exercise does not measure a production database or service.</p>
 
 <h2 id="product-request">Follow a product request</h2>
-<p>The first caller finds no saved card. App A reads the source, builds the representation and saves it with an expiry. The next caller can reuse the saved answer. Figure 1 keeps App A’s result visible while Redis receives the copy. Step through the successful run, then make <code>SET</code> fail.</p>
-<RequestFigure />
-<p>When the fill fails, the first caller still gets GBP 20.00. App A already has that answer. The next caller may need another source read because Redis has no copy. A failed cache write therefore changes later work without necessarily failing this request.</p>
-<p>The successful path has four calls. This outline leaves validation, admission and deadlines to the sections below; the downloadable adapter includes them.</p>
+<p>A cache fill is optional work after the server has obtained an answer. If Redis refuses the copy, this request can still succeed. The consequence falls on later requests, which have no saved answer to reuse.</p>
+<StoryFigure group="runtime" kind="request" number={1} />
+<p>This outline of the successful path leaves validation, admission and deadlines to the sections below; the downloadable adapter includes them.</p>
 <Code code={calls} lang="python" theme="css-variables" />
 <p><code>await</code> means that this request waits for a result while the event loop can run other requests. It does not make the work disappear or move it into a durable job. Redis receives no source connection and never calls <code>source.read</code>.</p>
 <p>The <code>ex=30</code> option stores the value and its 30-second expiry in one <code>SET</code>. Sending <code>SET</code> and then a separate expiry command would leave a gap in which the value exists without its intended lifetime. A plain replacement <code>SET</code> also clears an existing expiry, unless an option preserves it. Every ordinary fill here supplies its own expiry.</p>
@@ -89,20 +87,19 @@ const run = `python3 -m venv .venv
 <Code code={envelope} lang="json" theme="css-variables" />
 <p><code>schema: 1</code> and the key’s <code>v1</code> name the representation format. <code>revision: 1</code> names the source product version. Raising the mug’s price changes its revision; it need not change the format. <a href={hrefFor('cache-keys')}>Cache keys</a> explains how the context determines safe sharing.</p>
 <figure class="reply-figure">
-  <figcaption><span>Figure 2</span> Four replies at the decoding branch</figcaption>
-  <div class="reply-grid">
-    <div><b>No key</b><code>GET → None</code><p>Return the <code>MISS</code> sentinel. Try the source through its gate.</p></div>
-    <div><b>Valid product</b><code>kind: "product"</code><p>Return the checked product. A zero price or empty name is still a value.</p></div>
-    <div><b>Established absence</b><code>kind: "not-found"</code><p>Return <code>None</code> as the application result. Do not read the source again.</p></div>
-    <div><b>Unusable content</b><code>schema: 0 · broken JSON</code><p>Record the unusable entry and return <code>MISS</code>. Do not invent a missing product.</p></div>
-  </div>
-  <p class="caption">The tagged not-found envelope has the same schema and context fields, with no <code>product</code> field. A cache miss and a cached absence take different branches.</p>
+  <div class="table-scroll" role="region" tabindex="0" aria-label="How the adapter interprets cache replies"><table><thead><tr><th scope="col">Reply</th><th scope="col">Application decision</th></tr></thead><tbody>
+  <tr><th scope="row">No key</th><td>Return <code>MISS</code>; try the source through its gate.</td></tr>
+  <tr><th scope="row">Valid product</th><td>Return the checked value. A zero price is still a value.</td></tr>
+  <tr><th scope="row">Established absence</th><td>Return the cached not-found result, without a source read.</td></tr>
+  <tr><th scope="row">Unusable content</th><td>Record the rejected entry and treat it as a miss.</td></tr>
+  </tbody></table></div>
+  <figcaption><span>Figure 2.</span> A cache miss and a cached absence take different branches. The not-found envelope retains the schema and context but has no product field.</figcaption>
 </figure>
 <p>The decoder checks the schema, context, result tag and product fields. It also imposes a 4 KiB example value limit before parsing. It rejects a card for another shop, a string where integer pence is expected, malformed JSON and unsupported formats. The byte limit bounds parsing of ordinary responses after receipt; it does not stop an oversized Redis reply travelling over the connection.</p>
 <p>Rejected content becomes a miss and an observation for repair. The adapter does not delete it immediately: another request might have replaced it with a valid value between this read and a later delete. A successful source read can provide the next ordinary fill.</p>
 <Code code={miss} lang="python" theme="css-variables" />
-<p><code>MISS</code> is a unique object, tested by identity. A truthiness test such as <code>if value</code> would mix valid empty values with misses. Here <code>None</code> has a different meaning: the source successfully established that a product such as P99 is absent, or a valid cached envelope retained that answer.</p>
-<p>The example saves absence for five seconds and products for thirty. Both are illustrative insertion lifetimes. If P99 is created during those five seconds, its old absence can remain reusable until expiry or invalidation. A source timeout never establishes absence and is never saved as a not-found result.</p>
+<p><code>MISS</code> is a unique object, tested by identity. A truthiness test such as <code>if value</code> would mix valid empty values with misses. Here <code>None</code> has a different meaning: the source successfully established that the requested product is absent, or a valid cached envelope retained that answer.</p>
+<p>The example saves absence for five seconds and products for thirty. Both are illustrative insertion lifetimes. If that product is created during those five seconds, its old absence can remain reusable until expiry or invalidation. A source timeout never establishes absence and is never saved as a not-found result.</p>
 
 <h2 id="fill-failures">Keep the source result when a fill fails</h2>
 <p>The source branch has a clear boundary. Before it returns, the request has no answer. After it returns a valid representation, the request can answer even if saving the optional copy fails.</p>
@@ -115,8 +112,8 @@ const run = `python3 -m venv .venv
 <h2 id="deadlines">Fit the cache inside the request deadline</h2>
 <p>A timeout on each command is not a request deadline. Time spent obtaining a connection, reconnecting, reading the source and filling Redis all belongs to the same caller. The adapter accepts an absolute deadline from the event loop’s monotonic clock.</p>
 <Code code={deadlineCode} lang="python" theme="css-variables" />
-<p>This standalone call starts with 200 ms. Inside an existing request, pass the deadline already in force; do not grant a fresh 200 ms after earlier work has spent part of it. Figure 3 separates the work that obtains an answer from the work that merely stores a copy.</p>
-<DeadlineFigure />
+<p>This standalone call starts with 200 ms. Inside an existing request, pass the deadline already in force; do not grant a fresh budget after earlier work has spent part of it. A slow source read leaves less room for the optional copy.</p>
+<StoryFigure group="runtime" kind="deadline" number={3} />
 <p>The GET wrapper limits the whole lookup to 25 ms, including acquiring and preparing a connection. The client also limits connection setup and socket waits to 20 ms each. The source read must finish by the overall deadline. After that read succeeds, the optional fill gets at most 20 ms and less when the deadline is close.</p>
 <p>The fill leaves five milliseconds for returning the result. If that allowance has already gone, it is skipped. These numbers make the branches visible in the example. Choose actual limits from the caller’s requirements and measured behaviour; they do not promise that every event loop runs precisely on time.</p>
 <p>Retries are explicitly set to zero. A failed fill is not queued for replay after reconnection, when its saved payload may already be old. The adapter also creates no detached background task. A later request can obtain a new source result through the normal path.</p>
@@ -138,7 +135,7 @@ const run = `python3 -m venv .venv
 <div class="table-scroll" role="region" tabindex="0" aria-label="Adapter exercises and what they establish"><table><caption>What the driver checks</caption><thead><tr><th>Exercise</th><th>Expected observation</th></tr></thead><tbody>
 <tr><td>Miss, hit and actual expiry</td><td>Two initial reads call the source once. Expiry makes the next read call it again.</td></tr>
 <tr><td>Malformed, obsolete and mismatched values</td><td>Seven unusable variants lead to source reads. Zero and empty fields remain valid.</td></tr>
-<tr><td>Cached P99 absence, then a source failure</td><td>The absence hit saves a read. A failed source lookup writes no negative entry.</td></tr>
+<tr><td>Cached absence, then a source failure</td><td>The absence hit saves a read. A failed source lookup writes no negative entry.</td></tr>
 <tr><td>Real rejected fill and exhausted pool</td><td>The successful source result survives. Source and request gates still limit admission.</td></tr>
 <tr><td>Injected slow GET, source and SET</td><td>A GET timeout may fall back; a source timeout propagates; a fill timeout retains the result.</td></tr>
 <tr><td>Cancellation and source changes</td><td>No fill is detached. The native client recovers. A failed invalidation leaves a visible old copy.</td></tr>
@@ -157,5 +154,6 @@ const run = `python3 -m venv .venv
   <li>Python 3.14, <a href="https://docs.python.org/3.14/library/asyncio-task.html#timeouts">Timeouts and task cancellation</a>: absolute deadlines, cooperative cancellation and propagation.</li>
 </ul>
 <style>
-.reply-figure{margin:2rem 0;font:.87rem/1.55 var(--font-sans)}.reply-figure figcaption{font:1.15rem/1.4 var(--font-serif);margin-bottom:.65rem}.reply-figure figcaption span{font:.68rem var(--font-mono);text-transform:uppercase;color:var(--color-text-secondary);margin-right:.6rem}.reply-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--color-rule-strong);border:1px solid var(--color-rule-strong)}.reply-grid>div{background:var(--color-surface-alt);padding:1rem}.reply-grid b,.reply-grid code{display:block}.reply-grid code{margin:.5rem 0;font-size:.78rem;overflow-wrap:anywhere}.reply-grid p{font-size:.85rem;margin:0}.reply-grid p code{display:inline}.caption{font-size:.8rem;color:var(--color-text-secondary);margin:.65rem 0}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;font:.85rem/1.6 var(--font-sans)}caption{text-align:left;font-weight:600;margin-bottom:.6rem}th,td{text-align:left;vertical-align:top;padding:.7rem;border-bottom:1px solid var(--color-rule)}th{border-top:1px solid var(--color-rule-strong)}@media(max-width:500px){.reply-grid{grid-template-columns:1fr}.reply-grid>div{padding:.8rem}}
+.reply-figure{margin:2rem 0}.reply-figure figcaption{margin-top:.9rem;font:.83rem/1.6 var(--font-sans);color:var(--color-text-secondary)}
+.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;font:.85rem/1.6 var(--font-sans)}caption{text-align:left;font-weight:600;margin-bottom:.6rem}th,td{text-align:left;vertical-align:top;padding:.7rem;border-bottom:1px solid var(--color-rule)}th{border-top:1px solid var(--color-rule-strong)}
 </style>
