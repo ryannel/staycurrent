@@ -3,11 +3,13 @@ name: staycurrent-figures
 description: Create article figures, tables, code and interactive tools by following the teaching and visual standard of the fixed references.
 ---
 
-Use the finished explanations in [Sequence diagrams](../../../src/reference-articles/sequences.astro), [Indexes](../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../src/reference-articles/storage.astro) as worked models. Return to the passage and figure that does comparable teaching work while developing your prose and drawing together. Let the illustrations carry the article's central explanation. An intended reader should be able to learn its main ideas by following the drawings, labels, captions and brief step explanations. Use the references to judge that teaching; develop and qualify the understanding in the prose.
+Use the finished explanations in [Sequence diagrams](../../../src/reference-articles/sequences.astro), [Indexes](../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../src/reference-articles/storage.astro) as worked models. Return to the passage and figure that does comparable teaching work while developing your prose and drawing together. Make the cause, change and consequence visible in the drawing. Adapt the reference's teaching and visual craft to this subject and the publication; borrowing its controls or diagram shape alone is not enough.
 
 Use the collection's [example facts](../staycurrent-continuity/SKILL.md), selecting what the explanation needs. Keep shared data and outcomes in one place. Use site colour tokens. For stepped figures, use the shared player and [implementation guide](references/stepper.md).
 
-Look for playful, visually interesting animations that help the reader see how the subject works. Let movement and transformation carry the explanation where they make it clearer.
+Make the figure inviting through considered colour, spacing and playful motion that directs attention. Sophisticated implementation can serve a simple viewing experience. Let a simple sequence be understood by watching, settling once its point is made; add interaction when changing something reveals a useful relationship. If understanding requires elaborate instructions or controls, reconsider how much the figure is teaching at once.
+
+Choose example variation and any counters to expose the mechanism being taught. In a comparison, keep the common setup recognisable and make the relevant difference visible. More activity is useful only when it helps reveal that difference.
 
 Check [rendering and accessibility](references/render-checks.md) on the finished page with the preview/build owner.
 

@@ -9,7 +9,7 @@
 3. **Terms.** Explain at first use and use consistently.
 4. **Openings.** Give enough context to understand the question or claim and why it matters.
 5. **Reader-facing text only.** Keep qualifications that prevent a mistaken reader inference or action. Keep planning, editing history and production bookkeeping in the work record.
-6. **Captions and labels.** Captions explain what is shown; labels explain what controls change.
+6. **Prose and figures.** Captions orient or qualify; labels identify roles and what controls change. Does surrounding prose add reasoning, or merely retell visible actions and list example details? Preserve a useful text alternative for readers who cannot see the animation.
 7. **One piece.** The article reads as if written in one go. Name passages that read as later patches: hypothetical objections, stacked conditions or interrupting asides. Necessary qualifications belong with the reasoning they change.
 
 Judge whether the whole piece could sit beside the references in its selection, explanatory development and prose. Support that judgement with passages; an article-wide failure of the commissioned standard is substantive even when individual sentences are understandable.
