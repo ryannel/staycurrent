@@ -102,4 +102,8 @@ freeing 5 KiB, and saves P10: 6 KiB used and 2 KiB free. P7 is chosen for recenc
 not size. Widths represent invented total entry costs, including keys and
 bookkeeping, not allocator layout. No expiry occurs. This is a generic policy
 illustration, not an execution trace of Redis’s approximate LRU implementation.
+The reader-facing names in this figure are mug (P7), spoon (P8), bowl (P9) and
+plate (P10). Use those names when a product needs identifying; let the drawing
+show the sizes and sequence without repeating them in prose. The identifiers
+remain useful where a different figure is teaching cache-key identity.
 

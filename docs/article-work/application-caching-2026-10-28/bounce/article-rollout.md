@@ -323,3 +323,22 @@ and 375px phone, light and dark; replay and keyboard pause/resume work. A render
 sweep confirms finite geometry and occupancy of 0 → 5 → 6 → 8 → 3 → 6 KiB.
 Draft build passes with the existing 36 unrelated dense-prose warnings. Saved
 `eviction-*` screenshots; restored System theme and default viewport.
+
+## Explain the idea, not the product codes
+
+Rewrote the eviction lead-in and follow-through around filling the cache,
+choosing a victim and the consequence of a later request. Removed the prose's
+repeated identifier/byte-count inventory and shortened the caption and status
+lines. The drawing now names the mug, spoon, bowl and plate; the example record
+retains their mapping to P7–P10. Entry costs, sequence and LRU choice are unchanged.
+
+Following the reader’s further correction, removed the product-by-product
+lead-in entirely and cut the eviction narration after the figure. The animation
+shows differing sizes and the arrival/removal sequence; the prose explains the
+LRU choice and the cost of requesting an evicted entry again. Names remain in
+the drawing, without making the reader track them in the explanation.
+
+Scoped continuity check: eviction still leads into admission and memory policy;
+the LRU choice remains distinct from size. Draft build and article dense-prose
+check pass. Checked the named labels at desktop and 375px phone widths; restored
+the default viewport. Evidence: `article-screens/eviction-named-prose.jpg`.
