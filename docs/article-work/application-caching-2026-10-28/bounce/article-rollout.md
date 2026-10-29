@@ -287,3 +287,19 @@ the phone check revealed a crossing path. Existing five focused tests pass, and
 a render sweep of both changed figures has finite geometry throughout playback;
 the memory end state reports three misses/reads against three hits/zero reads.
 The draft build passes with the existing 36 unrelated dense-prose warnings.
+
+## Different product-card sizes
+
+Replaced the unrelated “large result” with P11 and varied the resident product
+card sizes: P7/P8/P9/P10 use 1/2/3/2 KiB in an 8 KiB cache. P11 occupies 6 KiB,
+the combined space of the three displaced cards. Card widths, size labels,
+headings, status text, caption, text alternative, surrounding prose and shared
+example now tell the same product-card story. No new product fields or prices
+are needed. Admission still depends on later reuse, not size alone.
+
+The phone cache uses more horizontal space to keep its smallest card legible.
+Hit animations land on the matching card, now at unequal positions. Checked
+desktop and 375px phone in both themes; all animation frames render with finite
+geometry and the final outcomes remain three misses/reads versus three hits.
+The draft build passes with the existing 36 unrelated warnings. Saved the
+`memory-product-sizes-*` previews and restored the normal viewport/System theme.
