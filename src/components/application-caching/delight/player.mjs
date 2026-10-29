@@ -8,6 +8,7 @@ export function mountScene(root, scene) {
   const trafficSlider = root.querySelector('[data-traffic]');
   const trafficControl = root.querySelector('[data-traffic-control]');
   const trafficOutput = root.querySelector('[data-traffic-output]');
+  const choices = [...root.querySelectorAll('[data-scene-choice]')];
   let traffic = scene.traffic ? scene.traffic.create() : null;
   let trafficLevel = scene.traffic?.defaultLevel ?? 2, nextArrival = scene.traffic?.startAt ?? 0, requestIndex = 0;
   const output = root.querySelector('output');
@@ -58,7 +59,7 @@ export function mountScene(root, scene) {
   const onPause = () => { paused = !paused; labelPause(); if (paused) stop(); else start(); };
   pause.addEventListener('click', onPause);
   const onReplay = () => {
-    if (!slider) {
+    if (!slider && scene.replayResetsVariant !== false) {
       variant = scene.defaultVariant ?? 'story'; root.dataset.variant = variant;
       drawing.setAttribute('aria-label', scene.altFor?.(variant) ?? scene.alt);
     }
@@ -66,6 +67,13 @@ export function mountScene(root, scene) {
   };
   replay.addEventListener('click', onReplay);
   const actions = [...root.querySelectorAll('[data-variant-action]')];
+  const choose = () => {
+    variant = choices.map(select => select.value).join(':');
+    root.dataset.variant = variant;
+    drawing.setAttribute('aria-label', scene.altFor?.(variant) ?? scene.alt);
+    restart();
+  };
+  choices.forEach(select => select.addEventListener('change', choose));
   const actionHandlers = actions.map(button => {
     const handler = () => {
       variant = button.dataset.variantAction;
@@ -95,7 +103,7 @@ export function mountScene(root, scene) {
   trafficSlider?.addEventListener('input', adjustTraffic);
   const observe = () => {
     observer?.disconnect();
-    const threshold = Math.min(.85, Math.max(.1, (innerHeight - 48) / drawing.getBoundingClientRect().height * .85));
+    const threshold = Math.min(scene.visibilityThreshold ?? .85, Math.max(.1, (innerHeight - 48) / drawing.getBoundingClientRect().height * .85));
     observer = new IntersectionObserver(entries => {
       visible = entries[0].intersectionRatio >= threshold;
       if (visible) start(); else stop();
@@ -118,6 +126,7 @@ export function mountScene(root, scene) {
     replay.removeEventListener('click', onReplay);
     slider?.removeEventListener('input', adjust);
     trafficSlider?.removeEventListener('input', adjustTraffic);
+    choices.forEach(select => select.removeEventListener('change', choose));
     actions.forEach((button, i) => button.removeEventListener('click', actionHandlers[i]));
   };
 }
