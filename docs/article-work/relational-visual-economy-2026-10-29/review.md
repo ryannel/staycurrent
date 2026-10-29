@@ -3,6 +3,9 @@
 29 October 2026. Review complete; substantive repairs remain open. This is a
 rendered visual review, not a new technical sign-off or a relational redesign.
 
+Subsequent repair and publication work is recorded in [Repairs](repairs.md).
+The findings below preserve the reviewed baseline rather than the repaired state.
+
 The application caching collection was separately published at
 [Application caching](https://staycurrent.dev/learn/databases/application-caching/).
 Publication commits `cfa42bbb` and `8711930c` deployed successfully. The latter's

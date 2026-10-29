@@ -4,8 +4,6 @@ const arrow = text => `<p class="cr-arrow">↓ ${text}</p>`;
 const frame = (html, explanation) => ({ html, explanation });
 const voters = (n, price = false) => row('One range · three voting replicas', [1,2,3].map(i => cell(`Node ${i}${i === 2 ? ' · leaseholder / leader' : ' · follower'}`, price ? (n >= 4 && i === 2 ? 'Applied: 22.00' : 'Applied: 20.00') : (i === 2 ? 'Serves the range' : 'Another copy'), i === 2 ? 'cr-focus' : '')));
 const route = n => row('SQL connection', [cell('Application', n === 3 ? 'Receives 20.00' : 'SELECT price for P7'),cell('Node 4 · gateway', n === 0 ? 'Plans the lookup' : n === 3 ? 'Builds the SQL result' : 'Routes a KV read', n < 3 ? 'cr-focus' : '')]) + arrow(n === 0 ? 'Primary-index key for P7' : n === 1 ? 'Cached range descriptor → range A' : n === 2 ? 'KV read → node 2' : '20.00 returns through the gateway') + voters(n);
-const primary = row('orders · primary index · ordered by order_id', [cell('101', 'customer 1 · paid'),cell('102', 'customer 2 · paid'),cell('103', 'customer 1 · pending')]);
-const secondary = row('orders_customer · ordered by customer_id, then order_id', [cell('1 / 101', 'Primary key: 101','cr-focus'),cell('1 / 103', 'Primary key: 103','cr-focus'),cell('2 / 102', 'Primary key: 102')]);
 function raft(n) {
   const cells = [1,2,3].map(i => {
     const durable = (i === 2 && n >= 1) || (i === 1 && n >= 2) || n >= 5;
@@ -15,7 +13,23 @@ function raft(n) {
   return row('Range A · U means “install the proposed P7 change”',cells) + `<p class="cr-decision">${n < 3 ? 'Agreement not yet established by the leader' : 'Leader has established Raft commitment for U'}</p>` + row('Separate transaction question',[cell('SQL transaction', 'The complete transaction still needs a commit outcome')]);
 }
 function storage(n) {
-  return row('One store on one node · local view', [cell('Raft history', 'Proposed and agreed commands for each range'),cell('MVCC data', 'Versioned keys for the store’s replicas')]) + arrow('Pebble stores both kinds of data') + row('Memory · lost in a crash',[cell('Memtable',n === 0 ? 'Earlier data' : n < 3 ? 'New storage writes' : 'Room for later writes',n === 1 ? 'cr-focus' : '')]) + row('Durable storage · not a second replica',[cell('Pebble WAL',n < 1 ? 'Earlier writes' : 'Recovery records for local writes',n === 1 ? 'cr-focus' : ''),cell('Sorted files · SSTs',n < 2 ? 'Earlier sorted data' : n === 2 ? 'Earlier files + new sorted file' : 'Replacement sorted files',n >= 2 ? 'cr-focus' : '')]) + `<p class="cr-decision">${['Logs have different jobs: replicated agreement and local crash recovery.','The WAL protects writes that have not reached an SST.','A memtable flush writes a new immutable sorted file.','Compaction reads old files and writes replacement files.'][n]}</p>`;
+  const value = (price, fresh = false) => `<span class="cr-value ${fresh ? 'cr-value-new' : ''}">P7 · ${price}</span>`;
+  const old = value('20.00');
+  const recent = value('22.00', true);
+  const file = (name, contents, extra = '') => `<div class="cr-file ${extra}"><b>${name}</b>${contents}</div>`;
+  return `<div class="cr-lsm">
+    <p class="cr-lsm-scope">One store · P7’s price versions</p>
+    <div class="cr-lsm-memory"><b>Memtable</b>${n === 1 ? recent : '<span class="cr-empty">Empty</span>'}</div>
+    <div class="cr-lsm-disk">
+      <div class="cr-wal"><b>Pebble WAL</b><span>${n ? '22.00 update recorded' : 'No new update'}</span></div>
+      <div class="cr-lsm-files">
+        ${n < 3 ? file('Sorted file A', old) : ''}
+        ${n === 2 ? '<div class="cr-flushed"><span class="cr-file-arrow">↓ flush from memory</span>' + file('New file B', recent, 'cr-file-new') + '</div>' : ''}
+        ${n === 3 ? `<div class="cr-merge-inputs">${file('A', old)}${file('B', recent)}</div><span class="cr-merge-arrow">↓ merge</span>${file('Replacement file C', recent + old, 'cr-file-new')}` : ''}
+      </div>
+    </div>
+    <p class="cr-lsm-action">${['Before the update', 'Write', 'Flush', 'Compaction'][n]}</p>
+  </div>`;
 }
 function split(n, mode) {
   const load = mode === 'one' ? ['quiet','all demand','quiet'] : ['busy','busy','busy'];
@@ -35,9 +49,14 @@ export const models = {
     note:'A model of one current primary-key lookup, with usable cached routing and an established lease. Placement is invented; schema lookup, transaction checks and internal messages are omitted. No elapsed time is implied.'
   },
   keys: {
-    frames:[
-      frame(secondary + arrow('customer_id = 1 selects two entries') + primary,'Mina’s secondary-index entries sit together at 1 / 101 and 1 / 103. Each carries the order’s primary key.'),
-      frame(secondary + arrow('Look up primary keys 101 and 103 for status') + primary,'The index lacks status, so this access path fetches the primary entries for 101 and 103. Order 102 is outside Mina’s customer span.')
+    static: true,
+    frames: [
+      frame(`<div class="cr-lookup">
+        <div class="cr-lookup-head"><b>Customer index</b><b>Primary row</b></div>
+        <div class="cr-lookup-row"><div><span class="cr-label">Customer 1</span><strong>1 / 101</strong></div><span class="cr-lookup-link" aria-hidden="true">→</span><div><strong>101</strong><span>paid</span></div></div>
+        <div class="cr-lookup-row"><div><span class="cr-label">Customer 1</span><strong>1 / 103</strong></div><span class="cr-lookup-link" aria-hidden="true">→</span><div><strong>103</strong><span>pending</span></div></div>
+        <p class="cr-lookup-outside">Customer 2’s entry, 2 / 102, is outside this lookup.</p>
+      </div>`, 'The two selected entries carry primary keys 101 and 103. Those primary rows supply the missing status.')
     ],
     note:'A conceptual added customer index after purchase 103. Labels stand for encoded keys, with table/index prefixes, family suffixes and version timestamps omitted. This illustrates an index access path, not a claimed optimiser choice for three rows.'
   },
@@ -54,12 +73,12 @@ export const models = {
   },
   storage: {
     frames:[
-      frame(storage(0),'The range’s Raft log holds proposed and agreed commands. Pebble’s WAL protects one store’s local writes. A replica stores both Raft state and versioned application data.'),
+      frame(storage(0),'Raft history and MVCC values both use the local engine. Here we follow just two price versions through memory and sorted files.'),
       frame(storage(1),'Pebble accepts storage writes into memory and records them in its local WAL. A durable acknowledgement cannot rely on memory alone.'),
       frame(storage(2),'Later, a memtable is flushed to a new sorted file. Reads can need memory and files at several levels to find the right version.'),
       frame(storage(3),'Compaction merges sorted contents into replacement files, then retires the old files when safe. That adds reads and writes beyond the application’s one update.')
     ],
-    note:'A local storage model, not the full ordering of Raft persistence, state-machine application or transaction commit. Boxes represent classes of data, not one file per range. Value separation, caches and level counts are omitted.'
+    note:'A local storage model, not the full ordering of Raft persistence, state-machine application or transaction commit. The files are illustrative, not one file per range. Both price versions are retained here; removing obsolete history requires a separate safety decision. Value separation, caches and levels are omitted.'
   },
   split: {
     options:[{value:'several',label:'Demand across P3, P7 and P9'},{value:'one',label:'All demand on P7'}],

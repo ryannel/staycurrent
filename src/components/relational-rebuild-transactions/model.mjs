@@ -41,7 +41,7 @@ export const figures = {
   },
   snapshots: {
     number:3, title:'Two reads across one commit', prompt:'Report isolation',
-    caption:'A read-only report begins before Mina’s purchase. The panels show what each transaction does; the strip below shows the committed database. Switch isolation and replay the same order of events.',
+    caption:'A read-only report begins before Mina’s purchase. The event rows retain each read across Mina’s commit; the strip below shows the committed database. Switch isolation and replay the same order of events.',
     variants: {
       committed: {label:'Read Committed',leftTitle:'Report · statement snapshots',rightTitle:'Mina · purchase 103',steps:[
         frame(['BEGIN','No query yet'],['Purchase not started'],'Committed: stock 1 · order 103 absent','The report starts a transaction. No query has observed any shop facts yet.'),
@@ -84,3 +84,38 @@ export const figures = {
     }
   }
 };
+
+export function historyRows(kind, variant) {
+  if (kind === 'stock') {
+    const guarded = variant === 'guarded';
+    return [
+      ['Read', 'Stock 1', '—'],
+      ['Read', '—', 'Stock 1'],
+      ['Write', guarded ? 'Guard passes: 1 → 0' : 'SET stock = 0', 'Update waits for Mina'],
+      ['Commit', 'COMMIT · releases lock', guarded ? 'Recheck stock 0: no row' : 'Resumes: writes 0 over 0'],
+      ['Outcome', 'Purchase 103 accepted', guarded ? 'ROLLBACK purchase 104' : 'COMMIT purchase 104']
+    ];
+  }
+  const repeatable = variant === 'repeatable';
+  return [
+    ['Begin', 'BEGIN · no read yet', '—'],
+    ['Read 1', 'Mug stock: 1', '—', 'Before commit'],
+    ['Write', '—', 'Stock → 0; add order 103'],
+    ['Commit', '—', 'COMMIT purchase 103'],
+    ['Read 2', repeatable ? 'Order 103 absent' : 'Order 103 exists', '—', repeatable ? 'Before commit' : 'After commit'],
+    ['Read 3', repeatable ? 'Mug stock: 1' : 'Mug stock: 0', '—', repeatable ? 'Before commit' : 'After commit']
+  ];
+}
+
+export function historyMarkup(kind, variant, stage) {
+  const rows = historyRows(kind, variant);
+  const headings = kind === 'stock' ? ['Mina', 'Tariq'] : ['Report', 'Mina'];
+  return '<table class="tx-history"><caption>Time moves down ↓</caption><thead><tr><th scope="col">Event</th>' +
+    headings.map(x => '<th scope="col">' + x + '</th>').join('') +
+    '</tr></thead><tbody>' + rows.map(([event, left, right, view], index) =>
+      '<tr class="' + (index === stage ? 'tx-now ' : '') + (event === 'Commit' ? 'tx-commit' : '') + '"><th scope="row">' +
+      event + '</th><td>' + (index <= stage ? left : '—') +
+      (view && index <= stage ? '<small class="tx-snapshot">View: ' + view.toLowerCase() + '</small>' : '') +
+      '</td><td>' + (index <= stage ? right : '—') + '</td></tr>'
+    ).join('') + '</tbody></table>';
+}

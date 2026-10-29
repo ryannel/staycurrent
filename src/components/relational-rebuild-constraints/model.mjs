@@ -4,20 +4,26 @@ const line = (text, cls='')=>`<p class="cf-verdict ${cls}">${text}</p>`;
 export const figures = {
  quantity: {
   title:'Which quantities reach the table?', number:1,
-  caption:'A model of PostgreSQL’s checks on a proposed order line. Each choice is an independent attempt at line 3 of order 103; the starting two lines stay unchanged.',
-  options:[{label:'Quantity',values:['2','0','NULL']},{label:'Rule',values:['CHECK alone','NOT NULL + CHECK']}],
-  steps:3,
-  draw:(s,o)=>{
-   const q=['2','0','NULL'][o[0]], required=o[1]===1, nullQ=q==='NULL';
-   const rejected=q==='0'||(nullQ&&required), reason=q==='0'?'CHECK is false':nullQ&&required?'NOT NULL fails':nullQ?'CHECK is unknown; it passes':'CHECK is true; it passes';
-   return {html:box('Proposed line 103 / 3',`<div class="cf-value">quantity = ${q}</div>`)+`<div class="cf-flow">↓ test the proposed value</div>`+box(required?'NOT NULL and CHECK (quantity > 0)':'CHECK (quantity > 0)',s?line(reason,rejected?'cf-bad':'cf-good'):'<p>Not checked yet</p>')+`<div class="cf-flow">↓ ${s===2?(rejected?'rejected':'accepted'):'attempted write'}</div>`+table('Stored order_items · order 103',['line_no','product_id','quantity'],[['1','P7','1'],['2','P3','2'],...(s===2&&!rejected?[['3','P7',q]]:[])]),explanation:s===0?'Start with two valid lines. The proposed third line has its own line number and an existing product. Quantity is the only rule being tested.':s===1?`For ${q}, ${reason.toLowerCase()}. ${nullQ&&!required?'A CHECK rejects false, not unknown.':''}`:rejected?'The statement fails. The proposed line is absent; the two starting lines remain.':`The third line is stored with quantity ${q}. ${nullQ?'CHECK alone did not require a quantity.':'A positive quantity passes this rule.'}`};
-  }
+  caption:'Independent attempts to add a third line to order 103. Its identity and product reference are valid; only the quantity rule differs.',
+  options:[], steps:1,
+  draw:()=>({html:table('CHECK (quantity > 0) with and without a required value',['Quantity','CHECK result','CHECK alone','NOT NULL + CHECK'],[
+   ['2','true','Accepted','Accepted'],
+   ['0','false','Rejected','Rejected'],
+   ['NULL','unknown','Accepted','Rejected · required']
+  ]),explanation:'CHECK rejects false. NOT NULL also rejects a missing value.'})
  },
  tenant:{
   title:'Two existing IDs can make one wrong association',number:3,
-  caption:'Tenant variant: tenant 10 owns the tea shop; customer 4, Rowan Vale, belongs to tenant 20. The proposed order pairs tenant 10 with customer 4. Both IDs exist.',
-  options:[{label:'References',values:['Separate IDs','Tenant–customer pair']}],steps:3,
-  draw:(s,o)=>({html:table('Existing tenants',['tenant_id'],[['10'],['20']])+table('Existing customers',['tenant_id','customer_id','name'],[['10','1','Mina Shah'],['20','4','Rowan Vale']])+box('Proposed order',`<div class="cf-pair"><span>tenant_id <b>10</b></span><span>customer_id <b>4</b></span></div>`)+`<div class="cf-flow">↓ ${o[0]?'find the complete pair (10, 4)':'find tenant 10; find customer 4'}</div>`+line(s===0?'Not checked yet':s===1?(o[0]?'No customer has the pair (10, 4)':'Tenant 10 exists ✓ · Customer 4 exists ✓'):(o[0]?'Rejected: tenant membership does not match':'Accepted: the mismatch was not tested'),s===0?'':o[0]?'cf-bad':'cf-good'),explanation:s===0?'The row claims that an order in tenant 10 belongs to customer 4. Read those values as one association.':s===1?(o[0]?'The composite foreign key looks for both values in the same customer row. It cannot combine tenant 10 from Mina with customer 4 from Rowan.':'Each foreign key finds its own target. Neither asks whether the customer belongs to the order’s tenant.'):(o[0]?'The matching pair is absent, so the database rejects this order. Rowan stays in tenant 20.':'Both separate references pass, leaving an order in tenant 10 linked to tenant 20’s customer.')}),
+  caption:'Tenant 10 owns the tea shop; Rowan belongs to tenant 20. Each rule is tested against the same proposed order.',
+  options:[],steps:1,
+  draw:()=>({html:
+   table('Existing customers · tenants 10 and 20 both exist',['Tenant','Customer','Name'],[['10','1','Mina Shah'],['20','4','Rowan Vale']])+
+   box('Proposed order', '<div class="cf-value">tenant 10 · customer 4</div>')+
+   '<div class="cf-columns">'+
+   box('Separate references', '<p>Tenant 10 exists ✓</p><p>Customer 4 exists ✓</p>'+line('Accepted · membership untested','cf-good'))+
+   box('Composite reference', '<p>Customer pair (10, 4) is absent.</p><p>Rowan’s pair is (20, 4).</p>'+line('Rejected · wrong tenant','cf-bad'))+
+   '</div>',
+   explanation:'The composite reference requires both values in the same customer row.'}),
  },
  timing:{
   title:'The same final rows, checked at different times',number:5,
