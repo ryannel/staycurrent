@@ -1,7 +1,7 @@
 import { relationalCollection, relationalArticleHref, relationalIntroduction } from './relational-collection';
 import { objectArticles, objectHome } from './object-storage-collection';
 import { drawingCollection, drawingHref } from './drawing-collection';
-import { applicationCachingEntries, applicationCachingFileKey } from './application-caching';
+import { applicationCachingEntries, applicationCachingFileKey, applicationCachingHome } from './application-caching';
 
 const cachingMetadata = Object.fromEntries(Object.entries(import.meta.glob('../articles/application-caching/*.meta.json', { eager: true, import: 'default' })).map(([file, meta]) => [applicationCachingFileKey(file), meta]));
 const cachingReading = applicationCachingEntries(Object.keys(cachingMetadata), cachingMetadata).filter(entry => entry.status === 'published');
@@ -44,6 +44,13 @@ export function breadcrumbs(path: string, title: string) {
   if (path.startsWith('/learn/databases/') || path.startsWith('/assessments/')) {
     trail.push({ href: databaseGuide, title: 'Databases and storage' });
     if (path === databaseGuide) return trail;
+    if (path.startsWith(applicationCachingHome)) {
+      trail.push({ href: applicationCachingHome, title: 'Application caching' });
+      if (path === applicationCachingHome) return trail;
+      const entry = cachingReading.find(item => item.href === path);
+      const parent = cachingReading.find(item => item.key === entry?.parent && item.key !== 'index');
+      if (parent) trail.push({ href: parent.href, title: parent.title });
+    }
     if (path.startsWith(objectHome)) {
       trail.push({ href: objectHome, title: 'Object storage' });
       if (path === objectHome) return trail;

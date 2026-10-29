@@ -40,3 +40,13 @@ optional simplifications remain; they do not block this publication.
 The pre-existing uncommitted relational data-modelling and example-record changes
 are not part of this publication commit. Relational review reports are a separate
 delivery; no relational article redesign is bundled into caching publication.
+
+## Deployment
+
+Publication commit `cfa42bbb` deployed successfully in
+[Publish run 40902681899](https://github.com/ryannel/staycurrent/actions/runs/40902681899).
+The coordinator opened the live introduction at
+<https://staycurrent.dev/learn/databases/application-caching/> and confirmed it
+serves the published collection. A small follow-up adds the collection/parent
+breadcrumbs on deeper articles and excludes repeated navigation labels from search
+excerpts; the rebuilt output passes the same site checks.
