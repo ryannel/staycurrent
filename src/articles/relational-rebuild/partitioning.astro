@@ -5,12 +5,12 @@ import PartitionFigure from '../../components/relational-rebuild-partitioning/Pa
 
 <p><strong>Table partitioning</strong> divides one logical table into smaller physical pieces. A shop can keep its orders in monthly partitions while applications still query one orders table. A report for October can then exclude every other month, and an approved retirement of January can operate on one whole piece.</p>
 <p>Both benefits depend on the boundary. A query that asks only for an order number may need to search every month. A policy that permits removing only the first half of January does not permit removing January's partition. Splitting the table also changes which keys and references the engine can enforce.</p>
-<p>This article follows a separate monthly copy of the shop's 2026 reporting workload: the three familiar orders plus 120,000 generated orders. The transactional shop tables stay separate. The drawings explain the boundaries; the downloadable experiment checks SQL and plans in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. Its counts describe that generated fixture, not a production threshold for partitioning.</p>
+<p>This article follows a separate monthly copy of the shop's 2026 reporting workload: the three familiar orders plus 120,000 generated orders. The transactional shop tables stay separate. The downloadable experiment checks SQL and plans in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. Its counts describe that generated fixture, not a production threshold for partitioning.</p>
 
 <section id="one-table">
   <h2>One table, several partitions</h2>
   <p>A <strong>partition key</strong> supplies the value that chooses a row's piece. Here it is <code>placed_at</code>, and each piece has a month of UTC timestamps. October begins at 1 October 00:00 inclusive and ends at 1 November 00:00 exclusive: a half-open range, written <code>[start, end)</code>.</p>
-  <p>Follow order 103 into October in Figure 1. Then compare its timestamp with the separate probe exactly at November's boundary.</p>
+  <p>Order 103’s 20 October timestamp belongs to October. A separate probe exactly at 1 November 00:00 UTC belongs to November.</p>
   <PartitionFigure kind="route" />
   <p>The adjoining ranges have neither an overlap nor a missing instant. A timestamp exactly at 1 November belongs to November, without inventing a final microsecond of October. The same rule applies to reads: October's upper bound should be <code>&lt; 1 November</code>, not an inclusive end at midnight.</p>
   <p>In PostgreSQL, the partitioned parent has no row storage of its own. Inserts through it are routed to the appropriate partition. Each partition has its own stored rows and indexes. This abbreviated definition shows the parent and its October piece; the experiment creates all twelve months.</p>
@@ -32,7 +32,7 @@ CREATE TABLE orders_2026_10 PARTITION OF orders_monthly
 <section id="pruning">
   <h2>Partition pruning</h2>
   <p><strong>Partition pruning</strong> excludes a partition when its bounds prove that it cannot contain a row the query needs. October's report requires <code>placed_at &gt;= 1 October</code> and <code>placed_at &lt; 1 November</code>. January ends before that interval starts; November starts where it ends. Neither can contribute an order.</p>
-  <p>Play Figure 2, then change the query to the full year and finally to order 103 without a time condition. Watch both the month count and the work left underneath it.</p>
+  <p>A full-year query needs all twelve monthly pieces. A lookup for order 103 with no time condition also cannot exclude a month from that order ID alone. Excluding order partitions still leaves whatever work the query needs in other tables.</p>
   <PartitionFigure kind="prune" />
   <p>Pruning uses the partition bounds, independently of an index. An index then offers an access path <em>inside</em> a remaining partition. Reading most October rows may favour a scan; finding a few may favour an index. <a href="/learn/databases/relational/indexes/">Indexes and access paths</a> develops that choice.</p>
   <p>The report also tests <code>status = 'paid'</code>. October contains pending orders too, including order 103, so retaining October does not mean returning all its rows. Nor has pruning calculated any line value. The report still joins eligible orders to <code>order_items</code>, adds agreed line values by customer and sorts the totals:</p>
@@ -65,7 +65,7 @@ ORDER BY line_value DESC, o.customer_id;`} />
 <section id="keys">
   <h2>Keys and references across partitions</h2>
   <p>The shop means an order number to identify one order, whatever its date. A local unique index can check only its own partition. Two unique indexes, one in October and one in November, can each accept 103 without consulting the other.</p>
-  <p>PostgreSQL 18 therefore requires a unique or primary-key constraint on a partitioned table to include every partition-key column, and the partition key must contain no expressions for this purpose. Adding <code>placed_at</code> satisfies that engine requirement, but changes what is unique. Figure 3 shows the difference.</p>
+  <p>PostgreSQL 18 therefore requires a unique or primary-key constraint on a partitioned table to include every partition-key column, and the partition key must contain no expressions for this purpose. Adding <code>placed_at</code> satisfies that engine requirement, but changes what is unique.</p>
   <PartitionFigure kind="keys" />
   <p>The pair <code>(103, 20 October 10:15)</code> differs from <code>(103, 1 November 00:00)</code>. A unique pair permits both. It cannot enforce the business rule that there is only one order 103. Generating IDs that are unlikely to collide does not make an unenforced duplicate impossible, including through imports or explicit writes.</p>
   <p>This matters to both <code>order_items</code> and <code>payments</code>. Their original foreign keys reference an order ID that is uniquely enforced. They cannot simply reference <code>orders_monthly(order_id)</code> when that column is no longer a unique key. A composite foreign key would need the timestamp as well:</p>
@@ -80,7 +80,7 @@ ORDER BY line_value DESC, o.customer_id;`} />
   <h2>Adding and retiring partitions</h2>
   <p>The partition set needs upkeep. Provide future ranges before their first writes arrive, monitor that coverage and choose what should happen to late rows. In PostgreSQL, an insert that matches no partition fails unless a default partition accepts it. A default can catch unexpected values, but then it needs monitoring and a checked path into the intended range; it does not make the missing range irrelevant.</p>
   <p>A late October order routes by its October <code>placed_at</code>, not by the date it reaches the database. After October has retired, decide whether to reject, quarantine or deliberately reopen that scope. Letting a catch-all silently accumulate retired data would undermine the lifecycle boundary.</p>
-  <p>Retirement starts with a policy decision about the records, not a convenient command. In this separate hypothetical scenario, an approved cutoff is 1 February 2026 at 00:00 UTC. All January timestamps lie before it. Change that cutoff to 15 January in Figure 4 and see why the operation must stop.</p>
+  <p>Retirement starts with a policy decision about the records, not a convenient command. In a separate hypothetical scenario, an approved cutoff is 1 February 2026 at 00:00 UTC. All January timestamps lie before it. A cutoff of 15 January would permit only part of that month to retire. Removing the whole January partition would also remove ineligible rows, so that operation must stop.</p>
   <PartitionFigure kind="retire" />
   <p><strong>Detaching</strong> removes the partition from the parent while keeping it as a standalone table. A parent query no longer returns January; a direct query of the detached table still can. Where the agreed policy permits a recoverable stage, that distinction gives room to verify the result before destroying the table. Access and retention still apply while it exists.</p>
   <Sql label="PostgreSQL detachment keeps the January table" code={`ALTER TABLE orders_monthly
@@ -112,7 +112,7 @@ SELECT COUNT(*) FROM orders_2026_01;`} />
 </section>
 
 <h2 id="sources">Sources and further reading</h2>
-<p>Checked against the PostgreSQL 18 documentation on 25 October 2026. Figures 1–4 are explanatory models; SQL observations use PGlite 0.5.8 / PostgreSQL 18.3 in an owned disposable instance. No native-server timing, lock-wait or production capacity result is claimed.</p>
+<p>Checked against the PostgreSQL 18 documentation on 25 October 2026. The boundary cases are explanatory models; SQL observations use PGlite 0.5.8 / PostgreSQL 18.3 in an owned disposable instance. No native-server timing, lock-wait or production capacity result is claimed.</p>
 <ul>
   <li><a href="https://www.postgresql.org/docs/18/ddl-partitioning.html">Table Partitioning</a>: partition bounds, routing, pruning, uniqueness limitations and design trade-offs.</li>
   <li><a href="https://www.postgresql.org/docs/18/sql-createtable.html">CREATE TABLE</a>: range, list, hash and default partition definitions.</li>

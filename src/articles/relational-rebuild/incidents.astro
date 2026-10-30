@@ -14,7 +14,7 @@ LIMIT 10;`;
 
 <p>A slow application request does not tell you that its SQL needs a faster plan. It may be waiting to borrow a connection, waiting for a lock after reaching the database, or competing for a processor or storage with other work. Each can leave the same spinning page in front of the customer. A useful diagnosis connects that symptom to the work or dependency holding it up.</p>
 
-<p>We will follow Mina asking the shop for her order history. Order 103 already exists, pending, with its two lines worth 29.00 and no payment. Her ordinary history read changes nothing. Separate branches introduce a pool queue, a PostgreSQL table lock and shared resource pressure; they are alternatives, not one accumulating incident. The drawings and their timings are illustrative.</p>
+<p>We will follow Mina asking the shop for her order history. Order 103 already exists, pending, with its two lines worth 29.00 and no payment. Her ordinary history read changes nothing. Separate branches introduce a pool queue, a PostgreSQL table lock and shared resource pressure; they are alternatives, not one accumulating incident. The schedules and timings are illustrative.</p>
 
 <p>The aim is to choose one action whose effect you can predict and check. Native evidence and intervention commands belong to <a href="/learn/databases/relational/postgresql/operations/">Operating and diagnosing PostgreSQL</a>; the same reasoning needs the appropriate evidence on another engine.</p>
 
@@ -24,7 +24,8 @@ LIMIT 10;`;
 <p>Mina should receive her newest orders. The small starting records return 103, pending, followed by 101, paid. The query asks for the order explicitly:</p>
 <Sql code={history} label="Mina’s order-history read" />
 
-<p>Suppose the page now takes a second where comparable requests previously completed promptly. Begin with the request’s boundaries: when it arrived, when it asked for a connection, when that connection was acquired, when the statement was sent and when the result was consumed. Figure 1 separates those intervals. Watch how much of the request happens before any SQL can be sent.</p>
+<p>Suppose the page now takes a second where comparable requests previously completed promptly. Record when the request arrived and when it asked for a connection. Then record when it acquired that connection, sent its statement and consumed the result.</p>
+<p>For an illustrative breakdown, suppose these stages happen in sequence. Connection acquisition takes 600 ms. The statement takes another 300 ms. Receiving, processing and returning its result takes the final 100 ms.</p>
 <RequestTime />
 
 <p>The 600 ms acquisition wait accounts for most of this invented request. Making its statement instantaneous would still leave at least those 600 ms. Conversely, a trace that wraps the whole connection call in a span named “database” can make a pool queue look like slow execution. Record what each interval actually includes.</p>
@@ -46,7 +47,7 @@ LIMIT 10;`;
 
 <p>Then follow the borrowers. A client can stay occupied while its query executes, waits for a database lock, delivers a large result or waits for application code to finish a transaction. Code can also forget to return it. A full pool establishes where the later callers wait; it does not yet explain why the earlier borrowers remain there. Check each application instance’s pool rather than assuming one total describes them all.</p>
 
-<p>Figure 2 starts with a separate session holding a table lock. The later callers wait for connections held by readers waiting for that lock. They have not reached the database themselves.</p>
+<p>Consider a pool with three clients. A separate session, H, holds an <code>ACCESS EXCLUSIVE</code> lock on <code>orders</code> in an open transaction that changes no business rows. Three history readers borrow all the clients and wait for that lock. Two later callers queue for a client, so they have not yet sent a database statement.</p>
 <LockChain />
 
 <p>The first three callers borrowed clients and reached PostgreSQL. The two later callers did neither. Both groups can report slow history requests, but only the first group has a current database statement to inspect. A request identifier, connection identity and statement interval let you connect those observations without inventing five database waiters.</p>
@@ -63,7 +64,7 @@ LIMIT 10;`;
 
 <p>H’s lock statement has finished, but its transaction is still open. That is why looking only for a long-running current statement can miss the cause. Follow the blocked statement to its blocker, then inspect that transaction’s lifetime, owner and remaining work. If the blocker also waits, follow the next edge. A chain ending at an idle holder has no cycle; it need not be a deadlock and can outlast a deadlock detector’s checking interval.</p>
 
-<p>Figure 2’s queued caller leaving does not affect the three lock waiters. Cancelling one of those database waiters would end that selected statement, but would still leave H holding the lock. The useful intervention depends on who can release the resource, not simply which waiting request looks oldest.</p>
+<p>If one queued caller gives up, it frees no borrowed client and releases no database lock. Cancelling one of the three database waiters would end that selected statement, but would still leave H holding the lock. The useful intervention depends on who can release the resource, not simply which waiting request looks oldest.</p>
 
 <p>For an actual incident, retain the statement identity, requested resource, blocking relationship and transaction state together. One sample can catch a brief wait that explains little of a long request; repeated samples and the request’s interval make the case stronger. <a href="/learn/databases/relational/locks-and-deadlocks/">Locks, contention and deadlocks</a> develops repairs to the protected interval, lock scope and acquisition order. Native monitoring and selected cancellation remain with the operations article.</p>
 </section>
@@ -104,7 +105,7 @@ LIMIT 10;`;
 
 <p>Other work can share the same device: reports reading pages or spilling, background page writes, and log writes needed by transactions. Find which operation and which storage location account for the change. More demand on a shared volume can delay a small history read whose own plan has barely changed.</p>
 
-<p>For space, examine the relevant volumes, quotas and growth trends. Then identify what is growing. It may be data, indexes, temporary files, retained row versions, recovery logs or unrelated files. Figure 3 shows an invented trajectory. Compare the remaining space with the proposed repair’s peak requirement, not just with zero.</p>
+<p>For space, examine the relevant volumes, quotas and growth trends. Then identify what is growing. It may be data, indexes, temporary files, retained row versions, recovery logs or unrelated files. Suppose a volume’s free space falls from 12 GiB to 8 GiB over five minutes, then to 4 GiB after another five. A proposed repair needs 6 GiB of extra peak space. Its available window closes before the volume becomes full.</p>
 <Space />
 
 <p>At minute ten, “four GiB left” sounds less urgent than “the six-GiB repair no longer fits”. The estimate must also leave room for ongoing writes and cleanup. Extrapolating the recent slope gives a warning horizon, not a promise: a new report or retained log can change it abruptly.</p>
@@ -115,7 +116,7 @@ LIMIT 10;`;
 <section aria-labelledby="bounded-intervention">
 <h2 id="bounded-intervention">Choose a bounded intervention</h2>
 
-<p>Turn the explanation into one action with a predicted effect, a scope and a stopping condition. For Figure 2, the evidence identifies H as a lock-only transaction with no business changes to preserve. Its owner can end it with rollback. The scope is that transaction; the first predicted effect is release of the table lock, followed by the readers finishing and clients returning.</p>
+<p>Turn the explanation into one action with a predicted effect, a scope and a stopping condition. In the lock case, the evidence identifies H as a lock-only transaction with no business changes to preserve. Its owner can end it with rollback. The scope is that transaction; the first predicted effect is release of the table lock, followed by the readers finishing and clients returning.</p>
 
 <p>Choose an observation period long enough to see those stages, bounded by the service’s remaining deadline and risk. If H has ended but the expected lock waits remain, check the current blockers. If the lock waits disappear but the queue keeps growing, follow the remaining execution or result-consumption delay. Do not broaden the action merely because the first graph has not returned to normal.</p>
 
@@ -145,7 +146,7 @@ LIMIT 10;`;
 <section aria-labelledby="verify-recovery">
 <h2 id="verify-recovery">Verify that useful service recovered</h2>
 
-<p>The lock release is only the first predicted change. Figure 4 follows it back to Mina. Read each arrow as a check still to make.</p>
+<p>The lock release is only the first predicted change. Confirm that the waiting readers finish, their clients return to the pool, and queued requests can borrow them and complete. Each consequence needs its own observation: a cleared database lock does not establish that the application has recovered.</p>
 <Recovery />
 
 <p>Observe useful completions, errors, latency and queue drainage under the relevant arrivals. Check requests already queued as well as newly arriving ones. A quiet database after refusing every caller is not a recovered history service. Nor does one successful probe establish that the original request mix is healthy.</p>

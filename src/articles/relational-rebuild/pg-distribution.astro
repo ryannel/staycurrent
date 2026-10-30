@@ -10,7 +10,7 @@ import '../../components/relational-rebuild-pg-distribution/distribution.css';
 
 <h2 id="partitions">Native table partitioning</h2>
 <p>A native partitioned table remains one logical table. With monthly order partitions, an October predicate can exclude other months before looking for rows. That can reduce work inside one PostgreSQL instance; it does not give the instance another server’s processor or memory.</p>
-<p>Figure 1 separates that choice from two ways of putting work on another server. Follow where order 103 appears in each drawing.</p>
+<p>A replica instead holds another copy of the same history and can serve eligible reads. A shard owns a disjoint portion of the data and its independent work. Partitions, copies and owners therefore answer different capacity questions even when each divides what a reader sees.</p>
 <figure class="pg-figure" aria-labelledby="pg-boundaries-title">
  <figcaption id="pg-boundaries-title"><span class="figure-number">Figure 1</span> Pieces, copies and owners</figcaption>
  <div class="stack">
@@ -21,14 +21,14 @@ import '../../components/relational-rebuild-pg-distribution/distribution.css';
  <p class="pg-caption">Three separate arrangements of the shop, not a combined deployment. Only the relevant order records are drawn. Replica progress is conditional; a copied history is not necessarily ready for a current read.</p>
 </figure>
 <p>If the problem is excluding old months or retiring a whole eligible month, begin with <a href="/learn/databases/relational/partitioning/">Table partitioning and data lifecycle</a>. If it is read traffic, consider the freshness contract and routing in <a href="/learn/databases/relational/replicas-and-read-routing/">Replicas, lag and read routing</a>. Sharding becomes useful when independent stored data or work needs more than one server.</p>
-<p>There is an exception to the local drawing: PostgreSQL permits foreign tables as partitions. Their data can live elsewhere. That requires care with partition bounds and brings the foreign wrapper’s execution and transaction behaviour. Declaring a remote partition does not supply automatic shard balancing or a distributed purchase protocol.</p>
+<p>PostgreSQL also permits foreign tables as partitions, which changes the ordinary local-storage arrangement. Their data can live elsewhere. That requires care with partition bounds and brings the foreign wrapper’s execution and transaction behaviour. Declaring a remote partition does not supply automatic shard balancing or a distributed purchase protocol.</p>
 
 <h2 id="application-shards">Application-managed shards</h2>
 <p>With application-managed shards, the application chooses the database connection. Reuse the parent article’s placement: customer group A contains Mina, B contains Tariq and C contains Edda. Each group keeps its customers, orders, lines and payments together. P owns the shared products. Groups can contain many customers; these letters are illustrative assignments, not a hash function.</p>
 <p>The router might consult a durable directory or compute a bucket from a customer key and look up that bucket’s current owner. A hash that changes whenever a server is added would remap data the application has not moved. Keep the logical group separate from its current database address.</p>
 <h3 id="finding-owner">Finding the right owner</h3>
 <p>Mina’s history request carries <code>customer_id = 1</code>, which selects A. The query can then find her newest orders through A’s local indexes. Routing finds the database; an index finds rows inside it.</p>
-<p>Figure 2 compares a customer’s history, an order-only lookup and a purchase. The information on the request determines which owners must participate.</p>
+<p>A customer history can reach one owner because its request supplies the customer key. An order-only lookup needs another way to find that group; a purchase may also need the shared stock owner. Request information and invariant scope determine which owners participate.</p>
 <WorkRouting />
 <p>An order number alone need not reveal the customer group. A maintained directory can map 103 to A, but its entries must be created consistently with orders and updated with movement. A stale or missing entry needs a defined response. Searching every owner is another design: each can use its own order-ID index, but the application must combine the answers and handle an unavailable owner. A local index on each database does not create a global routing index.</p>
 <p>Each database also brings connection limits, schema versions, statistics, backups and a recovery procedure. A rollout that upgrades A’s schema but leaves B’s behind must still serve compatible application requests. Restoring rows without the matching routing and request-outcome records can recover a different application state from the one customers were told about.</p>
@@ -39,7 +39,7 @@ import '../../components/relational-rebuild-pg-distribution/distribution.css';
 
 <h2 id="citus">Co-location in Citus</h2>
 <p>Citus supplies a SQL entry point that uses distribution metadata to plan work on PostgreSQL workers. For a customer-distributed layout, a distribution column chooses each row’s shard. <em>Co-location</em> keeps corresponding shards of related tables together, so matching customer records can be joined on a worker.</p>
-<p>Figure 3 draws a candidate customer-distributed copy. An added customer column on lines gives the planner the routing key and participates in the reference. The corresponding shard ranges and placements must agree; matching column names alone cannot establish locality.</p>
+<p>In a candidate customer-distributed copy, adding a customer column to lines gives the planner the routing key and lets it participate in the reference. The corresponding shard ranges and placements must agree; matching column names alone cannot establish locality.</p>
 <figure class="pg-figure" aria-labelledby="pg-citus-title">
  <figcaption id="pg-citus-title"><span class="figure-number">Figure 3</span> A join stays with its customer</figcaption>
  <div class="entry"><strong>Citus SQL entry point</strong><span>customer_id = 1 → distribution metadata → worker W1</span></div>
@@ -84,7 +84,7 @@ FOREIGN KEY (customer_id, order_id)
 
 <h2 id="foreign-tables">Foreign tables and remote work</h2>
 <p><code>postgres_fdw</code> lets a PostgreSQL database expose another PostgreSQL server’s tables as foreign tables. The caller writes local SQL; the wrapper sends suitable work to the configured remote server and brings results back. The server definition and user mapping identify the remote connection. They do not decide which owner ought to hold customer 1.</p>
-<p>Figure 4 follows a history query against <code>remote.orders</code>, a foreign table mapped to S’s <code>public.orders</code>. Follow the filtering separately from the rows returned.</p>
+<p>On the querying PostgreSQL instance, <code>remote.orders</code> is a foreign table mapped to remote server S’s <code>public.orders</code>. A history request can send its customer predicate to S, then sort the returned rows locally. The plan identifies which side performs each operation.</p>
 <figure class="pg-figure" aria-labelledby="pg-fdw-title">
  <figcaption id="pg-fdw-title"><span class="figure-number">Figure 4</span> Read the SQL at the connection boundary</figcaption>
  <div class="entry"><strong>Local PostgreSQL C</strong><span>SELECT order_id, status FROM remote.orders<br/>WHERE customer_id = 1 ORDER BY order_id</span></div>
@@ -105,7 +105,7 @@ ORDER BY order_id;`} />
   → Foreign Scan on remote.orders
       Remote SQL: SELECT order_id, status FROM public.orders
                   WHERE ((customer_id = 1))`}</code></pre>
-<p>A second native query joins S’s orders and lines and sums their values. Its plan instead contains <code>Relations: Aggregate on ((remote.orders o) INNER JOIN (remote.order_items i))</code>: both join and grouping ran on S, returning 101: 39.50 and 103: 29.00 before C’s sort. The input tables did not have to cross the connection to be joined in C.</p>
+<p>A second native query joins S’s orders and lines and sums their values. Its plan instead contains <code>Relations: Aggregate on ((remote.orders o) INNER JOIN (remote.order_items i))</code>: both join and grouping ran on S, returning 101: 39.50 and 103: 29.00 before the querying server’s local sort. The input tables did not have to cross the connection to be joined locally.</p>
 <p>Filtering before transfer can save rows crossing the connection; selecting only needed columns can save width. A join between compatible foreign tables on the same foreign server can also run remotely when the planner chooses it. A local function it cannot send, different user mappings or tables on different servers can change that boundary. Read the actual <code>Remote SQL</code> and the local plan, rather than assuming every SQL operation travels.</p>
 <p>This is useful for accessing separately owned data, gradual integration or a deliberately bounded remote query. It does not maintain an order directory, allocate stock or move a shard when a worker fills.</p>
 <h3 id="fdw-transactions">The transaction boundary</h3>
@@ -114,7 +114,7 @@ ORDER BY order_id;`} />
 
 <h2 id="skew">Skew and queries across workers</h2>
 <p>A customer key can exclude owners from one history lookup. The October paid-order report has no such equality. It needs every customer owner that can contribute. Co-location still helps: each owner joins its orders and lines locally and can reduce them before sending results.</p>
-<p>Figure 5 uses only the small starting rows for the result. Read from each owner down to the final sort.</p>
+<p>For the small paid-order report, A can return Mina’s total 39.50 and B Tariq’s 40.00; Edda’s group contributes no paid order. The entry point combines those complete customer totals and sorts them.</p>
 <figure class="pg-figure" aria-labelledby="pg-report-title">
  <figcaption id="pg-report-title"><span class="figure-number">Figure 5</span> Local joins, a shared report</figcaption>
  <div class="scene">
@@ -136,7 +136,7 @@ ORDER BY order_id;`} />
 
 <h2 id="moving">Moving a shard safely</h2>
 <p>Suppose group A is to move from PostgreSQL S to D. Its customer, order, line, payment and durable request-outcome records must arrive together. Product stock remains with P. A maintained order directory and other incoming references must continue to lead to the same group at its new owner.</p>
-<p>First take a deliberately paused approach. A pause makes the copy’s boundary easier to establish; it does not remove the authority problem. Figure 6 keeps the destination closed until the source is closed and the routing decision is recorded.</p>
+<p>First take a deliberately paused approach. A pause makes the copy’s boundary easier to establish; it does not remove the authority problem. Keep the destination closed until the source has stopped accepting group writes and the new routing decision is durably recorded.</p>
 <Move />
 <h3 id="close-source">Close the source before handing over</h3>
 <p>The admission gate must cover every mutation of A: application calls, jobs, imports, administrative paths and new references that could change the copied scope. Stopping the main router alone does not stop an old connection or an already admitted transaction.</p>

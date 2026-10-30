@@ -13,7 +13,7 @@ import Figure from '../../components/relational-rebuild-constraints/Figure.astro
 <Sql label="Require a positive quantity" code={`quantity integer NOT NULL
   CONSTRAINT order_items_quantity_positive CHECK (quantity > 0)`} />
 <p><code>NOT NULL</code> requires a value. <code>CHECK</code> tests an expression against the proposed row and rejects it if the result is false. They do different work. A comparison with <code>NULL</code>, such as <code>NULL &gt; 0</code>, is unknown, and a PostgreSQL check accepts an unknown result.</p>
-<p>Compare the same three quantities under both rules. Only the missing value distinguishes them.</p>
+<p>A quantity of 1 satisfies the positive check, and zero fails it. A missing quantity makes the check unknown, so the check alone accepts it; <code>NOT NULL</code> rejects it.</p>
 <Figure kind="quantity" />
 <p>With <code>CHECK</code> alone, a missing quantity can reach the table. Adding <code>NOT NULL</code> closes that gap. The same distinction applies to the shop’s non-negative stock and catalogue price: <code>CHECK (stock &gt;= 0)</code> and <code>CHECK (price &gt;= 0)</code> need required values if missing stock and price are forbidden.</p>
 <p>A check may compare several columns of the same row. A line could require its agreed price to be non-negative, or a record with two timestamps could require the end to follow the start. The expression must state the actual policy. Requiring text with <code>NOT NULL</code> still permits the empty string <code>''</code>; a name that must contain more than spaces needs a further rule such as <code>CHECK (btrim(name) &lt;&gt; '')</code>.</p>
@@ -27,7 +27,7 @@ import Figure from '../../components/relational-rebuild-constraints/Figure.astro
 <h2>Primary keys and UNIQUE constraints</h2>
 <p>The shop identifies an order line by <code>(order_id, line_no)</code>. A <strong>primary key</strong> makes that combination unique and requires every part to be non-null. It rejects a second line 1 for order 103, while allowing line 1 in another order.</p>
 <Sql label="The order-line identity" code={`CONSTRAINT order_items_pkey PRIMARY KEY (order_id, line_no)`} />
-<p>The complete pair is what must differ. Follow the attempted rows below. Product P7 occurs more than once, but the line key does not contain the product.</p>
+<p>The complete pair is what must differ. A second line 1 for order 103 conflicts, even if it names another product. A new line 3 for P7 does not conflict: the line key permits the mug to appear on more than one numbered line.</p>
 <figure class="cf identity-figure" aria-labelledby="identity-title">
  <figcaption id="identity-title"><span>Figure 2</span> Which occurrence is a duplicate?</figcaption>
  <div class="cf-stage">
@@ -84,7 +84,7 @@ ALTER TABLE customers ADD CONSTRAINT customers_loyalty_code_key
 <section id="tenant-integrity">
 <h2>Tenant integrity with composite references</h2>
 <p>A multi-tenant application records facts for several organisations. In this variant, tenant 10 owns the shop’s starting rows. Tenant 20 owns customer 4, Rowan Vale. Customer IDs remain globally unique, and orders now carry a tenant ID too.</p>
-<p>An order with tenant 10 and customer 4 names an existing tenant and an existing customer. Separate foreign keys on those two columns both pass. The missing rule is that <em>this customer belongs to this tenant</em>. Compare the two reference choices and follow the proposed pair.</p>
+<p>An order with tenant 10 and customer 4 names an existing tenant and an existing customer. Separate foreign keys on those two columns both pass. The missing rule is that <em>this customer belongs to this tenant</em>. Referencing the complete tenant–customer pair instead rejects the mismatch.</p>
 <Figure kind="tenant" />
 <p>Keep the pair unique in customers, then reference that complete pair from orders. These are replacement definitions for the tenant variant, not changes to the core example:</p>
 <Sql label="Require the customer to belong to the order’s tenant" code={`CREATE TABLE tenants (
@@ -117,7 +117,7 @@ CREATE TABLE orders (
 <section id="exclusion">
 <h2>Exclusion constraints</h2>
 <p>Uniqueness rejects equal keys. Some incompatible facts have different keys. The shop’s tea-tasting room R1 has reservation 7001 from 10:00 to 11:00 UTC on 2 November 2026. A second reservation from 10:30 to 11:30 has different start and end values, yet occupies the room at the same time.</p>
-<p>An <strong>exclusion constraint</strong> in PostgreSQL rejects a pair of rows when all the named comparisons are true. Here the comparisons are “same room” and “overlapping time interval”. Read the two proposed intervals against reservation 7001.</p>
+<p>An <strong>exclusion constraint</strong> in PostgreSQL rejects a pair of rows when all the named comparisons are true. Here the comparisons are “same room” and “overlapping time interval”. The 10:30–11:30 booking conflicts with reservation 7001. A booking from 11:00 to 12:00 can follow it, provided the intervals exclude their end and include their start.</p>
 <figure class="cf" aria-labelledby="reservation-title">
  <figcaption id="reservation-title"><span>Figure 4</span> Overlapping and adjoining reservations</figcaption>
  <div class="cf-stage">
@@ -154,7 +154,7 @@ CREATE TABLE room_reservations (
 <section id="timing">
 <h2>When constraints are checked</h2>
 <p>A change can lead towards a valid final state through a temporarily incomplete one. An import might receive a line for new order 105 before it inserts order 105 itself. With an immediate foreign key the line insert fails. Usually the simplest solution is to insert the parent first.</p>
-<p>If that order is inconvenient, PostgreSQL can defer an eligible constraint until commit. Declare the reference deferrable, then deliberately defer it in the transaction. Compare the two paths below.</p>
+<p>If that order is inconvenient, PostgreSQL can defer an eligible constraint until commit. Declare the reference deferrable, then deliberately defer it in the transaction. The line can then be inserted before order 105, as long as that order exists when the constraint is finally checked.</p>
 <Figure kind="timing" />
 <Sql label="Defer a deliberately deferrable order reference" code={`-- Declaration inside CREATE TABLE order_items:
 CONSTRAINT order_items_order_fk
@@ -182,7 +182,7 @@ COMMIT;`} />
 <p>A <strong>trigger</strong> runs a function automatically for a declared database operation. It can inspect the old and new version of a changed order to enforce a permitted status transition. Such a check uses the row being changed. A trigger that queries all the order’s payments makes a different kind of decision: it depends on which other transactions’ rows it can see.</p>
 <p>Follow two attempts to record a 20.00 payment against order 103. Each ordinary read happens before the other transaction commits, and both inserts happen before either commits.</p>
 <Figure kind="payments" />
-<p>Both decisions used the same unpaid state. At PostgreSQL’s default Read Committed isolation level, an ordinary query does not see another transaction’s uncommitted changes. Putting each read in a trigger makes it automatic; it does not make those reads see each other or coordinate the allowance.</p>
+<p>Both decisions used the same unpaid state. Each can approve 20.00 against the 29.00 allowance, then both can commit, leaving 40.00 recorded. At PostgreSQL’s default Read Committed isolation level, an ordinary query does not see another transaction’s uncommitted changes. Putting each read in a trigger makes it automatic; it does not make those reads see each other or coordinate the allowance.</p>
 <p>A sound design must make the decisions conflict, or detect that they cannot all stand. One route makes every relevant writer lock the same order before checking and changing its payments. Another uses serializable transactions and retries the whole transaction when the database rejects a conflicting execution. The protocol must cover payment updates and moves, and changes that reduce the line total, as well as payment inserts. The <a href="/learn/databases/relational/transaction-boundaries/">Transactions and isolation</a> article develops those protocols and their retry requirements.</p>
 <p>Keep the simpler constraints too. A non-negative stock check refuses an update that leaves stock below zero. It does not by itself ensure that each confirmed sale decremented stock, or that a reservation and its order commit together. A row rule can protect one fact while a transaction protocol protects the business operation that changes several facts.</p>
 </section>
@@ -206,7 +206,7 @@ COMMIT;`} />
 </section>
 
 <h2>Sources and further reading</h2>
-<p>Checked against PostgreSQL 18 documentation on 25 October 2026. The figures simplify documented behaviour. Single-session checks used PGlite 0.5.8 (PostgreSQL 18.3/WASM), including the <code>btree_gist</code> extension. No native multi-session execution is claimed for Figure 6.</p>
+<p>Checked against PostgreSQL 18 documentation on 25 October 2026. The worked scenarios simplify documented behaviour. Single-session checks used PGlite 0.5.8 (PostgreSQL 18.3/WASM), including the <code>btree_gist</code> extension. The concurrent-payment scenario illustrates the documented isolation rules; no native multi-session execution is claimed.</p>
 <ul>
 <li>PostgreSQL, <a href="https://www.postgresql.org/docs/18/ddl-constraints.html">Constraints</a> and <a href="https://www.postgresql.org/docs/18/sql-createtable.html">CREATE TABLE</a>: required values, row checks, keys, composite references, referential actions and exclusion declarations.</li>
 <li><a href="https://www.postgresql.org/docs/18/indexes-unique.html">Unique indexes</a> and <a href="https://www.postgresql.org/docs/18/indexes-partial.html">Partial indexes</a>: composite uniqueness, null policy and uniqueness over selected rows. <a href="https://www.postgresql.org/docs/18/ddl-identity-columns.html">Identity columns</a> separates generated numbers from uniqueness enforcement.</li>

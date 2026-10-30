@@ -15,7 +15,7 @@ FROM orders
 WHERE customer_id = 1
 ORDER BY placed_at DESC, order_id DESC
 LIMIT 10;`} />
-<p>Figure 1 follows the evidence across those boundaries. Begin at the left. A request still in the checkout queue has no current SQL to find on its behalf.</p>
+<p>A request still waiting for checkout has no current SQL to find on its behalf. Once it borrows a connection, backend observations can explain server waiting or execution. Result consumption and returning the client need application evidence again.</p>
 <figure class="ops-figure" aria-labelledby="ops-path-title">
   <div class="ops-figure-title" id="ops-path-title"><span>Figure 1</span> Where to look for Mina’s request</div>
   <div class="ops-path">
@@ -55,7 +55,7 @@ ORDER BY xact_start NULLS LAST, pid;`} />
 <p>Choose scope, thresholds and retention deliberately. SQL and parameters can contain private values, and logging every statement can create substantial work and storage growth. A short wait below the logging threshold can still appear in a live sample; an absent log line cannot rule it out.</p>
 
 <h2 id="blockers">Follow the blocked statement to its blocker</h2>
-<p>In this independent branch, session H runs <code>BEGIN</code>, then <code>LOCK TABLE orders IN ACCESS EXCLUSIVE MODE</code>, and leaves its transaction open. H changes no rows. Mina’s ordinary <code>SELECT</code> needs <code>ACCESS SHARE</code> on <code>orders</code>; those modes conflict. An ordinary row update would not explain this ordinary read waiting for that row’s lock.</p>
+<p>In this independent branch, session H runs <code>BEGIN</code>, then <code>LOCK TABLE orders IN ACCESS EXCLUSIVE MODE</code>, and leaves its transaction open. H changes no rows. Call Mina’s waiting history backend W. Its ordinary <code>SELECT</code> needs <code>ACCESS SHARE</code> on <code>orders</code>; those modes conflict. An ordinary row update would not explain this ordinary read waiting for that row’s lock.</p>
 <p>Start with the blocked backend’s PID, obtained from the request mapping. <code>pg_blocking_pids</code> supplies the immediate blocking session identities. Inspect their state as well as the waiter’s.</p>
 <Sql label="Follow the identified waiter to its immediate blockers" code={`-- Bind $1 to the current waiter PID from the request evidence.
 SELECT w.pid AS waiter_pid, w.backend_start AS waiter_start,
@@ -98,7 +98,7 @@ WHERE dbid = (SELECT oid FROM pg_database
 
 SELECT stats_reset, dealloc FROM pg_stat_statements_info;`} />
 <p>Use <code>query</code>, the group’s representative SQL, to identify the paid-order report and associate its counters with the application’s report operation. Literal values may appear as placeholders; the text identifies the statement’s structure, not every execution’s parameters. Match saved entries by <code>dbid</code>, <code>userid</code>, <code>queryid</code> and <code>toplevel</code>. Check the entry’s <code>stats_since</code> and the collection’s reset and eviction history before subtracting. Missing or recreated entries do not supply a complete interval. Avoid resetting shared counters just to make an incident report shorter.</p>
-<p>For a valid interval, divide the change in <code>total_exec_time</code> by the change in <code>calls</code> to obtain that interval’s mean execution time. Do not subtract the two lifetime means. Figure 3 gives two ways the same accumulated time can grow.</p>
+<p>For a valid interval, divide the change in <code>total_exec_time</code> by the change in <code>calls</code> to obtain that interval’s mean execution time. Do not subtract the two lifetime means. More calls can raise the total without changing the cost per call; slower calls can raise it without changing the call count. The corresponding repairs address different demand.</p>
 <figure class="ops-figure" aria-labelledby="ops-work-title">
   <div class="ops-figure-title" id="ops-work-title"><span>Figure 3</span> More calls, or longer calls?</div>
   <p class="ops-small">Synthetic changes over three alternative 60-second windows · one report statement group</p>
@@ -131,7 +131,7 @@ WHERE name IN ('max_connections', 'reserved_connections',
   <div class="ops-budget-key"><div><b>Up to 95</b>Ordinary admission before the reserved threshold</div><div><b>Next 2</b>Requires pg_use_reserved_connections privileges, or superuser</div><div><b>Final 3</b>Superuser only</div></div>
   <figcaption>One shared admission ceiling, not three pools. Privileged sessions can consume places before the thresholds are reached too. The 95 is a maximum ordinary allowance under these settings, not a guaranteed allocation to this application.</figcaption>
 </figure>
-<p>Check the actual settings and operational role before an incident: a planning allowance for support does not grant access to reserved slots. The first reservation defaults to zero; the superuser reservation is a final emergency margin. Increasing <code>max_connections</code> needs a restart and increases associated resource allocation.</p>
+<p>As remaining slots fall to <code>superuser_reserved_connections + reserved_connections</code>, ordinary roles stop being admitted. Only superusers and roles with <code>pg_use_reserved_connections</code> can enter; at the superuser-only margin, only superusers can. Check those settings and the operational role before an incident: a planning allowance for support does not grant reserved access. <code>reserved_connections</code> defaults to zero, and the superuser reservation is a final emergency margin. Increasing <code>max_connections</code> needs a restart and increases associated resource allocation.</p>
 <p>If many borrowed clients are waiting behind H, extra connections make more waiters. If admitted execution already overwhelms a resource, extra sessions can worsen it. If most server clients are idle but one application’s queue grows, inspect its checkout, hold time and leak behaviour. <a href="/learn/databases/relational/connections-and-capacity/">Connections, overload and capacity</a> owns the workload budget and overload policy after you have found the pressure.</p>
 
 <h2 id="storage">Separate storage delay from storage exhaustion</h2>
@@ -153,7 +153,7 @@ ORDER BY backend_type, object, context;`} />
 <p>Do not delete database or WAL files by hand. Deleting rows need not shrink their files, and <code>VACUUM FULL</code> needs spare space and an excluding table lock. A full WAL volume can shut the server down. Preserve recovery headroom while the specialist owner establishes which retention or maintenance obligation can safely change.</p>
 
 <h2 id="timeouts">Bound the next attempt</h2>
-<p>Before repeating a history request, decide how much time remains. The application’s checkout wait is already spent; PostgreSQL does not include it in <code>statement_timeout</code>. Figure 5 assigns a smaller server budget inside an invented two-second request deadline.</p>
+<p>Before repeating a history request, decide how much time remains. The application’s checkout wait is already spent; PostgreSQL does not include it in <code>statement_timeout</code>. For an illustrative two-second deadline, 600 ms spent on checkout and 500 ms reserved for later response work leave 900 ms for the server attempt. Lock waiting must fit inside that interval, rather than extending it.</p>
 <figure class="ops-figure" aria-labelledby="ops-time-title">
   <div class="ops-figure-title" id="ops-time-title"><span>Figure 5</span> A statement gets the time still available</div>
   <div class="ops-time"><div><strong>0–600 ms</strong><span>Checkout already spent</span></div><div><strong>Next ≤900 ms</strong><span>Statement allowance</span><small>Lock wait ≤200 ms per acquisition, inside this allowance</small></div><div><strong>500 ms reserved</strong><span>Transfer, cleanup and reply margin</span></div></div>
@@ -186,7 +186,7 @@ WHERE pid = $1
   AND state = 'active'
   AND query_start = $4::timestamptz;`} />
 <p>The four parameters are the sampled PID, connection start, application name and statement start. Preserve the timestamps’ full precision when binding them; rounding can prevent an exact match. No matching row means the sample no longer identifies that active statement. These checks narrow the target; they do not freeze a pooled connection between inspection and signalling. Coordinate with its owner to stop reuse when that race matters. Signalling also requires appropriate authority; monitoring access alone does not grant it, and ordinary signal roles cannot terminate a superuser backend.</p>
-<p>Then check the statement or session’s terminal outcome, its remaining locks and the client’s transaction state. Figure 2’s native counterpart used an isolated Linux PostgreSQL 18.6 instance and node-postgres 8.23.1. An idle-holder cancellation returned true while H’s granted table lock and W’s wait remained. Owner rollback released the lock and W returned 103 then 101. Cancelling W inside an explicit transaction produced <code>57014</code>; a subsequent statement failed with <code>25P02</code> until rollback. A separate lock timeout produced <code>55P03</code>. These are observed mechanism checks, not timing or least-privilege tests.</p>
+<p>Then check the statement or session’s terminal outcome, its remaining locks and the client’s transaction state. The native lock experiment used an isolated Linux PostgreSQL 18.6 instance and node-postgres 8.23.1. An idle-holder cancellation returned true while H’s granted table lock and W’s wait remained. Owner rollback released the lock and W returned 103 then 101. Cancelling W inside an explicit transaction produced <code>57014</code>; a subsequent statement failed with <code>25P02</code> until rollback. A separate lock timeout produced <code>55P03</code>. These are observed mechanism checks, not timing or least-privilege tests.</p>
 
 <h3 id="recovery-cost">Account for the recovery work</h3>
 <p>Ending a large PostgreSQL write transaction makes its aborted versions invisible; reclaiming their heap and index space still requires later cleanup. Do not assume that killing a session gives its allocated storage straight back. Our lock-only H avoids that cost because it created no row versions.</p>

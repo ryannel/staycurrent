@@ -37,7 +37,7 @@ ORDER BY line_value DESC, o.customer_id;`;
 
 <section id="rows-loops">
 <h2>Rows, loops and cardinality estimates</h2>
-<p>The report's order scan estimates 1,752 eligible orders and emits 9,176. The line lookup then runs once per eligible order. Figure 1 puts the repeated work inside one boundary. Its per-loop count and whole-report total describe different amounts of work.</p>
+<p>The report's order scan estimates 1,752 eligible orders and emits 9,176. The line lookup then runs once per eligible order. Its per-loop count and the whole-report total therefore describe different amounts of work.</p>
 <PlanWalk />
 <p>The native line-lookup excerpt reads:</p>
 <div class="sql-scroll" role="region" tabindex="0" aria-label="Measured inner index scan excerpt"><pre><code>Index Scan using order_items_pkey on order_items i
@@ -59,7 +59,7 @@ ORDER BY line_value DESC, o.customer_id;`;
 
 <section id="buffers-time">
 <h2>Buffers and execution time</h2>
-<p>The line scan's 36,822 buffer hits are accumulated across all 9,176 executions. Do not multiply them by loops again. They are also included in the inner aggregate and every ancestor containing that work. Figure 2 nests the measured counts in the same way.</p>
+<p>The line scan's 36,822 buffer hits are accumulated across all 9,176 executions. Do not multiply them by loops again. They are also included in the inner aggregate and every ancestor containing that work. Adding the parent’s count to its child’s would count some of those same accesses twice.</p>
 <figure class="pg-figure" aria-labelledby="pg-buffers-title">
 <figcaption id="pg-buffers-title"><span>Figure 2</span> One lookup's work appears in its ancestors</figcaption>
 <div class="pg-stage"><div class="pg-enclosure"><b>Whole statement · 37,587 shared hits</b><div class="pg-enclosure">Orders scan · 765 hits</div><div class="pg-enclosure"><b>Inner aggregate · 36,822 hits</b><div class="pg-enclosure">Line index scan · the same 36,822 hits<br />9,176 searches across all loops</div></div></div><p>765 + 36,822 = 37,587 accesses<br />The aggregate's copy is not another 36,822.</p></div>
@@ -83,7 +83,7 @@ ORDER BY line_value DESC, o.customer_id;`;
 <h2>Repairing cardinality estimates</h2>
 <p>The first consequential estimate error in our report is already at the orders scan: 1,752 estimated against 9,176 actual. That sends over five times as many orders into repeated lookups as predicted. Before changing the join, ask why the input estimate is wrong.</p>
 <p>The standalone <code>ANALYZE orders</code> command collects planner statistics; it does not profile our SELECT. If a large load or change has made statistics stale, a targeted collection is a sensible experiment. Here the fixture was freshly analysed, and paid status is deliberately related to the date. More precise individual distributions need not describe their combination.</p>
-<p>Figure 3 compares three observations on the same order rows. The first uses ordinary column statistics. The next raises the date and status targets to 1,000 and collects again. The last also collects a multivariate most-common-values list.</p>
+<p>Three observations on the same order rows separate individual-column precision from joint information. The first uses ordinary column statistics. The next raises the date and status targets to 1,000 and collects again, but still estimates only 1,713 orders. The last also collects a multivariate most-common-values list and estimates the observed 9,176. Higher individual precision did not capture the joint date/status distribution.</p>
 <figure class="pg-figure" aria-labelledby="pg-stats-title"><figcaption id="pg-stats-title"><span>Figure 3</span> Better individual counts still miss the combination</figcaption><div class="pg-stage">
 <div class="pg-bar-row"><span>Initial estimate<br /><b>1,752 orders</b></span><div class="pg-bar"><i style="width:19.09%"></i></div></div>
 <div class="pg-bar-row"><span>Larger column targets<br /><b>1,713 orders</b></span><div class="pg-bar"><i style="width:18.67%"></i></div></div>
@@ -109,7 +109,7 @@ CREATE STATISTICS orders_date_status (mcv)
   ON placed_at, status FROM orders;
 ALTER STATISTICS orders_date_status SET STATISTICS 1000;
 ANALYZE orders;`} label="Collect column statistics and a date-status MCV list" />
-<p>The multivariate list records frequently occurring combinations. It allows this estimate to reflect that paid orders are much more common in October than elsewhere. The scan estimate becomes accurate, but the scan still examines the whole table. The statistics did not add an access path or remove the rows required by the report.</p>
+<p>The multivariate list records frequently occurring combinations. It allows this estimate to reflect that paid orders are much more common in October than elsewhere. The scan estimate becomes accurate on this fixture, whose hundreds of date/status combinations fit the collected list. That exact agreement is not a general promise. The scan still examines the whole table. The statistics did not add an access path or remove the rows required by the report.</p>
 <p>Choose the statistics kind for the estimation question. <code>dependencies</code> can describe redundant equality conditions on related columns; PostgreSQL does not apply that correction to our timestamp range. <code>ndistinct</code> helps estimate the number of groups across several columns. <code>mcv</code> describes particular combinations, but a small list cannot represent every combination in a high-cardinality history. Extended statistics also do not currently correct join selectivity estimates across tables. A statistics object is a testable hypothesis about one error, not a universal estimate repair.</p>
 </section>
 
@@ -125,12 +125,12 @@ LIMIT 10;
 
 CREATE INDEX orders_history
   ON orders (customer_id, placed_at DESC, order_id DESC);`} label="History request and its candidate index" />
-<p>First there was only an additional index on <code>customer_id</code>. PostgreSQL chose a sequential scan for this common customer. Figure 4 compares that route with the route after the composite index was built. Neither route was forced.</p>
+<p>First there was only an additional index on <code>customer_id</code>. PostgreSQL chose a sequential scan for this common customer. After the composite index was built, the planner chose an ordered index scan instead. Neither route was forced.</p>
 <figure class="pg-figure" aria-labelledby="pg-history-title"><figcaption id="pg-history-title"><span>Figure 4</span> Supply the order, then stop after ten</figcaption><div class="pg-stage pg-compare">
 <div><b>Customer index available</b><div class="pg-flow-node">Sequential scan<span>120,003 orders examined<br />21,042 qualify</span></div><div class="pg-arrow">↓ consider all 21,042</div><div class="pg-flow-node">Top-N heapsort<span>Retain the newest ten</span></div><div class="pg-arrow">↓ 10 rows</div><b>765 shared hits</b></div>
 <div><b>Composite index available</b><div class="pg-flow-node">Index scan<span>Customer + time in Index Cond<br />Entries arrive newest first</span></div><div class="pg-arrow">↓ 10 rows</div><div class="pg-flow-node">Limit stops asking<span>No sort</span></div><div class="pg-arrow">↓ 10 rows</div><b>10 shared hits + 3 reads</b></div>
 </div><p class="pg-caption">Observed PostgreSQL 18.6 routes. The first top-N sort holds 26 kB but still considers every qualifying input. The second plan's index scan estimates 21,175 available rows; emitting ten under Limit is deliberate early stopping, not an estimate error.</p></figure>
-<p>The prediction held: the sort disappeared and the scan supplied only ten rows. The three shared reads occurred on the newly built index's first measured use. Comparing work is stronger than calling the later, warmer run fast merely because its elapsed time fell.</p>
+<p>The prediction held: the sort disappeared and the scan supplied only ten rows. That first measured use of the newly built index included three shared reads. Comparing work is stronger than calling the later, warmer run fast merely because its elapsed time fell.</p>
 <h3>Conditions, searches and heap fetches</h3>
 <p><code>Index Cond</code> means a condition is checked through the index. Leading equalities and the following range can bound a B-tree scan; a later key condition may only reject entries within the range already scanned. Consequently the label alone does not prove a short search. Compare output, searches and buffers.</p>
 <p><code>Filter</code> can expose later rejection. In a paid-only history request using this index, status is absent from the key, so fetched rows may still be rejected for being pending. A bitmap plan's <code>Recheck Cond</code> describes an exact condition the heap scan can need to verify, especially with lossy bitmap pages. Its presence alone does not establish that any candidate failed; inspect <code>Rows Removed by Index Recheck</code> and exact/lossy heap-block counts.</p>
@@ -153,16 +153,16 @@ ORDER BY line_value DESC, o.customer_id;`} label="Direct line-to-customer report
 <section id="spills">
 <h2>Sorts, hashes and temporary files</h2>
 <p>A small final answer can conceal a large working set. <code>Sort Method: external merge</code> establishes disk sort work; an in-memory <code>quicksort</code> or <code>top-N heapsort</code> describes another route. A hash with <code>Batches</code> greater than one signals work divided into batches, with temporary file I/O. Inspect temporary blocks alongside the method, input rows and row width.</p>
-<p>Figure 5 deliberately sorts the whole order table by status, time and ID. That independent request makes the memory contrast visible; it is not the report's small final sort.</p>
+<p>A separate native experiment sorted all 120,003 orders by status, time and ID, with parallelism disabled. At <code>work_mem = 64kB</code>, it used external merge sorting and reported 3,984 kB of disk space. At 32 MB it used quicksort with 7,760 kB of memory and no reported temporary blocks. This was a whole-table sort, not the report’s small final sort.</p>
 <figure class="pg-figure" aria-labelledby="pg-spill-title"><figcaption id="pg-spill-title"><span>Figure 5</span> The same input, two working-memory allowances</figcaption><div class="pg-stage"><div class="pg-flow-node"><b>120,003 order rows</b><span>order_id, customer_id, placed_at, status</span></div><div class="pg-arrow">↓ sort by status, placed_at, order_id</div><div class="pg-compare"><div class="pg-flow-node"><b>work_mem = 64 kB</b><span>External merge · 3,984 kB disk<br />1,482 temp blocks read<br />1,598 temp blocks written</span></div><div class="pg-flow-node"><b>work_mem = 32 MB</b><span>Quicksort · 7,760 kB memory<br />No temporary blocks reported</span></div></div></div><p class="pg-caption">Observed PostgreSQL 18.6 sort runs with parallelism disabled. Both read the same 765 cached heap blocks. Disk footprint and accumulated block I/O are different quantities; neither directly tells you the memory needed for an in-memory sort.</p></figure>
 <p>First ask whether the query needs all those rows and columns at the sort. Then test a local allowance if a spill remains worth removing. <code>work_mem</code> is a base allowance per working operation, not one budget shared by a whole statement. Hash operations can use <code>work_mem × hash_mem_multiplier</code>. Several operations, parallel processes and simultaneous requests can multiply the memory demand.</p>
-<p>Use <code>SET LOCAL work_mem = '32MB'</code> inside an explicit transaction for a bounded test. The figure establishes that the spill disappeared in this case. It does not establish a safe global setting for the shop. Measure competing reports and writes before extending the change.</p>
+<p>Use <code>SET LOCAL work_mem = '32MB'</code> inside an explicit transaction for a bounded test. The observed in-memory sort establishes that this particular spill disappeared. It does not establish a safe global setting for the shop. Measure competing reports and writes before extending the change.</p>
 </section>
 
 <section id="parallel">
 <h2>Parallel plans</h2>
 <p><code>Gather</code> collects rows from parallel work; <code>Gather Merge</code> combines streams that already have useful sort order. In a two-stage aggregate, workers produce partial states and the leader finalises them. A partial customer count is not yet the final answer if several processes saw that customer.</p>
-<p>Figure 6 uses a separate count of all orders by customer. Parallel setup and transfer costs were deliberately set to zero and the scan threshold lowered to obtain a small diagnostic parallel example. It demonstrates counters, rather than a recommended configuration or a speed improvement.</p>
+<p>A separate diagnostic query counts all orders by customer. Parallel setup and transfer costs were deliberately set to zero and the scan threshold lowered to obtain a small diagnostic parallel example. It demonstrates counters, rather than a recommended configuration or a speed improvement.</p>
 <figure class="pg-figure" aria-labelledby="pg-parallel-title"><figcaption id="pg-parallel-title"><span>Figure 6</span> Three participants, one set of order rows</figcaption><div class="pg-stage">
 <div class="pg-flow-node"><b>Parallel Seq Scan</b><span>actual rows=40001 loops=3<br />120,003 rows across leader + 2 workers</span></div><div class="pg-arrow">↓ each participant groups its own rows</div>
 <div class="pg-flow-node"><b>Partial HashAggregate</b><span>actual rows=1000 loops=3<br />3,000 partial customer counts in total</span></div><div class="pg-arrow">↓ Gather · planned 2 workers, launched 2</div>
@@ -176,7 +176,7 @@ ORDER BY line_value DESC, o.customer_id;`} label="Direct line-to-customer report
 <section id="prepared">
 <h2>Prepared statements and parameter skew</h2>
 <p>A prepared statement lets PostgreSQL retain the parsed and analysed request for repeated execution in one session. A <strong>custom plan</strong> uses the actual parameter values for a particular execution. A <strong>generic plan</strong> can be reused for different values, saving repeated planning work but losing their particular selectivities.</p>
-<p>The all-orders request in Figure 7 matches 84,000 rows for customer 1001 and 36 for customer 1002. Select the rare customer and compare the routes. These are recorded forced-plan observations, separate from the ten-row history request.</p>
+<p>An all-orders request matches 84,000 rows for customer 1001 and 36 for customer 1002. A plan suited to finding 36 rows need not suit reading 84,000, so compare both parameter classes. These are recorded forced-plan observations, separate from the ten-row history request.</p>
 <ParameterPlans />
 <p>The custom estimates were 84,000 and 36 respectively. The generic plan estimated 120 for either parameter. For the common customer its bitmap heap scan touched all 765 heap blocks, plus the customer index. An accurate common-value list did not help that generic estimate: the plan did not know which customer <code>$1</code> would be.</p>
 <h3>Inspecting the plan actually used</h3>

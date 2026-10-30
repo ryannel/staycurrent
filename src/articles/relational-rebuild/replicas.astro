@@ -11,7 +11,7 @@ import CatchUp from '../../components/relational-rebuild-replicas/CatchUp.astro'
 UPDATE products SET price = 22.00 WHERE product_id = 'P7';
 COMMIT;`} />
 
-<p>The drawings model one primary and replicas following one ordered log history. U marks the change and C its commit in a history we call H. These are symbolic positions, not measured log addresses or times. <a href="/learn/databases/relational/storage-and-durability/">Storage and durability</a> established why a durable log can recover a change before every data page has been written. Here the next question is where that history has reached, and whether a reader can see it there.</p>
+<p>The model uses one primary and replicas following one ordered log history. U marks the change and C its commit in a history we call H. These are symbolic positions, not measured log addresses or times. <a href="/learn/databases/relational/storage-and-durability/">Storage and durability</a> established why a durable log can recover a change before every data page has been written. Here the next question is where that history has reached, and whether a reader can see it there.</p>
 
 <section aria-labelledby="copying">
   <h2 id="copying">Copying the primary's history</h2>
@@ -23,17 +23,17 @@ COMMIT;`} />
 
 <section aria-labelledby="progress">
   <h2 id="progress">Received, durable and replayed</h2>
-  <p>“A has the change” hides three questions. Have its records arrived? Are they stored so that they survive the promised failure? Have they been applied far enough for a new read snapshot to include the commit? Figure 1 separates those progress points. Watch A's price when C becomes durable.</p>
+  <p>“A has the change” hides three questions. Have its records arrived? Are they stored so that they survive the promised failure? Have they been applied far enough for a new read snapshot to include the commit? A can pass one of these boundaries without passing the next.</p>
   <ReplicaFigure kind="progress" />
-  <p>At the durable step, A can recover C from its surviving log, yet it still answers 20.00. <strong>Durable</strong> describes survival; <strong>replayed</strong> describes application of the copied history. Receipt is earlier still: bytes in volatile memory are not a second durable copy.</p>
+  <p>Once C is durable, A can recover it from its surviving log, yet its applied price may still be 20.00. <em>Durable</em> describes survival; <em>replayed</em> describes application of the copied history. Receipt is earlier still: bytes in volatile memory are not a second durable copy.</p>
   <p>Replaying U alone does not make an unfinished price visible. In PostgreSQL, once the transaction's commit record has been replayed, its changes can appear in new snapshots on the standby. A report retaining a snapshot from before C can continue seeing 20.00. Catching up the replica does not refresh the report's established view.</p>
-  <p>The order drawn is one permitted schedule, chosen to expose the gaps. Real send, flush and replay work overlaps. A position is useful only with its meaning: a receipt position cannot be substituted for a replay position, and a log position is not by itself evidence of a transaction's commit outcome.</p>
+  <p>These progress points need not advance together. Real send, flush and replay work overlaps. A position is useful only with its meaning: a receipt position cannot be substituted for a replay position, and a log position is not by itself evidence of a transaction’s commit outcome.</p>
 </section>
 
 <section aria-labelledby="acknowledgement">
   <h2 id="acknowledgement">What a commit waits for</h2>
   <p>Under <strong>asynchronous replication</strong>, the primary does not wait for a replica's acknowledgement before answering the write. That can still be a fully durable local commit. “Asynchronous” here describes the remote wait; it does not say that the primary skipped its own log flush.</p>
-  <p>With <strong>synchronous replication</strong>, the reply waits for selected remote progress as well. Name both the required copies and the required progress point. These three possible promises give different answers at the durable-but-unreplayed state of Figure 1.</p>
+  <p>With <strong>synchronous replication</strong>, the reply waits for selected remote progress as well. Name both the required copies and the required progress point. Waiting for C to be durable on A gives a different promise from waiting for A to replay it too.</p>
   <div class="table-scroll" role="region" tabindex="0" aria-label="Commit acknowledgement promises">
     <table>
       <caption>Assume the primary's own commit is durable in every row</caption>
@@ -53,7 +53,7 @@ COMMIT;`} />
   <h2 id="read-your-writes">Reading your own writes</h2>
   <p>Suppose the application confirms the price edit, then reloads the catalogue page. The editor expects the reload to include the write it just confirmed. This is a <strong>read-your-writes</strong> requirement. It does not require every reader everywhere to be current.</p>
   <p>One route is to read from the primary after the commit, using a new snapshot that includes it. Another is to use a replica shown to include the required history. To explain that second route, give the application an illustrative token H:C: “this read must include history H through C”. A real engine or routing layer needs a reliable way to obtain and enforce such a requirement; a successful SQL update does not universally return this token.</p>
-  <p>Figure 2 tries A first. Compare the successful wait with each timeout path. Watch when the read gets a snapshot and which server actually supplies it.</p>
+  <p>Suppose the next read is routed to A while it is behind C. The application waits for A to qualify, then takes a new snapshot there. If the wait expires, it can use a qualified primary or another qualifying copy under its fallback policy. If none is available, it must report that this read promise cannot be met.</p>
   <ReplicaFigure kind="routing" />
   <p>The check belongs to the <em>actual target</em>. Checking A and then allowing a load balancer to send the query to B loses the proof. So does retaining a snapshot established before the check and assuming it now includes C. Keep the qualified target and the read together, and establish the required new snapshot after qualification. If a connection is replaced or the topology changes, validate again.</p>
   <p>A fixed sleep cannot provide that proof. Waiting a second may usually be enough, until replay pauses or the link breaks. A bounded wait for the required condition has a different meaning: either the condition holds before the deadline, or the application takes its declared fallback. If no eligible copy is reachable, return an explicit inability to meet the promise. Serving an older price requires an agreed weaker contract.</p>
@@ -63,7 +63,7 @@ COMMIT;`} />
 <section aria-labelledby="stale-reads">
   <h2 id="stale-reads">Stale reads and changing replicas</h2>
   <p>A customer browsing the catalogue may be allowed an older view. That is a <strong>stale read</strong>: a read from history behind the current writer. Whether it is acceptable comes from what the request means. A browsing page, a price-edit confirmation and a stock-changing purchase need not have the same read promise.</p>
-  <p>There is another surprise even without a new write. A reader sees 22.00 on A, then a later request sees 20.00 on B. Figure 3 keeps both copies fixed and changes only what the session carries between requests.</p>
+  <p>There is another surprise even without a new write. A reader sees 22.00 on A, then a later request sees 20.00 on B. Neither copy moved backwards: the session changed targets without preserving the history it had already observed.</p>
   <ReplicaFigure kind="switching" />
   <p><strong>Monotonic reads</strong> prevent this retreat to history that omits an earlier read's relevant changes. They differ from read-your-writes: the reader may never have written anything. In our single ordered history, retaining an observed-history requirement can rule out B until it catches up. Keeping the session on A can help while A retains that history, but a routing change must preserve the requirement too.</p>
   <p>Neither requirement establishes a time-based freshness bound. “Includes C” tells us about a particular commit. “No more than two seconds behind” needs trustworthy evidence relating the served view to time and a rule for refusing reads when that evidence is insufficient. A server being reachable, a recent network reply or a small-looking backlog does not establish that bound.</p>
@@ -86,7 +86,7 @@ COMMIT;`} />
     </table>
   </div>
   <p>PostgreSQL's reported write, flush and replay lag times describe recent progress and the sender learning about it. They are not catch-up predictions. On an idle, fully caught-up system, a last measured delay may remain briefly before becoming null; subtracting the last transaction's time from now would instead make an idle database appear progressively further behind.</p>
-  <p>Catching up while writes continue requires spare capacity. Figure 4 starts with 600 MiB still to replay. Compare the same replay capacity with and without new writes.</p>
+  <p>Catching up while writes continue requires spare capacity. Suppose 600 MiB remains to replay and replay capacity is 20 MiB/s. With no new writes, the ideal drain time is 30 seconds. Continuing writes use part of that same capacity.</p>
   <CatchUp />
   <p>At 20 MiB/s of replay and 10 MiB/s of new log, only 10 MiB/s drains the backlog. The ideal estimate is 60 seconds, twice the estimate with writes stopped. Rates can change, and another stage can become the bottleneck, so the arithmetic is a way to test an assumption rather than promise a deadline.</p>
   <p>Extra reporting work can reduce that spare capacity. PostgreSQL standby queries can also conflict with recovery work: allowing a query to continue or cancelling it to let replay advance is an operational trade, not free read capacity.</p>
@@ -99,7 +99,7 @@ COMMIT;`} />
 
 <section aria-labelledby="unavailable-primary">
   <h2 id="unavailable-primary">When the primary is unavailable</h2>
-  <p>Return to Figure 1's durable-but-unreplayed state. If the primary disappears and A's storage survives, A has C available to replay. It can recover the 22.00 change, although reads may need to wait for replay. B, still before C, has not shown that it can recover that acknowledged change. The last primary reply alone does not tell us which surviving copy contains it.</p>
+  <p>Suppose the primary disappears while A has C durably stored but not yet replayed. If A’s storage survives, it can recover the 22.00 change, although reads may need to wait for replay. B, still before C, has not shown that it can recover that acknowledged change. The last primary reply alone does not tell us which surviving copy contains it.</p>
   <p>A read can continue only under a promise the surviving target can meet. A reachable B may serve a permitted older catalogue view. It cannot satisfy the H:C request without obtaining the missing history. When no qualifying copy is available, preserving that promise costs read availability.</p>
   <p>Reachability and recent data do not grant permission to accept writes. The former primary may still be running beyond a broken link. <a href="/learn/databases/relational/failover/">Failover and fencing</a> follows the choice of a surviving write authority, exclusion of the former writer and handling of any lost or divergent work.</p>
   <p>History requirements must survive that decision honestly too. A restored copy or a promoted branch may not contain C, even if its numeric log position looks larger. Revalidate the history identity and its relationship to the required commit before comparing positions. A read promise follows the required history, not whichever server has inherited the primary's address.</p>

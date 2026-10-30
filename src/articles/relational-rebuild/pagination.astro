@@ -9,7 +9,7 @@ import '../../components/relational-rebuild-pagination/pagination.css';
 
 <p>Suppose the shop’s order screen shows the newest orders first, two at a time. While someone reads the first page, another order arrives. “Skip the first two rows” now skips a different pair. A <strong>keyset cursor</strong> remembers the last ordering key instead: “continue after this time and order ID”. It avoids that shift, but an order whose time changes can still cross the boundary, and its other values can change between reads.</p>
 
-<p>Every example starts from the same shop. For this order-list exercise, add orders 201 and 202. Both are for customer 3. Both were placed at the same instant as order 103, 10:15 UTC on 20 October 2026. The list has one row per order; it uses no order-line or payment details for the two additions. The SQL uses PostgreSQL 18. The drawings show ordered results and changes between reads, rather than the engine’s execution plan.</p>
+<p>Every example starts from the same shop. For this order-list exercise, add orders 201 and 202. Both are for customer 3. Both were placed at the same instant as order 103, 10:15 UTC on 20 October 2026. The list has one row per order; it uses no order-line or payment details for the two additions. The SQL uses PostgreSQL 18. The examples concern ordered results and changes between reads, rather than the engine’s execution plan.</p>
 
 <section id="limit-offset">
   <h2>LIMIT and OFFSET</h2>
@@ -29,7 +29,7 @@ FROM orders
 ORDER BY placed_at DESC, order_id DESC
 LIMIT 2 OFFSET 2;`} />
 
-  <p>With no changes, the second query skips 202 and 201, then returns 103 and 102. Figure 1 compares an insertion and a deletion between page requests. Both change which rows occupy the two positions the query skips.</p>
+  <p>With no changes, the second query skips 202 and 201, then returns 103 and 102. Now suppose order 203 arrives at 09:00 UTC on 21 October, before the second request. The new first two rows are 203 and 202, so the same offset returns 201 and 103. In a separate change, delete already-read 202 instead. The second query then skips 201 and 103, returning 102 and 101.</p>
 
   <OrderWalk mode="offset" number={1} />
 
@@ -42,7 +42,7 @@ LIMIT 2 OFFSET 2;`} />
   <h2>Keyset pagination</h2>
   <p>Keyset pagination continues from a value in the order instead of counting from the start. The first page still uses the first query above. Its last returned row is 201, so save that row’s complete ordering key: its timestamp and ID.</p>
 
-  <p>In a descending order, the next rows have a smaller timestamp, or the same timestamp and a smaller ID. Figure 2 applies those two tests to the timestamp tie. Follow 103: its time is not smaller, but its ID is.</p>
+  <p>In a descending order, the next rows have a smaller timestamp, or the same timestamp and a smaller ID. Order 103 has the same timestamp as 201 but a smaller ID, so it must pass the second part of that test.</p>
 
   <Ties />
 
@@ -132,7 +132,7 @@ LIMIT 2;`} />
 
 <section id="changes">
   <h2>Changes between pages</h2>
-  <p>A saved key does not depend on how many rows precede it. Delete 202 and the next request still asks for keys after 201. Insert 203 before the key and the next request still begins with 103. Figure 3 starts with those cases, then changes an order’s timestamp. Follow where the changed row lands relative to the saved key.</p>
+  <p>A saved key does not depend on how many rows precede it. Delete 202 and the next request still asks for keys after 201. Insert 203 before the key and the next request still begins with 103. Changing a row’s ordering value is different: it moves the row relative to the saved boundary.</p>
 
   <OrderWalk mode="keyset" number={3} />
 
@@ -152,7 +152,7 @@ LIMIT 2;`} />
 
   <p>At PostgreSQL’s default isolation level, Read Committed, each ordinary <code>SELECT</code> takes a fresh snapshot. Putting several such queries between <code>BEGIN</code> and <code>COMMIT</code> does not make them share one. In a read-only Repeatable Read transaction, they use the snapshot established by the first query. The read-only mode keeps this export from making application writes; the isolation level is what keeps its reads on that snapshot.</p>
 
-  <p>Figure 4 changes only 103’s status. First read two rows, let another transaction mark 103 paid and commit, then request the next batch. Switch the isolation level and watch the value copied for 103.</p>
+  <p>Suppose the first batch is read while 103 is pending, then another transaction marks it paid and commits before the next batch. Separate Read Committed queries can copy its newer paid status. In one Repeatable Read transaction whose snapshot was established by the first query, the later batch still copies pending. The export’s promise determines which result is acceptable.</p>
 
   <Snapshots />
 
@@ -181,7 +181,7 @@ COMMIT;`} />
   <p>Another route is to execute one query and consume its result in batches through a driver or database cursor. That avoids issuing a new list query for every batch. It still needs a bounded lifetime and a connection owner. PostgreSQL’s ordinary SQL cursor lives inside its transaction; a cursor declared <code>WITH HOLD</code> can survive commit by retaining its result, but remains tied to that database session. It is not a durable export job or an API page token. Driver streaming and cancellation mechanics belong to <em>SQL at the application boundary</em>.</p>
 
   <h3 id="resume">Resuming the same export</h3>
-  <p>Saving the last key lets a new query continue from a position. It cannot restore a snapshot whose transaction has ended. In Figure 4, rerunning after 201 in a new transaction can read 103 as paid, even if the original export needed pending.</p>
+  <p>Saving the last key lets a new query continue from a position. It cannot restore a snapshot whose transaction has ended. Rerunning after 201 in a new transaction can read 103 as paid, even if the original export needed its earlier pending status.</p>
 
   <p>Saving only the membership IDs is not enough either. They identify the same orders, but joining those IDs back to the live table reads their current values. If an order has been deleted, even that row may be missing. To resume the same exported content later, retain the required <strong>projection</strong>: the columns and calculated values the export actually delivers, with an order or ordinal for reading them back.</p>
 
@@ -222,7 +222,7 @@ COMMIT;`} />
 <section id="examples">
   <h2>Trying the queries</h2>
   <p><a href="/relational-rebuild/pagination/pagination-queries.sql">Download the data and pagination queries</a> to reproduce the list results in a PostgreSQL session. The script creates temporary projected tables, keeps each change independent and rolls everything back. It includes the time-only and non-strict counterexamples, mixed directions, previous-page query and null-weight cases.</p>
-  <p>The list SQL was checked in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. The two-session snapshot comparison and retained-value comparison were checked separately on a disposable PostgreSQL 18.6 server. The figures arrange those results to explain their meaning; they make no performance measurements.</p>
+  <p>The list SQL was checked in PGlite 0.5.8, a WebAssembly build of PostgreSQL 18.3. The two-session snapshot comparison and retained-value comparison were checked separately on a disposable PostgreSQL 18.6 server. These checks establish result meaning, not performance.</p>
 </section>
 
 <section id="sources">

@@ -7,6 +7,8 @@ Read the finding in its article context, including the relevant audience, plan, 
 
 Make the smallest coherent repair. Reword, reorder, cut or move existing material; restructure when the reader's problem requires it. Keep conditions beside the decisions they change and link moved teaching to its owner. The result should read as one article, without patch-like asides or repeated lessons.
 
+For prose that depends on a diagram or animation, repair the argument rather than merely deleting figure references. Read the complete article without the visual, its captions or controls; supply the missing premises, reasoning and outcomes in their natural places. Keep the visual as optional reinforcement and check its agreement afterwards.
+
 Reread the finished explanation against the relevant passages and figures in [staycurrent-write](../staycurrent-write/SKILL.md); a repair need not reload the three references. Run [continuity](../staycurrent-continuity/SKILL.md), checking surrounding explanation and downstream uses. Run the [dense-prose check](../staycurrent-write/SKILL.md) on the repaired sections: a repair that adds a qualification to an existing sentence often makes it harder to read. Use [staycurrent-figures](../staycurrent-figures/SKILL.md) for changed media and coordinate rendering with the build owner.
 
 Recheck affected claims and behaviour. Reuse native evidence while its code, data, environment and verifier remain applicable; otherwise verify the affected change or state the limit. Record changed locations, any wider restructuring and verification links, referencing unchanged evidence.

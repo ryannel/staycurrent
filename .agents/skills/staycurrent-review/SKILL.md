@@ -5,6 +5,8 @@ description: Coordinate article or collection reviews, perform an assigned revie
 
 Judge the reader's understanding and practical judgement against the commission. Use independent readers for the first full review; reviewers report problems without editing. The coordinator owns acceptance, repair scope and completion. Acceptance rests on the review's concrete examples and reasoning against the references; coverage establishes what was checked.
 
+Read the prose with diagrams and animations omitted, including their captions, labels and controls. Their removal must leave the article coherent and complete without prose changes. Report missing premises, causal links or outcomes, and passages that narrate or depend on a figure's state. Removing figure references alone does not establish this. Then assess the illustrations as optional reinforcement of the same explanation.
+
 For an assigned perspective, load only its file below and return findings within that assignment; do not commission other reviewers. For a repair confirmation, use the affected perspective and the evidence-reuse rules below. The full coordination workflow applies when arranging an article, tree or collection review.
 
 ## Review once

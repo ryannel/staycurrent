@@ -12,11 +12,11 @@ import '../../components/relational-rebuild-pg-architecture/styles.css';
 <section aria-labelledby="connections">
 <h2 id="connections">Connections and backend processes</h2>
 <p>The application sends SQL over a <strong>connection</strong>. PostgreSQL's supervisor process accepts a new connection and starts a <strong>backend</strong>, the server process that handles that conversation. Subsequent commands and replies pass between the client and its backend.</p>
-<p>Figure 1 gives the shop and a report their own connections. Follow the shop's query into backend A, then down to the memory and files both backends share.</p>
+<p>The shop and a report can have separate connections and backends while using the same shared memory and database files. Their processes are separate; the stored pages need not be.</p>
 <ProcessMap />
 <p>A connection, a transaction and a query are different things. One connection can carry many transactions over its lifetime. A transaction can contain several SQL commands. Without an explicit <code>BEGIN</code>, each ordinary standalone command still runs in a transaction of its own.</p>
 <p>A connection pool lends existing connections to application requests. A backend may be idle while its client decides what to send, waiting for a lock or I/O, or executing a query. Having borrowed a connection does not mean useful query work is happening. Some plans also enlist parallel worker processes; those workers are extra participants, rather than a replacement for the client's backend.</p>
-<p>The map locates the participants, but cannot identify the cause of a slow request. Pool waiting can occur before the request reaches any backend. <a href="/learn/databases/relational/postgresql/operations/">Operating and diagnosing PostgreSQL</a> follows that request using evidence from the pool and server.</p>
+<p>Knowing which backend serves a request does not identify the cause of a slow response. Pool waiting can occur before the request reaches any backend. <a href="/learn/databases/relational/postgresql/operations/">Operating and diagnosing PostgreSQL</a> follows that request using evidence from the pool and server.</p>
 </section>
 
 <section aria-labelledby="query">
@@ -26,32 +26,32 @@ import '../../components/relational-rebuild-pg-architecture/styles.css';
 FROM products
 WHERE product_id = 'P7';`} />
 <p>Inside the backend, parsing checks the syntax. Analysis resolves names such as <code>products</code> and <code>price</code>, their types and the operators to use. Rewriting transforms the query where needed, for example expanding a view into its underlying query.</p>
-<p>The <strong>planner</strong> chooses a plan for producing the answer. It compares estimated work: scanning the products heap, or finding P7 through its primary-key index and fetching a tuple. The <strong>executor</strong> follows that chosen plan and returns the resulting price through the connection. Those stages in Figure 1 are work inside the backend, not separate servers passing the request along.</p>
-<p>The primary key supplies an index; it does not require an index scan. With only the three shop products, reading the tiny table can be cheaper. We will draw an index route to explain its mechanics, without claiming it is the plan this query must choose. <a href="/learn/databases/relational/postgresql/query-execution/">Reading and repairing PostgreSQL plans</a> tests the planner's choices against actual rows, buffers and repeated work.</p>
+<p>The <strong>planner</strong> chooses a plan for producing the answer. It compares estimated work: scanning the products heap, or finding P7 through its primary-key index and fetching a tuple. The <strong>executor</strong> follows that chosen plan and returns the resulting price through the connection. These stages run inside the backend; they are not separate servers passing the request along.</p>
+<p>The primary key supplies an index; it does not require an index scan. With only the three shop products, reading the tiny table can be cheaper. An index route is useful for explaining its mechanics, but it is not the plan this query must choose. <a href="/learn/databases/relational/postgresql/query-execution/">Reading and repairing PostgreSQL plans</a> tests the planner's choices against actual rows, buffers and repeated work.</p>
 </section>
 
 <section aria-labelledby="buffers">
 <h2 id="buffers">Shared buffers</h2>
 <p>A backend needs a page in memory before it can read its tuples. PostgreSQL's <strong>shared buffers</strong> cache holds table and index pages for the server's backends. A page belongs to a particular table or index and has a block number within that stored object. A buffer slot is merely the place currently holding that page; the slot number is not the page's address.</p>
-<p>The first query can bring in a page that the next backend reuses. Figure 2 follows that reuse, then the clock sweep that makes room for another page.</p>
+<p>The first query can bring in a page that the next backend reuses. The second backend then avoids fetching that page into shared buffers again. When another page needs room, replacement must choose a slot that can safely be reused.</p>
 <Player kind="buffers" number={2} />
 <p>A shared-buffer <strong>hit</strong> found the page in this cache. A buffer miss needed a read into it. That read may come from the operating system's file cache, so a reported buffer read does not establish a physical drive read. The cache holds pages for indexes as well as heaps; an index lookup can need both.</p>
 <h3 id="pins">Pins, content locks and replacement</h3>
 <p>A <strong>pin</strong> prevents a buffer from being repurposed while a backend uses its page. A short <strong>buffer content lock</strong> protects access to the page's contents. A backend can release the content lock after selecting a tuple while retaining its pin to use the tuple data. Neither mechanism is the transaction's row lock: they protect the shared page and its memory slot, rather than deciding which transaction may update P7.</p>
-<p>Replacement uses a <strong>clock sweep</strong>, not a perfectly ordered list of last access times. A hand visits buffer slots. Pinned buffers cannot be reused; an unpinned buffer with a positive usage count gets its count reduced and another chance. An unpinned buffer at zero can supply a slot. Figure 2 chooses one hand position and set of counts; concurrent access can change what a real sweep encounters.</p>
-<p>The chosen page was clean. If it were dirty, its changes would need writing before the slot could safely hold another page. That can put write work on the path of a query trying to read. We will return to who performs it after following the update.</p>
+<p>Replacement uses a <strong>clock sweep</strong>, not a perfectly ordered list of last access times. A hand visits buffer slots. Pinned buffers cannot be reused; an unpinned buffer with a positive usage count gets its count reduced and another chance. An unpinned buffer at zero can supply a slot. Concurrent access can change pins and counts while the sweep proceeds, so there is no fixed sequence of victims to predict from access history alone.</p>
+<p>A buffer holding a clean page can be reused without writing that page first. A dirty page’s changes must be written before its slot can safely hold another page. That can put write work on the path of a query trying to read. The write path below explains which processes can perform it.</p>
 </section>
 
 <section aria-labelledby="heap">
 <h2 id="heap">Heap pages and row addresses</h2>
 <p>An ordinary PostgreSQL table is a <strong>heap</strong>: its tuples are not kept in primary-key order. Each heap page has a header, an array of <strong>line pointers</strong>, free space and tuple data. A line pointer records where a tuple's bytes lie within that page.</p>
-<p>An index's heap locator is a <strong>TID</strong>, or tuple identifier: a block number and an item number. In Figure 3, <code>(12,3)</code> means page 12, line pointer 3. Follow it through the line pointer rather than treating 3 as a byte offset.</p>
+<p>An index's heap locator is a <strong>TID</strong>, or tuple identifier: a block number and an item number. Suppose P7’s original tuple has the illustrative address <code>(12,3)</code>. Read page 12 and use line pointer 3 to locate its bytes. The item number is not a byte offset.</p>
 <HeapPage />
 <p>The indirection lets PostgreSQL compact tuple bytes within a page without changing their outside address: it adjusts the line pointer's offset. It does not make that address a lasting product identity. PostgreSQL exposes the physical version's location as the system column <code>ctid</code>. An update creates a new version with another location, and a table rewrite can move versions too. Use <code>product_id</code> to identify P7.</p>
 <Sql label="Inspect a visible tuple's physical location" code={`SELECT product_id, price, ctid
 FROM products
 WHERE product_id = 'P7';`} />
-<p>This query reports whichever P7 version is visible to its snapshot. Its actual <code>ctid</code> comes from that table's current storage; it need not be the drawing's <code>(12,3)</code>.</p>
+<p>This query reports whichever P7 version is visible to its snapshot. Its actual <code>ctid</code> comes from that table's current storage; it need not be the illustrative <code>(12,3)</code>.</p>
 <h3 id="toast">Large values and TOAST</h3>
 <p>A heap tuple cannot straddle pages, but a logical value can exceed one page. For supported variable-length types, <strong>TOAST</strong> can compress a large value or store it in chunks in an associated TOAST table. A small pointer then represents the out-of-line value in the main tuple.</p>
 <p>Imagine a wide product description stored that way. Reading only <code>price</code> need not fetch and reconstruct the description; returning the description does. The exact representation depends on the type, storage policy and compressibility. Wide values that remain inline still reduce the number of tuples per page, so the displayed character count is a poor storage estimate.</p>
@@ -60,21 +60,21 @@ WHERE product_id = 'P7';`} />
 <section aria-labelledby="visibility">
 <h2 id="visibility">Row versions and visibility</h2>
 <p>A <strong>snapshot</strong> describes which transaction effects an ordinary read admits when checking tuple versions; it does not copy the pages. Now change the price. A report first runs an ordinary query inside a read-only Repeatable Read transaction, establishing its snapshot. Another connection updates P7 and commits. The report then repeats its query; a later reader starts after the commit.</p>
-<p>Figure 4 puts both versions on the same shared page. Watch the writer's outcome and the two readers separately.</p>
+
 <Player kind="versions" number={4} />
 <p>The report still returns 20.00; the later snapshot returns 22.00. They are not reading private copies of the database. Each tests tuple metadata against its snapshot. Merely issuing <code>BEGIN</code> would not establish the report's ordinary Repeatable Read snapshot: the first snapshot-taking statement must have run. At Read Committed, a later statement instead takes a new ordinary snapshot.</p>
 <h3 id="tuple-header">What the tuple header tells the reader</h3>
 <p>A tuple carries a creator transaction identity, exposed as <code>xmin</code>, and information about its deletion or replacement, associated with <code>xmax</code>. An update marks the earlier version and creates another tuple. Transaction status tells whether that work committed or aborted; the snapshot tells whether that transaction's effects belong in this reader's view.</p>
-<p>The report excludes W's new tuple even after W commits, because W was not part of the committed history its snapshot admits. For the same reason, W's replacement does not hide the old tuple from that report. The later snapshot admits W and therefore makes the opposite choice.</p>
+<p>The report excludes the writer's new tuple even after the writer commits, because that transaction was not part of the committed history its snapshot admits. For the same reason, the replacement does not hide the old tuple from that report. The later snapshot admits the committed writer and therefore makes the opposite choice.</p>
 <p>Transaction IDs alone are insufficient. A transaction with a lower ID can still have been in progress when the snapshot was established. Snapshot membership and commit outcome matter, not just comparing two numbers. A non-zero <code>xmax</code> does not by itself prove that a tuple is dead: it can reflect unfinished or aborted work, and row locking can use the field too. Header flags distinguish those cases.</p>
-<p>If W rolls back, its new 22.00 tuple does not become an ordinary reader's value, and its attempted replacement does not remove 20.00. While W is uncommitted, other ordinary readers likewise cannot return its new price. This is why finding bytes that say 22.00 is insufficient evidence that a query should return 22.00.</p>
+<p>If the writer rolls back, its new 22.00 tuple does not become an ordinary reader's value, and its attempted replacement does not remove 20.00. While the writer is uncommitted, other ordinary readers likewise cannot return its new price. This is why finding bytes that say 22.00 is insufficient evidence that a query should return 22.00.</p>
 <p>These versions serve concurrency and can be removed when no longer needed. They are not a business price-history table, and they do not change the agreed 20.00 on order 103's mug line.</p>
 </section>
 
 <section aria-labelledby="index">
 <h2 id="index">From an index entry to a visible row</h2>
 <p>A primary-key B-tree stores product keys with heap locators. Its branch pages guide the search to a leaf containing the matching key. The key can match while the referenced tuple is invisible to this snapshot, so an ordinary index scan still needs the heap visibility check.</p>
-<p>Figure 5 returns to the lookup before the update. Follow the key, its TID and the visibility decision through to the answer.</p>
+<p>For the lookup before the update, searching for P7 finds its leaf entry and heap locator. The backend follows that locator, tests the referenced version’s visibility and returns its price only when that version belongs in the query’s snapshot.</p>
 <Player kind="lookup" number={5} />
 <p>The index and heap are separate structures. The primary key does not turn the products heap into a table ordered by <code>product_id</code>. It supplies an access path whose entries can lead into any heap page. <a href="/learn/databases/relational/postgresql/indexes/">PostgreSQL index methods and operators</a> develops the other access methods and the operators they can serve.</p>
 <h3 id="index-only">When an index-only scan can skip the heap</h3>
@@ -87,7 +87,6 @@ WHERE product_id = 'P7';`} />
 <h2 id="hot">Heap-only tuple updates</h2>
 <p>The price changed, but the primary-key value P7 did not. PostgreSQL can sometimes keep the existing index entry and follow a link from the old tuple to the new one. This is a <strong>heap-only tuple</strong>, or <strong>HOT</strong>, update.</p>
 <p>It needs space for the new version on the same page, and the update must not change columns referenced by the table's ordinary indexes. “Referenced” includes expression inputs, partial-index predicates and included columns, not just B-tree keys. Summarising indexes are an exception: PostgreSQL's BRIN can still need its summary updated without requiring a new per-tuple index entry.</p>
-<p>Start Figure 6 with the primary-key index and room on page 12. Then add a price index, and finally try the full page. Watch whether a second P7 entry appears in the primary-key B-tree even though the business identifier never changes.</p>
 <Player kind="hot" number={6} />
 <p>In the HOT case, the index still targets <code>(12,3)</code>. The old tuple links to <code>(12,4)</code>, so heap access can follow the chain and select the version its snapshot needs. The new heap-only tuple has no independent entry in those indexes. The index target need not equal the <code>ctid</code> of the version eventually returned.</p>
 <p>An index referencing price prevents that price update from being HOT. So does insufficient space on the old page, even if no indexed value changed. A non-HOT update needs new ordinary index entries for the new tuple, including a new P7 entry in the primary-key index. Old and new physical versions can temporarily have index entries for the same logical key; visibility and uniqueness enforcement account for the versions.</p>
@@ -102,7 +101,7 @@ WHERE product_id = 'P7';`} />
 <section aria-labelledby="writes">
 <h2 id="writes">The write path and background processes</h2>
 <p>The backend makes the update in a shared heap buffer. It also maintains any required index pages and generates write-ahead log records. Commit does not need every one of those pages written to its data file before the application hears success.</p>
-<p>Figure 7 separates commit, the later page write and the later cleanup. Each answers a different question.</p>
+<p>Commit establishes the transaction’s outcome. A later page write updates the data file, while cleanup reclaims versions no longer needed. Those events answer different questions and need not happen together.</p>
 <Player kind="write" number={7} />
 <p>Before a changed data page reaches its file, WAL covering its changes must be durable: the <strong>write-ahead rule</strong>. With normal local durable commit settings, the required WAL through the commit record must also be flushed before acknowledging commit. The changed page may follow later, because restart can redo changes it lacks.</p>
 <p>Several processes can move that work forwards. Their names describe different jobs:</p>

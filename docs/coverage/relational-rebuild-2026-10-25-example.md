@@ -86,6 +86,7 @@ These illustrations start independently from the shared rows unless stated other
 - Add order 103 line 3 for P7 to distinguish line identity from product identity.
 - Correct customer 1's current name from Mina Shah to Mina Patel.
 - A later P7 catalogue price is 22.00. Its agreed order-103 unit price remains 20.00, preserving the order total 29.00; repricing it would give 31.00.
+- A separate hypothetical discount on order 103 leaves its lines at 29.00 and grants 3.00 off the whole order, making the amount due 26.00. Record the discount and its reason separately from the line prices. This variation does not change the starting rows or the later unpaid-order calculation.
 - Offers are `(S1, P7, North)`, `(S1, P3, South)`, `(S2, P7, South)`. `(S1, P7, South)` is absent.
 - P7 has independent tags gift/ceramic and suppliers S1/S2.
 - A subtype example gives P3 origin Japan and P7 capacity 300 ml.

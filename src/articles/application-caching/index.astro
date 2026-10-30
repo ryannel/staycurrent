@@ -14,11 +14,11 @@ const { hrefFor } = Astro.props;
 
 <p>A cache entry pairs a <em>key</em>, the name used to find an answer, with a <em>value</em>, the saved answer itself. For P7, the key identifies a particular product card and the value holds its display name and price. The application asks for the key before doing the source work.</p>
 
-<p>Figure 1 follows one request for P7. It takes the longer route through the database, where matching rows from Products and Prices join to supply the name and price. The server saves that answer in the cache and returns it to the app.</p>
+<p>Suppose no card has been saved for P7 yet. The server reads its name and price from the database, combining the relevant product and price records. It builds the card, saves a copy under P7’s key and returns the answer to the caller.</p>
 
 <BounceFigure kind="read" number={1} />
 
-<p>This lookup was a <em>miss</em>: there was no saved card for P7. The server read the database and saved the answer. A later lookup that finds this copy is a <em>hit</em>; it can return the saved answer without reading the database again.</p>
+<p>A lookup without a saved answer is a <em>miss</em>. A later lookup that finds the usable copy is a <em>hit</em>; it can return the saved answer without reading the database again.</p>
 
 <p>This arrangement is called <em>cache-aside</em>. The application’s server sits beside the cache and decides when to read the source and fill the cache. Neither the source nor the cache performs those steps for it. A library can wrap the sequence in one function, but the same decisions still exist.</p>
 
@@ -42,9 +42,9 @@ const { hrefFor } = Astro.props;
 
 <p>Placement changes that cost. A local cache lives in the memory of one application process. It avoids a network trip, but another process cannot see its entries. A shared cache is a separate service that several processes can ask.</p>
 
-<p>The shop also has products P8 and P9. Each needs its own cached card: P7’s answer cannot serve P8. In Figure 2, labelled colours distinguish the three product keys.</p>
+<p>The shop also has products P8 and P9. Each needs its own cached card: P7’s answer cannot serve P8.</p>
 
-<p>Figure 2 keeps the same app and database, and adds a second server process. A load balancer receives the app’s requests and sends each to a server. Requests for P7, P8 and P9 now reach both A and B. Watch the cache-miss counts as each new key reaches the other server.</p>
+<p>Now run two server processes, A and B, behind a load balancer that routes requests to either one. Each server receives requests for all three products. Assume each fill finishes before the next request, and the useful copies remain available.</p>
 
 <BounceFigure kind="placement" number={2} />
 
@@ -74,25 +74,25 @@ const { hrefFor } = Astro.props;
 
 <p>One way to end reuse is <em>expiry</em>. Give the entry a time to live, or TTL, and lookups stop returning it when that time ends. Our example uses 30 seconds from insertion. Expiry does not fetch a replacement: the next miss still has to do that work.</p>
 
-<p>Another way is <em>invalidation</em>: remove a copy because something has made it unsuitable. Figure 4 commits the source change, then deletes the cached card. Watch the interval when the two prices disagree.</p>
+<p>Another way is <em>invalidation</em>: remove a copy because something has made it unsuitable. After committing the price change, the server deletes the cached card. Until that deletion finishes, the source says GBP 22.00 while the cache can still return GBP 20.00.</p>
 
 <BounceFigure kind="change" number={4} />
 
 <p>The deletion happens after the source commits. Deleting before commit would let a request miss, read the old source price and save it again. With commit first, the next ordinary miss can read the new value.</p>
 
-<p>There are still two separate operations. If the application stops after commit but before deletion, the source keeps GBP 22.00 and the cache can keep GBP 20.00. A read already in progress can also arrive late and refill an old card after the deletion. The successful sequence in Figure 4 contains no overlapping read; it does not prove that every possible order is safe.</p>
+<p>There are still two separate operations. If the application stops after commit but before deletion, the source keeps GBP 22.00 and the cache can keep GBP 20.00. A reader can also obtain GBP 20.00 before the commit, then save it after the deletion. Commit-then-delete handles the simple sequence, but does not prevent that overlapping read from restoring an old card.</p>
 
 <p>A 30-second TTL limits how long this insertion can be reused. It does not prove that its source data is at most 30 seconds old: the read may have taken time before insertion or observed an older source snapshot. <a href={hrefFor('freshness')}>Freshness and invalidation</a> follows those gaps, defines the freshness promise and shows when reading the source is the clearer solution.</p>
 
 <h2 id="when-requests-arrive-together">When requests arrive together</h2>
 
-<p>Figure 1 followed one request on its own. A popular product need not be so orderly. If four requests arrive just after P7 expires, all four can miss before any of them saves a replacement.</p>
+<p>A popular product can receive several requests while one fill is still running. If four requests arrive just after P7 expires, all four can miss before any of them saves a replacement.</p>
 
-<p>Figure 5 shows the same four arrivals in two arrangements. Watch how many source reads begin, and how many callers receive an answer.</p>
+<p>Without coordination, each caller starts its own source read. With a shared fill, the first caller starts the read and the other three wait for its result. Either arrangement still owes all four callers an answer.</p>
 
 <BounceFigure kind="burst" number={5} />
 
-<p>The four independent reads are a small <em>cache stampede</em>: several requests rebuild the same missing answer at once. Sharing that work is called <em>request coalescing</em>. One caller starts a fill and the others wait for its result. The server needs only one source read, though it still has four callers to answer.</p>
+<p>The four independent reads are a small <em>cache stampede</em>: several requests rebuild the same missing answer at once. Sharing that work is called <em>request coalescing</em>. It reduces the source reads from four to one without reducing the number of callers.</p>
 
 <p>That sharing needs a boundary. Combining work inside one server process does not stop another process from starting its own fill. A slow or failed fill also needs a bounded wait, so callers cannot accumulate indefinitely. Those details become part of the application’s miss path.</p>
 
@@ -108,7 +108,7 @@ const { hrefFor } = Astro.props;
 
 <BounceFigure kind="memory" number={6} />
 
-<p>Which entry should leave? Here, the cache removes the <em>least recently used</em> card: the one that has gone longest without being used. Its size is not the reason it leaves. If someone requests it again, the server must read the source.</p>
+<p>One choice is to remove the <em>least recently used</em> card: the one that has gone longest without being used. This rule uses access history, rather than simply choosing the largest card. A later request for the removed card must read the source again.</p>
 
 <p>Eviction policies use clues such as recent or frequent access to choose what leaves; they cannot know the next request. There is also an earlier choice: whether to save a returned card at all. That is <em>admission</em>. Skipping a rarely reused card can avoid displacing a useful one, but being large does not by itself make a card a poor choice.</p>
 
@@ -116,7 +116,7 @@ const { hrefFor } = Astro.props;
 
 <h2 id="using-redis">Using Redis for the worked cache</h2>
 
-<p>The cache box can now become a concrete service. Redis can store an encoded product card as a string value under its complete key. <code>GET</code> reads it, <code>SET</code> stores it, and <code>DEL</code> removes it. The <code>EX</code> option on <code>SET</code> sets an expiry in seconds as part of the same command.</p>
+<p>Redis can supply the shared cache by storing an encoded product card as a string value under its complete key. <code>GET</code> reads it, <code>SET</code> stores it, and <code>DEL</code> removes it. The <code>EX</code> option on <code>SET</code> sets an expiry in seconds as part of the same command.</p>
 
 <pre><code>{`GET product:v1:north:P7:en-GB:GBP
 

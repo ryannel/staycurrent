@@ -35,6 +35,11 @@ Use plain British English. Check consequential technical claims against primary
 sources and distinguish illustrative models from observed execution. Use the
 existing Astro article components and check rendered figures and controls.
 
+The prose must explain each article completely without its diagrams or animations.
+They are optional reinforcement: removing them, including captions and controls,
+must require no prose changes. Writers and reviewers read the article without
+those visuals before checking that the illustrations agree with it.
+
 The original Sequence diagrams, Indexes, and Storage and durability examples are
 preserved in `src/reference-articles/`. Run
 `STAYCURRENT_REFERENCE_PREVIEW=1 pnpm dev` to read their interactive previews at

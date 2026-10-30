@@ -14,9 +14,9 @@ import '../../components/relational-rebuild-pg-text/figures.css';
 <section aria-labelledby="lexemes">
 <h2 id="lexemes">From words to lexemes</h2>
 <p>A <strong>lexeme</strong> is the term left after preparing a word for search. With PostgreSQL’s built-in <code>english</code> configuration, <em>mugs</em> becomes <code>mug</code>, capitals become lower case, and common words such as <em>the</em> disappear as <strong>stop words</strong>. This reduction of word endings is called stemming. It helps related forms match; it does not discover that <em>cup</em> means something similar to <em>mug</em>.</p>
-<p><code>to_tsvector</code> prepares a document and returns a <code>tsvector</code>: its lexemes with the positions where they occurred. Figure 1 follows <em>The blue mugs</em>. Compare English preparation with <em>simple</em>: the configuration changes which words match.</p>
+<p><code>to_tsvector</code> prepares a document and returns a <code>tsvector</code>: its lexemes with the positions where they occurred. For <em>The blue mugs</em>, English preparation produces <code>blue</code> at position 2 and <code>mug</code> at position 3. The <code>simple</code> configuration instead retains <code>the</code>, <code>blue</code> and <code>mugs</code>, changing which requests match.</p>
 <Preparation />
-<p>English preparation kept positions 2 and 3. Removing <em>The</em> did not move <em>blue</em> into position 1. Those positions later let a phrase test the distance between words. The vector prints lexemes in sorted order, with all occurrences of the same lexeme collected together; it is not a sentence to read from left to right.</p>
+<p>Removing <em>The</em> did not move <em>blue</em> into position 1. Those positions later let a phrase test the distance between words. The vector prints lexemes in sorted order, with all occurrences of the same lexeme collected together; it is not a sentence to read from left to right.</p>
 <Sql label="Prepare a document and a plain request" code={`SELECT to_tsvector('english', 'The blue mugs');
 -- 'blue':2 'mug':3
 
@@ -65,7 +65,7 @@ SELECT to_tsvector('english', 'Mugs with tea')
 <h2 id="document">Building the searchable document</h2>
 <p>Choose what one result represents before choosing its index. Here it is one product, with its name and description forming one searchable document. Orders and individual word occurrences do not become result rows.</p>
 <div class="table-scroll" role="region" tabindex="0" aria-label="Catalogue search projection"><table><caption>The illustrative search projection · stock after order 103</caption><thead><tr><th>Product</th><th>Name</th><th>Added description</th><th>Stock</th></tr></thead><tbody><tr><td>P3</td><td>Green tea, 50 g</td><td>Loose green tea for a quiet afternoon.</td><td>10</td></tr><tr><td>P7</td><td>Blue mug</td><td>Blue ceramic mugs for tea.</td><td>0</td></tr><tr><td>P9</td><td>Teapot</td><td>Blue teapot for green tea.</td><td>4</td></tr></tbody></table></div>
-<p>A name hit should count more than a description hit. <code>setweight</code> labels each occurrence with <code>A</code>, <code>B</code>, <code>C</code> or <code>D</code>; the ranking function assigns a numerical weight to each label. Give names A and descriptions D, then combine their vectors with <code>||</code>. Figure 2 follows P7’s positions across that combination.</p>
+<p>A name hit should count more than a description hit. <code>setweight</code> labels each occurrence with <code>A</code>, <code>B</code>, <code>C</code> or <code>D</code>; the ranking function assigns a numerical weight to each label. Give names A and descriptions D, then combine their vectors with <code>||</code>. The combined vector must retain where each occurrence belongs in the resulting positional sequence.</p>
 <figure class="text-figure" aria-labelledby="fields-title">
 <figcaption id="fields-title"><span class="figure-number">Figure 2</span> Two fields become one positional document</figcaption>
 <p class="scene-label">Name · weight A</p><div class="field-strip"><span>Blue<small>1A</small></span><span>mug<small>2A</small></span></div>
@@ -98,7 +98,7 @@ ON catalogue_search USING gin (search);`} />
 <section aria-labelledby="gin">
 <h2 id="gin">Finding matches with a GIN index</h2>
 <p>The <a href="/learn/databases/relational/postgresql/indexes/">index-method article</a> introduced an inverted index: a component key points to the rows containing it. For text, those keys are lexemes. The posting list for <code>blue</code> leads to documents containing blue; intersecting it with the list for <code>mug</code> finds documents containing both.</p>
-<p>GIN’s built-in text-search class keeps lexeme keys, without their positions or weight labels. Figure 3 uses three diagnostic snippets to show what that information can prove. Run the words-anywhere request, then switch to the phrase.</p>
+<p>GIN’s built-in text-search class keeps lexeme keys, without their positions or weight labels. A document containing both <code>blue</code> and <code>mug</code> therefore remains a candidate even when another word separates them or they occur in reverse order.</p>
 <Candidates />
 <p>The keys suffice for ordinary lexeme membership. The phrase must inspect the vector to check positions, and <code>blue:A</code> must check that a blue occurrence carries A. GIN still helps by excluding documents missing necessary lexemes. PostgreSQL performs the required rechecks; the application does not accept every candidate as a match.</p>
 <p>On the native three-product fixture, an index-assisted <code>blue:A</code> query collected two candidates: P7 and P9. P7 has blue in its name, P9 only in its description. The heap recheck rejected P9. Selected fields from that observed plan are:</p>
@@ -116,7 +116,7 @@ ON catalogue_search USING gin (search);`} />
 <section aria-labelledby="ranking">
 <h2 id="ranking">Ranking the eligible results</h2>
 <p>A text match answers whether a product satisfies the query. A <strong>rank</strong> supplies an ordering signal among matches. Neither establishes whether the product may be returned. For this shop’s in-stock search, P7’s stock 0 makes it ineligible however good its text score is.</p>
-<p>The request <em>blue OR tea</em> matches all three products. With the weighted document above, <code>ts_rank_cd</code> gives P7 1.2, P3 1.1 and P9 0.2. Figure 4 follows the correct selection, then lets you move the limit before the stock filter.</p>
+<p>The request <em>blue OR tea</em> matches all three products. With the weighted document above, <code>ts_rank_cd</code> gives P7 1.2, P3 1.1 and P9 0.2. P7’s high score cannot make it eligible; the stock test must still apply before choosing the final two products.</p>
 <Ranking />
 <Sql label="Rank all eligible matches before choosing two" code={`WITH request AS (
   SELECT websearch_to_tsquery('english', $1) AS query
@@ -152,12 +152,12 @@ LIMIT 2;`} />
 <section aria-labelledby="maintenance">
 <h2 id="maintenance">Keeping search data current</h2>
 <p>A stored generated vector follows source-column writes. In a separate edit to P7’s description, removing its first <em>Blue</em> changes the vector and its GIN entries as part of that write. Blue remains in the name at weight A, but no longer occurs at weight D. After commit, a new reader sees the committed representation under its normal snapshot rules.</p>
-<p>Changing the preparation rules is different. PostgreSQL does not revisit every stored document because a dictionary or configuration changed. Figure 5 keeps the source unchanged and changes how <em>mugs</em> is prepared.</p>
+<p>Changing the preparation rules is different. PostgreSQL does not revisit every stored document because a dictionary or configuration changed. For example, changing preparation so that new requests retain <code>mugs</code> rather than stem it to <code>mug</code> can make them disagree with old stored vectors derived from unchanged source text.</p>
 <Configuration />
 <p>Rebuilding GIN over a stored vector reads that vector. If it still contains the old lexemes, the rebuilt index faithfully preserves the old meaning. Regenerate the vectors from source under the intended configuration; ordinary writes to that stored column’s source also maintain its index entries. For an expression index, rebuilding instead evaluates its document expression from the base row. The distinction is which representation the index is reading.</p>
 <h3 id="configuration-change">Changing the search configuration</h3>
 <p>Treat a language, dictionary, stop-word or field-composition change as a change of representation. First prepare representative documents and requests under the proposed rules. Check the resulting lexemes and expected matches. Then derive a new, identifiable vector/index version from source, account for writes while it is being populated, and switch matching queries with their compatible preparation. Keep the earlier version available until the switch and its checks are complete.</p>
-<p>Changing the meaning of a named configuration in place can mix old stored documents with newly prepared requests, as the figure shows. A separate configuration name helps identify the intended version, provided its dependencies are also kept under control. Merely copying a configuration does not isolate it from later changes to dictionaries that both versions reference.</p>
+<p>Changing the meaning of a named configuration in place can mix old stored documents with newly prepared requests. A separate configuration name helps identify the intended version, provided its dependencies are also kept under control. Merely copying a configuration does not isolate it from later changes to dictionaries that both versions reference.</p>
 <p>Dictionary files add another step: sessions can cache their contents. PostgreSQL documents using <code>ALTER TEXT SEARCH DICTIONARY</code>, even with unchanged options, to make existing sessions reload a changed file. Reloading rules still does not recompute stored vectors. Check both fresh derivation and the materialised search data. Lock management, concurrent index builds, backfill races and switching live writers need the procedures in <a href="/learn/databases/relational/postgresql/schema-changes/">PostgreSQL schema changes under load</a>.</p>
 </section>
 

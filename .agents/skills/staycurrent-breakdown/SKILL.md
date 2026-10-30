@@ -9,7 +9,7 @@ Before outlining, study the three fixed references using [staycurrent-write's re
 
 Start with practitioners' decisions, failure cases and practical judgement, checking consequential points against primary sources and standard texts. Record these intended outcomes in the brief. Then read existing articles and surrounding plans for material and neighbouring coverage; they do not set scope. Let subject depth determine length and form; keep a subject as a section when that serves the reader better than another page.
 
-Keep briefs short: state the reader's intended understanding or judgement and any essential example facts or scope boundary. Put supporting research and secondary cases in context notes. Leave paragraph development and visual design to the reference-led writer; identify only what needs making visible.
+Keep briefs short: state the reader's intended understanding or judgement and any essential example facts or scope boundary. Put supporting research and secondary cases in context notes. Plan a complete prose explanation; diagrams and animations may reinforce it but cannot own essential teaching. Leave paragraph development and visual design to the reference-led writer; identify only what would benefit from visual reinforcement.
 
 For a general subject taught through one implementation, plan around the subject's decisions; include alternatives where they change the reader's choice.
 

@@ -11,10 +11,10 @@ import SafeFollower from '../../components/relational-rebuild-crdb-reads/SafeFol
 <h2 id="isolation">Serializable and Read Committed</h2>
 <p>CockroachDB’s default isolation level is <strong>Serializable</strong>. Successful transactions must fit an order in which each ran as a whole. A transaction can read several rows, make a decision and write its result without another successful Serializable transaction slipping into the middle of that decision in a way that breaks that ordering. Conflicts can require the application to retry the transaction.</p>
 <p><strong>Read Committed</strong> gives each statement a fresh committed snapshot. The statements of one transaction can therefore observe different states. It reduces the need to retry whole transactions, at the cost of allowing anomalies across statements. CockroachDB’s implementation protects consistency within one statement more strongly than PostgreSQL’s Read Committed; the shared connection protocol does not make the engines’ isolation identical.</p>
-<p>Figure 1 reads P7, lets a separate transaction commit the new price, then reads P7 again. Compare the three read contracts.</p>
+<p>Suppose a transaction reads P7 at 20.00. A separate transaction then commits 22.00 before the first transaction reads P7 again. The isolation contract determines whether those two reads may return different prices.</p>
 <ReadHistory />
 <p>Under Serializable, the two reads return 20.00. Under Read Committed, the first returns 20.00 and the second 22.00. Both Read Committed answers were correct when their statements took their snapshots. The transaction did not keep one view between them.</p>
-<p>A Serializable read timestamp can move internally if CockroachDB can validate the earlier reads at the later time. The promise is a coherent transaction history, rather than a timestamp the application should assume is immovable. Figure 1 has already observed the old P7 value, so this transaction cannot simply switch to the new value on its second read.</p>
+<p>A Serializable read timestamp can move internally if CockroachDB can validate the earlier reads at the later time. The promise is a coherent transaction history, rather than a timestamp the application should assume is immovable. Once this transaction has observed P7 at 20.00, it cannot simply return 22.00 on its second read and keep both observations as one successful Serializable execution.</p>
 <p>Neither level makes a statement keep absorbing later commits while it runs. A long current read can still be showing an earlier snapshot when it finishes. Read Committed’s advancing snapshots also do not make it a historical follower-read mode.</p>
 <Sql label="Request and inspect Read Committed in the same transaction" code={`BEGIN ISOLATION LEVEL READ COMMITTED;
 SHOW transaction_isolation;
@@ -26,7 +26,7 @@ COMMIT;`} />
 
 <h3 id="payment-limit">Decisions across rows</h3>
 <p>Seeing committed data does not by itself protect a rule that spans statements. In a separate experiment, order 103 has a line value of 29.00 and no payments. The application accepts a proposed payment of 20.00 only if the recorded total plus 20.00 is no more than 29.00.</p>
-<p>Two attempts, 601 and 602, each read the total before either inserts. Follow both columns down Figure 2. The payment IDs differ, so a unique key on payment ID does not make the attempts conflict.</p>
+<p>Two attempts, 601 and 602, each read the total before either inserts. Both see 0.00, so each accepts its proposed 20.00 payment. Their payment IDs differ, so a unique key on payment ID does not make the attempts conflict. Under Read Committed, both can insert and commit, leaving 40.00 against the 29.00 limit.</p>
 <figure class="payment-figure" aria-labelledby="payment-title">
  <figcaption><span>Figure 2</span><span id="payment-title">Two checks against the same unpaid order</span></figcaption>
  <div class="payment-frame">
@@ -56,7 +56,7 @@ COMMIT;`} />
 
 <h2 id="followers">Closed timestamps and follower reads</h2>
 <p>In <a href="/learn/databases/relational/cockroachdb/keys-and-ranges/">Inside CockroachDB</a>, a range is a replicated interval of keys, with a leaseholder coordinating ordinary access. Each replica can hold multiple committed versions of P7. Having 20.00 in storage is still insufficient evidence that 20.00 is the right answer at the requested time.</p>
-<p>A follower could be missing a command that changes P7 before that time. It needs to know both that no more writes can enter the relevant past and that it has applied the history already assigned there. CockroachDB’s <strong>closed timestamp</strong> supplies the first promise, tied to a replication position that supplies the second test. Figure 3 shows why the promise can arrive before the follower is ready to answer.</p>
+<p>A follower could be missing a command that changes P7 before that time. It needs to know both that no more writes can enter the relevant past and that it has applied the history already assigned there. CockroachDB’s <strong>closed timestamp</strong> supplies the first promise, tied to a replication position that supplies the second test. A follower can receive the closed-time promise while its local application of those commands is still behind.</p>
 <SafeFollower />
 <p>The leaseholder closes a range through a timestamp: no new writes will be introduced at or below it. The follower can serve that time after it has applied the Raft commands through the associated position. Closing a time does not mean that every follower has caught up to it.</p>
 <p>For a query that needs several ranges, each must be able to answer at the same requested timestamp. One range’s progress cannot qualify another. A nearby SQL gateway is only where the SQL entered the cluster; its key-value requests can still travel elsewhere.</p>

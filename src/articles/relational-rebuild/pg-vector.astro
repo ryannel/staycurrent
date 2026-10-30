@@ -9,9 +9,9 @@ import VectorFigures from '../../components/relational-rebuild-pg-vector/VectorF
 <section id="vectors-and-distance">
 <h2>Vectors and distance</h2>
 <p>Suppose a search produces query vector <code>[1,0]</code>. Give P7, the blue mug, that same vector. Give P9, the teapot, <code>[0.8,0.6]</code>, and P3, the green tea, <code>[0,1]</code>. Each vector has two <em>dimensions</em>: two positions whose meanings must agree between stored values and queries.</p>
-<p>Figure 1 draws an arrow from the origin to each point. Start with L2, then switch the distance. Finally double P9's coordinates and compare the three orders.</p>
+
 <VectorFigures kind="distance" />
-<p><em>L2 distance</em>, written <code>&lt;-&gt;</code>, is the straight-line gap. Between <code>[1,0]</code> and <code>[0.8,0.6]</code> it is √((1−0.8)² + (0−0.6)²), about 0.632. <em>Cosine distance</em>, written <code>&lt;=&gt;</code>, is one minus the cosine of the angle between the arrows. It compares direction rather than length. Here its value is 0.2.</p>
+<p><em>L2 distance</em>, written <code>&lt;-&gt;</code>, is the straight-line gap. Between <code>[1,0]</code> and <code>[0.8,0.6]</code> it is √((1−0.8)² + (0−0.6)²), about 0.632. <em>Cosine distance</em>, written <code>&lt;=&gt;</code>, is one minus the cosine of the angle between the two vectors, treating each as a direction from the origin. It compares direction rather than length. Here its value is 0.2.</p>
 <p>The <em>inner product</em> multiplies corresponding coordinates and sums them. P9's inner product with the query is 0.8. Higher inner products come first, but pgvector's <code>&lt;#&gt;</code> returns their negatives, so an ascending index scan can put the best score first. It returns −0.8 here. Multiplying that result by −1 recovers the inner product; subtracting cosine distance from 1 gives cosine similarity. Neither conversion makes the scores interchangeable.</p>
 <p>Doubling P9 changes its length and its inner product, but leaves its direction unchanged. The cosine order stays the same while the inner-product order puts P9 ahead of P7. A choice of distance therefore changes the question. If both sides are normalised to unit length, L2, cosine and inner product give equivalent rankings; their numerical scores and thresholds still differ.</p>
 <h3>The representation's contract</h3>
@@ -42,7 +42,7 @@ FROM product_vectors
 WHERE stock > 0
 ORDER BY embedding <-> '[1,0]'::vector
 LIMIT 2;`} />
-<p>The result is P9 at about 0.632, then P3 at about 1.414. P7's zero distance does not help it pass the stock condition. Figure 2 follows that choice, then moves the filter outside a limited global result.</p>
+<p>The result is P9 at about 0.632, then P3 at about 1.414. P7's zero distance does not help it pass the stock condition. Choosing nearest products globally before testing stock asks a different question.</p>
 <VectorFigures kind="filter" />
 <p>Choosing the global nearest two first selects P7 and P9. Filtering those two leaves P9 alone, even though P3 is available. This SQL expresses that second question:</p>
 <Sql label="A limit before eligibility asks another question" code={`SELECT product_id, distance
@@ -63,9 +63,9 @@ ORDER BY distance;`} />
 <h2>HNSW indexes</h2>
 <p>Exact work grows with the eligible population and the vector width. An <em>approximate nearest-neighbour</em> index, or ANN index, avoids evaluating every eligible vector, accepting that some true neighbours may be missed. HNSW, short for <em>Hierarchical Navigable Small World</em>, organises vectors as a graph of links between nearby points.</p>
 <p>The upper layers contain fewer points and longer routes across the space. A search follows those links towards the query, then descends to denser layers. At the ground layer it explores a candidate list, keeping promising points and visiting their neighbours. The search can finish without reaching a better point elsewhere in the graph.</p>
-<p>Figure 3 makes one missed route visible. Start with one retained candidate. Then keep two and watch what happens at D, which is farther from the query than C.</p>
+<p>Consider a chosen graph where the search reaches C, at distance 2 from the query, and can also explore D at distance 3. The route through D leads to E, only 0.5 away. These are illustrative query distances, not geometric positions or a captured pgvector graph.</p>
 <VectorFigures kind="hnsw" />
-<p>In the narrow search, C's distance 2 beats D's 3, so the search discards the route through D. E, at distance 0.5, never enters the answer. Keeping D lets the wider search find E. The extra work is useful precisely because the path to a closer point need not improve at every step. The drawing isolates that trade; it does not predict which links a particular build creates.</p>
+<p>In the narrow search, C's distance 2 beats D's 3, so the search discards the route through D. E, at distance 0.5, never enters the answer. Keeping D lets the wider search find E. The extra work is useful precisely because the path to a closer point need not improve at every step. This chosen route isolates the exploration trade; it does not predict which links a particular build creates.</p>
 <Sql label="Create an HNSW index for L2 ordering" code={`CREATE INDEX product_vectors_hnsw ON product_vectors
 USING hnsw (embedding vector_l2_ops)
 WITH (m = 16, ef_construction = 64);`} />
@@ -86,9 +86,9 @@ COMMIT;`} />
 <section id="ivfflat-indexes">
 <h2>IVFFlat indexes</h2>
 <p>IVFFlat uses lists instead of a graph. During the build it learns representative centres from a sample of existing vectors, then assigns vectors to their closest centre. A query compares itself with the centres and <em>probes</em> some of their lists. It computes point distances inside those lists while skipping the others.</p>
-<p>The closest centre does not necessarily own the closest point. In Figure 4 the query is just left of the boundary between two lists, while B is just right of it. Probe one list, then two.</p>
+<p>The closest centre does not necessarily own the closest point. In a one-dimensional example, choose centres 0, 4 and 8, and query at 1.9. Centre 0 is closest to the query, but point B at 2.1 belongs to centre 4’s list. The query and its nearest point lie on opposite sides of a list boundary.</p>
 <VectorFigures kind="ivf" />
-<p>One probe returns A at distance 1.5. Searching the next list finds B at distance 0.2. A perfectly computed distance inside the first list did not establish the global nearest point. Searching more lists trades the saving from skipping vectors for a better chance of retaining the true neighbours.</p>
+<p>Suppose the nearest point A in centre 0’s list is 1.5 from the query. Probing that list alone returns A; searching centre 4’s list also finds B, only 0.2 away. A perfectly computed distance inside the first list did not establish the global nearest point. Searching more lists trades the saving from skipping vectors for a better chance of retaining the true neighbours.</p>
 <Sql label="IVFFlat build and search controls" code={`-- An alternative to the HNSW index; build after loading representative data.
 CREATE INDEX product_vectors_ivf ON product_vectors
 USING ivfflat (embedding vector_l2_ops)
@@ -109,7 +109,7 @@ COMMIT;`} />
 <section id="filtered-search">
 <h2>Filtering approximate results</h2>
 <p>Putting <code>WHERE stock &gt; 0</code> before the ordered limit is necessary, but an ANN index still explores an approximate population. In a shared index, the stock test is applied to rows produced by that index scan. Nearby out-of-stock rows can consume the exploration budget. A query asking for ten may therefore return three even when hundreds of eligible products exist.</p>
-<p>This is a second reason for a short answer, distinct from explicitly limiting a global subquery in Figure 2. The SQL can ask the right question while the bounded approximate path finds too few eligible rows. Do not move stock or authorisation checks out of the query to disguise that shortfall. A nearby vector establishes no permission to return its row.</p>
+<p>This is a second reason for a short answer, distinct from explicitly limiting a global subquery before filtering. The SQL can ask the right question while the bounded approximate path finds too few eligible rows. Do not move stock or authorisation checks out of the query to disguise that shortfall. A nearby vector establishes no permission to return its row.</p>
 <h3>Searching further</h3>
 <p>pgvector 0.8.7 can continue an approximate scan when the executor needs more rows. HNSW offers <code>strict_order</code> and <code>relaxed_order</code> iterative scans. IVFFlat offers <code>relaxed_order</code>. Iteration stops when enough rows have been found or the permitted search is exhausted; it is not an unbounded guarantee of a full answer.</p>
 <Sql label="Allow bounded additional HNSW exploration" code={`BEGIN;

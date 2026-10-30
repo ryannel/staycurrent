@@ -11,7 +11,7 @@ import '../../components/relational-rebuild-access-control/access.css';
 <section id="identity">
 <h2>Who the database sees</h2>
 <p>Authentication establishes an identity. Authorisation decides what that identity may do. Signing in to the shop establishes the person; signing in to the database establishes the service’s database identity. Those are separate checks.</p>
-<p>Figure 1 follows a customer lookup. Read the two checks in the middle before following the database connection on the right.</p>
+<p>For Mina’s customer lookup, the service first verifies the person’s sign-in and right to read customer 1 in tenant 10. Only then does it send the lookup through its database login, <code>shop_runtime</code>, with tenant context 10. A request naming tenant 20 must fail that application check before it reaches the database.</p>
 <figure class="access-figure" aria-labelledby="identity-caption">
  <figcaption id="identity-caption"><span class="figure-number">Figure 1</span> The person’s request and the service’s login</figcaption>
  <div class="access-scene identity-route">
@@ -52,7 +52,7 @@ import '../../components/relational-rebuild-access-control/access.css';
 FROM customers
 WHERE customer_id = $1;`} />
 <p>With parameter 4, this asks for Rowan. The parameter preserves the structure of the SQL: 4 is a value, not new SQL to execute. It says nothing about whether this request may read customer 4. Parameterised queries and access checks solve different problems.</p>
-<p>Figure 2 drops the customer condition as well, to make every row visible in the comparison. Compare <strong>Tenant policy</strong> with <strong>Table grant only</strong>: the table grant alone does not exclude Rowan.</p>
+<p>Removing the customer condition as well would ask for every customer. A table grant alone allows all four rows, including Rowan’s. A correctly enforced tenant-10 row policy instead limits that same query to Mina, Tariq and Edda.</p>
 <Boundary />
 <p>A table grant permits an action on an object. With no row restriction, it does not distinguish the tenants stored there. An application check can reject tenant 20 before SQL runs, but each query still needs the correct scope. A database-enforced row boundary can catch an omitted condition on the protected table, even when the application query is wrong.</p>
 <p>Row-level security is one way to enforce that boundary. A policy supplies a rule for the rows a connection may read or change, in addition to its ordinary privileges. A restricted view or routine is another possible interface. Choose the interface with its bypass paths in view: keeping a filtered view while also granting unrestricted access to its base table does not enforce the filter.</p>
@@ -60,10 +60,10 @@ WHERE customer_id = $1;`} />
 
 <section id="context">
 <h2>What a row boundary trusts</h2>
-<p>The illustrated rule compares each row’s <code>tenant_id</code> with the current request’s tenant context. It can make that comparison only because somebody supplied the context. In this design, that somebody is the service.</p>
+<p>The tenant rule compares each row’s <code>tenant_id</code> with the current request’s tenant context. It can make that comparison only because somebody supplied the context. In this design, that somebody is the service.</p>
 <p>If <code>shop_runtime</code> can freely set the context to 20, the policy will then permit tenant-20 rows. It still protects against a forgotten query condition when context is correct. It does not protect tenant 20 from a service that chooses 20 incorrectly, or from someone who obtains the same unrestricted context-setting authority.</p>
 <p>A stronger boundary needs an identity or assertion the caller cannot freely forge, validated by the enforcing layer. Separate tenant credentials are one possible design; a tightly controlled interface that validates the caller’s authority is another. Both introduce identity and credential management work. Moving a tenant value into a session variable alone does not create that stronger boundary.</p>
-<p>A pool adds another question: how long does the context live? The next request may borrow the same database connection. Figure 3 follows two requests through it. Step to <strong>Reuse without setup</strong>, then compare the two context lifetimes.</p>
+<p>A pool adds another question: how long does the context live? Suppose a tenant-10 request leaves its context on a session, then a tenant-20 request borrows that connection without setting its own scope. The policy still compares against 10 and can expose Mina, Tariq and Edda. The policy has applied its rule correctly to the wrong request context.</p>
 <Context />
 <p>The safe setup path acquires a connection, begins the transaction, establishes the authorised context, performs the data work on that same connection, then commits or rolls back before returning it. A query that runs before setup is already outside that path. <a href="/learn/databases/relational/application-sql/">SQL at the application boundary</a> explains how to keep one request’s connection and transaction together.</p>
 <p>Transaction-scoped context reduces the chance of leaving one request’s value for the next. In PostgreSQL, a local setting ends with the transaction and restores any prior session setting. Therefore the model assumes there is no old tenant value underneath it. Keep the connection’s baseline empty; setting a local value over a stale session value merely postpones the leak. Choose missing-context behaviour deliberately: reject the operation or match no rows, rather than silently choosing a tenant.</p>
@@ -81,7 +81,7 @@ WHERE customer_id = $1;`} />
  </div>
  <p class="access-caption">An authorised tenant-10 writer can still propose an invalid association. Conversely, perfectly consistent data can still be disclosed to the wrong reader.</p>
 </figure>
-<p>Both rules are needed. The order’s tenant can pass an access policy while its customer belongs to another tenant. A composite reference from the order’s tenant and customer ID to the customer’s corresponding pair protects that association. <a href="/learn/databases/relational/constraints/">Constraints and data integrity</a> builds and tests the reference; it does not replace the access decision here.</p>
+<p>Both rules are needed. A tenant-10 writer might create an order naming customer 4. The order’s tenant passes its access policy, but Rowan belongs to tenant 20: no customer has the pair <code>(10, 4)</code>. A composite reference from the order’s tenant and customer ID to the customer’s corresponding pair rejects that association. <a href="/learn/databases/relational/constraints/">Constraints and data integrity</a> builds and tests the reference; it does not replace the access decision here.</p>
 </section>
 
 <section id="tests">
@@ -100,7 +100,7 @@ WHERE customer_id = $1;`} />
 </tbody></table></div>
 <p>An empty result is evidence only for the statement you ran. An update may return no rows because it matched none, because the interface hid them, or because it made a change without returning row data. Record its affected-row count and check stored values. For a forbidden write, a successful test establishes that the forbidden change did not happen.</p>
 <p>A disposable native PostgreSQL 18.6 run checked the narrower customer/order example used here through separate <code>shop_runtime</code> and <code>shop_support</code> login connections. With tenant context 10, the policy returned customers 1–3 and hid customer 4. Support could read its granted columns but could not update order status or read the ungranted order timestamp. The runtime could not alter the customer table or become <code>shop_migrate</code>; tenant-changing writes failed. All three original orders were unchanged afterwards.</p>
-<p>The counterexamples mattered as much. Before enabling the row policy, the runtime read all four customers. Setting its freely changeable context to 20 exposed Rowan. A retained session value survived into another transaction. The table owner read all four rows despite the policy. These observations verify those PostgreSQL mechanisms in this fixture; they do not verify the shop’s sign-in checks or a production pool. Figures 2 and 3 are explanatory models, not captured server traces.</p>
+<p>The counterexamples mattered as much. Before enabling the row policy, the runtime read all four customers. Setting its freely changeable context to 20 exposed Rowan. A retained session value survived into another transaction. The table owner read all four rows despite the policy. These observations verify those PostgreSQL mechanisms in this fixture; they do not verify the shop’s sign-in checks or a production pool. The request schedules are explanatory models, not captured server traces.</p>
 </section>
 
 <section id="changes">
