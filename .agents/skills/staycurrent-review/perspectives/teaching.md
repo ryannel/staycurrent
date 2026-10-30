@@ -1,6 +1,6 @@
 # Teaching perspective
 
-**Inputs:** pieces; [Sequence diagrams](../../../../src/reference-articles/sequences.astro), [Indexes](../../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../../src/reference-articles/storage.astro) in full, including figures; parent, sibling and child plans; commission.
+**Inputs:** pieces; relevant passages and finished figures from [Sequence diagrams](../../../../src/reference-articles/sequences.astro), [Indexes](../../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../../src/reference-articles/storage.astro) to calibrate the judgement; available parent, sibling and child plans; commission. Reviewers need not repeat the writer's complete-reference preparation.
 
 ## Checks
 

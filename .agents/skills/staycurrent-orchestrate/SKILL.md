@@ -1,9 +1,9 @@
 ---
 name: staycurrent-orchestrate
-description: Plan a recursive article tree, coordinate reference-led writing, and deliver it with proportionate review and repair.
+description: Coordinate a commissioned article collection through recursive planning, writing, review and repair.
 ---
 
-Serve the commission: take an intelligent newcomer to expert practitioner in the subject, using the least reader time and effort. Run only commissioned stages. A first-version experiment returns the first complete draft before review or repairs.
+Serve the commission: take an intelligent newcomer to expert practitioner in the subject, using the least reader time and effort. Run the requested stages through their completion point. Stop at an unreviewed first draft only when the user requests that boundary; otherwise continue through the commissioned review, repair and confirmation.
 
 The orchestrator owns the tree, shared example, assignments, integration and delivery. Use fresh planners and writers for new pieces and independent readers for first reviews. Existing workers or the coordinator may handle later repairs and confirmations under [staycurrent-review](../staycurrent-review/SKILL.md). Workers perform their assignment directly rather than arranging review teams.
 

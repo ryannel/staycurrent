@@ -1,6 +1,6 @@
 # Editorial perspective
 
-**Inputs:** finished pieces as rendered; intended audience; [Sequence diagrams](../../../../src/reference-articles/sequences.astro), [Indexes](../../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../../src/reference-articles/storage.astro) in full. Do not read plans, earlier approvals or writer's notes.
+**Inputs:** finished pieces as rendered; intended audience; relevant passages and finished figures from [Sequence diagrams](../../../../src/reference-articles/sequences.astro), [Indexes](../../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../../src/reference-articles/storage.astro) to calibrate the judgement. Reviewers need not repeat the writer's complete-reference preparation. On a first editorial reading, do not read plans, earlier approvals or writer's notes; repair confirmation uses the accepted finding and affected context.
 
 ## Checks
 

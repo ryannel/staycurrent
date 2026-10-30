@@ -1,6 +1,6 @@
 ---
 name: staycurrent-breakdown
-description: Plan one article from its topic and brief as a heading outline, with stubs for the deeper articles it introduces.
+description: Plan one commissioned article's heading outline and contextual child-article stubs from its topic and brief.
 ---
 
 Plan this article's contribution to the commission: take an intelligent newcomer to expert practitioner in the commissioned subject, in the least reader time and effort. A child does not set its own specialist target.
@@ -35,4 +35,4 @@ heading:
           brief: Choose and verify safe maintenance procedures; the parent explains their purpose and risks.
 ```
 
-For orchestrator-managed review, return draft YAML. Otherwise arrange breakdown-mode [review](../staycurrent-review/SKILL.md), repair findings and return reviewed YAML.
+For orchestrator-managed review or an explicitly requested outline-only draft, return draft YAML. Otherwise arrange breakdown-mode [review](../staycurrent-review/SKILL.md), repair findings and return reviewed YAML. Keep any unresolved scope or example dependency with the result.

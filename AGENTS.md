@@ -1,15 +1,16 @@
 # Stay Current
 
 A static Astro publication helping engineers understand choices and changes that
-matter. Read `README.md` for the repository layout and `docs/site-direction.md`
-for the current publication scope. Other planned fields and the shared
+matter. Use `README.md` for repository layout questions and `docs/site-direction.md`
+when deciding publication scope. Other planned fields and the shared
 distributed-systems programme remain outside an article commission.
 
 ## Content work
 
 The goal is to take an intelligent newcomer to expert practitioner, optimising
-useful understanding against reader time and effort. Use the seven skills in
-`.agents/skills/`:
+useful understanding against reader time and effort. Select the applicable skills
+in `.agents/skills/` for editorial work; ordinary site maintenance does not need
+the article workflow:
 
 - `staycurrent-orchestrate`: manage recursive planning, corpus review and writing.
 - `staycurrent-breakdown`: plan one article and its contextual child stubs.
@@ -18,6 +19,11 @@ useful understanding against reader time and effort. Use the seven skills in
 - `staycurrent-continuity`: keep the collection's running example and terms consistent; run its pass before returning any draft or repair.
 - `staycurrent-revise`: repair an article from review findings so it still reads as one piece.
 - `staycurrent-review`: arrange independent reviews or perform an assigned perspective.
+
+Explicit user instructions take precedence over skill guidelines. Follow the
+commission's requested stages and completion point; resolve routine choices
+within that scope. If a skill instruction prevents completion or requires a
+pause, link the exact file, quote the instruction and explain its effect.
 
 The orchestrator maintains the shared tree and coordinates review under
 `staycurrent-review`. Use independent readers for first reviews; later repairs

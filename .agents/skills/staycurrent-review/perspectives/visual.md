@@ -1,6 +1,8 @@
 # Visual perspective
 
-**Inputs:** fixed-version rendered pieces in a browser; isolated figure routes where supplied; the three reference articles' rendered figures/tables; [staycurrent-figures](../../staycurrent-figures/SKILL.md). Applicable mechanical receipts may accompany them under the review skill's evidence rule: include versions/provenance, exclude author teaching notes, earlier quality verdicts and review findings. Reuse replaces none of these checks. Without browser access, ask the coordinator to operate controls and report results; do not infer operation from source. Hidden panes may animate at about one frame per second with stale screenshots; use page timers for hidden-window playback timing and report that under Limits.
+**Inputs:** fixed-version rendered pieces in a browser; isolated figure routes where supplied; comparable rendered figures/tables from the three reference articles; [staycurrent-figures](../../staycurrent-figures/SKILL.md). Applicable mechanical receipts may accompany them under the review skill's evidence rule: include versions/provenance and applicable observations. On a first review, exclude author teaching notes, earlier quality verdicts and review findings. A repair confirmation uses the accepted finding, inspects changed media and affected layout, and retains applicable earlier checks.
+
+Without browser access, use a coordinator's control checks where available and state which observations are theirs. Complete the checks available to you and report the remaining rendered checks as unverified; do not infer operation from source. Hidden panes can throttle animation and give stale screenshots; bring the page into view for visual judgement and use page timers when playback timing is uncertain. Report any resulting limits.
 
 ## Checks
 

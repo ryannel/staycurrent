@@ -1,9 +1,9 @@
 ---
 name: staycurrent-revise
-description: Repair accepted reader problems coherently, preserving the reference standard and checking what the change affects.
+description: Repair accepted article-review findings and verify the affected explanation and dependencies.
 ---
 
-Read the whole article before designing a repair, with relevant audience, plan and example context. Treat findings as reader problems, not wording to insert. Follow earlier history only when needed.
+Read the finding in its article context, including the relevant audience, plan, example facts and later uses. Read the whole article when the repair changes its argument or structure, or the affected scope is unclear. Treat findings as reader problems, not wording to insert. Follow earlier history only when needed.
 
 Make the smallest coherent repair. Reword, reorder, cut or move existing material; restructure when the reader's problem requires it. Keep conditions beside the decisions they change and link moved teaching to its owner. The result should read as one article, without patch-like asides or repeated lessons.
 
