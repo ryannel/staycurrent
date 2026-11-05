@@ -165,7 +165,8 @@ durability. To read their interactive pages, run
 excluded from normal builds. Source import paths and internal links are adapted
 for their new locations; the explanations and figures are preserved.
 
-Earlier skills are preserved in `docs/history/skills-before-2026-10-19/`. The
+Earlier skills are in git history: the suite from before 19 October 2026 can be read at
+commit `adcbf60` under `docs/history/skills-before-2026-10-19/`. The
 [editorial guide](docs/editorial-guide.md), [writing history](docs/writing-style.md),
 [illustration notes](docs/illustration-style.md) and earlier coverage proposals
 remain records of their work, rather than automatic additions to a worker's prompt.
