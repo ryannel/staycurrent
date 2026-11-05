@@ -1,7 +1,8 @@
 # Teach-back lens
 
 Tests whether the article teaches what its exit questions demand. It runs in two steps,
-carried out by two separate, fresh agents.
+carried out by two separate agents. If you are assigned the whole lens, give step 1 to a
+fresh agent, then do step 2 yourself.
 
 ## Step 1: answer
 

@@ -81,4 +81,5 @@ decorate, and never let colour carry meaning that a label or position does not a
 
 Existing figures that break these rules are listed in the
 [5 November review](reviews/process-review-2026-11-05/README.md#3-art-style). Fix them when
-an article is next revised. A separate restyling sweep has not been commissioned.
+an article is next substantially revised; a targeted repair fixes only what its findings
+name. A separate restyling sweep has not been commissioned.

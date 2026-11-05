@@ -6,8 +6,9 @@ description: Review a Stay Current plan, article or collection, or confirm a rep
 # Review
 
 Judge whether the reader ends up able to do what the commission promised, at the least
-cost in time and effort. Reviewers report problems; they do not edit. The coordinator
-accepts findings, arranges repairs and decides when the work is done.
+cost in time and effort. Reviewers report problems; they do not edit. The coordinator,
+meaning whoever assigned the review, accepts findings, arranges repairs and decides when
+the work is done.
 
 ## Lenses
 
@@ -22,14 +23,16 @@ fresh agent. When you are assigned one lens, load only that lens file.
   and do the figures follow the house style and work?
 
 A **plan** gets the practitioner lens on its dossier, tree and exit questions: coverage,
-ownership, depth and page count. A **collection** gets the practitioner and reader lenses
-across its reading routes, reusing the article reviews rather than repeating them.
+ownership, depth and page count. A **collection** gets the practitioner lens and the
+collection checks in the reader lens, across its reading routes. It reuses the article
+reviews rather than repeating them. An article with no exit questions cannot be taught
+back: report that to the coordinator, who has them written first.
 
 ## Inputs
 
-Give each reviewer the audience, the fixed version and only the inputs its lens lists. A
-first reader-lens review gets the finished article without plans, author notes or earlier
-verdicts.
+Give each reviewer the audience, the commit or build being reviewed, and only the inputs
+its lens lists. A first reader-lens review gets the finished article without plans,
+author notes or earlier verdicts.
 
 ## Findings
 
@@ -57,6 +60,8 @@ execution evidence while its code, data, environment and verifier still apply.
 ## Done
 
 Review is done when every accepted critical or medium finding is repaired and confirmed,
-and the teach-back check passes. Record the open low findings and any limits on the
+and the teach-back check passes. If an exit question is still not Supported after one
+repair, the coordinator decides whether to repair again, rewrite the question or accept
+the gap, and records why. Record the open low findings and any limits on the
 evidence. Optional polish does not reopen review, and completing review does not
 authorise publication.

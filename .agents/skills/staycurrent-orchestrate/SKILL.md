@@ -26,7 +26,7 @@ in reading time and effort.
 
 Independent assignments run in parallel. Every assignment, including a repair or a
 confirmation, goes to a fresh agent. Agents carry out their own assignment and do not
-commission others.
+commission others, except where a review lens says to.
 
 ## What the orchestrator owns
 
@@ -45,8 +45,8 @@ The collection is done when:
 
 - every article passes its teach-back check;
 - every accepted critical or medium finding is repaired and confirmed;
-- `pnpm build` passes, and every new or changed figure has been checked in both themes at
-  desktop and 375 px;
+- `pnpm build` passes, and every new or changed figure has passed the checks in the
+  write skill's figure guide;
 - the collection review has run once and its accepted findings are resolved;
 - the work record is current.
 
@@ -63,6 +63,5 @@ claim in an article. Do not write pass-by-pass reports. Earlier records under
 
 ## Publication
 
-Planning, drafting, review and repair do not authorise publication. Drafts stay on draft
-routes. When the owner authorises publication, integrate routes, navigation, search and
-downloads, run `pnpm build`, and commit and push to `main`, which deploys the site.
+Drafts stay off `main` until the owner authorises publication. The publication steps are
+under Delivery in `AGENTS.md`.

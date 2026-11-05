@@ -7,9 +7,9 @@ description: Write, rewrite or repair a Stay Current article and its figures. Us
 
 The target is set by the plan: after one reading, the reader can answer the article's
 exit questions, at the least cost in time and effort. Work from the brief, the exit
-questions, the neighbouring scopes and the example record. A standalone commission
-without a plan writes its own short brief and exit questions first, using
-[staycurrent-plan's guide](../staycurrent-plan/references/exit-questions.md).
+questions, the neighbouring scopes and the example record. A standalone article without
+a plan starts with [staycurrent-plan](../staycurrent-plan/SKILL.md) in its short form. An
+existing article without exit questions gets them first, as that skill describes.
 
 ## What a Stay Current article contains
 
@@ -49,10 +49,10 @@ For building, playback and checks, use the [figure guide](references/figures.md)
 Sequence diagrams, Indexes, and Storage and durability are preserved in
 `src/reference-articles/`. They are the publication's models for concrete, confident
 teaching prose: exact numbers, a mechanism put into words before it is named, and
-provenance gathered at the end. Before drafting a new article, read in full the one
-closest in shape to your subject, with `python3 scripts/read-writing-reference.py`.
-Return to specific passages when an explanation proves hard. Their framed visual style is
-not the house style.
+provenance gathered at the end. When starting a new collection, read in full the one
+closest in shape to your subject, with `python3 scripts/read-writing-reference.py`. For a
+single article or a rewrite, read that reference's opening and the section closest to your
+hardest explanation. Their framed visual style is not the house style.
 
 ## Accuracy
 
@@ -65,8 +65,8 @@ without asking.
 
 ## Continuity
 
-A collection's example record (`docs/coverage/<collection>-example.md`) fixes the shared
-facts. Develop scenarios from it, keep names, values and roles consistent, and propose any
+A collection's example record in `docs/coverage/` fixes the shared facts; for caching it
+is `application-caching-2026-10-28-example.md`. Develop scenarios from it, keep names, values and roles consistent, and propose any
 extension to the orchestrator rather than inventing a conflicting fact. Familiar figures
 should evolve as the explanation develops, keeping roles and visual meanings recognisable.
 
@@ -75,7 +75,8 @@ should evolve as the explanation develops, keeping roles and visual meanings rec
 Treat each finding as a reader's problem, not wording to insert. Make the smallest change
 that still reads as one piece: reword, reorder, cut or move material, and restructure when
 the problem needs it. Reread the surrounding explanation and every later use of what
-changed, and recheck any claim the repair touches.
+changed, and recheck any claim the repair touches. A repair fixes what its findings name;
+it does not start a wider restyling.
 
 ## Done
 
@@ -87,6 +88,9 @@ changed, and recheck any claim the repair touches.
 - Check new or changed figures against the defect list in the figure style, in both
   themes at desktop and 375 px.
 
-Return the integrated article on its draft route, together with the check results. Note
-any scope or example changes you propose, and any limits on the evidence. Publication is
-a separate decision for the owner.
+Return the article on its branch, previewed as `AGENTS.md` describes under Delivery,
+together with the check results. Note any scope or example changes you propose, and any
+limits on the evidence. In a collection, the coordinator arranges review. A standalone
+article goes on to the three lenses in [staycurrent-review](../staycurrent-review/SKILL.md),
+unless the owner asked for an unreviewed draft. Publication is a separate decision for
+the owner.

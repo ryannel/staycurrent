@@ -370,3 +370,40 @@ and the publication boundary are unchanged.
 
 The numbers policy encodes this review's recommendation. The owner had not yet
 confirmed it when the skills were updated.
+
+### Dry run and fixes
+
+A fresh agent traced eight realistic requests through the new skills before use:
+
+- planning a new collection;
+- writing a standalone article;
+- a targeted repair;
+- a single teach-back assignment;
+- a collection review;
+- site maintenance;
+- publication;
+- an unreviewed draft.
+
+It found these gaps, all fixed the same day:
+
+- **Drafts.** "Draft route" was undefined. `AGENTS.md` now says unpublished content stays
+  off `main`, on a branch or behind a draft-preview flag.
+- **Standalone articles.** The route for one article was unclear. It is now: a short plan,
+  then write, then the three lenses.
+- **Teach-back.** The lens conflicted with "agents do not commission others". It now
+  allows its two-step hand-off.
+- **Missing exit questions.** Articles written before November have none. They are now
+  written first.
+- **Plan done list.** The plan skill gained one.
+- **Collection reviews.** The reader lens gained collection checks.
+- **Terms.** "Coordinator" and the reviewed version are now defined.
+- **Repairs.** A targeted repair no longer pulls in figure restyling.
+- **Delivery.** Maintenance push permission and the publication steps now live in
+  `AGENTS.md`.
+- **Repair rounds.** Repeated teach-back failures now go to the coordinator to decide.
+- **Reference reading.** Writers read a reference article in full only when starting a
+  collection.
+
+The dry run also suggested reducing `CLAUDE.md` to an include of `AGENTS.md` so the two
+cannot drift. That changes the owner's Claude configuration, so it is left as a
+suggestion.

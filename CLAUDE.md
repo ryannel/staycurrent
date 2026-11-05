@@ -28,14 +28,25 @@ ordinary site maintenance does not need them.
 
 Explicit instructions from the owner take precedence over the skills. Follow the
 commission's stages and stopping point, and resolve routine choices within that scope.
+The coordinator is whoever assigned the work: the orchestrator in a collection,
+otherwise the owner.
+
 Check consequential technical claims against primary sources, and keep illustrative
 models distinct from observed execution.
 
 ## Delivery
 
-Planning, research, drafting and review do not authorise publication. Keep draft content
-distinct from available reading. When work is authorised for publication, commit and
-push it to `origin/main`; a push to `main` deploys the site.
+A push to `main` deploys the live site.
+
+- Work the owner asks for directly, such as site maintenance, is authorised: commit and
+  push it when it is done.
+- Article content is published only when the owner authorises publication. Planning,
+  drafting and review do not. Until then it stays off `main`. Develop on a branch, and
+  preview new articles on a `/review/` route behind a draft-preview flag, as
+  `APPLICATION_CACHING_DRAFT_PREVIEW` does. A rewrite of a published article stays on
+  its branch.
+- To publish, integrate the article's routes, its reading entry in `src/lib/reading.ts`,
+  navigation, search and downloads, run `pnpm build`, and push to `main`.
 
 ## Checks
 

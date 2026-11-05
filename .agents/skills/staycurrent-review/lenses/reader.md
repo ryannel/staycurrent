@@ -37,6 +37,18 @@ read plans, notes or earlier verdicts.
 10. **Themes and phones.** Check light and dark, desktop and 375 px. Text contrast is
     4.5:1, and large text and graphics 3:1.
 
+## A collection
+
+For an assembled collection, replace the per-article checks with these:
+
+- Follow each reading route from the introduction. Ideas arrive before they are used, and
+  each article opens from where the route leaves the reader.
+- Terms, names and running-example facts are consistent across articles.
+- No lesson is taught in full twice; each has one owner and the others point to it.
+- Figures share one visual language: the same role icons and colour meanings throughout.
+
+Rely on the article reviews for individual figures and passages.
+
 Without browser access, complete the prose checks and report the rendered checks as not
 done. Hidden panes can throttle animation, so bring the figure into view before judging
 it.
