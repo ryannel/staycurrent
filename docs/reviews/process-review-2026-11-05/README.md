@@ -346,8 +346,8 @@ commit through a number the reader can check against their own disks.
 
 The seven skills became four: `staycurrent-plan`, `staycurrent-write`,
 `staycurrent-review` and `staycurrent-orchestrate`. The previous suite, with its
-`AGENTS.md` and `CLAUDE.md`, is archived in
-[`docs/history/skills-before-2026-11-05/`](../../history/skills-before-2026-11-05/).
+`AGENTS.md` and `CLAUDE.md`, remains in git history at commit `0bd84e6`; no archive copy
+is kept in the tree, so agents cannot load stale instructions.
 
 | Article guidance | What changed here |
 | --- | --- |

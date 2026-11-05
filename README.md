@@ -149,8 +149,8 @@ Each article gets three independent review lenses: a teach-back check, in which 
 fresh agent answers the exit questions from the article alone; a senior-practitioner
 review; and a reader-and-visual review. Accepted problems are repaired and confirmed
 in context. The assembled collection receives one coverage and reading-route check.
-The skills before 5 November 2026 are archived in `docs/history/skills-before-2026-11-05/`,
-and the reasons for the change are in `docs/reviews/process-review-2026-11-05/`.
+Earlier versions of the skills are in git history; the last seven-skill suite is at
+commit `0bd84e6`. The reasons for the change are in `docs/reviews/process-review-2026-11-05/`.
 
 Each collection keeps its dossier and one running-example record beside its tree in
 `docs/coverage/`. Article and heading nodes use the singular `heading` list and
