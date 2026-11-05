@@ -314,7 +314,7 @@ prune them.
 
 | Question | Status, 5 November |
 | --- | --- |
-| 1. Art style: ink and tokens plus the data register? Flat discs or glossy spheres? | Open. The owner asked to see the styles in use; see the six-style gallery above. |
+| 1. Art style: ink and tokens plus the data register? Flat discs or glossy spheres? | Decided: ink and tokens, as rendered in Study A of the [style lab](style-lab.html), with flat discs. Recorded in [Figure style: ink and tokens](../../figure-style.md). |
 | 2. Pilot: raise Handling cache misses as the exemplar | Agreed. |
 | 3. Numbers policy: real first, one provenance section per article | Open. The owner asked where real numbers would help; see below. |
 | 4. Restructure the skills into four after the pilot | Agreed. Read OpenAI's [Rethinking skills and prompts for GPT-6 Astra](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra) first, at the owner's request. This environment's network policy blocked `developers.openai.com`, so the article has not yet been read for this work. |

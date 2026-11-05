@@ -1,5 +1,9 @@
 # How Stay Current draws a system
 
+> **Article figures now follow [Figure style: ink and tokens](figure-style.md)**, chosen on
+> 5 November 2026. The guidance below covers raster illustrations such as the database
+> field guide's pencil-and-wash artwork.
+
 Our illustrations support the explanation in the surrounding text. A reader should see
 what is grouped together, what moves, and what can be left alone. The current rendering reference is the restrained technical sketch chosen on
 3 October 2026: [light artwork](../src/assets/explainers/sketch-relational-light.png)
