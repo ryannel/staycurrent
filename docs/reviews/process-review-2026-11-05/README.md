@@ -135,6 +135,28 @@ Server breadth, and Raft or Parallel Commits proofs.
 
 ## 3. Art style
 
+### Styles in use today
+
+A survey of every built page with figures found six styles, not three:
+
+1. **Ink and tokens:** every caching article, and the animated figures in most
+   relational, PostgreSQL and CockroachDB articles.
+2. **Lab bench stepper:** Drawing systems' Sequences and Async interactions, and the
+   three reference articles.
+3. **Framed data panels:** static tables, plans and counters inside relational
+   articles, often on the same page as ink-and-tokens figures.
+4. **Editorial illustration cards:** column stores, documents, object storage,
+   search, partitioning and the vector assessment.
+5. **Pencil-and-wash sketches:** raster images in the databases field guide and the
+   column-store essay.
+6. **Plain notation drawings:** Drawing systems' architecture, vocabulary, layout,
+   states and processes. These teach diagram notation, so their plainness is
+   deliberate.
+
+![Six styles in use today](styles-in-use.jpg)
+
+The comparison below concentrates on the three styles that carry mechanism.
+
 ![The three visual families now on the site](style-families.jpg)
 
 | | A. Lab bench (references) | B. Editorial tables (column stores) | C. Ink and tokens (caching) |
@@ -290,10 +312,32 @@ prune them.
 
 ## 5. Decisions for the owner
 
-1. **Art style:** ink and tokens plus the data register, as specified above? Flat
-   discs or glossy spheres for tokens?
-2. **Pilot:** raise Handling cache misses as the exemplar, or choose another
-   article?
-3. **Numbers policy:** real first, with one provenance section per article?
-4. **Skills:** restructure into four skills with the dossier, exit questions and
-   teach-back, after the pilot confirms the approach?
+| Question | Status, 5 November |
+| --- | --- |
+| 1. Art style: ink and tokens plus the data register? Flat discs or glossy spheres? | Open. The owner asked to see the styles in use; see the six-style gallery above. |
+| 2. Pilot: raise Handling cache misses as the exemplar | Agreed. |
+| 3. Numbers policy: real first, one provenance section per article | Open. The owner asked where real numbers would help; see below. |
+| 4. Restructure the skills into four after the pilot | Agreed. Read OpenAI's [Rethinking skills and prompts for GPT-6 Astra](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra) first, at the owner's request. This environment's network policy blocked `developers.openai.com`, so the article has not yet been read for this work. |
+
+### Where real numbers would help
+
+A real number earns its place when the reader's decision depends on magnitude.
+Invented numbers remain right when the lesson is ordering or arithmetic. In the
+stampede example, for instance, the 0, 20, 40 and 60 ms arrivals only establish
+who starts a read before the first fill finishes.
+
+Three measurements show the difference. They were taken on 5 November 2026 with
+Redis 7.0.15 over loopback in a 4-vCPU container, using
+[`redis-measure.py`](redis-measure.py) and `redis-benchmark`. A network hop adds
+its round trip to every request. The pilot would remeasure on the lab's Redis 8
+setup and record its conditions.
+
+| Measurement | Result | Decision it informs |
+| --- | --- | --- |
+| Memory for 100,000 cards with 500-byte values and 30-byte keys | 59 MiB: 619 bytes per entry, 119 above the value | The shop's whole catalogue of about 2 million cards needs about 1.2 GiB. That decides whether "cache everything" is cheap or whether eviction matters, which the memory article currently argues through an 18-step trace in abstract units. |
+| 40 product cards for a listing page | 40 sequential GETs: median 1.6 ms, p99 2.2 ms. One MGET: median 0.09 ms. | Per-request round trips dominate. Over a 0.3 ms network hop, sequential lookups cost about 12 ms before any work. Batching is a first-order design choice that the collection never mentions. |
+| GET throughput with 500-byte values | About 86,000 per second with 50 clients; about 25,600 per second from one client | Set this beside the database's tested capacity, and a cold or failed cache shows whether the source can survive the full miss load or needs admission control. That turns "the source may be overloaded" into a calculation the reader can do for their own system. |
+
+The reference Storage article shows the same effect. "5.1 ms a commit is 196
+commits a second. Sixteen clients get eight times the throughput" teaches group
+commit through a number the reader can check against their own disks.
