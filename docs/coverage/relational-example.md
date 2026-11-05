@@ -1,6 +1,6 @@
 # Relational collection · running example
 
-Written on 20 October 2026, following [staycurrent-continuity](../../.claude/skills/staycurrent-continuity/SKILL.md). The tree is [relational-2026-10-19.yaml](relational-2026-10-19.yaml).
+Written on 20 October 2026, following [staycurrent-continuity](../history/skills-before-2026-11-05/staycurrent-continuity/SKILL.md). The tree is [relational-2026-10-19.yaml](relational-2026-10-19.yaml).
 
 Sources: the trial introduction (`src/articles/relational-trial/a00.astro`, rows in `src/components/relational-trial/a00/model.mjs`) and the trial transactions article (`src/articles/relational-trial/a03.astro`, rows in `src/components/relational-trial/a03/model.mjs`). Both pages were checked against PostgreSQL 18.6 by their `verify.mjs` scripts. The published collection uses a different example, the workshop service (see [Where existing articles disagree](#where-existing-articles-disagree)). This record follows the trial pages, because they are the newest plans and the drafts are being rewritten towards them.
 

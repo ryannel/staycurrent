@@ -317,7 +317,7 @@ prune them.
 | 1. Art style: ink and tokens plus the data register? Flat discs or glossy spheres? | Decided: ink and tokens, as rendered in Study A of the [style lab](style-lab.html), with flat discs. Recorded in [Figure style: ink and tokens](../../figure-style.md). |
 | 2. Pilot: raise Handling cache misses as the exemplar | Agreed. |
 | 3. Numbers policy: real first, one provenance section per article | Open. The owner asked where real numbers would help; see below. |
-| 4. Restructure the skills into four after the pilot | Agreed. Read OpenAI's [Rethinking skills and prompts for GPT-6 Astra](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra) first, at the owner's request. This environment's network policy blocked `developers.openai.com`, so the article has not yet been read for this work. |
+| 4. Restructure the skills into four | Done on 5 November, at the owner's request, before the pilot. OpenAI's [Rethinking skills and prompts for GPT-6 Astra](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra) was read first; see [Skills update](#skills-update-5-november) below. The pilot will calibrate the new skills. |
 
 ### Where real numbers would help
 
@@ -341,3 +341,32 @@ setup and record its conditions.
 The reference Storage article shows the same effect. "5.1 ms a commit is 196
 commits a second. Sixteen clients get eight times the throughput" teaches group
 commit through a number the reader can check against their own disks.
+
+## Skills update, 5 November
+
+The seven skills became four: `staycurrent-plan`, `staycurrent-write`,
+`staycurrent-review` and `staycurrent-orchestrate`. The previous suite, with its
+`AGENTS.md` and `CLAUDE.md`, is archived in
+[`docs/history/skills-before-2026-11-05/`](../../history/skills-before-2026-11-05/).
+
+| Article guidance | What changed here |
+| --- | --- |
+| Short descriptions that say exactly when to use a skill | Each description names the task and its "use when". Orchestrate now applies only to multi-article commissions. |
+| Root skill file as a minimal router, with supporting docs loaded when relevant | The dossier, tree and exit-question guides sit under plan. Voice, figures, stepper and database verification sit under write. The three lenses sit under review, and an assigned lens loads only its own file. |
+| Drop elaborate itineraries and recipes | The procedural rules on scheduling, evidence reuse and handoffs were cut to what decides quality and completion. |
+| Contextual pointers instead of blanket reading | `AGENTS.md` and `CLAUDE.md` point to documents by situation. Writers read the one reference article closest in shape to their subject, not all three every time. |
+| Drop redundant verification prompts | Generic "check your work" language was removed. The checks that remain are specific to this publication: the teach-back check, prose without figures, dense-prose and the figure defect list. |
+| Give permission for safe workflows; avoid needless stop-for-review gates | Builds, previews and disposable databases may be run, fixed and rerun without asking. Orchestrate carries work through to its definition of done, and stops early only where the commission says so or for owner decisions. |
+| Define "done" up front | Each skill ends with an explicit done list. |
+| Consider every model that reads repository skills | The skills stay in `.agents/skills/` for Codex, symlinked from `.claude/skills/` for Claude, in plain language without model-specific tricks. |
+
+The content changes follow this review. They add an expert dossier, exit questions,
+a teach-back lens and a senior-practitioner lens that compares the article with the
+best existing explanation. They restore the voice anchors and structure removed on
+19 October, add a numbers policy (real figures where a decision depends on magnitude,
+provenance stated once) and point figures at `docs/figure-style.md`. Prose independence,
+primary-source checking, fresh agents for every assignment, blind first reader reviews
+and the publication boundary are unchanged.
+
+The numbers policy encodes this review's recommendation. The owner had not yet
+confirmed it when the skills were updated.

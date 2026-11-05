@@ -1,59 +1,41 @@
 # Stay Current
 
 A static Astro publication helping engineers understand choices and changes that
-matter. Use `README.md` for repository layout questions and `docs/site-direction.md`
-when deciding publication scope. Other planned fields and the shared
-distributed-systems programme remain outside an article commission.
+matter. Use plain British English throughout.
+
+## Where to look
+
+- Repository layout, routes and commands: `README.md`.
+- Publication scope, and what is planned rather than available: `docs/site-direction.md`.
+- How article figures look: `docs/figure-style.md`.
+- The preserved reference articles (Sequence diagrams, Indexes, and Storage and
+  durability): `src/reference-articles/`. Run `STAYCURRENT_REFERENCE_PREVIEW=1 pnpm dev`
+  to see them at `/review/examples/sequences/`, `/review/examples/indexes/` and
+  `/review/examples/storage/`. Normal builds exclude those routes.
+- `docs/article-work/` and `docs/history/` are records of earlier work, not instructions.
 
 ## Content work
 
-The goal is to take an intelligent newcomer to expert practitioner, optimising
-useful understanding against reader time and effort. Select the applicable skills
-in `.agents/skills/` for editorial work; ordinary site maintenance does not need
-the article workflow:
+Articles aim to take an intelligent newcomer to expert practitioner, at the least cost
+in reading time and effort. Editorial work uses the skills in `.agents/skills/`;
+ordinary site maintenance does not need them.
 
-- `staycurrent-orchestrate`: manage recursive planning, corpus review and writing.
-- `staycurrent-breakdown`: plan one article and its contextual child stubs.
-- `staycurrent-write`: write one article using the three fixed examples.
-- `staycurrent-figures`: choose, build and check an article's figures, tables and interactive tools.
-- `staycurrent-continuity`: keep the collection's running example and terms consistent; run its pass before returning any draft or repair.
-- `staycurrent-revise`: repair an article from review findings so it still reads as one piece.
-- `staycurrent-review`: arrange independent reviews or perform an assigned perspective.
+- `staycurrent-plan`: research what an expert knows, then outline articles and exit
+  questions.
+- `staycurrent-write`: write, rewrite or repair an article and its figures.
+- `staycurrent-review`: review a plan, article or collection, or confirm a repair.
+- `staycurrent-orchestrate`: run a multi-article commission from plan to delivery.
 
-Explicit user instructions take precedence over skill guidelines. Follow the
-commission's requested stages and completion point; resolve routine choices
-within that scope. If a skill instruction prevents completion or requires a
-pause, link the exact file, quote the instruction and explain its effect.
-
-The orchestrator maintains the shared tree and coordinates review under
-`staycurrent-review`. Use independent readers for first reviews; later repairs
-and confirmations may reuse a worker or be checked by the coordinator. Retain
-unaffected checks and do not repeat collection-wide review after local repairs.
-Standalone assignments arrange proportionate review. Keep briefs and results
-with the work in `docs/`.
-Use plain British English. Check consequential technical claims against primary
-sources and distinguish illustrative models from observed execution. Use the
-existing Astro article components and check rendered figures and controls.
-
-The prose must explain each article completely without its diagrams or animations.
-They are optional reinforcement: removing them, including captions and controls,
-must require no prose changes. Writers and reviewers read the article without
-those visuals before checking that the illustrations agree with it.
-
-The original Sequence diagrams, Indexes, and Storage and durability examples are
-preserved in `src/reference-articles/`. Run
-`STAYCURRENT_REFERENCE_PREVIEW=1 pnpm dev` to read their interactive previews at
-`/review/examples/sequences/`, `/review/examples/indexes/` and
-`/review/examples/storage/`. Normal builds exclude those routes.
-
-Earlier skills are archived under `docs/history/skills-before-2026-10-19/`.
-Historical editorial notes are records, not additional instructions to load.
+Explicit instructions from the owner take precedence over the skills. Follow the
+commission's stages and stopping point, and resolve routine choices within that scope.
+Check consequential technical claims against primary sources, and keep illustrative
+models distinct from observed execution.
 
 ## Delivery
 
-Commit and push authorised work to `origin/main` at relevant delivery points.
-A push to `main` deploys the site. Review, research and drafting do not authorise
-publication; keep planned and draft content distinct from available reading.
+Planning, research, drafting and review do not authorise publication. Keep draft content
+distinct from available reading. When work is authorised for publication, commit and
+push it to `origin/main`; a push to `main` deploys the site.
 
 ## Checks
 
@@ -64,5 +46,6 @@ pnpm test           # the site check's own tests
 pnpm dev            # http://localhost:4321
 ```
 
-The site check covers shared structure, links and theme-safe CSS. Errors fail the
-build; it does not establish prose or teaching quality.
+Builds, the site check, local previews and disposable local databases are safe to run,
+fix and rerun without asking. The site check covers structure, links and theme-safe CSS.
+It does not establish prose or teaching quality.

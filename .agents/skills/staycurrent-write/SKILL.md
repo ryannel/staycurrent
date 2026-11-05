@@ -1,20 +1,92 @@
 ---
 name: staycurrent-write
-description: Write a new article or substantial rewrite using the publication's three fixed teaching references.
+description: Write, rewrite or repair a Stay Current article and its figures. Use when drafting or substantially revising an article, repairing accepted review findings, or adding or changing an article's figures.
 ---
 
-For planning or writing a new piece, read the complete reference text with `python3 scripts/read-writing-reference.py`: it lists numbered, bounded parts. Read each part separately, checking its END marker; recover any clipped output before designing. Complete references already available in the current context need no duplicate read. Study [Sequence diagrams](../../../src/reference-articles/sequences.astro), [Indexes](../../../src/reference-articles/indexes.astro) and [Storage and durability](../../../src/reference-articles/storage.astro) as finished articles, following their drawings through the explanations. When developing a difficult explanation, return to the reference passage and finished figure that does comparable teaching work. Adapt how it builds understanding, directing attention through the prose and drawing together. Write an article that could sit beside them and feel written by the same author, starting from what this reader already understands.
+# Write an article
 
-Use the plan to understand this article’s contribution, intended reader understanding and neighbouring scopes. For a standalone commission without a plan, infer a suitable article scope from the request; a recursive collection is needed only when commissioned. Teach its own outcome completely while preserving the stated parent–child boundaries. Let each section develop a subject or question the reader now has reason to understand. Reshape the explanatory order and presentation; coordinate scope changes where they affect other articles. Where a child owns deeper treatment, establish the concept through an accurate example and explain when that treatment is needed. Keep the child’s full definitions, tests and methods there. Follow the references in how they name articles and sections. Prefer established, searchable industry terms where they fit naturally. Follow the article or collection's [example record and continuity](../staycurrent-continuity/SKILL.md).
+The target is set by the plan: after one reading, the reader can answer the article's
+exit questions, at the least cost in time and effort. Work from the brief, the exit
+questions, the neighbouring scopes and the example record. A standalone commission
+without a plan writes its own short brief and exit questions first, using
+[staycurrent-plan's guide](../staycurrent-plan/references/exit-questions.md).
 
-The prose carries the complete explanation. Diagrams and animations reinforce it and are optional: removing them, including their captions, labels and controls, must leave a coherent article without further prose changes. Establish the example's necessary facts, explain the mechanism and outcome, and retain the conditions that change the reader's judgement. Explain the subject directly rather than narrating a diagram, directing playback or referring to a figure's selected state. Do not transcribe every visible detail; include what the reasoning needs. Use [staycurrent-figures](../staycurrent-figures/SKILL.md) for supporting figures, tables, code and interactive tools. Coordinate rendered checks with the designated preview/build owner.
+## What a Stay Current article contains
 
-Check consequential claims against primary sources; list them under Sources and further reading. Keep qualifications that prevent a mistaken reader inference or action, including whether results are illustrative or observed. Keep production bookkeeping and verification evidence with the work.
+- **The practitioner's world.** Use the names practitioners search for, introduced once
+  the reader has seen the behaviour they name. Show the output a practitioner would
+  read: plans, metrics, logs, error text. Put short code at decision points. Cover the
+  failure patterns and incidents that the dossier assigns to this article.
+- **Numbers.** Use real figures wherever a decision depends on magnitude, stated plainly
+  with their source or measurement conditions. Use invented figures where the lesson is
+  ordering or arithmetic. Say where the numbers come from once, in a closing section,
+  rather than qualifying them paragraph by paragraph.
+- **Confident statements.** Say what things are. Keep "not" for contrasts that prevent a
+  real mistake. Mention running-example facts only where they change the lesson.
+- **One implementation, general subject.** When one product illustrates a general
+  subject, teach the subject's decisions. Explain the mechanism once, then gather where
+  other implementations differ in ways that change a decision.
+- **Parent and child.** Give a useful answer at this level, and leave the child's full
+  treatment to the child. A pointer to the child is one sentence, not a substitute for
+  an answer here.
 
-When an implementation illustrates a broader subject, present it as one of several choices and distinguish general principles from its specific behaviour and guarantees.
+Before drafting, read the [voice guide](references/voice.md).
 
-Reread the complete prose with diagrams and animations omitted, including their captions and controls. Repair missing premises, unexplained results and transitions that depend on them. Then check that the optional illustrations agree with and reinforce the explanation, and run the continuity pass. Follow the references' clarity and development without inheriting any dependence on a visual.
+## Prose stands alone
 
-For an integrated Astro article, run `pnpm check -- --rule=dense-prose --page=<article URL path>` on a build that includes it; coordinate one current build with the preview/build owner. The page selector is a rendered route, not a source filename. It points at sentences and paragraphs that carry more at once than good human-written explainers do. Reread each one in place and rewrite it if a reader would have to read it twice, keeping what they need. The counts show where to look; they don't decide when the writing is done. For a prose-only draft, make that reading check directly and record that the rendered check is pending; do not integrate or publish solely to run it.
+The prose carries the whole explanation. Removing every figure, including captions,
+labels and controls, must leave a complete article with no further edits. Write about the
+subject, not about the figure. A figure earns its place by making something felt that
+prose can only state, such as timing, accumulation, contention or scale.
 
-Return the article and applicable check results for the commissioned review; standalone complete articles arrange [article review](../staycurrent-review/SKILL.md). An explicitly requested unreviewed draft ends at that boundary and states its review status.
+## Figures
+
+Figures follow the house style in [Figure style: ink and tokens](../../../docs/figure-style.md).
+For building, playback and checks, use the [figure guide](references/figures.md).
+
+## The reference articles
+
+Sequence diagrams, Indexes, and Storage and durability are preserved in
+`src/reference-articles/`. They are the publication's models for concrete, confident
+teaching prose: exact numbers, a mechanism put into words before it is named, and
+provenance gathered at the end. Before drafting a new article, read in full the one
+closest in shape to your subject, with `python3 scripts/read-writing-reference.py`.
+Return to specific passages when an explanation proves hard. Their framed visual style is
+not the house style.
+
+## Accuracy
+
+Check consequential claims against primary sources, and list them under "Sources and
+further reading". Keep observed behaviour distinct from illustration. Claims about engine
+behaviour that rest on execution need a run on an owned, disposable instance; see
+[database verification](references/database-verification.md). Local builds, previews and
+disposable databases are safe: run them, fix what your change breaks and rerun them
+without asking.
+
+## Continuity
+
+A collection's example record (`docs/coverage/<collection>-example.md`) fixes the shared
+facts. Develop scenarios from it, keep names, values and roles consistent, and propose any
+extension to the orchestrator rather than inventing a conflicting fact. Familiar figures
+should evolve as the explanation develops, keeping roles and visual meanings recognisable.
+
+## Repairs
+
+Treat each finding as a reader's problem, not wording to insert. Make the smallest change
+that still reads as one piece: reword, reorder, cut or move material, and restructure when
+the problem needs it. Reread the surrounding explanation and every later use of what
+changed, and recheck any claim the repair touches.
+
+## Done
+
+- Reread the whole article from the reader's starting point, once with the figures
+  omitted.
+- Answer each exit question from the article alone. Close any gap you find.
+- Build, then run `pnpm check -- --rule=dense-prose --page=<route>`. Reread each flagged
+  sentence in place, and rewrite it if a reader would have to read it twice.
+- Check new or changed figures against the defect list in the figure style, in both
+  themes at desktop and 375 px.
+
+Return the integrated article on its draft route, together with the check results. Note
+any scope or example changes you propose, and any limits on the evidence. Publication is
+a separate decision for the owner.

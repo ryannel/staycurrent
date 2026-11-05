@@ -1,28 +1,68 @@
 ---
 name: staycurrent-orchestrate
-description: Coordinate a commissioned article collection through recursive planning, writing, review and repair.
+description: Run a commissioned Stay Current collection from plan to delivery. Use when a commission covers more than one article; a single article uses plan, write and review directly.
 ---
 
-Serve the commission: take an intelligent newcomer to expert practitioner in the subject, using the least reader time and effort. Run the requested stages through their completion point. Stop at an unreviewed first draft only when the user requests that boundary; otherwise continue through the commissioned review, repair and confirmation.
+# Run a collection
 
-The orchestrator owns the tree, shared example, assignments, integration and delivery. Use fresh planners and writers for new pieces and independent readers for first reviews. Existing workers or the coordinator may handle later repairs and confirmations under [staycurrent-review](../staycurrent-review/SKILL.md). Workers perform their assignment directly rather than arranging review teams.
+The commission names the subject, the stages wanted and any stopping point. The aim
+does not change: take an intelligent newcomer to expert practitioner at the least cost
+in reading time and effort.
 
-## Plan and write
+## Order of work
 
-Infer the audience, starting knowledge, useful outcomes and boundaries from the commission and publication context. Resolve routine choices; ask only when ambiguity materially changes scope.
+1. **Plan** with [staycurrent-plan](../staycurrent-plan/SKILL.md): the expert dossier,
+   the article tree, the running example and each article's exit questions. Review the
+   whole plan once with [staycurrent-review](../staycurrent-review/SKILL.md) before
+   writing.
+2. **Write** each article with [staycurrent-write](../staycurrent-write/SKILL.md). Give
+   the writer the article's brief and exit questions, the neighbouring scopes, the
+   relevant finished articles and the example record.
+3. **Review** each finished article with the three lenses in staycurrent-review, then
+   repair accepted findings and confirm them.
+4. **Review the assembled collection** once, for coverage, ownership, duplication and
+   reading order. Reuse the article reviews rather than repeating them.
+5. **Deliver** (below).
 
-Keep the canonical tree under `docs/coverage/`, its [example record](../staycurrent-continuity/SKILL.md) beside it, and a concise work record under `docs/article-work/`. Give each planner the topic, commission, neighbouring scopes, shared facts and fixed references. Let the references guide the teaching from the first outline. Use [staycurrent-breakdown](../staycurrent-breakdown/SKILL.md); settle the root example before children. Plan contextual child stubs recursively until useful outcomes have owners. Review the complete provisional tree once; an earlier local review is useful only for an unresolved decision that would make further planning wasteful.
+Independent assignments run in parallel. Every assignment, including a repair or a
+confirmation, goes to a fresh agent. Agents carry out their own assignment and do not
+commission others.
 
-Give each writer the audience, purpose, learning outcomes, neighbouring scopes, relevant finished reading and example facts. Child scopes are context, not a coverage checklist. Confirm complete reference delivery and use [staycurrent-write](../staycurrent-write/SKILL.md). Let the references lead teaching and illustration; integrate proposed tree and shared-example changes centrally.
+## What the orchestrator owns
 
-## Review and deliver
+The dossier, tree and example record in `docs/coverage/`; acceptance of findings; scope
+changes between articles; one build and preview for the commission; the work record; and
+delivery. Writers propose changes to the tree or the shared example; the orchestrator
+decides and updates the record.
 
-Review each complete article once for technical accuracy, teaching/writing and rendered behaviour. Consolidate accepted problems and repair them using [staycurrent-revise](../staycurrent-revise/SKILL.md). Confirm the changed explanation and affected dependencies. Retain unaffected checks; do not add routine final readings or restart review for optional polish.
+First reader-lens reviews get only the finished article and the audience: no plans,
+author notes or earlier verdicts. The practitioner and teach-back lenses get the inputs
+their lens files list.
 
-Review the assembled collection once for coverage, ownership, duplication, prerequisites and actual routes, reusing article checks. Further checking follows concrete findings or invalidated judgements, not a round counter. Apply the review skill's completion rule; do not let scheduling create new delivery gates.
+## Done
 
-Designate one preview/build owner. Identify the version and relevant source/dependencies so the rendering and evidence match; a small repair can use a changed-file record against the existing baseline. Keep findings, decisions and verification links with the work, referencing unchanged records instead of copying complete evidence packets. Preserve original reports and material limits without generating pass-by-pass paperwork.
+The collection is done when:
 
-Handoffs contain only context and delivery instructions for the current assignment. First editorial readers receive no author notes, plans or earlier verdicts. Mechanical evidence carries provenance and applicable observations, not prior quality approvals. Start ready work as slots free up; do not commission reviews to occupy capacity.
+- every article passes its teach-back check;
+- every accepted critical or medium finding is repaired and confirmed;
+- `pnpm build` passes, and every new or changed figure has been checked in both themes at
+  desktop and 375 px;
+- the collection review has run once and its accepted findings are resolved;
+- the work record is current.
 
-Return the collection, article links, completion state and meaningful limits. Keep drafts distinct from available reading. Once publication is authorised, integrate normal routes, navigation and downloads, run appropriate site checks, and commit/push at relevant delivery points.
+Carry the work through to that point. Stop early only where the commission says so, or
+for a decision that belongs to the owner, such as a change of scope or publication.
+
+## Work record
+
+Keep one README per commission in `docs/article-work/<commission>/`. It holds the
+commission, links to the dossier and tree, one findings table (finding, decision, where
+fixed, confirmed by) and any limits on the evidence. Keep the evidence that supports a
+claim in an article. Do not write pass-by-pass reports. Earlier records under
+`docs/article-work/` and `docs/history/` are history, not instructions.
+
+## Publication
+
+Planning, drafting, review and repair do not authorise publication. Drafts stay on draft
+routes. When the owner authorises publication, integrate routes, navigation, search and
+downloads, run `pnpm build`, and commit and push to `main`, which deploys the site.
