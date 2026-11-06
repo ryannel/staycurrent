@@ -1,6 +1,7 @@
 // Figure: three callers share one load of P7's card, each with its own deadline.
-// Times follow the pilot's native run: A leaves at 50 ms; with a detached load B and C
-// receive the card at about 100 ms; with the load tied to A, all three end at 50 ms.
+// Times follow the pilot's native run (evidence/go/wrapper-run.txt, no stale copy): A leaves
+// with an error at 50 ms; with a detached load B and C receive the card at about 100 ms;
+// with the load tied to A, all three receive an error at 50 ms.
 import { axis, bar, chip, disc, makeScene, path, phase, pulse, svg, text } from './ink.mjs';
 
 const T = 200;
@@ -36,8 +37,11 @@ function draw(t, variant, small) {
     s += bar(x(c.at), x(Math.min(now, end)), lane.y, c.colour, 8);
     s += disc(x(c.at), lane.y, c.colour, 8);
     if (now >= end) {
-      const got = c.id === 'A' ? 'older card' : attached ? 'error' : '£20 card';
-      const colour = c.id === 'A' ? '--c0' : attached ? '--miss' : '--cache';
+      // A missed, so it holds no older card and leaves with an error. With its own budget the
+      // load serves B and C; tied to A, it is cancelled at 50 ms and all three receive an error.
+      const failed = attached || c.id === 'A';
+      const got = failed ? 'error' : 'GBP 20.00 card';
+      const colour = failed ? '--miss' : '--cache';
       s += chip(x(end), chipY(lane), got, colour, { size: 18 }) + pulse(t, end / (T * 1.08), x(end), lane.y, colour, 8);
     }
   });
@@ -65,8 +69,8 @@ export const sharedLoad = makeScene({
   draw,
   alt: 'Three callers share one load of P7’s card. Caller A can wait 50 ms, callers B and C 150 ms each.',
   altFor: v => v === 'attached'
-    ? 'The load runs under caller A’s deadline. At 50 ms A leaves with an older card it is permitted, the load is cancelled with it, and B and C receive an error although they could have waited until 170 and 190 ms.'
-    : 'The load has its own 120 ms budget. At 50 ms caller A leaves with an older card it is permitted. The load fills at 100 ms and callers B and C both receive the £20 card: one source read, two fresh cards.',
-  textAlternative: 'Caller A misses P7’s card at 0 ms and can wait 50 ms; caller B joins at 20 ms and caller C at 40 ms, each able to wait 150 ms. When the shared load has its own 120 ms budget, A leaves at 50 ms with an older card its freshness rule permits, the load fills at 100 ms, and B and C receive the £20 card from one source read. When the load runs under A’s deadline instead, it is cancelled at 50 ms and B and C both receive an error.',
-  caption: 'Three callers share one load of P7’s card. Each caller waits only until its own deadline; switch whether the load has its own budget or runs under the first caller’s.',
+    ? 'The load runs under caller A’s deadline. At 50 ms it is cancelled with A, and all three callers receive an error, although B and C could have waited until 170 and 190 ms.'
+    : 'The load has its own 120 ms budget. At 50 ms caller A leaves with an error, since it found no card to fall back on. The load fills at 100 ms and callers B and C both receive the GBP 20.00 card: one source read, two fresh cards.',
+  textAlternative: 'Caller A misses P7’s card at 0 ms and can wait 50 ms; B joins at 20 ms and C at 40 ms, each able to wait 150 ms. With its own 120 ms budget, the load fills at 100 ms, and B and C receive the card from one source read after A has left with an error. Tied to A’s deadline, the load is cancelled at 50 ms and all three receive an error.',
+  caption: 'Three callers share one load of P7’s card, each waiting only until its own deadline. Switch whether the load has its own budget or runs under the first caller’s.',
 });

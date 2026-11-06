@@ -51,6 +51,6 @@ export const recovery = makeScene({
   defaultVariant: 'story',
   draw,
   alt: 'A chart of the share of card requests served from cache in the 20 seconds after Redis restarts empty at peak, with source fills held at 2,000 a second. Demand fills reach 61% after one second, about 80% after five and the normal 94% after about 20. Prewarming all 50,000 cards in catalogue order first reaches only 20% after five seconds and 80% after twenty.',
-  textAlternative: 'The share of card requests served from cache after Redis restarts empty at peak, with fills held at 2,000 a second. With demand fills, the most requested cards come back first: 34% in the first quarter-second, 61% after one second, about 80% after five seconds and the normal 94% after about 20 seconds. Prewarming all 50,000 cards in catalogue order before serving demand restores popularity evenly, 4% a second: 20% after five seconds and 80% after twenty. Simulated, not measured.',
+  textAlternative: 'The share of requests served from cache after Redis restarts empty at peak, with fills held at 2,000 a second. Demand fills bring the most requested cards back first: 61% after one second, about 80% after five and 94% after about 20. Prewarming all 50,000 cards in catalogue order reaches only 20% after five seconds. Simulated, not measured.',
   caption: 'Requests served from cache after Redis restarts empty at peak, with source fills held at 2,000 a second. Demand fills restore the most requested cards first.',
 });

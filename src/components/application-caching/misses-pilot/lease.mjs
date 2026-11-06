@@ -27,18 +27,22 @@ function draw(t, variant, small) {
     const w = Math.max(0, right - x(210));
     s += `<rect x="${x(210)}" y="${L.aQuery - 14}" width="${w}" height="28" rx="6" fill="var(--miss)" opacity=".14"/>`;
     s += `<rect x="${x(210)}" y="${L.bLease - 12}" width="${w}" height="${L.bQuery - L.bLease + 26}" rx="6" fill="var(--miss)" opacity=".14"/>`;
-    if (now >= 360) s += text(x(360) + 10, L.both, '2 computations', { size: small ? 18 : 19, weight: 600, anchor: 'start' });
+    // On desktop the note sits left of the overlap, clear of A's refusal chip on the right.
+    if (now >= 360) s += small
+      ? text(x(360) + 10, L.both, '2 computations', { size: 18, weight: 600, anchor: 'start' })
+      : text(x(210) - 10, L.both, '2 computations', { size: 19, weight: 600, anchor: 'end' });
   }
 
   // Server A
   s += name(L.aName, 'Server A');
-  s += bar(x(0), x(upto(0, 200)), L.aLease, '--c0', 8);
+  // A's lease lasts until it expires at 200 ms, or until A releases it after a timeout.
+  s += bar(x(0), x(upto(0, Math.min(aEnd, 200))), L.aLease, '--c0', 8);
   s += chip(x(100), L.aChip, 'lease tokA', '--c0', { size: 17 });
   s += bar(x(0), x(upto(0, aEnd)), L.aQuery, '--db', 14);
   if (now >= aEnd) {
     s += pulse(t, aEnd / (T * 1.05), x(aEnd), L.aQuery, '--miss', 8);
-    if (timeout) s += chip(x(aEnd) + 8, L.aQuery, 'timeout, release 1', '--miss', { size: 17, anchor: 'start' });
-    else s += chip(W - 6, L.aEnd, 'publish 0, release 0', '--miss', { size: 17, anchor: 'end' });
+    if (timeout) s += chip(x(aEnd) + 8, L.aQuery, 'cancelled, lease released', '--miss', { size: 17, anchor: 'start' });
+    else s += chip(W - 6, L.aEnd, 'publish and release refused', '--miss', { size: 17, anchor: 'end' });
   }
 
   // Server B
@@ -52,7 +56,7 @@ function draw(t, variant, small) {
     s += chip(x(285), L.bChip, 'tokB', '--c1', { size: 17 });
     s += bar(x(210), x(upto(210, 360)), L.bQuery, '--db', 14);
   }
-  if (now >= 360) s += chip(x(360) + 10, L.bQuery, 'publish 1, release 1', '--cache', { size: 17, anchor: 'start' }) + pulse(t, 360 / (T * 1.05), x(360), L.bQuery, '--cache', 8);
+  if (now >= 360) s += chip(x(360) + 10, L.bQuery, 'publishes, releases', '--cache', { size: 17, anchor: 'start' }) + pulse(t, 360 / (T * 1.05), x(360), L.bQuery, '--cache', 8);
 
   // The cached list
   s += name(L.cName, 'Cached list');
@@ -73,10 +77,10 @@ export const lease = makeScene({
   defaultVariant: 'lease',
   actions: [{ value: 'lease', label: 'Lease only' }, { value: 'timeout', label: 'With a source timeout' }],
   draw,
-  alt: 'Server A takes a 200 ms lease to compute the under-£21 list. Server B waits and serves the older list, then takes its own lease when A’s expires.',
+  alt: 'Server A takes a 200 ms lease to compute the list of products under GBP 21.00. Server B waits and serves the older list, then takes its own lease when A’s expires.',
   altFor: v => v === 'timeout'
     ? 'With a 180 ms statement timeout on A’s fill, PostgreSQL cancels A’s query at 181 ms and A releases its own lease. Server B takes a new lease at 210 ms, computes the list alone and publishes it at 360 ms.'
-    : 'Server A’s query stalls until 900 ms, but its lease expires at 200 ms. Server B takes a new lease at 210 ms, so both computations run until B publishes at 360 ms. At 900 ms A’s owner-checked publish and release both return 0, and the cache keeps B’s list.',
-  textAlternative: 'Server A takes a 200 ms lease on the under-£21 list with token tokA and starts its query. Server B finds the lease taken at 10 ms and serves the older list. A’s query stalls until 900 ms, but the lease expires at 200 ms; at 210 ms B takes a new lease with token tokB, computes the list in 150 ms, and publishes and releases at 360 ms. Between 210 and 360 ms two computations run. At 900 ms A’s owner-checked publish and release both return 0, so the cache keeps B’s list. With a 180 ms statement timeout on A’s fill, PostgreSQL cancels A’s query at 181 ms, A releases its own lease, and B’s computation runs alone.',
-  caption: 'Server A’s lease on the under-£21 list expires while its query is still running. The lease bounds A’s permission; add a source-side timeout to bound its work.',
+    : 'Server A’s query stalls until 900 ms, but its lease expires at 200 ms. Server B takes a new lease at 210 ms, so both computations run until B publishes at 360 ms. At 900 ms A’s owner-checked publish and release are both refused, and the cache keeps B’s list.',
+  textAlternative: 'Server A takes a 200 ms lease on the list and starts its query, and at 10 ms Server B finds the lease and serves the older list. A’s query stalls until 900 ms, but its lease expires at 200 ms, so B takes a new lease at 210 ms and publishes at 360 ms while both computations run. At 900 ms A’s owner-checked publish and release are refused, and the cache keeps B’s list. With a 180 ms statement timeout, A’s query is cancelled at 181 ms and B computes alone.',
+  caption: 'Server A’s lease on the list expires while its query still runs. The lease bounds A’s permission; a source-side timeout bounds its work.',
 });

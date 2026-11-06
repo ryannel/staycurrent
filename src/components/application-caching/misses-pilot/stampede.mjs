@@ -1,4 +1,4 @@
-// Figure: computations of the under-£21 list started after its entry expires.
+// Figure: computations of the list of products under GBP 21.00 started after its entry expires.
 // Arrivals every 2.5 ms (400 a second); each miss starts a computation until the
 // first fill lands. Counts follow rate × fill time; the pilot's native run gave 61 and 242.
 import { axis, disc, makeScene, path, pulse, svg, text } from './ink.mjs';
@@ -54,10 +54,10 @@ export const stampede = makeScene({
   defaultVariant: 'base',
   actions: [{ value: 'base', label: '150 ms computation' }, { value: 'slow', label: 'Source slows to 600 ms' }],
   draw,
-  alt: 'A chart of list computations started against time after the under-£21 list expires, with a request every 2.5 ms and no protection. A dashed line marks the 40 fill slots of the whole fleet.',
+  alt: 'A chart of list computations started against time after the list of products under GBP 21.00 expires, with a request every 2.5 ms and no protection. A dashed line marks the 40 fill slots of the whole fleet.',
   altFor: v => v === 'slow'
     ? 'With a 600 ms computation, the count climbs by one every 2.5 ms until the first fill lands at 600 ms: 240 computations, six times the dashed line at 40 fill slots across the fleet.'
     : 'With a 150 ms computation, the count climbs by one every 2.5 ms until the first fill lands at 150 ms: 60 computations, above the dashed line at 40 fill slots across the fleet.',
-  textAlternative: 'A chart of list computations started against time after the under-£21 list expires, at 400 requests a second with no protection. Every request that arrives before the first fill lands starts its own computation, so the count climbs by one every 2.5 ms. With a 150 ms computation it reaches 60 when the first fill lands at 150 ms. With a 600 ms computation it reaches 240 at 600 ms. A dashed line at 40 marks the fill slots of the whole fleet; both counts pass it.',
-  caption: 'Computations of the under-£21 list started after its entry expires, at 400 requests a second with no protection. The count is the arrival rate times the time to the first fill.',
+  textAlternative: 'Computations of the list started after its entry expires, at 400 requests a second with no protection. The count climbs by one every 2.5 ms until the first fill lands: 60 at 150 ms, or 240 when the computation takes 600 ms. A dashed line marks the fleet’s 40 fill slots, and both counts pass it.',
+  caption: 'Computations of the list started after its entry expires, at 400 requests a second. The count is the arrival rate times the time to the first fill.',
 });
