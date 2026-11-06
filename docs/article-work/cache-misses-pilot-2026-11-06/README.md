@@ -136,6 +136,14 @@ Producing the pilot took one planner, one writer, four first-review agents, one 
 three confirming agents and two baseline agents. That is more agent work than the old
 process used for an article.
 
+## Publication
+
+The owner authorised publication on 6 November 2026. The pilot replaced the live article
+at `src/articles/application-caching/cache-misses.astro`. Its figures moved to
+`src/components/application-caching/cache-misses/`, and the preview-only pilot route was
+removed. The previous version remains in git history. The open low findings above are
+unchanged.
+
 ## Observations on the skills
 
 Notes on where the skills helped, misled or were ignored, for the owner's decision on

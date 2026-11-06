@@ -1,5 +1,5 @@
 // Figure: share of card requests served from cache after Redis restarts empty at peak.
-// Demand fills: the pilot's simulation (50,000 cards, Zipf exponent 1, 20,000 requests a
+// Demand fills: the simulation in docs/article-work/cache-misses-pilot-2026-11-06/ (50,000 cards, Zipf exponent 1, 20,000 requests a
 // second over 20 Servers, 2 slots and a queue of 1 per Server, 20 ms fills; quarter-second
 // buckets, plotted at their midpoints). Prewarm: all 50,000 cards in catalogue order at
 // 2,000 fills a second while demand misses wait, so the share grows by 1/25 each second.

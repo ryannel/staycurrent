@@ -1,4 +1,4 @@
-// Figure: a slow lease owner. Times follow the pilot's native run on Redis 7.0.15 and
+// Figure: a slow lease owner. Times follow the native run in docs/article-work/cache-misses-pilot-2026-11-06/ on Redis 7.0.15 and
 // PostgreSQL 16.15 (query durations modelled with pg_sleep): A's 200 ms lease expires while
 // its query runs to 900 ms; B takes a new lease at 210 ms and publishes at 360 ms. With
 // statement_timeout = 180 ms on A's fill, PostgreSQL cancels A's query at 181 ms.

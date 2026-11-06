@@ -1,5 +1,5 @@
 // Figure: three callers share one load of P7's card, each with its own deadline.
-// Times follow the pilot's native run (evidence/go/wrapper-run.txt, no stale copy): A leaves
+// Times follow the native run in docs/article-work/cache-misses-pilot-2026-11-06/ (evidence/go/wrapper-run.txt, no stale copy): A leaves
 // with an error at 50 ms; with a detached load B and C receive the card at about 100 ms;
 // with the load tied to A, all three receive an error at 50 ms.
 import { axis, bar, chip, disc, makeScene, path, phase, pulse, svg, text } from './ink.mjs';

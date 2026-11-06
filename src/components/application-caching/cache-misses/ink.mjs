@@ -1,4 +1,4 @@
-// Ink-and-tokens helpers for the cache-misses pilot figures (docs/figure-style.md).
+// Ink-and-tokens helpers for the cache-misses figures (docs/figure-style.md).
 // Shared role icons come from relational-motion/drawing.mjs; these helpers add the
 // flat discs, value chips, bars and axes the timelines and charts need.
 export const clamp = x => Math.max(0, Math.min(1, x));

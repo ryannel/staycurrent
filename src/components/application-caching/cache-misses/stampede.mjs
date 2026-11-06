@@ -1,6 +1,6 @@
 // Figure: computations of the list of products under GBP 21.00 started after its entry expires.
 // Arrivals every 2.5 ms (400 a second); each miss starts a computation until the
-// first fill lands. Counts follow rate × fill time; the pilot's native run gave 61 and 242.
+// first fill lands. Counts follow rate × fill time; the native run in docs/article-work/cache-misses-pilot-2026-11-06/ gave 61 and 242.
 import { axis, disc, makeScene, path, pulse, svg, text } from './ink.mjs';
 
 const T = 700, MAX = 250, GAP = 2.5;

@@ -114,11 +114,11 @@ identify requests where reuse matters; they do not add product facts or change
 the replay’s byte costs, request order or policy assumptions.
 
 
-## Production scale for Handling cache misses (pilot)
+## Production scale for Handling cache misses
 
-Proposed 6 November 2026 by the cache-misses pilot planner and agreed by the
-coordinator for the pilot only. Other articles do not use these facts until the pilot is
-adopted. The Redis deployment (one primary with a replica) needs confirming with
+Proposed 6 November 2026 by the cache-misses pilot planner, agreed by the coordinator,
+and published with Handling cache misses on 6 November 2026. Other articles have not
+yet been revised to use these facts. The Redis deployment (one primary with a replica) needs confirming with
 Operating a cache before wider use. These are invented facts at a realistic scale, so that real magnitudes fit
 the shop. They are still not measurements of a running service. Where a figure is
 derived, the derivation is in the
