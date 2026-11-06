@@ -104,6 +104,38 @@ optional polish:
 - **Code note.** A one-line note on the per-process caps for keys and waiters would help
   near the Go code.
 
+## Comparison with the live article
+
+The same two-step teach-back ran on the live article, which was written with the earlier
+process. A fresh agent answered from its text alone, and a separate agent marked the
+answers with the same rules.
+
+| Mark | Live article | Pilot |
+| --- | --- | --- |
+| Supported | 2 (Q3, Q9) | 10 |
+| Thin | 5 (Q1, Q2, Q4, Q6, Q7) | 0 |
+| Unsupported | 3 (Q5, Q8, Q10) | 0 |
+
+**Caveat.** The exit questions were written for the pilot's plan, and some of them use
+its production-scale example, which the live article never introduces. That
+disadvantages the live article on Q1, Q2 and Q6.
+
+**The gaps the marker found are about content, not example facts:**
+
+- no rule to estimate with (arrival rate × fill time, when a lease pays off, a retry
+  budget);
+- no code;
+- no XFetch;
+- no popularity model;
+- no name for metastable failure;
+- no guidance on where retries belong, which the live article's own cited Amazon source
+  gives.
+
+**Costs.** Reading text grew from about 3,100 words to about 5,700 (11 to 22 minutes).
+Producing the pilot took one planner, one writer, four first-review agents, one repairer,
+three confirming agents and two baseline agents. That is more agent work than the old
+process used for an article.
+
 ## Observations on the skills
 
 Notes on where the skills helped, misled or were ignored, for the owner's decision on
