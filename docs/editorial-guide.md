@@ -230,8 +230,8 @@ An example or chain of mechanisms can help the author see a possible argument;
 leave room to discover a better one while writing. For an existing article,
 preserve valuable evidence and reconsider the material in light of its purpose.
 
-The current production workflow is defined in `staycurrent-orchestrate`,
-`staycurrent-breakdown`, `staycurrent-write` and `staycurrent-review`. The notes
+The current production workflow is defined in `staycurrent-plan`,
+`staycurrent-write`, `staycurrent-review` and `staycurrent-orchestrate`. The notes
 below record earlier editorial work.
 Use the following questions where they apply to that outcome:
 

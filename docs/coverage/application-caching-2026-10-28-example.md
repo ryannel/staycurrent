@@ -113,3 +113,42 @@ and catalogue (Q). The vase is not the introductory plate (P10). These names
 identify requests where reuse matters; they do not add product facts or change
 the replay’s byte costs, request order or policy assumptions.
 
+
+## Production scale for Handling cache misses
+
+Proposed 6 November 2026 by the cache-misses pilot planner, agreed by the coordinator,
+and published with Handling cache misses on 6 November 2026. Other articles have not
+yet been revised to use these facts. The Redis deployment (one primary with a replica) needs confirming with
+Operating a cache before wider use. These are invented facts at a realistic scale, so that real magnitudes fit
+the shop. They are still not measurements of a running service. Where a figure is
+derived, the derivation is in the
+[dossier](application-caching-2026-10-28-dossier.md) (M11, M13). Nothing above
+changes. The small scenarios for Figures 1, 2 and 6, their two servers and their byte
+widths remain teaching slices. The per-process limits above remain local example
+choices. This section describes the production fleet they were distinguished from.
+
+- **Catalogue.** Shop `north` sells 50,000 products. At this scale, cards are requested
+  in the baseline `en-GB` and `GBP` representation only, so there is one card key per
+  product.
+- **Popularity.** Requests follow a roughly Zipf-like popularity with exponent 1. This
+  is a modelling assumption. P7, the blue mug, is about the seventh most requested
+  product, at about 250 card requests a second at peak. The 1,000 most requested cards
+  receive about two thirds of requests, and the top 5,000 about four fifths.
+- **Traffic and fleet.** At peak, 20,000 product-card requests a second reach 20
+  `Server` instances behind the load balancer, about 1,000 each. `Server A` and
+  `Server B` in the figures are two of them.
+- **Shared cache.** One Redis primary with one replica in the same zone. A lookup
+  round trip has a median of about 0.4 ms. With the 30-second insertion TTL and no
+  early refresh, the steady hit ratio is near 94%, about 1,200 card fills a second.
+- **Card fill.** Three source queries plus assembly, with a median of 20 ms and a p99
+  of about 60 ms at normal load.
+- **Source allowance.** In an invented load test, the PostgreSQL primary sustained
+  about 2,500 card fills a second before checkout missed its latency objective. The
+  card-fill allowance is 2,000 a second across the fleet. Demand fills, refreshes,
+  warm-up reads and retries all count against it. At a 20 ms median that is 40 fills in
+  flight, which is 2 executing slots on each of the 20 instances.
+- **An expensive answer.** North's list of products under GBP 21.00 (first page, 24
+  products) costs about 150 ms of database time to compute. It is requested about 400
+  times a second at peak, because the home page links to it.
+- **Request budget.** A product-card request has 150 ms at the `Server`. A cache
+  command times out after 10 ms.

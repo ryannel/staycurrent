@@ -1,130 +1,227 @@
 ---
-import StoryFigure from '../../components/application-caching/stories/StoryFigure.astro';
+import { Code } from 'astro:components';
+import MissFigure from '../../components/application-caching/cache-misses/MissFigure.astro';
 const { hrefFor } = Astro.props;
+const wrapper = `type Card string // a rendered product card
+
+// Group shares one source load per key among the callers waiting for it.
+type Group struct {
+	sf    singleflight.Group
+	Load  func(ctx context.Context, key string) (Card, error) // recheck cache, read source, fill
+	Stale func(key string) (Card, bool)                      // a copy freshness still permits
+}
+
+func (g *Group) Get(ctx context.Context, key string) (Card, error) {
+	ch := g.sf.DoChan(key, func() (any, error) {
+		// Detach from the first caller, then give the shared load its own budget.
+		lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 120*time.Millisecond)
+		defer cancel()
+		return g.Load(lctx, key)
+	})
+	select {
+	case r := <-ch:
+		if r.Err != nil {
+			return "", r.Err
+		}
+		return r.Val.(Card), nil
+	case <-ctx.Done(): // this caller's deadline: leave without starting another read
+		if c, ok := g.Stale(key); ok {
+			return c, nil
+		}
+		return "", ctx.Err()
+	}
+}`;
+const stampedeActivity = `select wait_event, count(*), min(clock_timestamp() - query_start) as newest,
+       max(clock_timestamp() - query_start) as oldest, left(query, 40) as query
+from pg_stat_activity
+where backend_type = 'client backend' and state = 'active' and pid <> pg_backend_pid()
+group by 1, 5 order by 2 desc;
+
+ wait_event | count |     newest      |     oldest      |                  query
+------------+-------+-----------------+-----------------+------------------------------------------
+ PgSleep    |   233 | 00:00:00.003088 | 00:00:00.584587 | select name || ':' || price_pence /*card`;
+const leaseTrace = `   0 ms  A  SET lease:list:… tokA NX PX 200   -> OK
+  11 ms  B  SET lease:list:… tokB NX PX 200   -> (nil)   serves the older list
+ 212 ms  B  SET lease:list:… tokB NX PX 200   -> OK
+ 364 ms  B  owner-checked publish, release    -> 1, 1
+ 902 ms  A  owner-checked publish, release    -> 0, 0    cache keeps B’s list`;
+const publishCheck = `-- KEYS[1] lease, KEYS[2] list; ARGV[1] token, ARGV[2] list, ARGV[3] ms to the hard limit
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[3])
+  return 1
+end
+return 0`;
 ---
-<p>A cache miss sends a request back to the work the cache was meant to save. One missing product card might cost one database read. A hundred callers arriving before that read finishes can start a hundred copies of it. When the whole cache disappears, the same thing happens across many products at once.</p>
-<p>Handling misses means deciding who starts that work, who waits for it and what happens when there is no room for another read. Sharing a fill helps callers asking for the same answer. A separate source limit is needed when their answers differ. Both must keep working when the cache itself fails.</p>
-<p>We will follow requests for the shop’s mug, then consider what happens when customers ask for different products. The figures use invented timings and limits to expose the decisions; they are not production capacity recommendations.</p>
+<p>A cache miss sends a request back to the work the cache was meant to save. At the shop’s peak, 20,000 product-card requests a second reach 20 <code>Server</code> instances. About 94% of them find a usable card in Redis, and the other 1,200 a second read PostgreSQL, assemble the card and store it again. A load test found that the database could sustain about 2,500 card fills a second before checkout missed its latency objective, so the card cache is allowed 2,000 fills a second.</p>
+<p>That margin is comfortable on an average second. Misses do damage when they arrive together: when a popular entry expires, when Redis restarts empty, or when it becomes unreachable. The source then receives a burst that the average hit ratio never shows, and slowing under it makes the burst last longer.</p>
+<p>Handling misses means deciding what each caller does when its answer is missing. It can start source work or wait for someone else’s, take an older answer that is still permitted or a reduced one, or be refused quickly. Request coalescing, deadlines, early refresh and admission control make those decisions, and they must keep protecting the source when the cache fails.</p>
+<p>Two cached answers carry the examples. Product P7’s card, the blue mug, is requested about 250 times a second and takes 20 ms to fill. Shop north’s list of products under GBP 21.00 is linked from the home page. It is requested about 400 times a second and takes about 150 ms of database time to compute.</p>
 
 <section aria-labelledby="one-expiry">
 <h2 id="one-expiry">One expiry can start many reads</h2>
-<p>Suppose the mug’s cached card has just expired. Caller A misses, starts a source read and waits. Before its fill is ready, caller B misses too. The cache contains no sign that A is already doing the work, so B starts another read. C and D can do the same.</p>
-<p>This is a <strong>cache stampede</strong>: several callers try to rebuild a missing answer at once. The slower the first fill, the longer that opportunity stays open.</p>
-<StoryFigure group="capacity" kind="burst" number={1} />
-<p>Let the four callers arrive twenty milliseconds apart, at 0, 20, 40 and 60 ms. If a fill takes 100 ms, all four start reads before A finishes. If it takes 40 ms, A fills before C’s lookup at the same instant, and C and D hit instead. This ordering assumes a completed fill is available before an arrival at the same time. A faster source has reduced duplicate reads without changing the arrivals.</p>
-<p>The first completed fill does not undo reads already in progress. With the 100 ms source, B, C and D are still consuming source capacity after A has filled the cache. If extra concurrent work also slows the source, the miss window can grow further.</p>
-<p>A daily hit ratio can hide this moment. Suppose the preceding 996 requests were hits and these four were misses. The combined hit ratio is 99.6%, yet all four new source reads overlap. The source needs room for that overlap when it happens, not merely for the average miss count across the day.</p>
+<p>The list has just expired, and the first request misses and starts computing it. The next arrives 2.5 ms later and finds the entry still missing, because nothing in the cache records that the first has begun, so it starts a second computation. So does every request until the first result is stored, 150 ms later. Many callers rebuilding the same missing answer at once is a <strong>cache stampede</strong>, also called a thundering herd or a dog-pile.</p>
+<p>Its size is the arrival rate times the time to the first fill: 400 a second for 0.15 s is 60 computations of the same list. At 20 ms each, the source’s allowance of 2,000 fills a second lets the fleet run 40 card fills at once. Normal misses already keep about 24 of them busy, and one expiry asks for 60 more, each seven times as long.</p>
+<MissFigure kind="stampede" number={1} />
+<p>A run against a disposable PostgreSQL and Redis, with the computation modelled as 150 ms, started 61 queries before the first fill was stored at 151 ms. But the extra computations compete with everything else for processors and disks, so the source slows. If each now takes 600 ms, the window stays open four times as long, and 240 computations start, six times the fleet’s fill slots. A stampede on an expensive key feeds itself.</p>
+<p>With a 600 ms computation the run started 241 queries. About 0.6 s in, PostgreSQL’s active backends looked like this:</p>
+<pre><code>{stampedeActivity}</code></pre>
+<p>Hundreds of active copies of one statement, started one after another over the last 0.6 s, are the signature of a stampede. The wait event is <code>PgSleep</code> only because the run modelled the work with <code>pg_sleep</code>; in production it would be CPU, I/O or a lock.</p>
+<p>The same estimate tells you when to do nothing. P7’s card, at 250 requests a second and 20 ms a fill, costs about five duplicate reads per expiry, and five runs each made six reads in all. A database absorbs that unnoticed.</p>
+<p>A daily hit ratio hides the burst. The list misses 60 of the 12,000 requests in each 30-second TTL, a hit ratio of 99.5%, but those 60 misses arrive together.</p>
 </section>
 
 <section aria-labelledby="share-work">
 <h2 id="share-work">Share the work for one key</h2>
-<p>The server can keep a small map of fills already in progress. The first caller registers a loader under the card’s complete key. Later callers finding that entry wait for the same result. This is <strong>request coalescing</strong>, often called singleflight. For the four arrivals above, one 100 ms read can supply all four answers.</p>
-<p>Sharing removes duplicate source work, but it does not remove the wait for the answer. A popular missing key can still have many callers waiting behind one read.</p>
-<p>The map key must identify the same answer as the cache key. Coalescing on a product ID alone would merge different shops or currencies even if the stored cache keys were correct. <a href={hrefFor('cache-keys')}>Cache keys</a> establishes those distinctions.</p>
-<p>Registering a loader and deciding who owns it must be one indivisible operation within the process. Once it owns the fill, the loader checks the cache again. Another loader or application instance may have filled the entry since the caller’s first lookup. A usable result from that second check avoids another source read.</p>
-<p>When loading ends, pass its result or error to the waiting callers and remove the in-flight entry. Remove only the entry that still belongs to this loader, so old cleanup cannot erase a replacement. A source failure remains a failure; it must not turn into a cached claim that the product is absent. A successful source result can still be returned if the optional cache fill fails.</p>
-<p>Go’s <code>singleflight.Group</code> provides this per-key suppression and result sharing within one group. It does not choose the application’s caller deadlines, waiter limits or source budget. The same separation is useful in other languages: a shared future represents the result, while the surrounding request code decides how long each caller can wait.</p>
+<p>The burst happens because callers cannot see each other’s work. Give each <code>Server</code> a map of loads in progress, keyed by the complete cache key. The first caller to miss registers a load and starts it, and later callers find the entry and wait for its result. When it finishes, every waiter receives its result or its error, and the entry is removed. This is <strong>request coalescing</strong>, also called request collapsing or singleflight, and within one process it turns 60 computations of the list into one.</p>
+<p>Three details make it correct. Checking the map and registering a load must be one atomic step, or two callers can both decide they are first. The load checks the cache again before reading the source, in case another process has stored the answer meanwhile. And the map’s key must identify the same answer as the cache key, or one shop’s caller can receive another shop’s card, as <a href={hrefFor('cache-keys')}>Cache keys</a> explains.</p>
+<p>A failed load passes its error to every waiter. Nobody caches it as “not found”, because a timeout says nothing about whether P7 exists. Some designs remember the failure itself for a second or so, so that callers fail fast instead of each trying a struggling source. DNS resolvers are required to.</p>
+<p>Go’s <code>singleflight</code>, Caffeine’s <code>cache.get(key, loader)</code> and a map of promises elsewhere all share work this way. None decides how long a caller may wait, how long the load may run, or how much source work may start.</p>
 
 <h3 id="bound-wait">Bound the wait as well as the work</h3>
-<p>Callers need separate waiting budgets. Suppose A starts a shared source read at 0 ms and can wait only until 50 ms. B joins at 20 ms and can wait until the read finishes at 100 ms. Tying the loader to A’s cancellation would make B lose work it still needs.</p>
-<StoryFigure group="capacity" kind="waiting" number={2} />
-<p>The caller that times out leaves the waiting group. It cannot escape its deadline by starting another read. Without a permitted old copy or another supported fallback, it receives a failure while the shared read continues for the remaining callers.</p>
-<p>Bound the number of waiters as well as their waiting time. One popular key can otherwise hold thousands of request objects behind one slow loader. Bound the total number of in-flight keys too. A request that cannot join uses whatever fallback its contract permits, or fails promptly. It does not enter an unbounded second queue.</p>
-<p>The loader also needs a work deadline. If its 120 ms budget expires, request cancellation from the source and end its callers’ waits. Cancellation being requested is different from the source confirming it has stopped. Until the operation settles, retain its resource accounting and prevent unrestricted replacement work.</p>
-<p>A source-side execution timeout can help bound that remaining work. A client timer or a closed connection alone may not do so. Where completion cannot be confirmed, the dependency’s own admission limit must remain the final protection. Otherwise repeated client timeouts can release local slots while abandoned queries accumulate at the source.</p>
-<p>If every waiter leaves, the application may cancel the loader or let it finish as a useful fill. Either choice must retain a finite work budget. After a shared failure, immediate retries from every former waiter would recreate the burst; later attempts still need coalescing and admission.</p>
+<p>A card request has 150 ms at the <code>Server</code>, and each caller must be able to leave when its time runs out without harming work that others still need. It can leave with an older card only if the cache still holds one that freshness permits. That needs two limits on each entry, a soft TTL and a hard TTL.</p>
+<p>The hard limit is the last moment the card may be served. It counts from the card’s read at the source and is set as the Redis expiry. The soft limit, the refresh point, is stored in the value with the read time. Between the two, a lookup returns the card marked as due for replacement, and the caller can join a load with the older card in reserve. After the hard limit the lookup misses outright.</p>
+<p>Suppose caller A misses P7’s card at 0 ms and starts a load that will take 100 ms, but A can wait only 50 ms. B joins at 20 ms and C at 40 ms, and each of them can wait 150 ms. In most code the load runs under A’s request context, because A’s handler called it. A’s deadline then cancels the query at 50 ms, and B and C lose an answer that would have arrived at 100 ms.</p>
+<p>So the load gets its own lifetime. It is detached from the caller that started it and given its own budget, here 120 ms, twice the card fill’s 60 ms 99th percentile. Each caller waits for the result or for its own deadline, whichever comes first. A caller whose deadline comes first returns an older card it holds, or an error, and starts nothing. In Go, <code>context.WithoutCancel</code> detaches the load, and <code>DoChan</code> lets each caller wait on its own deadline:</p>
+<Code code={wrapper} lang="go" theme="css-variables" />
+<p>In a run, this wrapper gave B and C the card at 102 ms from one source query. A received an error at 50 ms, or the older card when its lookup had found one. With the load tied to A’s context, all three failed at 50 ms.</p>
+<MissFigure kind="sharedLoad" number={2} />
+<p>The rule that matters most is in the last branch: a caller that gives up never starts its own read. The proxy cache in nginx lets one request fill a missing entry while others wait. When <code>proxy_cache_lock_timeout</code> runs out, though, a waiting request “will be passed to the proxied server, however, the response will not be cached”. Every waiter becomes uncached origin work at exactly the moment the origin is slow.</p>
+<p>When the load’s budget runs out, its waiters receive an error at 120 ms, and the Go client asks PostgreSQL to cancel the query. Asking is not the same as knowing the work has stopped. A cancel request can be lost with a broken connection, and in a run, a client killed one second into an eight-second query left its backend active until the query finished.</p>
+<p>Two PostgreSQL settings, both off by default, bound the work where it runs. <code>statement_timeout</code> cancels any statement that runs past its limit, so give the fill role one shorter than the load’s budget. <code>client_connection_check_interval</code> makes a running query notice a vanished client; at 250 ms it removed the killed client’s backend within a second.</p>
+<p>Bound the numbers too. <code>singleflight</code> limits neither its keys nor its waiters, so cap both per process, and answer a caller that cannot join as if its deadline had passed.</p>
 
 <h3 id="instances">Across application instances</h3>
-<p>Now add a second server behind the shop’s load balancer. Each process has its own in-flight map, so one missing key can have one loader in each server. Two reads may be an acceptable cost for avoiding coordination. With many instances or an expensive fill, sharing ownership across processes may save enough work to justify it.</p>
-<p>A <strong>lease</strong> grants that ownership for a limited time. One process obtains the lease and refreshes; the others wait within their budgets or use a still-permitted copy. Expiry lets another process take over after an owner crashes. It also lets another process take over while a slow owner is still alive.</p>
-<p>Suppose A obtains an eighty-millisecond lease and begins a read that lasts 120 ms. B takes a new lease and starts another read at 90 ms, after A’s lease expires. B’s read finishes at 140 ms. A remains alive and working throughout the handover.</p>
-<StoryFigure group="capacity" kind="lease" number={3} />
-<p>Between 90 and 120 ms, both source reads run. A lease can reduce duplicate work, but it cannot promise that old work has stopped. Its lifetime is a permission recorded in the coordinating store, not a timer inside the database query.</p>
-<p>Use a unique owner token, and check it atomically when publishing a fill or releasing ownership. Once B owns the current lease, A’s old token must not authorise a fill or deletion of B’s lease. A separate check followed by an unconditional write leaves a gap in which ownership can change.</p>
-<p>That guard protects these cache operations only under the chosen store’s guarantees. It does not make the source and cache one transaction, and possession of the lease does not establish that a value is current. <a href={hrefFor('versioned-fills')}>Versioned fills</a> develops conditional publication and its remaining limits. If the lease service is unavailable, fallback work must still pass the source limit developed below.</p>
+<p>The map lives in one process, so each of the 20 <code>Server</code> instances coalesces only its own callers. In the stampede run, 20 groups, each taking every twentieth request, ran 20 list queries for one expiry.</p>
+<p>Whether 20 is acceptable depends on the key. Each <code>Server</code> sees about 12 requests a second for P7’s card, so a 20 ms window rarely holds two of them, and five or so duplicate reads per expiry are not worth coordinating. For the list, 20 computations of 150 ms take half the fleet’s 40 fill slots every 30 seconds. The list earns another mechanism, and the card does not.</p>
+<p>A <strong>lease</strong> gives one process permission to refill a key for a limited time. In Redis, <code>SET lease:&lt;key&gt; &lt;token&gt; NX PX 200</code> succeeds only if no lease exists. The token is random for this attempt, and the lease vanishes after 200 ms if its holder crashes. The winner computes the list, and a loser serves the older list while its hard limit allows. Facebook’s memcache issued lease tokens at most once every ten seconds per key, and on keys prone to herds its peak database load fell from 17,000 queries a second to 1,300.</p>
+<p>A lease saves work; it does not make anything correct. In Martin Kleppmann’s terms it is an efficiency lock, which may occasionally let two holders through at the cost of duplicate work. A correctness lock would need the protected resource itself to refuse an expired holder, and here that job falls to conditional publication.</p>
+<p>The weak point is a slow owner. Server A takes a 200 ms lease and starts the list query, which stalls for 900 ms. At 10 ms, Server B finds A’s lease and serves the older list. A’s lease expires at 200 ms while A is still working, so at 210 ms B wins a new lease and computes the list, which it publishes at 360 ms. For those 150 ms the list is computed twice.</p>
+<MissFigure kind="lease" number={3} />
+<p>At 900 ms A’s query returns, with a list older than B’s. A plain <code>SET</code> would replace B’s list with it, and a plain <code>DEL</code> would remove whatever lease exists by then, perhaps a third <code>Server</code>’s. Both operations must check A’s token atomically, and on Redis 7.0.15 the run printed:</p>
+<pre><code>{leaseTrace}</code></pre>
+<p>With a plain <code>SET</code>, the run ended with A’s older list in the cache. Redis runs a Lua script without interleaving other commands, so each check is a short script:</p>
+<pre><code>{publishCheck}</code></pre>
+<p>The release script deletes the lease on the same condition, which Redis 8.4’s <code>DELEX key IFEQ token</code> does in one command. On Redis Cluster, the lease and the list need a shared hash tag such as <code>{'{list:…}'}</code>, so that the script’s two keys sit in one slot.</p>
+<p>The lease bounded A’s permission, not A’s work: PostgreSQL never heard of it. With a <code>statement_timeout</code> of 180 ms on A’s fill, PostgreSQL cancelled A’s query at 181 ms with <code>ERROR: canceling statement due to statement timeout</code>, and B computed the list alone. Keep that order, with the statement timeout shorter than the load’s budget and the budget shorter than the lease, and keep the token check, since a process can pause between its query and its publish.</p>
+<p>Those values are far too tight for real use. In the slowdown to 600 ms, a 180 ms timeout would cancel every computation, and the list would never refresh. Size all three from the 99th percentile under load, with headroom. Suppose the list’s 99th percentile is about 450 ms. Then a 1 s statement timeout, a 1.2 s budget and a 2 s lease let even a 600 ms computation finish.</p>
+<p>If the source is slower still, refreshes fail, and callers receive the older list until its hard limit and a refusal after it. If the lease store is unavailable, fall back to per-process coalescing through the same admission limit. Treating “no lease service” as “everyone may load” would remove the protection just when the cache tier is in trouble.</p>
 </section>
 
 <section aria-labelledby="early-refresh">
 <h2 id="early-refresh">Refresh while an answer is still usable</h2>
-<p>So far every caller has arrived after expiry. A popular key can avoid that wait by starting its replacement earlier, while the current answer is still allowed. One request triggers the refresh; other requests keep receiving the permitted copy.</p>
-<p>That needs two separate decisions: when to try refreshing, and when the old answer must stop being served. Refreshing does not buy the old answer more time.</p>
-<StoryFigure group="capacity" kind="refresh" number={4} />
-<p>If replacement fails, the current copy can be served only for its remaining allowance. After that, requests must take the miss path. A successful refresh replaces it with an answer whose validity has been established afresh.</p>
-<p><a href={hrefFor('freshness')}>Freshness and invalidation</a> owns that allowance, including any permission to serve stale data during a failure. Early refresh spends some of the available time on replacement work. It cannot invent a stale-serving exception, restart the age of an old observation or ignore an invalidation.</p>
-<p>A request-triggered refresh also avoids refreshing keys nobody reads. A timer that refreshes the mug’s card every twenty-four seconds keeps working even after customers stop looking at mugs. A request-triggered design does no work when the key is unused, but the first request after a long gap may still have to wait.</p>
-<p>Memcached’s meta protocol offers a concrete version of this pattern: early recache can select one requester to refresh an item nearing expiry. Redis applications can build their own refresh ownership. In either case, the application still decides which answer is permissible and how much refresh work can run.</p>
+<p>So far, callers wait for a replacement. A hot entry can instead be replaced before anyone waits: one request starts a refresh while the others keep receiving the current answer, still inside its hard limit.</p>
+<p>The two limits now do separate jobs. The soft limit is when the application starts trying to replace the answer. The hard limit, 30 seconds after the list was read, is the last moment it may be served. A successful refresh stores a new observation with its own 30 seconds. A failed refresh leaves the old answer exactly as old as it was, so refreshing early spends part of the allowance and never extends it.</p>
+<MissFigure kind="refresh" number={4} />
+<p>HTTP calls this <code>stale-while-revalidate</code>. How long an answer may be served is decided in <a href={hrefFor('freshness')}>Freshness and invalidation</a>; early refresh works inside it.</p>
+<p>A fixed refresh point on a hot key brings the stampede back politely. If every request after 25 seconds may refresh, every request before the first refresh lands starts one: 60 again for the list. A fixed point needs coalescing, and for the list a lease.</p>
+<p><strong>Probabilistic early expiration</strong>, published as XFetch by Vattani, Chierichetti and Lowenstein, spreads the decision across the requests. Store the computation time Δ with the value, and let each request refresh early if</p>
+<p class="miss-formula"><code>now − Δ · β · ln(rand()) ≥ expiry</code></p>
+<p>where <code>rand()</code> is uniform between 0 and 1, and β is a tuning factor, 1 by default. Because −ln(rand()) is usually small and occasionally large, refreshes are rare long before expiry and increasingly likely close to it.</p>
+<p>The first refresh starts roughly Δ · β · ln(rate · Δ · β) before expiry. For the list that is 0.15 × ln 60, about 0.6 s, and in 2,000 simulated expiries it was 0.7 s on average. Requests that arrive while it runs may start more, 2.8 refreshes per expiry on average and 11 at the 99th percentile. They come from all 20 <code>Server</code> instances, so per-process coalescing hardly helps; if 11 at once is too many, take the lease before refreshing.</p>
+<p>XFetch needs no coordination and does no work for keys nobody reads, while a timer refreshing all 50,000 cards every 25 seconds would take the whole allowance. Fixed refresh points with jitter are enough when rate × fill time is small, as for P7’s card at about five. XFetch earns its place where that product is large.</p>
 
 <h3 id="jitter">Spread refreshes across keys</h3>
-<p>Suppose a warm-up loads many cards together. Giving each one the same refresh time moves the original burst into a scheduled refresh burst. <strong>Jitter</strong> varies the chosen time so they do not all ask for source work together.</p>
-<p>For entries with the same 30-second serving boundary, a design might choose refresh points between 22 and 26 seconds. Those invented points spread the attempts while preserving the boundary. Varying expiry instead can shorten some lifetimes; adding random time beyond the allowed age would break the freshness promise.</p>
-<p>Jitter separates keys. It does not stop four callers for the mug from arriving at the same instant, so that key still needs coalescing. It also cannot spread an event that removes the whole cache at once. For those misses, we need to limit all the work heading towards the source.</p>
+<p>Jitter solves a different problem: keys written together expire together. If a warm-up fills 10,000 cards in a few seconds, the source sees that warm-up again one TTL later. Choose each key’s refresh point at random inside the allowance, say between 22 and 26 seconds, and never beyond it.</p>
+<p>Jitter separates keys, so it does nothing for the 400 callers of one key. And when Redis restarts empty, neither jitter nor early refresh helps, because there is nothing left to refresh. That needs a limit on all the work sent to the source.</p>
 </section>
 
 <section aria-labelledby="source-budget">
 <h2 id="source-budget">Limit source work across all keys</h2>
-<p>Now suppose each customer asks for a different product. A per-key loader map can combine none of those reads.</p>
-<p>The service needs a budget for all source work, across keys. Consider six different missing cards requested together, each with a 150 ms deadline. Allow two executing source reads and two queued requests. The first two callers start reads, the next two wait, and the last two are refused without starting source work.</p>
-<StoryFigure group="capacity" kind="admission" number={5} />
-<p>A queue is useful only while a request has a chance to finish. Suppose each read takes exactly 100 ms. The first two callers receive answers at 100 ms. The queued callers then have fifty milliseconds left, too little for another read. Refusing them starts no futile work: two reads have answered two callers, and four callers have been refused.</p>
-<p>Real read durations vary. Use measured latency and the remaining request budget to decide whether a queued request has a useful chance of finishing. Remove cancelled and expired requests before execution, and place a bound on queue time. A long queue can make a busy service look accepting while every caller’s deadline runs out inside it.</p>
-<p>Now let every read take 200 ms instead. Even the first two callers time out at 150 ms, and the queued callers leave without starting. The running reads occupy their slots until they settle at 200 ms. The result is two source reads and no on-time product answers. The concurrency limit still protects the source, but cannot guarantee useful responses when it slows.</p>
-<p><strong>Admission control</strong> is this decision about whether to start work. A concurrency limit bounds how much admitted work is running at once. A rate limit bounds starts over time, allowing whatever burst its policy specifies. They answer different questions: fast reads can produce many starts through two slots, while slow reads can accumulate behind a modest start rate.</p>
-<p>A connection pool bounds connections. It may still allow an unbounded queue of callers waiting to acquire them. It can also cover only one application process. Give the request path explicit limits on pending work, execution and time instead of assuming the pool supplies all three.</p>
-<p>Choose the source allowance from measurements of the source under representative load, keeping room for uncached work such as checkout. Refreshes, demand fills, warm-up reads and retries all consume that allowance. Prefer foreground work when background warming would otherwise occupy its last useful slots.</p>
-<p>The allowance must also survive scaling. Two slots in Server A plus two in Server B permit four reads, not two. Ten such processes permit twenty. A fleet can divide a fixed allowance among instances, use a shared admission service, or rely on a source-side limit with local protection. Each design needs a defined behaviour when coordination fails; “allow everything” would discard the protection at the moment it is needed.</p>
-<p>Source-work admission differs from deciding whether a completed result deserves cache space. The read may be worth answering even when its result is too large or rarely reused to retain. <a href={hrefFor('cache-memory')}>Cache memory</a> owns that second decision.</p>
+<p>Coalescing combines callers of one key, but after a cold restart most misses are for different cards. In a simulation of the shop, with 50,000 cards of Zipf-like popularity, per-process coalescing absorbed about one miss in eight, and perfect fleet-wide coalescing a third. Something must cap the rest.</p>
+<p>The cap that protects the source is concurrency: how many fills run at once. By Little’s law, fills in progress equal their start rate times their mean duration. At 2,000 fills a second and about 20 ms each, that is 40 fills in flight, or 2 executing slots on each <code>Server</code>. The law needs the mean, and the 60 ms 99th percentile pulls the mean above the median. So 40 slots deliver somewhat fewer than 2,000 fills a second, which errs on the safe side.</p>
+<p>A <code>Server</code> whose two slots are busy holds at most one more request in a waiting place, within Google’s SRE advice to keep queues no longer than half the workers. When that request reaches a slot, check its remaining deadline again, and refuse it if the time left no longer covers a fill. A request that finds the slots and the waiting place full is refused at once. Deciding whether to start work at all is <strong>admission control</strong>.</p>
+<p>A concurrency limit keeps protecting a source that slows. If fills slow to 40 ms, the 40 slots complete 1,000 a second, and at 200 ms only 200. The slower the source, the less it receives. A rate limit of 2,000 starts a second keeps admitting 2,000 however long each takes, which at 200 ms is 400 fills in flight. Demand fills, refreshes, warm-up reads and retries all count against the same allowance.</p>
+<p>Refuse quickly. A rejection that takes a millisecond costs almost nothing, while a queue that holds a request for 140 ms and then times out spends the caller’s whole budget. Every refused caller still needs an answer defined in advance, in this order of preference:</p>
+<ul>
+<li><strong>A copy that freshness still permits</strong>, from Redis or from the copies each <code>Server</code> keeps of cards it served recently. A local copy keeps the hard limit of the read it came from.</li>
+<li><strong>A reduced card</strong>: the name and picture, with the price marked as temporarily unavailable. Never GBP 0.00 or “product not found”, which are different answers. Checkout still reads the authoritative price.</li>
+<li><strong>A fast refusal</strong>, such as HTTP 503, that callers are told not to retry.</li>
+</ul>
+<p>Per-<code>Server</code> limits add up, so recheck them whenever the fleet changes. At 30 instances, 2 slots each admit 60 fills in flight, or 3,000 a second, past the 2,500 at which checkout failed. Divide the 40 slots again, which rounds down to 1 per instance, or share one limiter across the fleet, or enforce the limit at the source.</p>
+
+<h3 id="pools">A connection pool is not admission control</h3>
+<p>Suppose a teammate proposes a 50-connection pool on each <code>Server</code> and no other limit. Across 20 instances that permits 1,000 connections, ten times PostgreSQL’s default <code>max_connections</code> of 100. The pools themselves never make anyone wait. When fills slow from 20 ms to 200 ms, the normal 1,200 misses a second need 240 fills in flight. That is about 12 per <code>Server</code>, well inside a pool of 50.</p>
+<p>The database’s limit fails first. PostgreSQL 16 reserves 3 of its 100 connections for superusers. Once the pools hold about 5 connections per <code>Server</code>, the fill role’s 98th connection is refused with <code>FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute</code>. Callers needing a new connection get that error at once, with no defined fallback, and retry layers multiply it. The 97 open connections carry more than twice the 40 fills the source can sustain. Raising <code>max_connections</code> to stop the errors lets the database run all 240 at once, six times what it can carry.</p>
+<p>Admission limits act before any of this. Two slots and a waiting place per <code>Server</code>, recomputed for 30 instances, refuse the excess in a millisecond with a defined answer. The pool then needs room only for those fills and the <code>Server</code>’s other queries.</p>
+
+<h3 id="batching">Batch distinct misses</h3>
+<p>Coalescing cannot combine different keys, but one request can miss many. When the list page finds 8 of its 24 cards missing, one query with <code>WHERE id = ANY($1)</code> fetches all eight, which is the DataLoader pattern. Count the batch against the allowance by its cost.</p>
 </section>
 
 <section aria-labelledby="cache-unavailable">
 <h2 id="cache-unavailable">When the cache is unavailable</h2>
-<p>A missing key is a successful cache lookup with no entry. A cache timeout says something else: the application could not establish what was stored. Both can leave it without an answer, but they need different observations and the timeout has already spent some of the caller’s time.</p>
-<p>Suppose a request has a 150 ms budget. Its cache attempt consumes 20 ms before failing. There are at most 130 ms left for source admission, the source read and the response. Giving the source a new 150 ms budget would silently extend the request’s promised wait.</p>
-<div class="cache-table-scroll"><table>
-<caption>The same cache failure, with different remaining options</caption>
-<thead><tr><th scope="col">After the failed lookup</th><th scope="col">What the caller receives</th><th scope="col">Source work</th></tr></thead>
-<tbody>
-<tr><th scope="row">A valid local copy remains</th><td>The copy, if its age and other validity checks still permit it.</td><td>None for this answer.</td></tr>
-<tr><th scope="row">A source slot and enough time remain</th><td>The source answer if the read succeeds in time.</td><td>One admitted read, possibly shared.</td></tr>
-<tr><th scope="row">No useful source attempt can be admitted</th><td>An explicitly supported reduced result, or a timely failure.</td><td>No new read.</td></tr>
-</tbody>
-</table></div>
-<p>For the shop, a reduced catalogue view might omit a price and say that it is temporarily unavailable. That is an application feature with its own meaning. Returning GBP 0.00 or claiming the mug does not exist would invent a different answer. Checkout still uses its authoritative transaction and stock checks.</p>
-<p>Bound cache-call time and pending cache requests so a stalled cache cannot hold the entire application waiting. If repeated failures trigger a temporary bypass, let a small number of probes check for recovery. The bypass avoids repeated cache waits; every resulting source request still uses the normal source allowance.</p>
-<p>Retries are additional attempts. A cache retry consumes remaining time, and a source retry consumes more source work. Keep attempts within the overall deadline and the same admission rules. Backoff and jitter can spread permitted retries, but cannot create capacity. Retrying at several layers can multiply attempts before the application sees a final failure.</p>
-<p>The concrete client configuration, connection lifetime and optional-fill behaviour belong to <a href={hrefFor('redis')}>Caching with Redis</a>. The design requirement here survives any choice of client: losing the cache must not remove the limit on work sent to the source.</p>
+<p>Treating every failed lookup as a miss confuses two events. A miss is an answer: the key is not there. A timeout says nothing about the key and has already spent time, so after a 10 ms Redis timeout a source read gets only the 140 ms that remain. Give cache calls their own timeouts and cap how many may be pending, so that a stalled cache cannot hold every <code>Server</code> waiting.</p>
+<p>Then count the work. With a hit ratio h, the source receives the fraction 1 − h of requests. Without the cache it receives them all, 1 / (1 − h) times as many. At 94% that is about 17 times, so 1,200 fills a second become 20,000 attempts. Per-process coalescing joins about 2,300 of them to fills already running, which leaves about 17,700 a second, nearly nine times the allowance.</p>
+<p>A better cache makes this worse. Bronson and colleagues, who named metastable failures, use a 90% hit ratio. The application then serves ten times what the database could, but only while the cache is warm. At 99% the factor is 100.</p>
+<p>Admission still sends the source its 2,000 fills a second. They answer 10% of requests, and callers who joined them on popular cards add about 2%, so in the simulation about 12% received a full card.</p>
+<p>Local copies do much better. The 1,000 most requested cards carry two thirds of all requests. Keeping them within their 30 seconds on 20 instances costs 20 × 1,000 ÷ 30, about 670 fills a second, a third of the allowance. In the simulation those copies answered 66% of requests, and the remaining 1,330 fills a second another 7%. So about 72% received a usable card, and the rest a reduced card or a refusal.</p>
+<p>When one of many cache servers fails, Facebook’s memcache sends its keys to a small gutter pool of spare servers, rather than rehashing its hot keys onto the survivors.</p>
+<p>After repeated failures, a <code>Server</code> may stop calling the cache and send a few probes to detect its recovery, saving the 10 ms timeout on each request. This is a circuit breaker; AWS warns that its two modes make behaviour hard to test, so test both.</p>
+
+<h3 id="retries">Retries multiply the work</h3>
+<p>Suppose the card loader, its database client and the edge proxy each make up to three attempts. In a source brownout every layer sees failures, and each attempt becomes up to three at the next layer down. One request for one card can then cause 3 × 3 × 3 = 27 source queries. AWS’s five-layer version of the example reaches 3⁵ = 243 times the database load.</p>
+<p>Retry at one layer: the loader, which knows the remaining deadline and sends every attempt through coalescing and admission. Configure the client and the proxy not to retry these reads, and let the loader make its three attempts only while the deadline allows.</p>
+<p>Budget retries across requests too, because a per-request cap still triples the load when everything fails. Google’s SRE book retries only while retries stay under 10% of requests. The AWS SDKs take retries from a 500-token bucket that successes refill. A brownout’s timeouts and server errors are transient errors, which cost 14 tokens a retry, so about 35 failed retries empty it. Mark admission refusals and overload errors as not retryable. Backoff and jitter spread retries out, but they create no capacity.</p>
 </section>
 
 <section aria-labelledby="cold-recovery">
 <h2 id="cold-recovery">Return from a cold cache</h2>
-<p>The cache starts responding again, but it is empty. Connectivity has recovered; useful hits have not. Sending every waiting request to the source at once would create a burst across the whole catalogue, with little repeated work to combine.</p>
-<p>Demand-driven fills rebuild entries that callers actually need. Coalescing combines repeated requests for each card, and source admission controls how many different cards can be loaded. Later requests benefit as those fills complete.</p>
-<p>A small warm-up can help when recent demand identifies useful keys. It must share the same source budget. With two slots, one background warm-up read leaves one slot for a foreground miss; two background reads leave none until one finishes. Warming the entire catalogue can delay users and fill memory with cards they never request.</p>
-<p>Restore traffic or application instances gradually. At each increase, check useful responses, source execution and source latency together. Stop the increase when the source approaches its tested allowance or successful requests cease to finish in time. A successful <code>PING</code> says the store responds; it says nothing about the working set or the application’s ability to serve it.</p>
-<p>Exercise the complete request path with the cache disabled as well as empty. A slow popular fill, a failed refresh and simultaneous misses on different keys test different parts of the design.</p>
+<p>Redis restarts empty at peak. Every request misses, admission holds fills at 2,000 a second, and at first nine requests in ten receive a fallback. Recovery is quick because popularity is skewed. The most requested cards are among the first filled, and each fill turns every later request for that card into a hit. In the simulation, 61% of requests were hits after one second, 70% after two and about 80% after five.</p>
+<p>The 1,000 most requested cards serve two thirds of requests and need at least half a second of fills. Under demand fills, 500 of them were back within 0.8 s, 900 within 2.6 s and all of them by about 8 s. The simulation models no expiry, which hides a second wave: cards filled together expire together 30 seconds later, unless their refresh points are jittered.</p>
+<MissFigure kind="recovery" number={5} />
+<p>Prewarming all 50,000 cards first would be slower. At 2,000 fills a second, the warm-up holds the whole allowance for 25 seconds. In catalogue order it restores 4% of requests each second, so 20% after five seconds, against 80% from demand fills. A targeted warm-up does help: yesterday’s 2,000 most requested cards take one second and restore about 70% of hits. Give a warm-up a share of the allowance, and let demand misses come first.</p>
+<p>Bring traffic back the same way, in steps, watching two measurements. Source fill latency should stay near its normal 20 ms median and 60 ms 99th percentile, and admitted source work below 40 fills in flight, with refusals falling. Stop when either fails. In Slack’s February 2022 incident, a first step overloaded the database again, and the team raised the limit “by smaller increments”.</p>
+
+<h3 id="metastable">When the cache cannot refill itself</h3>
+<p>Ten minutes after a cache failover, the hit ratio is flat at 31% and database CPU is at 100%. <code>pg_stat_activity</code> lists 90 identical card queries, the oldest running for 4.8 s against an application timeout of 1 s. Almost no fills succeed, and the loader records 2.7 source attempts per request.</p>
+<p>This is a <strong>metastable failure</strong>: the trigger, the cold cache, has passed, but a loop keeps the system failed. The low hit ratio overloads the database, so queries take longer than 1 s, and the application gives up before any fill stores its answer.</p>
+<p>The abandoned queries keep running, and each is replaced by a retry, so the database does nearly three times the work of the requests it is failing. Load falling back to normal would not cure it, and a study of real metastable failures found retries sustaining more than half of them. Two changes break the loop:</p>
+<ol>
+<li><strong>Stop the amplification.</strong> Turn off retries outside the loader, budget them inside it, and put the admission limit in front of the database. Admitted fills then finish in their normal 20 ms and store their answers, and the hit ratio starts to rise.</li>
+<li><strong>Stop abandoned work at the source.</strong> Set the fill role’s <code>statement_timeout</code> no longer than the application’s budget, so that queries nobody is waiting for are cancelled.</li>
+</ol>
+<p>Then raise traffic in steps. Without an admission limit, the emergency equivalent is shedding load at the edge. In Facebook’s 2010 outage, a configuration check treated database errors as invalid values and deleted cached keys, and the site was turned off to break the loop.</p>
+</section>
+
+<section aria-labelledby="exercise">
+<h2 id="exercise">Exercise the whole design</h2>
+<p>Each mechanism has a failure it exists for, so cause each failure on purpose, with the cache disabled as well as empty:</p>
 <div class="cache-table-scroll"><table>
-<caption>What each failure should leave visible</caption>
+<caption>What each rehearsal should show</caption>
 <thead><tr><th scope="col">Change</th><th scope="col">Expected observation</th></tr></thead>
 <tbody>
-<tr><th scope="row">Slow one popular fill</th><td>Waiters combine behind bounded work. A caller leaving does not free an occupied source slot.</td></tr>
-<tr><th scope="row">Fail an early refresh</th><td>The old answer’s last allowed serving time stays fixed.</td></tr>
-<tr><th scope="row">Miss on many distinct keys</th><td>Execution and waiting stay bounded. Rejected callers start no source work.</td></tr>
-<tr><th scope="row">Lose the cache and its lease service</th><td>Fallback retains source admission and each caller’s remaining deadline.</td></tr>
-<tr><th scope="row">Recover empty and start warming</th><td>Warm-up competes within the declared allowance; useful hits return without an uncontrolled source burst.</td></tr>
+<tr><th scope="row">Slow the list’s computation</th><td>One load per key per <code>Server</code>, or one per fleet with the lease. Callers leave at their deadlines without starting reads; the statement timeout ends the query.</td></tr>
+<tr><th scope="row">Fail an early refresh</th><td>The older answer is served until its hard limit, and not after.</td></tr>
+<tr><th scope="row">Miss on many distinct keys</th><td>Fills in flight stay within the fleet limit; refused callers receive the defined fallback within milliseconds.</td></tr>
+<tr><th scope="row">Make Redis unreachable</th><td>Source work stays inside the allowance; the lease falls back to per-process coalescing.</td></tr>
+<tr><th scope="row">Restart Redis empty</th><td>Hits return in popularity order; warm-up and retries spend the same allowance.</td></tr>
 </tbody>
 </table></div>
-<p>Count useful replies, rejected requests and actual source work separately. Fast rejection can lower an overall latency average while fewer customers get product cards. A client-side timeout can make the request count fall while source work is still running. These are different outcomes and need different counters.</p>
-<p>The request path now has a place for every caller: a permitted hit, a bounded shared wait, an admitted source read or a defined fallback. <a href={hrefFor('operating-caches')}>Operating a cache</a> uses those paths and observations to plan a rollout, diagnose a failure and control recovery.</p>
+<p>Count useful replies, fallbacks, refusals and source work separately. Otherwise fast refusals flatter the latency while fewer customers receive cards.</p>
+</section>
+
+<section aria-labelledby="numbers">
+<h2 id="numbers">Where the numbers come from</h2>
+<p>The shop’s production scale is invented at realistic magnitudes and describes no running service. The runs used a disposable PostgreSQL 16.15 and Redis 7.0.15 with Go 1.24.7 on 6 November 2026. Their queries used <code>pg_sleep</code> to model the work, so durations were chosen, while counts, states, errors and replies were observed. The XFetch figures come from 2,000 simulated expiries, and the outage and recovery shares from a simulation of the example. They show orders of magnitude, not predictions.</p>
 </section>
 
 <section class="essay-sources" aria-labelledby="sources">
 <h2 id="sources">Sources and further reading</h2>
 <ul>
-<li><a href="https://pkg.go.dev/golang.org/x/sync/singleflight">Go: singleflight</a> defines duplicate suppression within a Group and the shared result. Caller and source budgets remain application decisions.</li>
-<li><a href="https://docs.memcached.org/protocols/meta/#early-recache">Memcached: meta protocol, early recache</a> shows request-triggered refresh ownership and conditional updates. Its preceding stampede section covers ownership on a miss.</li>
-<li><a href="https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/">Redis: distributed locks</a> explains expiring ownership, unique tokens and owner-checked release on a single instance, including the limits of asynchronous failover. The lease trace here does not implement or analyse Redlock.</li>
-<li><a href="https://aws.amazon.com/builders-library/caching-challenges-and-strategies/">Amazon Builders’ Library: Caching challenges and strategies</a> discusses cache dependence, cold starts and testing without the cache.</li>
-<li><a href="https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/">Amazon Builders’ Library: Using load shedding to avoid overload</a> develops useful completed work, overload testing and the danger of mixing quick failures into successful-request latency.</li>
-<li><a href="https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/">Amazon Builders’ Library: Timeouts, retries, and backoff with jitter</a> explains finite waiting, extra work from retries and spreading correlated attempts.</li>
+<li>Vattani, Chierichetti and Lowenstein, <a href="https://www.vldb.org/pvldb/vol8/p886-vattani.pdf">Optimal Probabilistic Cache Stampede Prevention</a>, PVLDB 8(8), 2015: stampede size, XFetch and its parameter β.</li>
+<li>Nishtala et al., <a href="https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf">Scaling Memcache at Facebook</a>, NSDI 2013, sections 3.2.1 and 3.3: leases against thundering herds, the 17,000 to 1,300 queries a second, and the gutter pool.</li>
+<li>Go, <a href="https://pkg.go.dev/golang.org/x/sync/singleflight">singleflight</a> and <a href="https://pkg.go.dev/context#WithoutCancel">context.WithoutCancel</a>.</li>
+<li>Caffeine, <a href="https://github.com/ben-manes/caffeine/wiki/Refresh">Refresh</a>: <code>refreshAfterWrite</code> and atomic loading per key.</li>
+<li>nginx, <a href="https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_cache_lock_timeout">proxy_cache_lock_timeout</a>: what a cache lock does with waiters when it times out.</li>
+<li>Redis, <a href="https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/">Distributed locks with Redis</a>, and the <a href="https://redis.io/docs/latest/commands/set/">SET</a> and <a href="https://redis.io/docs/latest/commands/delex/">DELEX</a> commands: single-instance leases, owner-checked release and the 8.4 conditional options.</li>
+<li>Martin Kleppmann, <a href="https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html">How to do distributed locking</a>, 2016: efficiency and correctness locks.</li>
+<li>PostgreSQL, <a href="https://www.postgresql.org/docs/current/runtime-config-client.html">client connection defaults</a> (<code>statement_timeout</code>) and <a href="https://www.postgresql.org/docs/current/runtime-config-connection.html">connections</a> (<code>client_connection_check_interval</code>, <code>max_connections</code>, <code>superuser_reserved_connections</code>).</li>
+<li>Netflix, <a href="https://github.com/Netflix/concurrency-limits">concurrency-limits</a>: concurrency limits from Little’s law and measured latency.</li>
+<li>Google, <em>Site Reliability Engineering</em>, <a href="https://sre.google/sre-book/handling-overload/">Handling Overload</a> and <a href="https://sre.google/sre-book/addressing-cascading-failures/">Addressing Cascading Failures</a>: retry budgets, queue sizes and deadlines. The latter cites Maurer’s “Fail at Scale” for Facebook’s adaptive queues.</li>
+<li>Amazon Builders’ Library: <a href="https://aws.amazon.com/builders-library/caching-challenges-and-strategies/">Caching challenges and strategies</a>, <a href="https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/">Using load shedding to avoid overload</a> and <a href="https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/">Timeouts, retries, and backoff with jitter</a>. The AWS SDK <a href="https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html">retry behaviour</a> describes its token bucket and the cost of transient and throttling retries.</li>
+<li>Bronson, Aghayev, Charapko and Zhu, <a href="https://sigops.org/s/conferences/hotos/2021/papers/hotos21-s11-bronson.pdf">Metastable Failures in Distributed Systems</a>, HotOS 2021; Huang et al., <a href="https://www.usenix.org/system/files/osdi22-huang-lexiang.pdf">Metastable Failures in the Wild</a>, OSDI 2022.</li>
+<li>Wessels, Carroll and Thomas, <a href="https://www.rfc-editor.org/rfc/rfc9520">RFC 9520: Negative Caching of DNS Resolution Failures</a>, 2023: resolvers cache a resolution failure for at least one second and at most five minutes.</li>
+<li>Slack, <a href="https://slack.engineering/slacks-incident-on-2-22-22/">Slack’s Incident on 2-22-22</a>; Facebook, <a href="https://engineering.fb.com/2010/09/23/uncategorized/more-details-on-today-s-outage/">More details on today’s outage</a>, 2010.</li>
+<li>On this site: <a href={hrefFor('freshness')}>Freshness and invalidation</a> for serving allowances, <a href={hrefFor('versioned-fills')}>Versioned cache fills</a> for conditional publication, <a href={hrefFor('redis')}>Caching with Redis</a> for client deadlines, and <a href={hrefFor('operating-caches')}>Operating a cache</a> for rollouts and diagnosis.</li>
 </ul>
-<p>The figures are executable or drawn teaching traces, not observations of Redis or a database. Their fixed service times expose ordering and resource accounting; they do not predict throughput or latency percentiles.</p>
 </section>

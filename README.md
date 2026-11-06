@@ -138,26 +138,24 @@ agents, the limits of human oversight and the editorial disclaimer.
 `AiDisclosure.astro` supplies the footer icon; `AiTextDisclosure.astro` supplies
 the text link through `TitleLine.astro` and directly where there is no title line.
 
-Seven skills in `.agents/skills/`, symlinked from `.claude/skills/`, define production:
-`staycurrent-orchestrate`, `staycurrent-breakdown`, `staycurrent-write`,
-`staycurrent-figures`, `staycurrent-continuity`, `staycurrent-revise` and
-`staycurrent-review`. They take an intelligent newcomer to expert practitioner,
-optimising useful understanding against reader time and effort. The orchestrator
-builds a provisional recursive article tree and reviews the complete learning route
-once, then uses fresh planners and writers for the articles. Independent first
-readers cover technical accuracy, teaching, writing and rendered behaviour.
-Accepted substantive problems are repaired and confirmed in context, retaining
-unaffected checks; later repairs may reuse a worker or be checked by the coordinator.
-The assembled collection receives one coverage and reading-route check using the
-article reviews already completed. The review skill owns the completion rule and
-when a later change invalidates an earlier judgement.
+Four skills in `.agents/skills/`, symlinked from `.claude/skills/`, define production:
+`staycurrent-plan`, `staycurrent-write`, `staycurrent-review` and
+`staycurrent-orchestrate`. They take an intelligent newcomer to expert practitioner,
+optimising useful understanding against reader time and effort. Planning starts with
+an expert dossier: the vocabulary, sources, magnitudes, tools, failures and
+misconceptions an expert knows. Articles and their exit questions are derived from it.
+Writers aim at the exit questions and follow `docs/figure-style.md` for figures.
+Each article gets three independent review lenses: a teach-back check, in which a
+fresh agent answers the exit questions from the article alone; a senior-practitioner
+review; and a reader-and-visual review. Accepted problems are repaired and confirmed
+in context. The assembled collection receives one coverage and reading-route check.
+Earlier versions of the skills are in git history; the last seven-skill suite is at
+commit `0bd84e6`. The reasons for the change are in `docs/reviews/process-review-2026-11-05/`.
 
-Each collection keeps one running-example record beside its tree in `docs/coverage/`.
-The five perspective files fix their inputs and checks in
-`.agents/skills/staycurrent-review/perspectives/`. Article and heading nodes use
-the singular `heading` list and `nested_article` child stubs. Applicable mechanical
-evidence can be reused; fresh reader judgement and current rendered-media checks
-remain separate. Reviewed drafts require publication authorisation.
+Each collection keeps its dossier and one running-example record beside its tree in
+`docs/coverage/`. Article and heading nodes use the singular `heading` list and
+`nested_article` child stubs, with `exit_questions` on each article. Reviewed drafts
+require publication authorisation.
 
 The three chosen writing and teaching examples are fixed at their pre-rewrite
 revision in `src/reference-articles/`: Sequence diagrams, Indexes, and Storage and
@@ -167,7 +165,8 @@ durability. To read their interactive pages, run
 excluded from normal builds. Source import paths and internal links are adapted
 for their new locations; the explanations and figures are preserved.
 
-Earlier skills are preserved in `docs/history/skills-before-2026-10-19/`. The
+Earlier skills are in git history: the suite from before 19 October 2026 can be read at
+commit `adcbf60` under `docs/history/skills-before-2026-10-19/`. The
 [editorial guide](docs/editorial-guide.md), [writing history](docs/writing-style.md),
 [illustration notes](docs/illustration-style.md) and earlier coverage proposals
 remain records of their work, rather than automatic additions to a worker's prompt.

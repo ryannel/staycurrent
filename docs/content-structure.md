@@ -150,12 +150,12 @@ site section or a replacement for article-local sources.
 a parked idea. Explaining a necessary database mechanism does not activate that
 programme. Its eventual home and scope need a separate decision.
 
-## Production workflow, 19 October 2026
+## Production workflow, 5 November 2026
 
-Use `staycurrent-orchestrate` for the requested planning and writing stages.
-`staycurrent-breakdown` plans one article and returns child briefs for recursion;
-`staycurrent-write` follows the three fixed example articles; and
-`staycurrent-review` provides the appropriate independent perspectives. The
+Use `staycurrent-orchestrate` for a multi-article commission. `staycurrent-plan`
+researches the expert dossier and derives the article tree and exit questions;
+`staycurrent-write` writes, repairs and illustrates an article; and
+`staycurrent-review` provides the teach-back, practitioner and reader lenses. The
 orchestrator maintains the complete tree and reconciles corpus-wide changes.
 
 The earlier coverage reasoning above remains historical context. It does not
