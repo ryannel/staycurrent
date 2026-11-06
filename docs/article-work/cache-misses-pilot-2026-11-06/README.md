@@ -72,6 +72,38 @@ compiled binary is left out.
 | 12 | Negative caching of failed fills, from the best-alternative comparison (practitioner) | Low | Accept as one sentence. |
 | 13 | Missing counters and adaptive throttling (practitioner) | Low | Decline. Length matters more; Operating a cache owns the counters. |
 
+### Repair and confirmation
+
+A fresh agent repaired findings 1–12 in commit `e73bf54`. Reading text fell from about
+7,400 to about 5,700 words, every exit question is still answered, and Figure 5 was
+removed. The new evidence is under `evidence/`. That includes the connection limit
+observed on PostgreSQL 16: an ordinary role is refused at the 98th connection with
+"remaining connection slots are reserved for roles with the SUPERUSER attribute".
+
+Two fresh checks followed:
+
+- **Teach-back, rerun from scratch.** One agent answered from the repaired text alone and
+  another marked the answers. All 10 questions were Supported (8 of 10 before repair),
+  with the arithmetic rederived and the PostgreSQL and AWS figures checked against their
+  documentation.
+- **Informed confirmation.** One agent confirmed each finding against its fix and read the
+  whole article for seams. All 12 accepted findings were confirmed, with no new critical
+  or medium problems.
+
+Review is therefore done, as the review skill defines it. These low findings stay open as
+optional polish:
+
+- **N1.** A leftover phrase, "recomputed for 30 instances", in the 20-instance pool
+  scenario.
+- **N2.** Soft and hard limits are defined a second time in the refresh section.
+- **N3.** "66% plus 7%" is followed by "about 72%" (unrounded, 65.7% + 6.7%).
+- **N4.** "Metastable failure" is used before its definition.
+- **N5.** Figure 3's "2 computations" label sits beside the overlap rather than on it at
+  desktop width.
+- **Question wording.** Exit question 6 could say "with no local copies".
+- **Code note.** A one-line note on the per-process caps for keys and waiters would help
+  near the Go code.
+
 ## Observations on the skills
 
 Notes on where the skills helped, misled or were ignored, for the owner's decision on
@@ -90,3 +122,29 @@ adopting them.
   practice, and nothing on how "realistic scale" fits an existing toy example.
 - **Tools.** The fetch tool failed for several hosts that the shell's proxy reached. The
   skills could note that agents may fetch sources with `curl` through the proxy.
+- **Write, helped.** Reading the article with every figure removed, the dense-prose check on
+  one page, and the voice guide's weak and strong pairs all helped. The writer produced
+  real output, run code and six figures in the house style.
+- **Write, unclear.**
+  - The skill points to `AGENTS.md`, but Claude reads `CLAUDE.md`.
+  - The figure-style colour tokens are not defined site-wide.
+  - The shared drawing library still draws glossy tokens.
+  - `MotionFigure` cannot load figures from new folders without a shared-code change.
+  - Most of the figure work went on label collisions that an automatic overlap check
+    would catch.
+- **Write, length.** The first draft ran to 7,400 words. Nothing in the skill weighs the
+  expert content it asks for against reader time, and only review caught it. Plan or
+  write should set a length budget from the exit questions and neighbouring articles.
+- **Repair, misled.** "Make the smallest change that still reads as one piece" does not fit
+  a repair that must also cut 25%; it took three passes. The skill also gives no
+  definition of "reading text" for word counts.
+- **Voice and density pull against each other.** The voice guide's 27–28-word sentences
+  conflict with the dense-prose check, which capped the rise at about one word a
+  sentence. One of the two should give way.
+- **Review, helped.** Two lenses independently caught each of the three biggest
+  problems. The teach-back separated "reads well" from "teaches the answer": two questions
+  failed on a fluent first draft. The practitioner lens's best-alternative question gave a
+  clear verdict ("would send a new hire here instead") and surfaced negative caching.
+- **Review, process.** The skill says findings are recorded, but the full lens reports are
+  long. The coordinator kept a findings table here and put the detailed repair brief
+  outside the repository.
