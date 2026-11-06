@@ -26,6 +26,25 @@ The pilot is done when the plan is complete, the article passes its teach-back c
 accepted critical and medium findings are repaired and confirmed, the preview build
 passes, and the owner has the live and pilot versions to compare.
 
+## Plan decisions
+
+The plan was written by a fresh agent with `staycurrent-plan`. It comprises the
+[dossier](../../coverage/application-caching-2026-10-28-dossier.md), ten exit questions on
+the `cache-misses` node of the tree, and a production-scale section in the example record.
+The coordinator spot-checked the Redis 8.4 `DELEX … IFEQ` claim against redis.io. The
+planner's open questions were decided as follows:
+
+1. **Batching distinct misses** into one source query: a short section in this article,
+   because it is a miss-handling decision.
+2. **Lookup fan-out** (40 sequential GETs against MGET): out of scope for this article. It
+   belongs to Caching with Redis, so it is not added here.
+3. **Naming:** the backend processes are `Server A`/`Server B`, as in the example record,
+   not the tree's older "App A".
+4. **Exit questions on the index stub:** out of scope for the pilot.
+5. **Production-scale example facts:** agreed for the pilot only, as marked in the record.
+6. **"Fail at Scale"** is cited through the SRE book, because the original could not be
+   reached.
+
 ## Findings
 
 | Finding | Decision | Fixed in | Confirmed by |
@@ -35,3 +54,17 @@ passes, and the owner has the live and pilot versions to compare.
 
 Notes on where the skills helped, misled or were ignored, for the owner's decision on
 adopting them.
+
+- **Plan, helped.** The dossier sections led the planner, unprompted, to almost every gap the
+  5 November review had found: XFetch, Facebook's leases and gutter pool, metastable
+  failure, real incidents, real output and code. It also found items the review had
+  missed: retry amplification, the 1/(1 − hit ratio) loss multiplier and Redis 8.4's
+  owner-checked commands. "Material, not scope" stopped the live text anchoring it.
+- **Plan, misled.** The worked exit questions in the skill are about this very article,
+  so they anchored the planner. Two assume a topology that this collection does not
+  have. Fix: use another subject for the worked example.
+- **Plan, unclear.** The skill gives no label for real runs with modelled durations, no
+  length for a one-article dossier, no step for when a brief is narrower than expert
+  practice, and nothing on how "realistic scale" fits an existing toy example.
+- **Tools.** The fetch tool failed for several hosts that the shell's proxy reached. The
+  skills could note that agents may fetch sources with `curl` through the proxy.
