@@ -8,7 +8,9 @@ matter. Use plain British English throughout.
 - Repository layout, routes and commands: `README.md`.
 - Publication scope, and what is planned rather than available: `docs/site-direction.md`.
 - How article figures look: `docs/figure-style.md`.
-- The preserved reference articles (Sequence diagrams, Indexes, and Storage and
+- Writing voice and the four current reference essays:
+  `.agents/skills/staycurrent-write/references/voice.md`.
+- The preserved worked articles (Sequence diagrams, Indexes, and Storage and
   durability): `src/reference-articles/`. Run `STAYCURRENT_REFERENCE_PREVIEW=1 pnpm dev`
   to see them at `/review/examples/sequences/`, `/review/examples/indexes/` and
   `/review/examples/storage/`. Normal builds exclude those routes.

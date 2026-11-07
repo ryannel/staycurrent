@@ -11,6 +11,12 @@ questions, the neighbouring scopes and the example record. A standalone article 
 a plan starts with [staycurrent-plan](../staycurrent-plan/SKILL.md) in its short form. An
 existing article without exit questions gets them first, as that skill describes.
 
+## Voice and writing references
+
+Before drafting, read the [voice guide](references/voice.md) and its four Randall Munroe
+essays. That guide owns the shared prose voice, reference-reading instructions and
+guidance for local repairs. It is separate from the house figure style.
+
 ## What a Stay Current article contains
 
 - **The practitioner's world.** Use the names practitioners search for, introduced once
@@ -19,8 +25,9 @@ existing article without exit questions gets them first, as that skill describes
   failure patterns and incidents that the dossier assigns to this article.
 - **Numbers.** Use real figures wherever a decision depends on magnitude, stated plainly
   with their source or measurement conditions. Use invented figures where the lesson is
-  ordering or arithmetic. Say where the numbers come from once, in a closing section,
-  rather than qualifying them paragraph by paragraph.
+  ordering or arithmetic. Gather detailed provenance in a closing section rather than
+  repeating it paragraph by paragraph. State assumptions where a reader needs them to
+  follow the calculation; never present an illustrative value as a measurement.
 - **Confident statements.** Say what things are. Keep "not" for contrasts that prevent a
   real mistake. Mention running-example facts only where they change the lesson.
 - **One implementation, general subject.** When one product illustrates a general
@@ -29,8 +36,6 @@ existing article without exit questions gets them first, as that skill describes
 - **Parent and child.** Give a useful answer at this level, and leave the child's full
   treatment to the child. A pointer to the child is one sentence, not a substitute for
   an answer here.
-
-Before drafting, read the [voice guide](references/voice.md).
 
 ## Prose stands alone
 
@@ -43,16 +48,6 @@ prose can only state, such as timing, accumulation, contention or scale.
 
 Figures follow the house style in [Figure style: ink and tokens](../../../docs/figure-style.md).
 For building, playback and checks, use the [figure guide](references/figures.md).
-
-## The reference articles
-
-Sequence diagrams, Indexes, and Storage and durability are preserved in
-`src/reference-articles/`. They are the publication's models for concrete, confident
-teaching prose: exact numbers, a mechanism put into words before it is named, and
-provenance gathered at the end. When starting a new collection, read in full the one
-closest in shape to your subject, with `python3 scripts/read-writing-reference.py`. For a
-single article or a rewrite, read that reference's opening and the section closest to your
-hardest explanation. Their framed visual style is not the house style.
 
 ## Accuracy
 
@@ -78,17 +73,26 @@ the problem needs it. Reread the surrounding explanation and every later use of 
 changed, and recheck any claim the repair touches. A repair fixes what its findings name;
 it does not start a wider restyling.
 
+After substantive prose repairs, reread the whole article in order. Several local fixes
+can introduce repetition, defensive asides or a broken transition. This is the repairer's
+coherence check; it does not start another independent review round. A bounded factual
+or typographical correction needs its affected explanation and later uses checked.
+
 ## Done
 
-- Reread the whole article from the reader's starting point, once with the figures
-  omitted.
-- Answer each exit question from the article alone. Close any gap you find.
-- Build, then run `pnpm check -- --rule=dense-prose --page=<route>`. Reread each flagged
-  sentence in place, and rewrite it if a reader would have to read it twice.
+- For a new or substantially rewritten article, reread the whole piece from the reader's
+  starting point, once with the figures omitted. Answer each exit question from the
+  article alone and close any gap. A bounded repair checks the affected reasoning and
+  exit questions, retaining checks the change does not invalidate.
+- For an integrated article, build, then run
+  `pnpm check -- --rule=dense-prose --page=<route>`. Reread each flagged sentence in
+  place, and rewrite it if a reader would have to read it twice. The counts show where
+  to look, not whether the writing works. For a prose-only draft, check by reading and
+  record rendered checks as pending; do not integrate solely to obtain them.
 - Check new or changed figures against the defect list in the figure style, in both
   themes at desktop and 375 px.
 
-Return the article on its branch, previewed as `AGENTS.md` describes under Delivery,
+Return an integrated article on its branch, previewed as `AGENTS.md` describes under Delivery,
 together with the check results. Note any scope or example changes you propose, and any
 limits on the evidence. In a collection, the coordinator arranges review. A standalone
 article goes on to the three lenses in [staycurrent-review](../staycurrent-review/SKILL.md),

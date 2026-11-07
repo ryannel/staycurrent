@@ -157,9 +157,17 @@ Each collection keeps its dossier and one running-example record beside its tree
 `nested_article` child stubs, with `exit_questions` on each article. Reviewed drafts
 require publication authorisation.
 
-The three chosen writing and teaching examples are fixed at their pre-rewrite
-revision in `src/reference-articles/`: Sequence diagrams, Indexes, and Storage and
-durability. To read their interactive pages, run
+The [voice guide](.agents/skills/staycurrent-write/references/voice.md) owns the shared
+prose voice and four Randall Munroe writing references, aligned with the revised
+`ryannel.dev` guidance. Read those essays in full before planning a new explanation or
+drafting. Reader-and-visual review records an unaided reading before supplying the voice
+and figure guides for its informed checks; teach-back remains a separate test.
+
+Three worked articles remain fixed at their pre-rewrite revision in
+`src/reference-articles/`: Sequence diagrams, Indexes, and Storage and durability.
+They no longer set the prose voice, and their framed visuals are not the house style.
+`scripts/read-writing-reference.py` still reads these local examples, not the current
+writing references. To read their interactive pages, run
 `STAYCURRENT_REFERENCE_PREVIEW=1 pnpm dev` and open `/review/examples/sequences/`,
 `/review/examples/indexes/` or `/review/examples/storage/`. The preview routes are
 excluded from normal builds. Source import paths and internal links are adapted

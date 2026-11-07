@@ -6,8 +6,9 @@ fresh agent, then do step 2 yourself.
 
 ## Step 1: answer
 
-**Inputs:** the article's prose (from its built page or its source) and its exit
-questions. Nothing else.
+**Inputs:** the article's prose extracted from its built page, or the supplied prose for
+a prose-only commission, and its exit questions. Nothing else. Exclude source imports,
+comments, figures, captions and controls; they must not supply missing article teaching.
 
 Answer each question using only the article. Quote the passage or passages that support
 each answer. If the article does not support an answer, write "not in the article" and

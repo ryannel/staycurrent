@@ -10,6 +10,9 @@ cost in time and effort. Reviewers report problems; they do not edit. The coordi
 meaning whoever assigned the review, accepts findings, arranges repairs and decides when
 the work is done.
 
+Look both for understanding the reader needed but did not get, and for time the article
+took without giving anything back. Keep the original readings and disagreements visible.
+
 ## Lenses
 
 A new or substantially rewritten article gets all three lenses, each from a separate,
@@ -31,18 +34,26 @@ back: report that to the coordinator, who has them written first.
 ## Inputs
 
 Give each reviewer the audience, the commit or build being reviewed, and only the inputs
-its lens lists. A first reader-lens review gets the finished article without plans,
-author notes or earlier verdicts.
+its lens lists. Start agents without the author's conversation. The reader-and-visual
+lens begins with only the finished article, audience and [first-reading instructions](lenses/first-reading.md).
+Use built HTML or text extracted from the rendering, without source comments or imports;
+for a prose-only draft, use the supplied prose and state that rendered checks are pending.
+Do not give this reader plans, exit questions, voice guidance, author notes or earlier
+verdicts. Save its unaided observations before sending the voice and figure guides and
+the remaining [reader-lens checks](lenses/reader.md). These are two stages of the same
+lens, not another reviewer. Teach-back retains its separate question-led test.
 
 ## Findings
 
 For each finding, give its location, the reader's problem and the evidence: a passage, a
-source or an observation. Report passing checks in a line.
+source or an observation. Keep observations separate from proposed repairs. Name useful
+passages a repair should preserve. Report passing checks in a line.
 
 - **Critical:** false or unsupported understanding, an incorrect action, an impossible
   argument, or a figure that contradicts the text.
 - **Medium:** the reader must stall, reread or supply missing understanding, or cannot
-  answer an exit question. Missing expert-level content belongs here too.
+  answer an exit question. Missing expert-level content and unnecessary repeated
+  teaching belong here too.
 - **Low:** optional polish.
 
 ## Repair and confirmation
@@ -65,3 +76,6 @@ repair, the coordinator decides whether to repair again, rewrite the question or
 the gap, and records why. Record the open low findings and any limits on the
 evidence. Optional polish does not reopen review, and completing review does not
 authorise publication.
+
+Model reviewers can share the writer's blind spots and reward fluent prose. A passed
+review records the evidence gathered; it does not by itself establish good writing.

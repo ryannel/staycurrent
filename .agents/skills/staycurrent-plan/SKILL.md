@@ -26,6 +26,11 @@ is exhausted.
 
 ## 2. Article tree
 
+Before outlining a new explanation, read the [voice guide and its writing references](../staycurrent-write/references/voice.md).
+Plan a question the reader can follow from beginning to end. For each section, be able
+to say what useful understanding would be lost if it were cut. Adding exit questions to
+an existing article need not repeat this reference preparation.
+
 Derive the articles from the dossier. Give every dossier item an owning article, or
 record why it is omitted. Keep a subject as a section when a page of its own would not
 save the reader effort. Depth follows what an expert needs, not the length of

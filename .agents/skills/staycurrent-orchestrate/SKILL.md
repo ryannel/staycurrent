@@ -35,9 +35,11 @@ changes between articles; one build and preview for the commission; the work rec
 delivery. Writers propose changes to the tree or the shared example; the orchestrator
 decides and updates the record.
 
-First reader-lens reviews get only the finished article and the audience: no plans,
-author notes or earlier verdicts. The practitioner and teach-back lenses get the inputs
-their lens files list.
+First reader-lens reviews start without inherited author conversation and receive only
+the finished article, audience and [first-reading instructions](../staycurrent-review/lenses/first-reading.md).
+Save the unaided reading before sending the voice and figure guides for the rest of that
+lens. Do not send plans, exit questions, author notes or earlier verdicts. The practitioner
+and teach-back lenses get the inputs their lens files list.
 
 ## Done
 
