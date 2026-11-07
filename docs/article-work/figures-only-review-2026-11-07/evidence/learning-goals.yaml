@@ -1,0 +1,122 @@
+key: cache-misses
+parent: index
+topic: Cache misses, refresh and source protection
+title: Handling cache misses
+brief: Keep useful requests within the source's capacity when a popular answer expires
+  or the cache becomes cold or unavailable. Follow P7's callers through shared fills,
+  bounded waiting and refresh, then widen the view to many keys competing for the
+  same source. Choose which work to admit and what the other callers receive. Redis
+  is one implementation; a cache outage must not remove the source's protection.
+exit_questions:
+- The north list of products under GBP 21.00 costs about 150 ms to compute and is
+  requested about 400 times a second across the fleet. Its shared entry expires with
+  no protection. Roughly how many computations start before the first fill lands,
+  how does that compare with the fleet's 40 fill slots, and what happens to the count
+  if the source slows to 600 ms under that load?
+- The shop runs 20 Server instances, each with per-process coalescing. Is that enough
+  for P7's card (about 250 requests a second, 20 ms fill) and for the under-GBP-21.00
+  list? Defend adding or refusing a shared refresh lease for each, and say why the
+  lease is an efficiency mechanism rather than what keeps a published value correct.
+- Server A takes a 200 ms refresh lease for the list, then its query stalls for 900
+  ms. Trace what Server B does, how many source computations run and when, and which
+  of A's later cache operations must be refused. What did the lease lifetime fail
+  to bound, and what do you add at the source?
+- Write a per-key in-flight wrapper of about 20 lines (Go singleflight or your language's
+  equivalent) in which each caller waits only until its own deadline, the shared load
+  runs under its own 120 ms budget that the first caller's cancellation cannot end,
+  and a caller whose deadline passes returns a still-permitted stale card or an error
+  without starting another source read.
+- With XFetch and beta 1 on the list, roughly how long before expiry does the first
+  refresh start, and about how many refreshes per expiry should you expect across
+  the fleet? When is fixed jitter on refresh points enough instead, and why does neither
+  help when Redis restarts empty?
+- Redis becomes unreachable at peak, with 20,000 card requests a second, a hit ratio
+  near 94% and a source allowance of 2,000 fills a second. If every Server falls back
+  to the database, how much source demand arrives, and how much does per-process coalescing
+  remove? With two executing fills and a short deadline-checked queue per instance,
+  what fraction of requests get a full card, and what should the rest receive?
+- Ten minutes after a cache failover the dashboard shows a hit ratio flat at 31%,
+  database CPU at 100%, 90 identical active card queries in pg_stat_activity with
+  the oldest at 4.8 s, a 1 s application timeout, almost no successful fills and 2.7
+  attempts per request. Name the state the system is in, explain why it is not recovering
+  on its own, and give the first two changes you would make.
+- Redis restarts empty at peak and admission holds fills at 2,000 a second. Under
+  the example's popularity model, roughly how soon are the 1,000 most-requested cards
+  back, and what share of requests do they serve? Why would prewarming all 50,000
+  cards first slow recovery, and which two measurements tell you when to admit more
+  traffic?
+- A teammate proposes protecting the database with a 50-connection pool on each Server
+  and no other limit. What does that allow across 20 instances, what do callers experience
+  when fills slow from 20 ms to 200 ms, and what limits would you specify instead,
+  including what must change when the fleet scales to 30 instances?
+- The card loader, its database client and the edge proxy each make up to three attempts.
+  During a source brownout, how many source attempts can one request for one card
+  cause, where should retries live, and how are they budgeted?
+heading:
+- title: One expiry can start many reads
+  brief: Begin with P7 cached and several callers arriving just after its entry expires.
+    Follow each miss until the first fill completes, counting source reads and callers
+    still waiting. Define a cache stampede through that burst. Slow the source read
+    while keeping arrivals fixed to expose more overlapping work. Contrast the short
+    burst with a flattering daily hit ratio. Keep the timings and capacity in this
+    drawing explicitly illustrative.
+- title: Share the work for one key
+  brief: Give App A one in-flight fill per complete cache key. The first caller starts
+    it; later callers share its result or error. Recheck the cache after gaining fill
+    ownership, and remove the in-flight entry when the work ends. Show the source-read
+    count falling while the waiting callers remain visible.
+  heading:
+  - title: Bound the wait as well as the work
+    brief: Give callers a deadline and the shared loader its own bounded lifetime.
+      One caller leaving need not cancel work that others still need. Limit waiter
+      count and memory, propagate failure, and avoid releasing a source slot while
+      timed-out work is still running. Distinguish requesting cancellation from knowing
+      the source stopped. A waiter whose budget ends receives a permitted stale result
+      or an explicit failure; it does not automatically start another source read.
+  - title: Across application instances
+    brief: 'Add App B: a per-process map can now permit one fill in each process.
+      Decide whether this bounded duplication is acceptable before adding shared refresh
+      ownership. For a lease, draw a slow owner surviving its lease and a replacement
+      owner starting. An owner token checked atomically at publication and release
+      can protect those cache operations on the selected store; it does not cancel
+      old source work or make the source and cache one transaction. Preserve the freshness
+      article''s validity rules and source-wide admission even when lease service
+      is unavailable.'
+- title: Refresh while an answer is still usable
+  brief: Put an early refresh point and the last allowed serving time on one timeline.
+    One caller starts a refresh while others reuse the still-permitted answer. If
+    refreshing fails, the last allowed time still holds. Compare a hot key with an
+    unused one to show what eager refreshing can waste. Spread refresh or expiry times
+    across keys with jitter, without extending the agreed age allowance. Show why
+    staggered deadlines do not solve a burst on one key or the simultaneous loss of
+    the whole cache.
+- title: Limit source work across all keys
+  brief: 'Replace the repeated P7 calls with misses for different products: per-key
+    coalescing now has little to combine. Draw finite source execution slots, a bounded
+    waiting area and an explicit rejection path. Separate a limit on concurrent work
+    from a limit on starts per second; neither an unbounded queue nor a connection
+    pool alone establishes a useful response deadline. Choose limits from measured
+    source capacity with room for checkout and other uncached work. Count refreshes,
+    warming and retries in the same budget. Show how per-instance limits add across
+    the fleet, so scaling App A into more instances cannot silently multiply the intended
+    source allowance.'
+- title: When the cache is unavailable
+  brief: Make the cache call slow or fail, then follow the remaining request budget.
+    Distinguish a cache error from a missing key. Bounded cache waits and pending
+    calls protect the application; bounded source admission protects the dependency.
+    Returning the source answer is useful only when that work can be admitted. Where
+    it cannot, use a still-permitted local copy, an explicitly reduced result or a
+    timely failure. Show how automatic retries can consume the same scarce capacity
+    again; any retries fit the overall deadline and budget. Briefly explain controlled
+    bypass and recovery probes if used, without turning the section into a general
+    circuit-breaker course.
+- title: Return from a cold cache
+  brief: Bring the cache back empty while requests continue. Compare demand-driven
+    fills with a bounded warm-up of useful keys, both using the existing source allowance.
+    A whole-dataset prefill can compete with users and evict useful entries; it is
+    not automatically a recovery step. Reintroduce traffic or application instances
+    gradually and stop the ramp when source latency or admitted work shows the limit
+    has been reached. Finish by exercising the complete design with a slow fill, a
+    failed refresher, many distinct misses and cache loss. Count useful replies, rejected
+    requests and actual source work separately. Operating a cache owns the production
+    rollout procedure.

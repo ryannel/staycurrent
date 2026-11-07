@@ -1,13 +1,12 @@
-# Reader and visual lens
+# Reader lens
 
 For the first review of a new or substantially rewritten article, complete the
 [first reading](first-reading.md) and return its observations before using this file.
-Then assess the whole article against the writing references and look at its
-figures as a designer would. Retain the original observations unchanged beside these
-informed findings. This is the second stage of the same reader-and-visual assignment.
+Then assess the whole article against the writing references. Retain the original
+observations unchanged beside these informed findings. This is the second stage of
+the same reader assignment; visual review belongs to a separate fresh reader.
 
-**Inputs:** the finished article rendered in a browser, the audience,
-[Figure style: ink and tokens](../../../../docs/figure-style.md), and the
+**Inputs:** the finished article, the audience, and the
 [voice guide](../../staycurrent-write/references/voice.md). Read relevant passages from
 its current writing references to calibrate the judgement; a review need not repeat the
 writer's full reference preparation. Do not read plans, author notes or earlier verdicts
@@ -39,18 +38,6 @@ effort of the whole article even when every sentence is clear. Keep the passages
 work, and distinguish a hard step needing more explanation from unnecessary explanation.
 The writing should be generous towards readers and people making different choices.
 
-## The figures
-
-7. **Contribution.** Name what each figure makes easier to understand. Suggest a simpler
-   form, or no figure, where the figure adds effort without understanding.
-8. **House style.** Check each figure against the defect list in the figure style:
-   overlaps, labels on tokens, token treatment, values drawn where they matter, one title.
-9. **Motion and controls.** Watch each figure from its first frame to its settled final
-   frame. The cause of the outcome is visible without instructions, and the controls work
-   by keyboard.
-10. **Themes and phones.** Check light and dark, desktop and 375 px. Text contrast is
-    4.5:1, and large text and graphics 3:1.
-
 ## A collection
 
 For an assembled collection, replace the per-article checks with these:
@@ -59,14 +46,12 @@ For an assembled collection, replace the per-article checks with these:
   each article opens from where the route leaves the reader.
 - Terms, names and running-example facts are consistent across articles.
 - No lesson is taught in full twice; each has one owner and the others point to it.
-- Figures share one visual language: the same role icons and colour meanings throughout.
 
-Rely on the article reviews for individual figures and passages.
+Rely on the article reviews for individual passages; the visual lens owns figure
+consistency across the collection.
 
 Collection checks and scoped repair confirmations do not restart the first-reading
 stage. A substantially rewritten argument can require a new fresh reading under the
 review skill's rules for widening a check.
 
-Without browser access, complete the prose checks and report the rendered checks as not
-done. Hidden panes can throttle animation, so bring the figure into view before judging
-it.
+Report whether you read built prose or an unrendered draft.

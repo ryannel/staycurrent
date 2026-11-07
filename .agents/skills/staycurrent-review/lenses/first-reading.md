@@ -1,7 +1,7 @@
 # First reading
 
-**Inputs:** the finished article as rendered, or the supplied prose for a prose-only
-commission; the intended audience; these instructions. Start without the author's
+**Inputs:** prose extracted from the finished rendering, or the supplied prose for a
+prose-only commission; the intended audience; these instructions. Start without the author's
 conversation, plan, exit questions, writing guide or previous verdicts. Tell the
 coordinator if you have already seen those inputs.
 
@@ -27,11 +27,6 @@ explain the subject completely on its own.
 At the end, say what you can now explain or decide, and what remains unclear. Keep this
 account separate from suggestions about how to fix the page.
 
-## Look at the figures
-
-Inspect each figure before its caption and say what you think it shows. Then read the
-caption and surrounding prose together. What becomes easier to understand? Does anything
-disagree with the explanation? Report access limits; do not infer interaction from code.
-
-Return your original observations before receiving the voice and figure guides for the
-rest of the reader-and-visual lens. Preserve useful passages as well as problems.
+Return your original observations before receiving the voice guide for the rest of the
+reader lens. Preserve useful passages as well as problems. A separate fresh visual
+reader assesses the figures before seeing the prose.

@@ -24,6 +24,8 @@ and child briefs; the sources and any execution evidence; the commission.
    mechanisms to their owning child, without duplicating a full treatment.
 
 For a plan or collection, also check that every needed subject has exactly one owner.
+For a plan, check that its proposed visual coverage includes the main mechanisms,
+consequential failures and practical choices; detailed implementation may stay in prose.
 Count the pages a typical task needs, and name any merges that would save openings
 without losing understanding. For each proposed cut or merge, state the reader effort
 saved and the understanding lost.

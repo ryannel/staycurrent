@@ -54,10 +54,22 @@ Articles written before November 2026 have no exit questions. Before repairing o
 reviewing one, write its questions from its brief and record them in the collection's
 tree.
 
+## 5. Visual coverage
+
+Plan the visual explanation alongside the written one, using the brief and exit
+questions. Follow the [figure guide's learning target](../staycurrent-write/references/figures.md).
+Keep a short map with the article's work record: the main mechanisms, consequential
+failures and practical choices, and the figures that will explain them. Several lessons
+may share one evolving example; another may need several views. Choose the number from
+the understanding needed.
+Identify detail left to prose and any unresolved gap. A missing major lesson is a gap
+to solve, not an automatic exception because it is difficult to draw. The writer may
+revise this map as the explanation develops.
+
 ## Done
 
 The plan is done when every dossier item has an owner or a recorded omission, every
-article has a brief and 6–10 exit questions, and the example record is written. Return
-these with any open questions about scope. The orchestrator reviews a collection plan
-once, as a whole, before writing starts. A standalone plan goes straight to writing
-unless the owner asked to see it first.
+article has a brief, 6–10 exit questions and visual coverage, and the example record is
+written. Return these with any open questions about scope. The orchestrator reviews a
+collection plan once, as a whole, before writing starts. A standalone plan goes straight
+to writing unless the owner asked to see it first.

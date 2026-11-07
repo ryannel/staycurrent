@@ -46,8 +46,12 @@ prose can only state, such as timing, accumulation, contention or scale.
 
 ## Figures
 
-Figures follow the house style in [Figure style: ink and tokens](../../../docs/figure-style.md).
-For building, playback and checks, use the [figure guide](references/figures.md).
+For a new article or substantial rewrite, develop the visual explanation alongside the
+prose, following the plan's visual coverage. The [figure guide](references/figures.md)
+owns its learning target, design and checks;
+[Figure style: ink and tokens](../../../docs/figure-style.md) owns its appearance.
+When substantially rewriting an older article without a visual map, derive one from its
+brief and exit questions. A bounded repair retains the unaffected plan and checks.
 
 ## Accuracy
 
@@ -89,12 +93,14 @@ or typographical correction needs its affected explanation and later uses checke
   place, and rewrite it if a reader would have to read it twice. The counts show where
   to look, not whether the writing works. For a prose-only draft, check by reading and
   record rendered checks as pending; do not integrate solely to obtain them.
-- Check new or changed figures against the defect list in the figure style, in both
-  themes at desktop and 375 px.
+- For commissioned figures, check the sequence against its coverage map and the figure
+  guide, including a figures-only preview for independent comprehension review. Check
+  new or changed figures in both themes at desktop and 375 px. Retain unaffected checks
+  for local repairs.
 
 Return an integrated article on its branch, previewed as `AGENTS.md` describes under Delivery,
 together with the check results. Note any scope or example changes you propose, and any
 limits on the evidence. In a collection, the coordinator arranges review. A standalone
-article goes on to the three lenses in [staycurrent-review](../staycurrent-review/SKILL.md),
+article goes on to the four lenses in [staycurrent-review](../staycurrent-review/SKILL.md),
 unless the owner asked for an unreviewed draft. Publication is a separate decision for
 the owner.

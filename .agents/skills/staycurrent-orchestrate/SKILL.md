@@ -18,7 +18,7 @@ in reading time and effort.
 2. **Write** each article with [staycurrent-write](../staycurrent-write/SKILL.md). Give
    the writer the article's brief and exit questions, the neighbouring scopes, the
    relevant finished articles and the example record.
-3. **Review** each finished article with the three lenses in staycurrent-review, then
+3. **Review** each finished article with the four lenses in staycurrent-review, then
    repair accepted findings and confirm them.
 4. **Review the assembled collection** once, for coverage, ownership, duplication and
    reading order. Reuse the article reviews rather than repeating them.
@@ -36,16 +36,23 @@ delivery. Writers propose changes to the tree or the shared example; the orchest
 decides and updates the record.
 
 First reader-lens reviews start without inherited author conversation and receive only
-the finished article, audience and [first-reading instructions](../staycurrent-review/lenses/first-reading.md).
-Save the unaided reading before sending the voice and figure guides for the rest of that
+the article's prose, audience and [first-reading instructions](../staycurrent-review/lenses/first-reading.md).
+Save the unaided reading before sending the voice guide for the rest of that
 lens. Do not send plans, exit questions, author notes or earlier verdicts. The practitioner
 and teach-back lenses get the inputs their lens files list.
+
+Give the separate visual reader only the figures-only preview, audience and
+[first visual reading](../staycurrent-review/lenses/first-visual-reading.md) initially.
+Save its account before sending the article, learning goals and informed visual checks.
+The write skill's figure guide specifies the isolated preview; check that browser
+snapshots cannot reveal the surrounding prose or long explanatory alternatives.
 
 ## Done
 
 The collection is done when:
 
 - every article passes its teach-back check;
+- each visual sequence passes independent comprehension and coverage review;
 - every accepted critical or medium finding is repaired and confirmed;
 - `pnpm build` passes, and every new or changed figure has passed the checks in the
   write skill's figure guide;

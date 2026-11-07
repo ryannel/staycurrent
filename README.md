@@ -145,9 +145,11 @@ optimising useful understanding against reader time and effort. Planning starts 
 an expert dossier: the vocabulary, sources, magnitudes, tools, failures and
 misconceptions an expert knows. Articles and their exit questions are derived from it.
 Writers aim at the exit questions and follow `docs/figure-style.md` for figures.
-Each article gets three independent review lenses: a teach-back check, in which a
+Each article gets four independent review lenses: a teach-back check, in which a
 fresh agent answers the exit questions from the article alone; a senior-practitioner
-review; and a reader-and-visual review. Accepted problems are repaired and confirmed
+review; a prose-first reader; and a separate figures-first visual reader. The visual
+sequence must explain the main mechanisms, consequential failures and practical choices;
+its coverage is planned alongside the prose. Accepted problems are repaired and confirmed
 in context. The assembled collection receives one coverage and reading-route check.
 Earlier versions of the skills are in git history; the last seven-skill suite is at
 commit `0bd84e6`. The reasons for the change are in `docs/reviews/process-review-2026-11-05/`.
@@ -160,8 +162,15 @@ require publication authorisation.
 The [voice guide](.agents/skills/staycurrent-write/references/voice.md) owns the shared
 prose voice and four Randall Munroe writing references, aligned with the revised
 `ryannel.dev` guidance. Read those essays in full before planning a new explanation or
-drafting. Reader-and-visual review records an unaided reading before supplying the voice
-and figure guides for its informed checks; teach-back remains a separate test.
+drafting. Reader review records an unaided prose reading before supplying the voice
+guide. Visual review records what a fresh reader understands from the figures before
+supplying the article, learning goals and figure guides; teach-back remains a separate test.
+
+For the figures-only review of Handling cache misses, run
+`STAYCURRENT_FIGURE_PREVIEW=1 pnpm dev` and open `/review/figures/cache-misses/`.
+This uses the article's actual figures and visible captions, with no article body or
+long explanatory text alternatives in the review DOM. The normal article retains its
+accessibility descriptions. Normal builds exclude this review route.
 
 Three worked articles remain fixed at their pre-rewrite revision in
 `src/reference-articles/`: Sequence diagrams, Indexes, and Storage and durability.
