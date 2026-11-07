@@ -22,7 +22,6 @@ function draw(t, variant, small) {
   s += axis(X0, X1, Y0, small ? [0, 200, 400, 600] : [0, 100, 200, 300, 400, 500, 600, 700], x, v => v ? `${v} ms` : '0');
   // The whole fleet's card-fill concurrency: 2,000 fills a second at 20 ms.
   s += path(`M${X0} ${y(40)}H${X1}`, { colour: '--ink', width: 1.4, dash: '6 6' });
-  s += text(X1, y(40) + 26, small ? '40 fill slots, fleet' : '40 fill slots across the fleet', { size: 19, colour: '--ink', anchor: 'end' });
   // Staircase of starts, drawn up to the present moment.
   const until = Math.min(now, T);
   let d = `M${x(0)} ${y(1)}`;
@@ -45,6 +44,8 @@ function draw(t, variant, small) {
       ? text(X1, Y0 + 60, note, { size: 19, colour: '--cache', anchor: 'end' })
       : text(x(fill), Y0 + 60, note, { size: 19, colour: '--cache' });
   }
+  // Paint the label last so its paper halo clears the first-fill marker.
+  s += text(X1, y(40) + 26, small ? '40 fill slots, fleet' : '40 fill slots across the fleet', { size: 19, colour: '--ink', anchor: 'end' });
   return svg(s, small, W, H);
 }
 

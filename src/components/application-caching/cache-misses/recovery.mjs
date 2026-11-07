@@ -1,8 +1,9 @@
 // Figure: share of card requests served from cache after Redis restarts empty at peak.
 // Demand fills: the simulation in docs/article-work/cache-misses-pilot-2026-11-06/ (50,000 cards, Zipf exponent 1, 20,000 requests a
 // second over 20 Servers, 2 slots and a queue of 1 per Server, 20 ms fills; quarter-second
-// buckets, plotted at their midpoints). Prewarm: all 50,000 cards in catalogue order at
-// 2,000 fills a second while demand misses wait, so the share grows by 1/25 each second.
+// buckets, plotted at their midpoints). Prewarm is a calculated expectation, not a
+// simulator output: all 50,000 cards in an order independent of popularity at 2,000
+// fills a second while demand misses wait. Expected request share grows by 1/25 each second.
 import { axis, disc, makeScene, path, svg, text } from './ink.mjs';
 
 const demand = [[0, 0], [0.125, 0.343], [0.375, 0.506], [0.625, 0.579], [0.875, 0.603], [1.125, 0.611], [1.375, 0.659], [1.625, 0.674], [1.875, 0.683], [2.125, 0.698], [2.375, 0.714], [2.625, 0.725], [2.875, 0.742], [3.5, 0.75], [4.5, 0.784], [5.5, 0.79], [6.5, 0.826], [7.5, 0.841], [8.5, 0.851], [9.5, 0.867], [10.5, 0.877], [11.5, 0.895], [12.5, 0.902], [13.5, 0.905], [14.5, 0.916], [15.5, 0.913], [16.5, 0.922], [17.5, 0.927], [18.5, 0.933], [19.5, 0.942], [20, 0.945]];
@@ -22,7 +23,7 @@ function draw(t, variant, small) {
   s += text(X1, y(0.94) - 12, 'normal hit ratio, 94%', { size: 18, colour: '--muted', anchor: 'end' });
   s += text(X0 - (small ? 50 : 80), Y1 - 26, 'Requests served from cache', { size: small ? 19 : 20, colour: '--muted', anchor: 'start' });
 
-  // Prewarming everything in catalogue order: popularity returns at 1/25 a second.
+  // Expected hit share for prewarming in an order independent of popularity.
   const pre = Math.min(now, T);
   s += path(`M${x(0)} ${y(0)}L${x(pre)} ${y(pre / 25)}`, { colour: '--db', width: 2.6 });
   // Demand fills under admission.
@@ -50,7 +51,7 @@ export const recovery = makeScene({
   duration: 7000,
   defaultVariant: 'story',
   draw,
-  alt: 'A chart of the share of card requests served from cache in the 20 seconds after Redis restarts empty at peak, with source fills held at 2,000 a second. Demand fills reach 61% after one second, about 80% after five and the normal 94% after about 20. Prewarming all 50,000 cards in catalogue order first reaches only 20% after five seconds and 80% after twenty.',
-  textAlternative: 'The share of requests served from cache after Redis restarts empty at peak, with fills held at 2,000 a second. Demand fills bring the most requested cards back first: 61% after one second, about 80% after five and 94% after about 20. Prewarming all 50,000 cards in catalogue order reaches only 20% after five seconds. Simulated, not measured.',
-  caption: 'Requests served from cache after Redis restarts empty at peak, with source fills held at 2,000 a second. Demand fills restore the most requested cards first.',
+  alt: 'A chart of requests served from cache after Redis restarts empty, with fills held at 2,000 a second. Simulated demand fills reach 61% after one second and about 80% after five. The prewarm line is an expectation for a catalogue order independent of popularity: 20% after five seconds and 80% after twenty.',
+  textAlternative: 'With fills held at 2,000 a second, the demand simulation reaches 61% cache hits after one second, about 80% after five and 94% after about twenty. The prewarm line is calculated, not simulated. It assumes catalogue order is independent of popularity: filling 10,000 of 50,000 cards after five seconds covers 20% of requests on average. Popular-first ordering would recover more demand sooner.',
+  caption: 'Requests served from cache after Redis restarts empty, with fills held at 2,000 a second. Demand fills are simulated; prewarming shows the expectation for a catalogue order independent of popularity.',
 });
