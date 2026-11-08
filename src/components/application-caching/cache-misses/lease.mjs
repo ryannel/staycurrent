@@ -68,7 +68,11 @@ function draw(t, variant, small) {
   }
 
   s += axis(X0, X1, L.axis, small ? [0, 500, 1000] : [0, 200, 400, 600, 800, 1000], x, v => v ? `${v} ms` : '0');
-  return svg(s, small, W, L.H);
+  const checkY = L.H + 12;
+  s += text(W / 2, checkY, timeout ? 'Source timeout ends A’s query before B starts.' : 'At 900 ms: lease absent; A presents tokA.', { size: small ? 18 : 21 });
+  s += text(W / 2, checkY + 30, 'Atomic owner check gates publish and release.', { size: small ? 18 : 21 });
+  s += text(W / 2, checkY + 60, 'A token mismatch refuses both operations.', { size: small ? 18 : 21 });
+  return svg(s, small, W, L.H + 92);
 }
 
 export const lease = makeScene({

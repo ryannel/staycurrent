@@ -29,7 +29,7 @@ function draw(t, variant, small) {
 
   callers.forEach((c, i) => {
     const lane = lanes[i];
-    s += label(lane, `Caller ${c.id}`, `waits ${c.wait} ms`);
+    s += label(lane, `Caller ${c.id}`, `budget ${c.wait} ms`);
     s += path(`M${x(c.at)} ${lane.y}H${x(c.at + c.wait)}`, { colour: '--muted', width: 1.4, dash: '3 5' });
     s += path(`M${x(c.at + c.wait)} ${lane.y - 9}V${lane.y + 9}`, { colour: '--muted', width: 1.4 });
     if (now < c.at) return;

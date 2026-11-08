@@ -1,7 +1,7 @@
 // Figure: computations of the list of products under GBP 21.00 started after its entry expires.
 // Arrivals every 2.5 ms (400 a second); each miss starts a computation until the
 // first fill lands. Counts follow rate × fill time; the native run in docs/article-work/cache-misses-pilot-2026-11-06/ gave 61 and 242.
-import { axis, disc, makeScene, path, pulse, svg, text } from './ink.mjs';
+import { axis, chip, disc, makeScene, path, pulse, svg, text } from './ink.mjs';
 
 const T = 700, MAX = 250, GAP = 2.5;
 
@@ -46,7 +46,9 @@ function draw(t, variant, small) {
   }
   // Paint the label last so its paper halo clears the first-fill marker.
   s += text(X1, y(40) + 26, small ? '40 fill slots, fleet' : '40 fill slots across the fleet', { size: 19, colour: '--ink', anchor: 'end' });
-  return svg(s, small, W, H);
+  const state = chip(small ? 85 : 170, 25, now < fill ? 'empty cache' : 'list cached', now < fill ? '--miss' : '--cache', { size: 18 })
+    + text(small ? 175 : 285, 32, now < fill ? '→ each miss starts work' : '→ later requests hit', { size: small ? 18 : 22, anchor: 'start' });
+  return svg(state + `<g transform="translate(0 64)">${s}</g>`, small, W, H + 64);
 }
 
 export const stampede = makeScene({
@@ -60,5 +62,5 @@ export const stampede = makeScene({
     ? 'With a 600 ms computation, the count climbs by one every 2.5 ms until the first fill lands at 600 ms: 240 computations, six times the dashed line at 40 fill slots across the fleet.'
     : 'With a 150 ms computation, the count climbs by one every 2.5 ms until the first fill lands at 150 ms: 60 computations, above the dashed line at 40 fill slots across the fleet.',
   textAlternative: 'Computations of the list started after its entry expires, at 400 requests a second with no protection. The count climbs by one every 2.5 ms until the first fill lands: 60 at 150 ms, or 240 when the computation takes 600 ms. A dashed line marks the fleet’s 40 fill slots, and both counts pass it.',
-  caption: 'Computations of the list started after its entry expires, at 400 requests a second. The count is the arrival rate times the time to the first fill.',
+  caption: 'Computations of the list started after its entry expires, at 400 requests a second with no sharing or admission limit. Each miss starts work until the first fill makes later requests hit. The dashed line is a comparison with the fleet’s intended capacity, not an enforced limit.',
 });

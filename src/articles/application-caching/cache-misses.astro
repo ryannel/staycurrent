@@ -100,10 +100,11 @@ return 0`;
 <p>The shop has 20 application-server instances. Each has its own map, so per-process coalescing can still allow 20 copies of the list query. In the experiment, distributing the callers among 20 groups produced 20 list computations for one expiry.</p>
 <p>That may be enough. P7's roughly 250 requests a second are spread across the fleet, giving each server about 12 a second. Few arrive on the same server during a 20-millisecond fill. Coordinating the entire fleet to save a handful of card reads may cost more than it saves.</p>
 <p>The list is a stronger candidate. Twenty copies each spend about 150 milliseconds in the database. The shop's example capacity budget permits roughly 40 card fills at once, so this one expired list can occupy half those places. A <strong>refresh lease</strong> lets the servers choose one owner to do the work.</p>
+<MissFigure kind="coordination" number={3} />
 <p>In Redis, <code>SET lease:&lt;key&gt; &lt;token&gt; NX PX 200</code> attempts to create a 200-millisecond lease. <code>NX</code> means “only if this key does not exist”; the token identifies this particular attempt. The winner starts the load. A loser can wait within its deadline, serve an older answer that is still permitted, or return its defined fallback. Expiry lets another server take over if the owner crashes.</p>
 <p>Expiry also lets another server take over if the owner is merely slow. Suppose Server A gets the lease at 0 milliseconds, then its query stalls for 900 milliseconds. B tries at 10 milliseconds, finds A's lease and serves the older list. At 200 milliseconds the lease expires. B tries again at 210 milliseconds, wins, and finishes its own 150-millisecond computation at 360 milliseconds.</p>
 <p>From 210 to 360 milliseconds, both queries are running. Redis has expired A's permission, but PostgreSQL has not been told to stop A's work.</p>
-<MissFigure kind="lease" number={3} />
+<MissFigure kind="lease" number={4} />
 <p>Now let A finish at 900 milliseconds. Its older result must not replace B's, and its cleanup must not delete a lease belonging to a later owner. Both publication and release need an atomic check that the stored token is still A's.</p>
 <p>An experiment with no older list to serve reproduced the lease race. B waited after its first acquisition failed. The condensed trace shows both of A's late operations being rejected:</p>
 <pre><code>{leaseTrace}</code></pre>
@@ -121,7 +122,7 @@ return 0`;
 <h2 id="early-refresh">Refresh before the answer expires</h2>
 <p>So far, a request discovers that an answer needs replacing and waits for it. With a soft and hard limit, the application can start earlier. One request triggers a refresh while others keep receiving the current answer, still inside its serving allowance.</p>
 <p>A successful refresh stores a new observation with its own lifetime. A failed refresh leaves the old observation exactly as old as before. If its hard limit arrives before a replacement, callers must wait for a usable result or receive a fallback. The HTTP mechanism <code>stale-while-revalidate</code> uses this general idea of serving an allowed older response during revalidation; the product's allowance is explained in <a href={hrefFor('freshness')}>Freshness and invalidation</a>.</p>
-<MissFigure kind="refresh" number={4} />
+<MissFigure kind="refresh" number={5} />
 <p>A fixed refresh point needs the same protection as an expiry. If every request after 25 seconds can start a refresh, the list's next 150 milliseconds contain another 60 callers. Coalesce them, and use a lease if the remaining duplicates across servers are too expensive.</p>
 <p>Another approach lets each request make a random decision. Far from expiry, a refresh is unlikely. As expiry approaches it becomes more likely, so a busy key usually refreshes before its copy disappears. Unused keys do no work. This is <strong>probabilistic early expiration</strong>; XFetch is a published algorithm for it.</p>
 <p>XFetch stores the previous computation time, Δ, with the cached value. On each request it chooses a random number strictly between 0 and 1 and refreshes when:</p>
@@ -133,6 +134,7 @@ return 0`;
 <h3 id="jitter">Spread different keys out too</h3>
 <p>There is another way for refreshes to arrive together. If a warm-up stores thousands of entries at once, they can all reach their refresh point together. Randomly spread those points, perhaps between 22 and 26 seconds after the source read, while keeping the 30-second hard limit. This variation is called <strong>jitter</strong>.</p>
 <p>Jitter spreads work across keys. It does not coordinate the callers of one popular key. For cheap fills such as P7's, a fixed refresh point with jitter and whatever coalescing is justified may be sufficient. XFetch is useful when one key attracts enough overlapping work to warrant a more careful refresh decision.</p>
+<MissFigure kind="scheduling" number={6} />
 <p>Neither technique helps an empty cache. There is no stored answer, refresh point or previous computation time to work with. We need a limit that applies to all source work, whatever caused it.</p>
 </section>
 
@@ -145,6 +147,7 @@ return 0`;
 <p>Across 20 servers, that gives each server two executing places. When both are occupied, allow at most one more request to wait. When a place opens, check that waiting request's deadline again. If too little time remains for a useful result, refuse it. If the waiting place is already occupied, refuse the new request immediately. Choosing whether work may start is <strong>admission control</strong>.</p>
 <p>Every refusal needs a response the product can accept. Try a cached copy that is still within its hard limit, including a local copy if Redis is unavailable. If the page already has a usable name and picture, show them with the price marked temporarily unavailable.</p>
 <p>Without usable data, fail quickly with an explicit error such as HTTP 503. The fallback must fit what is already available without another source read. Do not turn missing capacity into a zero price or “product not found”. Checkout still checks the authoritative price.</p>
+<MissFigure kind="admission" number={7} />
 <p>A short queue absorbs a small burst. A long queue can spend a caller's entire budget before its query starts. In this example, a request rejected in a millisecond has a chance to take another path; one rejected after 140 milliseconds has almost no time left.</p>
 <p>Concurrency also responds to a slowdown. If the 40 fills each take 40 milliseconds, the fleet completes about 1,000 a second. At 200 milliseconds it completes about 200. The limit allows less new work while old work takes longer. A rate limit admitting 2,000 starts a second would instead accumulate about 400 concurrent fills at 200 milliseconds.</p>
 <p>Count demand loads, early refreshes, warm-up reads and retries against the same source budget. Limit their total work where it runs, including queries whose callers have gone away.</p>
@@ -158,6 +161,7 @@ return 0`;
 <p>Other clients or reservation settings can make refusal happen earlier. The failure is a connection error, not our planned short queue and fallback. Raising <code>max_connections</code> may remove that error while admitting still more work than the database can handle.</p>
 <p>Put admission before obtaining a connection. Size the pool for the admitted fills and the server's other database uses, and give connection acquisition its own bounded wait. A suitably small pool can be part of the protection, but it must fit the fleet-wide budget and the caller's deadline.</p>
 
+<MissFigure kind="limits" number={8} />
 <h3 id="batching">Batch different missing keys</h3>
 <p>Coalescing shares one answer. It cannot combine requests for different cards, but a page can fetch several missing cards together. If eight of a page's 24 cards are missing, a query using <code>WHERE id = ANY($1)</code> can fetch those eight in one round trip. This is the DataLoader pattern. Charge the batch for its expected source cost; combining eight reads into one query does not necessarily make it cost as little as one card.</p>
 </section>
@@ -184,7 +188,7 @@ return 0`;
 <p>An unreachable cache cannot accept replacements. A restarted, empty Redis can. Every admitted fill now helps two groups: the callers waiting for it and later callers who find its answer cached.</p>
 <p>That makes popularity useful. In the shop's simulation, the first few popular cards were requested and filled quickly. With source work capped at 2,000 fills a second, the hit ratio reached about 61% after one second, 70% after two and 80% after five.</p>
 <p>The 1,000 most requested cards serve about two thirds of requests. Filling all of them needs at least half a second at the full allowance, but demand does not request them in perfect order. The simulation had 500 back within 0.8 seconds, 900 within 2.6 seconds and all 1,000 by about eight seconds.</p>
-<MissFigure kind="recovery" number={5} />
+<MissFigure kind="recovery" number={9} />
 <p>Prewarming the whole catalogue first spends work differently. Fifty thousand cards at 2,000 fills a second take at least 25 seconds. After five seconds, 10,000 cards are ready. If their order is independent of popularity, that is 20% of the catalogue and, on average, 20% of requests. This is a calculated expectation; the demand-fill simulation reached about 80% in that time.</p>
 <p>The order matters. Warming yesterday's 2,000 most popular cards is more useful than starting at an arbitrary catalogue position: roughly one second of work can cover about 70% of demand.</p>
 <p>Give warm-up only a share of the source budget and let current demand take priority. The recovery simulation omitted expiry; a real cache also needs to spread the refresh points of entries filled together, or their next refresh can become another burst.</p>
@@ -197,6 +201,7 @@ return 0`;
 <p>This is a <strong>metastable failure</strong>: a temporary disturbance has pushed the system into a state that sustains its own overload. Traffic returning to its old level may not help, because that level depended on a warm cache.</p>
 <p>First stop the amplification. Disable retries outside the loader, enforce its retry budget, and put the admission limit before the source. If the application has no working limiter, shedding traffic at the edge can provide emergency relief. Reduce demand far enough that admitted queries can finish and populate the cache.</p>
 <p>Then stop abandoned work at the source. Set a suitable statement timeout within the application's load budget and verify that timed-out work actually ends. Request logs showing failures are not enough while database backends remain busy. As fills begin succeeding, increase traffic gradually while watching the same latency and concurrency measurements.</p>
+<MissFigure kind="feedback" number={10} />
 </section>
 
 <section aria-labelledby="exercise">
